@@ -1,0 +1,198 @@
+{
+  "project": "AI Roleplay Uni-app Client",
+  "version": "1.0",
+  "description": "This specification outlines all custom static image icons needed to replace temporary text/unicode symbols. Load these icons via <image> tags to guarantee 100% compatibility across H5, App, and WeChat Mini Programs.",
+  "assets_directory": "src/static/icons/",
+  "recommended_formats": ["SVG (Vector, highly recommended for crisp scaling)", "PNG (Transparent background, min 2x/3x resolution)"],
+  "icons": [
+    {
+      "key": "tab_session",
+      "path": "/static/icons/tab_session.png",
+      "purpose": "Bottom Navigation Bar: Session Tab (Normal State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#8e8e93 (Muted Gray)"
+    },
+    {
+      "key": "tab_session_active",
+      "path": "/static/icons/tab_session_active.png",
+      "purpose": "Bottom Navigation Bar: Session Tab (Active/Selected State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#1c1c1e (Dark/Active)"
+    },
+    {
+      "key": "tab_character",
+      "path": "/static/icons/tab_character.png",
+      "purpose": "Bottom Navigation Bar: Character Tab (Normal State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#8e8e93 (Muted Gray)"
+    },
+    {
+      "key": "tab_character_active",
+      "path": "/static/icons/tab_character_active.png",
+      "purpose": "Bottom Navigation Bar: Character Tab (Active/Selected State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#1c1c1e (Dark/Active)"
+    },
+    {
+      "key": "tab_settings",
+      "path": "/static/icons/tab_settings.png",
+      "purpose": "Bottom Navigation Bar: Settings Tab (Normal State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#8e8e93 (Muted Gray)"
+    },
+    {
+      "key": "tab_settings_active",
+      "path": "/static/icons/tab_settings_active.png",
+      "purpose": "Bottom Navigation Bar: Settings Tab (Active/Selected State)",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#1c1c1e (Dark/Active)"
+    },
+    {
+      "key": "header_back",
+      "path": "/static/icons/header_back.png",
+      "purpose": "Header back navigation chevron arrow",
+      "size": "44x44 px (or 22x22 pt)",
+      "color_hint": "#1c1c1e (Apple Style Left Chevron)"
+    },
+    {
+      "key": "header_plus",
+      "path": "/static/icons/header_plus.png",
+      "purpose": "Home page top right plus (+) dropdown trigger",
+      "size": "40x40 px (or 20x20 pt)",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "header_info",
+      "path": "/static/icons/header_info.png",
+      "purpose": "Chat page top right info details trigger",
+      "size": "40x40 px (or 20x20 pt)",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "menu_chat",
+      "path": "/static/icons/menu_chat.png",
+      "purpose": "Dropdown item: 'New Session' chat bubble symbol",
+      "size": "36x36 px (or 18x18 pt)",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "menu_user_plus",
+      "path": "/static/icons/menu_user_plus.png",
+      "purpose": "Dropdown item: 'Add Character' user plus symbol",
+      "size": "36x36 px (or 18x18 pt)",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "chat_send",
+      "path": "/static/icons/chat_send.png",
+      "purpose": "Chat message input send action arrow (white inside button)",
+      "size": "32x32 px",
+      "color_hint": "#ffffff"
+    },
+    {
+      "key": "chat_sparkle",
+      "path": "/static/icons/chat_sparkle.png",
+      "purpose": "Chat input AI reasoning mode sparkle (normal state)",
+      "size": "26x26 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "chat_sparkle_active",
+      "path": "/static/icons/chat_sparkle_active.png",
+      "purpose": "Chat input AI reasoning mode sparkle (active state)",
+      "size": "26x26 px",
+      "color_hint": "#f5d020 (Gold/Yellow)"
+    },
+    {
+      "key": "drawer_close",
+      "path": "/static/icons/drawer_close.png",
+      "purpose": "Drawer panel top right close cross (x) symbol",
+      "size": "36x36 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "drawer_brain",
+      "path": "/static/icons/drawer_brain.png",
+      "purpose": "Drawer manual memory extraction brain symbol",
+      "size": "32x32 px",
+      "color_hint": "#3a3a3c"
+    },
+    {
+      "key": "drawer_sync",
+      "path": "/static/icons/drawer_sync.png",
+      "purpose": "Drawer update cognition arrows symbol",
+      "size": "32x32 px",
+      "color_hint": "#3a3a3c"
+    },
+    {
+      "key": "drawer_trash",
+      "path": "/static/icons/drawer_trash.png",
+      "purpose": "Drawer danger zone delete session trash symbol",
+      "size": "32x32 px",
+      "color_hint": "#ff3b30 (Danger Red)"
+    },
+    {
+      "key": "char_camera",
+      "path": "/static/icons/char_camera.png",
+      "purpose": "Avatar upload placeholder camera symbol",
+      "size": "48x48 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "char_import",
+      "path": "/static/icons/char_import.png",
+      "purpose": "Character card import box folder arrow symbol",
+      "size": "48x48 px",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "char_caret_up",
+      "path": "/static/icons/char_caret_up.png",
+      "purpose": "Character advanced settings arrow (Expanded state)",
+      "size": "32x32 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "char_caret_down",
+      "path": "/static/icons/char_caret_down.png",
+      "purpose": "Character advanced settings arrow (Collapsed state)",
+      "size": "32x32 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "char_pencil",
+      "path": "/static/icons/char_pencil.png",
+      "purpose": "Character details page edit profile pencil symbol",
+      "size": "36x36 px",
+      "color_hint": "#1c1c1e"
+    },
+    {
+      "key": "settings_database",
+      "path": "/static/icons/settings_database.png",
+      "purpose": "Settings page: Database mode list icon",
+      "size": "40x40 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "settings_globe",
+      "path": "/static/icons/settings_globe.png",
+      "purpose": "Settings page: Server URL list icon",
+      "size": "40x40 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "settings_key",
+      "path": "/static/icons/settings_key.png",
+      "purpose": "Settings page: API access key list icon",
+      "size": "40x40 px",
+      "color_hint": "#8e8e93"
+    },
+    {
+      "key": "settings_chevron",
+      "path": "/static/icons/settings_chevron.png",
+      "purpose": "Settings/List items: Right disclosure chevron symbol",
+      "size": "32x32 px",
+      "color_hint": "#c7c7cc"
+    }
+  ]
+}
