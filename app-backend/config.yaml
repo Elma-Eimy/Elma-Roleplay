@@ -1,0 +1,31 @@
+llm:
+  chat_model: deepseek-v4-pro
+  non_reasoning_chat_model: deepseek-v4-flash
+  memory_model: deepseek-v4-flash
+  embedding_model: doubao-embedding-vision-251215
+  chat_base_url: https://api.deepseek.com/v1
+  embedding_base_url: https://ark.cn-beijing.volces.com/api/v3
+  temperature: 0.7
+  memory_temperature: 0.3
+  max_tokens: 4096
+  reasoning_mode: false
+app:
+  context_history_limit: 15
+  retrieval_top_k: 3
+  memory_extract_history_limit: 20
+  retrieval_min_importance: 0.3
+  cognition_update_interval: 30
+  cognition_importance_threshold: 0.8
+  lorebook_scan_depth: 5
+  lorebook_token_budget: 3000
+  lorebook_max_recursive_passes: 3
+  sqlite_db_path: data.db
+  chroma_db_path: ./chroma_data
+  upload_avatar_dir: ./assets/avatars
+  cors_origins:
+  - '*'
+  max_card_size_mb: 10
+  history_fetch_default: 50
+  history_fetch_max: 500
+  retrieval_max_distance: 1.2
+  cognition_max_words: 200
