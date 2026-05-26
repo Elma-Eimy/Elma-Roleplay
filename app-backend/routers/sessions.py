@@ -11,32 +11,18 @@ router = APIRouter()
 
 def get_session_history_with_inheritance(session_id: int, db: Session, limit: int) -> list[models.ChatMessage]:
     """
-    沿会话继承链向上追溯，获取完整的聊天历史记录。
+    获取指定会话的聊天历史记录。
     按照时间正序排列（最旧的在前面，最新的在后面）。
+    注：根据对齐后的颗粒度要求，开启子会话时不再合并父会话的原始消息记录，
+    以便子会话独立于父会话重新起步，因此此处仅拉取当前会话的消息，不再递归向上追溯。
     """
-    messages = []
-    curr_session_id = session_id
-    visited_sessions = set()  # 防御性：防死循环
-    
-    while curr_session_id is not None and len(messages) < limit:
-        if curr_session_id in visited_sessions:
-            break
-        visited_sessions.add(curr_session_id)
-        
-        needed = limit - len(messages)
-        # 获取当前会话的消息，按时间倒序
-        curr_msgs = (
-            db.query(models.ChatMessage)
-            .filter(models.ChatMessage.session_id == curr_session_id)
-            .order_by(models.ChatMessage.id.desc())
-            .limit(needed)
-            .all()
-        )
-        messages.extend(curr_msgs)
-        
-        curr_session = db.get(models.Session, curr_session_id)
-        curr_session_id = curr_session.parent_session_id if curr_session else None
-        
+    messages = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session_id)
+        .order_by(models.ChatMessage.id.desc())
+        .limit(limit)
+        .all()
+    )
     messages.reverse()  # 反转以恢复时间正序
     return messages
 
