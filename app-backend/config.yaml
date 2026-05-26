@@ -2,7 +2,7 @@ llm:
   chat_model: deepseek-v4-pro
   non_reasoning_chat_model: deepseek-v4-flash
   memory_model: deepseek-v4-flash
-  embedding_model: doubao-embedding-vision-251215
+  embedding_model: "你的模型端点，记得换"
   chat_base_url: https://api.deepseek.com/v1
   embedding_base_url: https://ark.cn-beijing.volces.com/api/v3
   temperature: 0.7
