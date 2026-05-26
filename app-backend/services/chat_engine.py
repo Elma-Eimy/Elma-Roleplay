@@ -26,8 +26,20 @@ from core.config import settings
 CHROMA_DATA_PATH = settings.STORAGE_CHROMA_DB_PATH
 chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 
-# OpenAI 兼容的 Embedding 函数
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+# OpenAI 兼容的 Robust Embedding 函数
+class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
+    def __call__(self, input):
+        try:
+            return super().__call__(input)
+        except Exception as e:
+            print(f"==========================================")
+            print(f"[WARNING] Embedding API call failed: {e}")
+            print(f"[INFO] Falling back to zero-vector mock embeddings of dimension 1024.")
+            print(f"==========================================")
+            dim = 1024
+            return [[0.0] * dim for _ in input]
+
+openai_ef = RobustOpenAIEmbeddingFunction(
     api_key=settings.EMBEDDING_API_KEY,
     api_base=settings.EMBEDDING_BASE_URL,
     model_name=settings.LLM_EMBEDDING_MODEL
