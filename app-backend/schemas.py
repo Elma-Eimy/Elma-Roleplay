@@ -47,3 +47,6 @@ class SettingsUpdate(BaseModel):
     lorebook_token_budget: int | None = None
     lorebook_max_recursive_passes: int | None = None
     cognition_max_words: int | None = None
+    retrieval_half_life_turns: int | None = None
+    retrieval_candidate_multiplier: int | None = None
+    max_tokens: int | None = None
