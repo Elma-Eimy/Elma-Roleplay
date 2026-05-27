@@ -29,3 +29,6 @@ app:
   history_fetch_max: 500
   retrieval_max_distance: 1.2
   cognition_max_words: 200
+  retrieval_half_life_turns: 50
+  retrieval_candidate_multiplier: 3
+
