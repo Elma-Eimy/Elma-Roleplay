@@ -13,6 +13,9 @@ export interface AppSettings {
   lorebook_token_budget: number;
   lorebook_max_recursive_passes: number;
   cognition_max_words: number;
+  retrieval_half_life_turns: number;
+  retrieval_candidate_multiplier: number;
+  max_tokens: number;
 }
 
 export type SettingsUpdate = Partial<AppSettings>;
