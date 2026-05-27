@@ -16,6 +16,7 @@ import time
 from openai import OpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
+import core.models as models
 
 
 # ══════════════════════════════════════════════
@@ -28,15 +29,35 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 
 # OpenAI 兼容的 Robust Embedding 函数
 class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
+    # 静态类成员：用于缓存成功调用的向量维度，初始为 None。一旦有一次成功，即捕获并保持其维度
+    _cached_dim = None
+
     def __call__(self, input):
         try:
-            return super().__call__(input)
+            embeddings = super().__call__(input)
+            if embeddings and len(embeddings) > 0:
+                # 动态缓存正确的向量维度
+                self.__class__._cached_dim = len(embeddings[0])
+            return embeddings
         except Exception as e:
             print(f"==========================================")
             print(f"[WARNING] Embedding API call failed: {e}")
-            print(f"[INFO] Falling back to zero-vector mock embeddings of dimension 1024.")
+            
+            # 自适应推断向量维度：优先使用缓存 -> 其次分析模型名称 -> 最后兜底 1536
+            dim = self.__class__._cached_dim
+            if dim is None:
+                model_lower = getattr(self, "model_name", "").lower()
+                if "3-large" in model_lower:
+                    dim = 3072
+                elif "ada-002" in model_lower or "3-small" in model_lower:
+                    dim = 1536
+                elif "bge-large" in model_lower:
+                    dim = 1024
+                else:
+                    dim = 1536  # 最通用的 OpenAI 默认维度
+            
+            print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
             print(f"==========================================")
-            dim = 1024
             return [[0.0] * dim for _ in input]
 
 openai_ef = RobustOpenAIEmbeddingFunction(
@@ -73,153 +94,7 @@ def _resolve_model(use_reasoning: bool | None) -> str:
 # System Prompt 组装与世界书 (Lorebook) 处理
 # ══════════════════════════════════════════════
 
-def process_lorebook(
-    character,
-    recent_history: list[dict] | None,
-    user_message: str | None
-) -> dict:
-    """
-    处理角色专属的世界书（Lorebook/CharacterBook）匹配与筛选。
-    """
-    if not recent_history and not user_message:
-        return {"before_char": [], "after_char": []}
-
-    # 1. 安全解析 extensions
-    extensions_dict = {}
-    if character.extensions:
-        if isinstance(character.extensions, str):
-            try:
-                extensions_dict = json.loads(character.extensions)
-            except Exception:
-                pass
-        elif isinstance(character.extensions, dict):
-            extensions_dict = character.extensions
-            
-    character_book = extensions_dict.get("character_book", {}) if isinstance(extensions_dict, dict) else {}
-    if not isinstance(character_book, dict):
-        character_book = {}
-        
-    entries = character_book.get("entries", [])
-    if not isinstance(entries, list) or not entries:
-        return {"before_char": [], "after_char": []}
-        
-    # 2. 提取配置（支持 YAML 可配置回退）
-    scan_depth = character_book.get("scan_depth")
-    if scan_depth is None or not isinstance(scan_depth, int) or scan_depth < 0:
-        scan_depth = settings.APP_LOREBOOK_SCAN_DEPTH
-        
-    token_budget = character_book.get("token_budget")
-    if token_budget is None or not isinstance(token_budget, int) or token_budget <= 0:
-        token_budget = settings.APP_LOREBOOK_TOKEN_BUDGET
-        
-    recursive_scanning = bool(character_book.get("recursive_scanning", False))
-    
-    # 3. 构造基础扫描文本
-    history_to_scan = recent_history[-scan_depth:] if scan_depth > 0 and recent_history else []
-    scan_parts = []
-    for msg in history_to_scan:
-        scan_parts.append(msg.get("content", ""))
-    if user_message:
-        scan_parts.append(user_message)
-    scan_text = "\n".join(scan_parts)
-    
-    # 4. 条目触发匹配 (支持递归扫描)
-    max_passes = settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES if recursive_scanning else 1
-    triggered_indexes = set()
-    triggered_entries = []
-    
-    current_scan_text = scan_text
-    
-    for _ in range(max_passes):
-        new_trigger_added = False
-        for idx, entry in enumerate(entries):
-            if idx in triggered_indexes:
-                continue
-                
-            if not isinstance(entry, dict):
-                continue
-                
-            if not entry.get("enabled", True):
-                continue
-                
-            constant = bool(entry.get("constant", False))
-            if constant:
-                triggered_indexes.add(idx)
-                triggered_entries.append(entry)
-                new_trigger_added = True
-                content = entry.get("content", "")
-                if content:
-                    current_scan_text += "\n" + content
-                continue
-                
-            keys = entry.get("keys", [])
-            secondary_keys = entry.get("secondary_keys", [])
-            selective = bool(entry.get("selective", False))
-            case_sensitive = bool(entry.get("case_sensitive", False))
-            
-            if not isinstance(keys, list):
-                keys = [keys] if keys else []
-            if not isinstance(secondary_keys, list):
-                secondary_keys = [secondary_keys] if secondary_keys else []
-                
-            if not case_sensitive:
-                text_to_search = current_scan_text.lower()
-                keys_to_search = [str(k).lower() for k in keys if k]
-                secondary_keys_to_search = [str(k).lower() for k in secondary_keys if k]
-            else:
-                text_to_search = current_scan_text
-                keys_to_search = [str(k) for k in keys if k]
-                secondary_keys_to_search = [str(k) for k in secondary_keys if k]
-                
-            primary_matched = any(k in text_to_search for k in keys_to_search) if keys_to_search else False
-            if selective:
-                secondary_matched = any(k in text_to_search for k in secondary_keys_to_search) if secondary_keys_to_search else False
-                matched = primary_matched and secondary_matched
-            else:
-                matched = primary_matched
-                
-            if matched:
-                triggered_indexes.add(idx)
-                triggered_entries.append(entry)
-                new_trigger_added = True
-                content = entry.get("content", "")
-                if content:
-                    current_scan_text += "\n" + content
-                    
-        if not new_trigger_added:
-            break
-            
-    # 5. 预算控制与排序
-    triggered_entries.sort(key=lambda e: (
-        int(e.get("insertion_order", 100)),
-        int(e.get("priority", 100))
-    ))
-    
-    budget_used = 0
-    selected_entries = []
-    for entry in triggered_entries:
-        content = entry.get("content", "").strip()
-        if not content:
-            continue
-        content_len = len(content)
-        if budget_used + content_len <= token_budget:
-            selected_entries.append(entry)
-            budget_used += content_len
-            
-    # 6. 分类位置归宿
-    before_char = []
-    after_char = []
-    for entry in selected_entries:
-        pos = entry.get("position", "after_char")
-        if pos == "before_char":
-            before_char.append(entry)
-        else:
-            after_char.append(entry)
-            
-    return {
-        "before_char": before_char,
-        "after_char": after_char
-    }
+from services.lorebook_engine import process_lorebook
 
 
 def build_system_prompt(
@@ -230,28 +105,11 @@ def build_system_prompt(
     user_message: str | None = None
 ) -> dict:
     """
-    从 Character + SessionPersona 组装完整的分层 System Prompt。
+    重构后：静态 System Prompt 组装。返回静态部分，并提取动态变量供 User Message 拼接。
     """
     sections = []
 
-    # ── Lorebook before_char 注入 ──
-    lorebook_result = {"before_char": [], "after_char": []}
-    if recent_history is not None or user_message is not None:
-        try:
-            lorebook_result = process_lorebook(
-                character=character,
-                recent_history=recent_history,
-                user_message=user_message
-            )
-        except Exception as e:
-            print(f"[WARN] build_system_prompt: 处理世界书匹配失败: {e}")
-
-    # before_char 设定文本注入
-    before_char_text = "\n\n".join([e.get("content", "").strip() for e in lorebook_result["before_char"] if e.get("content")])
-    if before_char_text:
-        sections.append(before_char_text)
-
-    # ── Layer 1: 核心人设 ──
+    # 1. 核心人设 (静态)
     if character.system_prompt_override:
         sections.append(character.system_prompt_override)
     else:
@@ -260,53 +118,7 @@ def build_system_prompt(
         if character.personality:
             sections.append(f"【性格特点】\n{character.personality}")
 
-    # ── Layer 2: 场景 ──
-    scenario = None
-    if persona and persona.current_scenario_override:
-        scenario = persona.current_scenario_override
-    elif character.scenario:
-        scenario = character.scenario
-
-    if scenario:
-        sections.append(f"【当前场景】\n{scenario}")
-
-    # ── Lorebook after_char 注入 ──
-    after_char_text = "\n\n".join([e.get("content", "").strip() for e in lorebook_result["after_char"] if e.get("content")])
-    if after_char_text:
-        sections.append(after_char_text)
-
-    # ── Layer 3: 动态认知 ──
-    if persona and persona.cognition_state:
-        sections.append(f"【角色认知】\n{persona.cognition_state}")
-
-    # ── Layer 4: 当前状态 ──
-    if persona:
-        status_parts = []
-        if persona.affection_score is not None:
-            status_parts.append(f"对用户的好感度：{persona.affection_score}")
-        if persona.current_mood:
-            status_parts.append(f"当前心情：{persona.current_mood}")
-        if status_parts:
-            sections.append(f"【当前状态】\n" + "；".join(status_parts))
-
-    # ── Layer 5: 检索到的记忆 ──
-    if retrieved_memories:
-        memory_lines = []
-        for mem in retrieved_memories:
-            content = mem.get("content", "") if isinstance(mem, dict) else str(mem)
-            mem_type = mem.get("memory_type", "") if isinstance(mem, dict) else ""
-            if content:
-                prefix = f"[{mem_type}] " if mem_type else ""
-                memory_lines.append(f"- {prefix}{content}")
-
-        if memory_lines:
-            sections.append(f"【相关记忆】\n" + "\n".join(memory_lines))
-
-    # ── Layer 6: 对话示例 ──
-    if character.mes_example:
-        sections.append(f"【对话示例】\n{character.mes_example}")
-
-    # ── Layer 7: 结构化输出指令 ──
+    # 2. 结构化输出指令 (静态)
     json_instructions = """【重要：输出格式要求】
 你必须且只能以有效的 JSON 格式进行响应。响应必须严格以 '{' 开头，以 '}' 结尾，绝对不要包含任何 markdown 标记（如 ```json）。
 你的 JSON 响应必须且仅包含以下键：
@@ -318,15 +130,74 @@ def build_system_prompt(
 请确保 affection_change 是整数类型（取值范围为 -5 到 5），绝对不要包含多余的键或格式。"""
     sections.append(json_instructions)
 
-    # 组合主 System Prompt
+    # 3. 后置扮演规则 (静态)
+    post_instructions = character.post_history_instructions or None
+    if post_instructions:
+        sections.append(f"【扮演补充规则】\n{post_instructions}")
+
+    # 4. 对话示例 (静态 - 仅非子会话附加以保 caching)
+    if not (persona and persona.parent_persona_id):
+        if character.mes_example and character.mes_example.strip():
+            sections.append(f"【对话示例】\n{character.mes_example.strip()}")
+
     system_prompt = "\n\n".join(sections)
 
-    # ── Layer 8: post_history_instructions（单独返回）──
-    post_instructions = character.post_history_instructions or None
+    # ── 动态变量处理 ──
+    
+    # 世界书 (Lorebook) 匹配
+    lorebook_result = {"before_char": [], "after_char": []}
+    if recent_history is not None or user_message is not None:
+        try:
+            lorebook_result = process_lorebook(
+                character=character,
+                recent_history=recent_history,
+                user_message=user_message
+            )
+        except Exception as e:
+            print(f"[WARN] build_system_prompt: 处理世界书匹配失败: {e}")
+
+    # 检索到的记忆 (RAG)
+    retrieved_memories_text = None
+    if retrieved_memories:
+        memory_lines = []
+        for mem in retrieved_memories:
+            content = mem.get("content", "") if isinstance(mem, dict) else str(mem)
+            mem_type = mem.get("memory_type", "") if isinstance(mem, dict) else ""
+            
+            # 解析时间标签
+            time_label = ""
+            if isinstance(mem, dict) and "turns_passed" in mem:
+                turns_passed = mem["turns_passed"]
+                for tier in settings.APP_RP_TIME_TIERS:
+                    if turns_passed <= tier.get("max_turns", 9999999):
+                        time_label = tier.get("label", "")
+                        break
+                if not time_label:
+                    time_label = "很久以前"
+            
+            if content:
+                time_prefix = f"[{time_label}] " if time_label else ""
+                type_prefix = f"[{mem_type}] " if mem_type else ""
+                memory_lines.append(f"- {time_prefix}{type_prefix}{content}")
+
+        if memory_lines:
+            retrieved_memories_text = "\n".join(memory_lines)
+
+    # 场景定义
+    scenario = None
+    if persona and persona.current_scenario_override:
+        scenario = persona.current_scenario_override
+    elif character.scenario:
+        scenario = character.scenario
 
     return {
-        "system_prompt": system_prompt,
-        "post_history_instructions": post_instructions,
+        "system_prompt": system_prompt, # 纯静态部分，极度缓存友好
+        "lorebook_result": lorebook_result, # 动态世界书结果
+        "retrieved_memories_text": retrieved_memories_text, # 动态召回记忆
+        "scenario": scenario, # 动态场景
+        "cognition_state": persona.cognition_state if persona else None, # 动态认知
+        "affection_score": persona.affection_score if persona else None, # 动态好感
+        "current_mood": persona.current_mood if persona else None, # 动态心情
     }
 
 
@@ -466,26 +337,8 @@ def generate_reply(
 ) -> dict:
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
-
-    参数：
-      character          — Character ORM 对象
-      persona            — SessionPersona ORM 对象（可为 None）
-      recent_history     — [{"role": "user"|"assistant", "content": "..."}]
-      user_message       — 当前用户输入
-      retrieved_memories — memory_manager.retrieve_memories() 的返回值
-      db                 — 可选的 SQLAlchemy Session，用于在调用 LLM 前提交事务释放锁
-      use_reasoning      — 覆盖 config.yaml 的模型选择：
-                           True=思考模型 / False=非思考模型 / None=默认配置
-
-    返回：
-      {
-        "reply": str,              # 角色回复文本
-        "emotion_tag": str,        # 情绪标签（中文）
-        "affection_change": int,   # 好感度变动（-5 ~ 5）
-        "model_used": str,         # 实际使用的模型名（调试用）
-      }
     """
-    # Step 1: 组装 System Prompt
+    # Step 1: 组装 缓存友好型 静态 System Prompt 并抽取动态要素
     prompt_result = build_system_prompt(
         character=character,
         persona=persona,
@@ -494,10 +347,32 @@ def generate_reply(
         user_message=user_message,
     )
 
-    # Step 2: 构建 messages 列表
+    # 动态示例继承：如果是子会话，拉取父会话最后 4 条消息作为真实的 Few-shot 伪历史
+    if persona and persona.parent_persona_id and db is not None:
+        parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
+        if parent_persona:
+            parent_msgs = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == parent_persona.session_id,
+                models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
+            ).order_by(models.ChatMessage.id.desc()).limit(4).all()
+            
+            parent_msgs.reverse()
+            parent_history_formatted = [
+                {
+                    "role": msg.role.value, 
+                    "content": msg.content,
+                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
+                    "affection_change": getattr(msg, "affection_change", 0)
+                }
+                for msg in parent_msgs
+            ]
+            # 拼接到真实的 recent_history 最前方，由后续统一处理 assistant JSON 封装
+            recent_history = parent_history_formatted + recent_history
+
+    # Step 2: 构建 messages 列表 (首位为单条静态 system prompt)
     messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
 
-    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，以保证大模型上下文格式的绝对一致性
+    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，保留真实的情绪/好感变动
     for msg in recent_history:
         if msg["role"] == "assistant":
             content_str = msg["content"]
@@ -506,25 +381,65 @@ def generate_reply(
                 json.loads(content_str)
                 messages.append({"role": "assistant", "content": content_str})
             except Exception:
-                # 否则，将其包装为标准 JSON 格式，以契合 System Prompt 要求的 assistant 输出规范
+                # 否则，利用携带的真实情绪字段重新包装为标准 JSON 格式
+                emo = msg.get("emotion_tag") or "平静"
+                change = msg.get("affection_change") or 0
                 fallback_json = json.dumps({
                     "reply": content_str,
-                    "emotion_tag": "平静",
-                    "affection_change": 0
+                    "emotion_tag": emo,
+                    "affection_change": int(change)
                 }, ensure_ascii=False)
                 messages.append({"role": "assistant", "content": fallback_json})
         else:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # 插入 post_history_instructions（在用户消息之前）
-    if prompt_result["post_history_instructions"]:
-        messages.append({
-            "role": "system",
-            "content": prompt_result["post_history_instructions"]
-        })
+    # Step 3: 动态上下文包装 (XML 闭包标签) 并统一挂载到最后一轮 User 消息中
+    dynamic_context_blocks = []
 
-    # 添加当前用户消息
-    messages.append({"role": "user", "content": user_message})
+    # 3.1 场景与认知状态
+    scenario = prompt_result.get("scenario")
+    if scenario:
+        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
+    
+    cognition = prompt_result.get("cognition_state")
+    if cognition:
+        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
+        
+    # 3.2 心情与好感度
+    status_parts = []
+    aff_score = prompt_result.get("affection_score")
+    if aff_score is not None:
+        status_parts.append(f"对用户好感度: {aff_score}")
+    mood = prompt_result.get("current_mood")
+    if mood:
+        status_parts.append(f"当前心情: {mood}")
+    if status_parts:
+        dynamic_context_blocks.append(f"<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
+
+    # 3.3 世界书 (Lorebook) 知识
+    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
+    lore_contents = []
+    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
+        content = e.get("content", "").strip()
+        if content:
+            lore_contents.append(content)
+    if lore_contents:
+        dynamic_context_blocks.append(f"<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
+
+    # 3.4 召回长期记忆 (RAG)
+    retrieved_mem = prompt_result.get("retrieved_memories_text")
+    if retrieved_mem:
+        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
+
+    # 3.5 拼装增强的 User 消息内容，确保上下文与提问有清晰边界
+    enhanced_user_content = ""
+    if dynamic_context_blocks:
+        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
+        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
+    
+    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
+
+    messages.append({"role": "user", "content": enhanced_user_content})
 
     # 在调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
     if db is not None:
@@ -533,10 +448,10 @@ def generate_reply(
         except Exception as e:
             print(f"[WARN] chat_engine.generate_reply: 释放 SQLite 锁失败: {e}")
 
-    # Step 3: 调用 LLM
+    # Step 4: 调用 LLM
     model = _resolve_model(use_reasoning)
     
-    # 针对 DeepSeek-V4（不管是 Pro 还是 Flash 模型）或者任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
+    # 针对 DeepSeek-V4/V3 或任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
     is_deepseek = "deepseek" in model.lower()
     resp_fmt = None if is_deepseek else {"type": "json_object"}
     max_t = settings.LLM_MAX_TOKENS
@@ -607,20 +522,8 @@ def generate_reply_stream(
 ):
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
-
-    参数：
-      character          — Character ORM 对象
-      persona            — SessionPersona ORM 对象（可为 None）
-      recent_history     — [{"role": "user"|"assistant", "content": "..."}]
-      user_message       — 当前用户输入
-      retrieved_memories — memory_manager.retrieve_memories() 的返回值
-      db                 — 可选的 SQLAlchemy Session，用于在调用 LLM 前提交事务释放锁
-      use_reasoning      — 覆盖 config.yaml 的模型选择
-
-    返回：
-      (response_stream, model_used)
     """
-    # Step 1: 组装 System Prompt
+    # Step 1: 组装 缓存友好型 静态 System Prompt 并抽取动态要素
     prompt_result = build_system_prompt(
         character=character,
         persona=persona,
@@ -629,10 +532,32 @@ def generate_reply_stream(
         user_message=user_message,
     )
 
-    # Step 2: 构建 messages 列表
+    # 动态示例继承：如果是子会话，拉取父会话最后 4 条消息作为真实的 Few-shot 伪历史
+    if persona and persona.parent_persona_id and db is not None:
+        parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
+        if parent_persona:
+            parent_msgs = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == parent_persona.session_id,
+                models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
+            ).order_by(models.ChatMessage.id.desc()).limit(4).all()
+            
+            parent_msgs.reverse()
+            parent_history_formatted = [
+                {
+                    "role": msg.role.value, 
+                    "content": msg.content,
+                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
+                    "affection_change": getattr(msg, "affection_change", 0)
+                }
+                for msg in parent_msgs
+            ]
+            # 拼接到真实的 recent_history 最前方，由后续统一处理 assistant JSON 封装
+            recent_history = parent_history_formatted + recent_history
+
+    # Step 2: 构建 messages 列表 (首位为单条静态 system prompt)
     messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
 
-    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，以保证大模型上下文格式的绝对一致性
+    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，保留真实的情绪/好感变动
     for msg in recent_history:
         if msg["role"] == "assistant":
             content_str = msg["content"]
@@ -641,25 +566,65 @@ def generate_reply_stream(
                 json.loads(content_str)
                 messages.append({"role": "assistant", "content": content_str})
             except Exception:
-                # 否则，将其包装为标准 JSON 格式，以契合 System Prompt 要求的 assistant 输出规范
+                # 否则，利用携带的真实情绪字段重新包装为标准 JSON 格式
+                emo = msg.get("emotion_tag") or "平静"
+                change = msg.get("affection_change") or 0
                 fallback_json = json.dumps({
                     "reply": content_str,
-                    "emotion_tag": "平静",
-                    "affection_change": 0
+                    "emotion_tag": emo,
+                    "affection_change": int(change)
                 }, ensure_ascii=False)
                 messages.append({"role": "assistant", "content": fallback_json})
         else:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # 插入 post_history_instructions（在用户消息之前）
-    if prompt_result["post_history_instructions"]:
-        messages.append({
-            "role": "system",
-            "content": prompt_result["post_history_instructions"]
-        })
+    # Step 3: 动态上下文包装 (XML 闭包标签) 并统一挂载到最后一轮 User 消息中
+    dynamic_context_blocks = []
 
-    # 添加当前用户消息
-    messages.append({"role": "user", "content": user_message})
+    # 3.1 场景与认知状态
+    scenario = prompt_result.get("scenario")
+    if scenario:
+        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
+    
+    cognition = prompt_result.get("cognition_state")
+    if cognition:
+        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
+        
+    # 3.2 心情与好感度
+    status_parts = []
+    aff_score = prompt_result.get("affection_score")
+    if aff_score is not None:
+        status_parts.append(f"对用户好感度: {aff_score}")
+    mood = prompt_result.get("current_mood")
+    if mood:
+        status_parts.append(f"当前心情: {mood}")
+    if status_parts:
+        dynamic_context_blocks.append(f"<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
+
+    # 3.3 世界书 (Lorebook) 知识
+    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
+    lore_contents = []
+    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
+        content = e.get("content", "").strip()
+        if content:
+            lore_contents.append(content)
+    if lore_contents:
+        dynamic_context_blocks.append(f"<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
+
+    # 3.4 召回长期记忆 (RAG)
+    retrieved_mem = prompt_result.get("retrieved_memories_text")
+    if retrieved_mem:
+        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
+
+    # 3.5 拼装增强的 User 消息内容，确保上下文与提问有清晰边界
+    enhanced_user_content = ""
+    if dynamic_context_blocks:
+        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
+        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
+    
+    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
+
+    messages.append({"role": "user", "content": enhanced_user_content})
 
     # 在调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
     if db is not None:
@@ -668,10 +633,10 @@ def generate_reply_stream(
         except Exception as e:
             print(f"[WARN] chat_engine.generate_reply_stream: 释放 SQLite 锁失败: {e}")
 
-    # Step 3: 调用 LLM
+    # Step 4: 调用 LLM
     model = _resolve_model(use_reasoning)
     
-    # 针对 DeepSeek-V4（不管是 Pro 还是 Flash 模型）或者任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
+    # 针对 DeepSeek-V4/V3 或任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
     is_deepseek = "deepseek" in model.lower()
     resp_fmt = None if is_deepseek else {"type": "json_object"}
     max_t = settings.LLM_MAX_TOKENS
