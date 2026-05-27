@@ -51,7 +51,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                     dim = 3072
                 elif "ada-002" in model_lower or "3-small" in model_lower:
                     dim = 1536
-                elif "bge-large" in model_lower:
+                elif "bge-large" in model_lower or "doubao" in model_lower:
                     dim = 1024
                 else:
                     dim = 1536  # 最通用的 OpenAI 默认维度
