@@ -60,7 +60,10 @@ def get_settings():
         "lorebook_scan_depth": settings.APP_LOREBOOK_SCAN_DEPTH,
         "lorebook_token_budget": settings.APP_LOREBOOK_TOKEN_BUDGET,
         "lorebook_max_recursive_passes": settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES,
-        "cognition_max_words": settings.APP_COGNITION_MAX_WORDS
+        "cognition_max_words": settings.APP_COGNITION_MAX_WORDS,
+        "retrieval_half_life_turns": settings.APP_RETRIEVAL_HALF_LIFE_TURNS,
+        "retrieval_candidate_multiplier": settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER,
+        "max_tokens": settings.LLM_MAX_TOKENS
     }
 
 
