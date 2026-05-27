@@ -232,6 +232,7 @@ const isInputFocused = ref(false);
 const scrollTop = ref(0);
 const scrollWithAnimation = ref(false);
 const isStatusPanelOpen = ref(false);
+const isInitLoading = ref(true);
 
 // 软键盘弹起时，iOS 端需移除底部安全区域的高度占位，防止出现双重空白间距
 const inputWrapperStyle = computed(() => {
@@ -283,6 +284,7 @@ onLoad(async (options) => {
     const sId = parseInt(options.sessionId, 10);
     currentSessionId.value = sId;
     
+    isInitLoading.value = true;
     // 初始进入页面时不带动画滚动，防止多次触发动画导致滚动回弹/抖动
     scrollWithAnimation.value = false;
     
@@ -295,10 +297,11 @@ onLoad(async (options) => {
     // 延迟 250 毫秒以确保历史消息组件在移动端端侧彻底完成 DOM 挂载和高度计算后再滚动到底端
     setTimeout(() => {
       scrollToBottom();
-      // 瞬间置底完成后，开启滚动动画，使后续新消息有平滑过渡
-      nextTick(() => {
+      // 瞬间置底完成后，开启滚动动画，并解除初始化锁定状态
+      setTimeout(() => {
         scrollWithAnimation.value = true;
-      });
+        isInitLoading.value = false;
+      }, 100);
     }, 250);
   }
 });
@@ -316,9 +319,13 @@ const goBack = () => {
 
 const scrollToBottom = async () => {
   await nextTick();
-  // 在 Uni-app 中，为确保 scroll-view 检测到值改变从而触发底层渲染滚动，
-  // 我们交替使用两个极大值（999999 和 999998），触发滚动层准确滚动到底部
-  scrollTop.value = scrollTop.value === 999999 ? 999998 : 999999;
+  // 在 Uni-app 中，为确保 DOM 元素高度及布局计算已由渲染引擎彻底完成，
+  // 我们延迟 80ms 再设定滚动高度，有效防止滚动高度计算滞后导致未完全触底的问题。
+  // 通过使用 999999 - Math.random() 随机微调值确保每次设定的值都不同，
+  // 从而强力唤醒 Vue 的属性变化监听器去触发底层 DOM 的真实滚动更新，且不引发 `@scroll` 反馈回环。
+  setTimeout(() => {
+    scrollTop.value = 999999 - Math.random();
+  }, 80);
 };
 
 // 引入高频滚动节流锁，防止流式输出时反复重绘导致的卡顿
@@ -334,17 +341,22 @@ const scrollToBottomThrottled = () => {
 
 // 监听消息数组长度的变化，无论是加载历史记录还是发送/接收新消息，都自动滚动到底部
 watch(() => chatStore.messages.length, () => {
+  if (isInitLoading.value) return;
   scrollToBottom();
 });
 
-// 流式输出过程中，采用节流函数跟随滚动
+// 流式输出过程中，采用节流函数跟随滚动，并且禁用滚动动画防止在高速追加字符时动画冲突导致重绘卡顿
 watch(() => chatStore.streamingText, () => {
+  if (isInitLoading.value) return;
+  scrollWithAnimation.value = false;
   scrollToBottomThrottled();
 });
 
-// 对话彻底结束或状态发生改变时，强制无条件滚动到底部以确保最终位置对齐
+// 对话彻底结束或状态发生改变时，强制无条件滚动到底部以确保最终位置对齐，此时可以启用平滑滚动动画
 watch(() => chatStore.isLoading, (loading) => {
+  if (isInitLoading.value) return;
   if (!loading) {
+    scrollWithAnimation.value = true;
     scrollToBottom();
   }
 });
