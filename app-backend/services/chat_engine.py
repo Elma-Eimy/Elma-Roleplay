@@ -13,6 +13,7 @@
 import json
 import chromadb
 import time
+import re
 from openai import OpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
