@@ -43,7 +43,10 @@ def parse_character(file: UploadFile = File(...)):
                 detail=f"文件过大，最大允许 {MAX_CARD_SIZE_BYTES // 1024 // 1024} MB。"
             )
 
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        filename = os.path.basename(file.filename or "card.png")
+        if not filename:
+            filename = "card.png"
+        file_path = os.path.join(UPLOAD_DIR, filename)
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
