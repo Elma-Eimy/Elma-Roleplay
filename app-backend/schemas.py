@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     # False → 强制使用非思考模型（non_reasoning_chat_model）
     # None  → 沿用 config.yaml 的默认配置（reasoning_mode 字段）
     use_reasoning: bool | None = None
+    is_regenerate: bool = False
 
 
 class MessageUpdate(BaseModel):
