@@ -141,7 +141,8 @@ export const useChatStore = defineStore("chat", () => {
         { 
           session_id: sessionId, 
           user_message: lastUserMsg.content,
-          use_reasoning: useReasoning.value
+          use_reasoning: useReasoning.value,
+          is_regenerate: true
         },
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
