@@ -132,7 +132,6 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = 
         lock.release()
 
 @router.post("/stream")
-@router.post("/stream")
 def chat_stream(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
