@@ -28,9 +28,9 @@ import core.models as models
 CHROMA_DATA_PATH = settings.STORAGE_CHROMA_DB_PATH
 chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 
-# OpenAI 兼容的 Robust Embedding 函数
+# 兼容 OpenAI 的稳健嵌入函数
 class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
-    # 静态类成员：用于缓存成功调用的向量维度，初始为 None。一旦有一次成功，即捕获并保持其维度
+    # 用于缓存向量维度的静态类成员
     _cached_dim = None
 
     def __call__(self, input):
@@ -42,8 +42,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
 
         if is_vision:
             try:
-                # ── 多模态向量 API 路径 ──
-                # 拼接多模态 API 地址：/api/v3/embeddings/multimodal
+                # Multimodal API endpoint: /api/v3/embeddings/multimodal
                 base_url = (self.api_base or settings.EMBEDDING_BASE_URL).rstrip("/")
                 url = f"{base_url}/embeddings/multimodal"
                 
@@ -52,7 +51,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                     "Authorization": f"Bearer {self.api_key or settings.EMBEDDING_API_KEY}"
                 }
                 
-                # 组装符合方舟多模态规范的 input
+                # Format input for Volcengine multimodal schema
                 multimodal_input = [{"type": "text", "text": doc} for doc in input]
                 
                 payload = {
@@ -71,8 +70,35 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 with urllib.request.urlopen(req, timeout=15.0) as response:
                     res_data = json.loads(response.read().decode("utf-8"))
                     
-                # 提取返回的 embeddings 列表
-                embeddings = [item["embedding"] for item in res_data.get("data", [])]
+                if not isinstance(res_data, dict):
+                    raise ValueError(f"API returned non-dictionary response: {res_data}")
+                    
+                if "error" in res_data:
+                    raise ValueError(f"API returned error: {res_data['error']}")
+                
+                data_field = res_data.get("data", [])
+                
+                # 提取嵌入
+                embeddings = []
+                if isinstance(data_field, dict):
+                    # Single dictionary format support: {"embedding": [...]}
+                    embedding = data_field.get("embedding")
+                    if isinstance(embedding, list):
+                        embeddings.append(embedding)
+                    else:
+                        raise ValueError(f"Expected list for 'embedding' inside data dict: {data_field}")
+                elif isinstance(data_field, list):
+                    # Standard list format support: [{"embedding": [...]}, ...]
+                    for item in data_field:
+                        if isinstance(item, dict) and "embedding" in item:
+                            embeddings.append(item["embedding"])
+                        elif isinstance(item, list):
+                            embeddings.append(item)
+                        else:
+                            raise ValueError(f"Unexpected item format in data list: {item}")
+                else:
+                    raise ValueError(f"API returned unexpected data field type: {type(data_field)}")
+                        
                 if embeddings and len(embeddings) > 0:
                     self.__class__._cached_dim = len(embeddings[0])
                 return embeddings
@@ -82,23 +108,21 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 
                 dim = self.__class__._cached_dim
                 if dim is None:
-                    dim = 1024  # 豆包多模态模型默认为 1024 维
+                    dim = 1024
                 print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
                 print(f"==========================================")
                 return [[0.0] * dim for _ in input]
         else:
-            # ── 标准文本向量 API 路径 ──
+            # 标准文本 API 端点
             try:
                 embeddings = super().__call__(input)
                 if embeddings and len(embeddings) > 0:
-                    # 动态缓存正确的向量维度
                     self.__class__._cached_dim = len(embeddings[0])
                 return embeddings
             except Exception as e:
                 print(f"==========================================")
                 print(f"[WARNING] Embedding API call failed: {e}")
                 
-                # 自适应推断向量维度：优先使用缓存 -> 其次分析模型名称 -> 最后兜底 1536
                 dim = self.__class__._cached_dim
                 if dim is None:
                     model_lower = model_name.lower()
@@ -109,7 +133,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                     elif "bge-large" in model_lower or "doubao" in model_lower:
                         dim = 1024
                     else:
-                        dim = 1536  # 最通用的 OpenAI 默认维度
+                        dim = 1536
                 
                 print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
                 print(f"==========================================")
