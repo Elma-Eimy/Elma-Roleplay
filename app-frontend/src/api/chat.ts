@@ -6,6 +6,7 @@ export interface ChatRequest {
   session_id: number;
   user_message: string;
   use_reasoning?: boolean;
+  is_regenerate?: boolean;
 }
 
 export interface ChatResponse {
@@ -28,19 +29,21 @@ export interface ChatResponse {
 export async function sendMessage(params: ChatRequest): Promise<ChatResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
-    const userMsg = {
-      id: Date.now(),
-      role: "user" as const,
-      content: params.user_message,
-      emotion_tag: null,
-      affection_change: null,
-      created_at: new Date().toISOString(),
-    };
-    
-    if (!db.messages[params.session_id]) {
-      db.messages[params.session_id] = [];
+    if (!params.is_regenerate) {
+      const userMsg = {
+        id: Date.now(),
+        role: "user" as const,
+        content: params.user_message,
+        emotion_tag: null,
+        affection_change: null,
+        created_at: new Date().toISOString(),
+      };
+      
+      if (!db.messages[params.session_id]) {
+        db.messages[params.session_id] = [];
+      }
+      db.messages[params.session_id].push(userMsg);
     }
-    db.messages[params.session_id].push(userMsg);
 
     const session = db.sessions.find((s) => s.id === params.session_id);
     const char = db.characters.find((c) => c.id === (session ? session.character_id : 1));
@@ -102,19 +105,21 @@ export async function sendMessageStream(
   if (USE_MOCK) {
     try {
       const db = getMockDB();
-      const userMsg = {
-        id: Date.now(),
-        role: "user" as const,
-        content: params.user_message,
-        emotion_tag: null,
-        affection_change: null,
-        created_at: new Date().toISOString(),
-      };
-      
-      if (!db.messages[params.session_id]) {
-        db.messages[params.session_id] = [];
+      if (!params.is_regenerate) {
+        const userMsg = {
+          id: Date.now(),
+          role: "user" as const,
+          content: params.user_message,
+          emotion_tag: null,
+          affection_change: null,
+          created_at: new Date().toISOString(),
+        };
+        
+        if (!db.messages[params.session_id]) {
+          db.messages[params.session_id] = [];
+        }
+        db.messages[params.session_id].push(userMsg);
       }
-      db.messages[params.session_id].push(userMsg);
 
       const session = db.sessions.find((s) => s.id === params.session_id);
       const char = db.characters.find((c) => c.id === (session ? session.character_id : 1));
