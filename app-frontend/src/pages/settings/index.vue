@@ -74,7 +74,7 @@
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="20"
-                @change="e => engineSettings.temperature = e.detail.value / 10"
+                @change="(e: any) => engineSettings.temperature = e.detail.value / 10"
               />
             </view>
 
@@ -104,97 +104,153 @@
               </view>
             </view>
 
-            <!-- 记忆过滤最低重要度滑块行 -->
-            <view class="engine-row border-bottom">
-              <view class="engine-row-left">
-                <view class="engine-name-row">
-                  <text class="engine-param-name">记忆最低重要度</text>
-                  <text class="engine-param-val">{{ engineSettings.retrieval_min_importance.toFixed(2) }}</text>
+            <!-- 高级设置折叠切换行 -->
+            <view class="advanced-toggle-row" @tap="showAdvanced = !showAdvanced">
+              <view class="advanced-toggle-btn">
+                <text class="advanced-toggle-text">{{ showAdvanced ? '收起高级参数' : '展开高级参数' }}</text>
+                <text class="advanced-toggle-subtext" v-if="!showAdvanced">（包括重要度、世界书、Token限制等 9 项）</text>
+                <image 
+                  class="advanced-chevron" 
+                  :class="{ 'is-active': showAdvanced }" 
+                  src="/static/icons/settings_chevron.svg" 
+                  mode="aspectFit" 
+                />
+              </view>
+            </view>
+
+            <!-- 高级参数折叠部分 -->
+            <view class="advanced-section" :class="{ 'is-show': showAdvanced }">
+              <!-- 记忆过滤最低重要度滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">记忆最低重要度</text>
+                    <text class="engine-param-val">{{ engineSettings.retrieval_min_importance.toFixed(2) }}</text>
+                  </view>
+                  <text class="engine-param-desc">低于此阈值的记忆将被过滤（范围 0.00 ~ 1.00）</text>
                 </view>
-                <text class="engine-param-desc">低于此阈值的记忆将被过滤（范围 0.00 ~ 1.00）</text>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round(engineSettings.retrieval_min_importance * 100)"
+                  :min="0" :max="100" :step="5"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.retrieval_min_importance = e.detail.value / 100"
+                />
               </view>
-              <slider
-                class="engine-slider"
-                :value="Math.round(engineSettings.retrieval_min_importance * 100)"
-                :min="0" :max="100" :step="5"
-                activeColor="#1c1c1e"
-                backgroundColor="rgba(0,0,0,0.07)"
-                block-color="#ffffff"
-                block-size="20"
-                @change="e => engineSettings.retrieval_min_importance = e.detail.value / 100"
-              />
-            </view>
 
-            <!-- 记忆检索最大容忍距离滑块行 -->
-            <view class="engine-row border-bottom">
-              <view class="engine-row-left">
-                <view class="engine-name-row">
-                  <text class="engine-param-name">记忆最大向量距离</text>
-                  <text class="engine-param-val">{{ engineSettings.retrieval_max_distance.toFixed(1) }}</text>
+              <!-- 记忆检索最大容忍距离滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">记忆最大向量距离</text>
+                    <text class="engine-param-val">{{ engineSettings.retrieval_max_distance.toFixed(1) }}</text>
+                  </view>
+                  <text class="engine-param-desc">向量相似度的最大容忍距离，越小越严格（范围 0.5 ~ 3.0）</text>
                 </view>
-                <text class="engine-param-desc">向量相似度的最大容忍距离，越小越严格（范围 0.5 ~ 3.0）</text>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round(engineSettings.retrieval_max_distance * 10)"
+                  :min="5" :max="30" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.retrieval_max_distance = e.detail.value / 10"
+                />
               </view>
-              <slider
-                class="engine-slider"
-                :value="Math.round(engineSettings.retrieval_max_distance * 10)"
-                :min="5" :max="30" :step="1"
-                activeColor="#1c1c1e"
-                backgroundColor="rgba(0,0,0,0.07)"
-                block-color="#ffffff"
-                block-size="20"
-                @change="e => engineSettings.retrieval_max_distance = e.detail.value / 10"
-              />
-            </view>
 
-            <!-- 世界书历史扫描深度步进器行 -->
-            <view class="engine-row border-bottom">
-              <view class="engine-row-left">
-                <text class="engine-param-name">世界书扫描深度</text>
-                <text class="engine-param-desc">世界书扫描的对话历史消息条数（范围 1 ~ 20）</text>
+              <!-- 世界书历史扫描深度步进器行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">世界书扫描深度</text>
+                  <text class="engine-param-desc">世界书扫描的对话历史消息条数（范围 1 ~ 20）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('lorebook_scan_depth', -1, 1, 20)">-</view>
+                  <text class="step-value">{{ engineSettings.lorebook_scan_depth }}</text>
+                  <view class="step-btn" @tap="stepInt('lorebook_scan_depth', 1, 1, 20)">+</view>
+                </view>
               </view>
-              <view class="stepper">
-                <view class="step-btn" @tap="stepInt('lorebook_scan_depth', -1, 1, 20)">-</view>
-                <text class="step-value">{{ engineSettings.lorebook_scan_depth }}</text>
-                <view class="step-btn" @tap="stepInt('lorebook_scan_depth', 1, 1, 20)">+</view>
-              </view>
-            </view>
 
-            <!-- 世界书 Token 预算上限步进器行 -->
-            <view class="engine-row border-bottom">
-              <view class="engine-row-left">
-                <text class="engine-param-name">世界书 Token 预算</text>
-                <text class="engine-param-desc">世界书条目注入的最大 Token 数（范围 500 ~ 10000）</text>
+              <!-- 世界书 Token 预算上限步进器行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">世界书 Token 预算</text>
+                  <text class="engine-param-desc">世界书条目注入的最大 Token 数（范围 500 ~ 10000）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('lorebook_token_budget', -500, 500, 10000)">-</view>
+                  <text class="step-value">{{ engineSettings.lorebook_token_budget }}</text>
+                  <view class="step-btn" @tap="stepInt('lorebook_token_budget', 500, 500, 10000)">+</view>
+                </view>
               </view>
-              <view class="stepper">
-                <view class="step-btn" @tap="stepInt('lorebook_token_budget', -500, 500, 10000)">-</view>
-                <text class="step-value">{{ engineSettings.lorebook_token_budget }}</text>
-                <view class="step-btn" @tap="stepInt('lorebook_token_budget', 500, 500, 10000)">+</view>
-              </view>
-            </view>
 
-            <!-- 世界书最大递归级联次数行 -->
-            <view class="engine-row border-bottom">
-              <view class="engine-row-left">
-                <text class="engine-param-name">世界书递归扫描次数</text>
-                <text class="engine-param-desc">触发级联条目时的最大递归层数（范围 1 ~ 10）</text>
+              <!-- 世界书最大递归级联次数行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">世界书递归扫描次数</text>
+                  <text class="engine-param-desc">触发级联条目时的最大递归层数（范围 1 ~ 10）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('lorebook_max_recursive_passes', -1, 1, 10)">-</view>
+                  <text class="step-value">{{ engineSettings.lorebook_max_recursive_passes }}</text>
+                  <view class="step-btn" @tap="stepInt('lorebook_max_recursive_passes', 1, 1, 10)">+</view>
+                </view>
               </view>
-              <view class="stepper">
-                <view class="step-btn" @tap="stepInt('lorebook_max_recursive_passes', -1, 1, 10)">-</view>
-                <text class="step-value">{{ engineSettings.lorebook_max_recursive_passes }}</text>
-                <view class="step-btn" @tap="stepInt('lorebook_max_recursive_passes', 1, 1, 10)">+</view>
-              </view>
-            </view>
 
-            <!-- 认知摘要最大字数上限行 -->
-            <view class="engine-row">
-              <view class="engine-row-left">
-                <text class="engine-param-name">认知摘要最大字数</text>
-                <text class="engine-param-desc">角色微观认知状态摘要的字数上限（范围 50 ~ 500）</text>
+              <!-- 认知摘要最大字数上限行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">认知摘要最大字数</text>
+                  <text class="engine-param-desc">角色微观认知状态摘要的字数上限（范围 50 ~ 500）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('cognition_max_words', -50, 50, 500)">-</view>
+                  <text class="step-value">{{ engineSettings.cognition_max_words }}</text>
+                  <view class="step-btn" @tap="stepInt('cognition_max_words', 50, 50, 500)">+</view>
+                </view>
               </view>
-              <view class="stepper">
-                <view class="step-btn" @tap="stepInt('cognition_max_words', -50, 50, 500)">-</view>
-                <text class="step-value">{{ engineSettings.cognition_max_words }}</text>
-                <view class="step-btn" @tap="stepInt('cognition_max_words', 50, 50, 500)">+</view>
+
+              <!-- 最大输出 Token 数行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">最大输出 Token 数</text>
+                  <text class="engine-param-desc">单次模型生成的最大 Token 上限（范围 256 ~ 16384）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('max_tokens', -256, 256, 16384)">-</view>
+                  <text class="step-value">{{ engineSettings.max_tokens }}</text>
+                  <view class="step-btn" @tap="stepInt('max_tokens', 256, 256, 16384)">+</view>
+                </view>
+              </view>
+
+              <!-- 时间衰减半衰期行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">记忆半衰期 (轮数)</text>
+                  <text class="engine-param-desc">记忆随对话轮数增加而衰减的半衰期时间（范围 5 ~ 500）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('retrieval_half_life_turns', -5, 5, 500)">-</view>
+                  <text class="step-value">{{ engineSettings.retrieval_half_life_turns }}</text>
+                  <view class="step-btn" @tap="stepInt('retrieval_half_life_turns', 5, 5, 500)">+</view>
+                </view>
+              </view>
+
+              <!-- 检索候选池放大倍数行 -->
+              <view class="engine-row">
+                <view class="engine-row-left">
+                  <text class="engine-param-name">检索候选池放大倍数</text>
+                  <text class="engine-param-desc">最终提取数量乘以该倍数作为初始检索候选池（范围 1 ~ 20）</text>
+                </view>
+                <view class="stepper">
+                  <view class="step-btn" @tap="stepInt('retrieval_candidate_multiplier', -1, 1, 20)">-</view>
+                  <text class="step-value">{{ engineSettings.retrieval_candidate_multiplier }}</text>
+                  <view class="step-btn" @tap="stepInt('retrieval_candidate_multiplier', 1, 1, 20)">+</view>
+                </view>
               </view>
             </view>
 
@@ -339,6 +395,7 @@ import type { AppSettings } from "@/api/settings";
 const fontSize = ref(16);
 const isMock = ref(USE_MOCK);
 const isLoadingSettings = ref(false);
+const showAdvanced = ref(false);
 
 // 引擎设置的状态变量（从后端加载的响应式副本）
 const engineSettings = reactive<AppSettings>({ ...DEFAULT_SETTINGS });
@@ -886,6 +943,67 @@ const handleResetDatabase = () => {
 .modal-btn.save:active {
   background-color: #000000;
   transform: scale(0.97);
+}
+
+/* ===== Advanced Settings Collapsible ===== */
+.advanced-toggle-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 32rpx 28rpx;
+  background-color: #ffffff;
+}
+
+.advanced-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  width: 100%;
+  height: 80rpx;
+  background-color: rgba(0, 0, 0, 0.015);
+  border: 1px dashed rgba(0, 0, 0, 0.12);
+  border-radius: 20rpx;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.advanced-toggle-btn:active {
+  background-color: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.25);
+  transform: scale(0.995);
+}
+
+.advanced-toggle-text {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+}
+
+.advanced-toggle-subtext {
+  font-size: 22rpx;
+  color: #8e8e93;
+}
+
+.advanced-chevron {
+  width: 24rpx;
+  height: 24rpx;
+  opacity: 0.6;
+  transform: rotate(90deg); /* points down by default */
+  transition: transform 0.25s ease;
+}
+
+.advanced-chevron.is-active {
+  transform: rotate(270deg); /* points up when open */
+}
+
+.advanced-section {
+  display: none;
+  background-color: rgba(0, 0, 0, 0.005);
+}
+
+.advanced-section.is-show {
+  display: block;
 }
 
 /* Custom SVG Icon Styles */
