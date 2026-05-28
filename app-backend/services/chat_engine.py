@@ -33,7 +33,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
     # 静态类成员：用于缓存成功调用的向量维度，初始为 None。一旦有一次成功，即捕获并保持其维度
     _cached_dim = None
 
-        def __call__(self, input):
+    def __call__(self, input):
         import urllib.request
         import json
 
