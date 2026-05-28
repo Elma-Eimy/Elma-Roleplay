@@ -40,6 +40,7 @@ def get_character_collection(character_id: int):
         name=collection_name,
         embedding_function=openai_ef
     )
+
     # 动态探测 collection 已有的向量维度，并同步给 embedding_function 的缓存，以防 API 失败时 fallback 维度不匹配
     try:
         if collection.count() > 0:
@@ -50,6 +51,7 @@ def get_character_collection(character_id: int):
         print(f"[WARN] 动态探测 collection {collection_name} 向量维度失败: {e}")
 
     return collection
+
 
 # ──────────────────────────────────────────────
 # 2. 继承链工具
