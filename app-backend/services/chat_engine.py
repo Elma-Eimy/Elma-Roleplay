@@ -33,33 +33,87 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
     # 静态类成员：用于缓存成功调用的向量维度，初始为 None。一旦有一次成功，即捕获并保持其维度
     _cached_dim = None
 
-    def __call__(self, input):
-        try:
-            embeddings = super().__call__(input)
-            if embeddings and len(embeddings) > 0:
-                # 动态缓存正确的向量维度
-                self.__class__._cached_dim = len(embeddings[0])
-            return embeddings
-        except Exception as e:
-            print(f"==========================================")
-            print(f"[WARNING] Embedding API call failed: {e}")
-            
-            # 自适应推断向量维度：优先使用缓存 -> 其次分析模型名称 -> 最后兜底 1536
-            dim = self.__class__._cached_dim
-            if dim is None:
-                model_lower = getattr(self, "model_name", "").lower()
-                if "3-large" in model_lower:
-                    dim = 3072
-                elif "ada-002" in model_lower or "3-small" in model_lower:
-                    dim = 1536
-                elif "bge-large" in model_lower or "doubao" in model_lower:
-                    dim = 1024
-                else:
-                    dim = 1536  # 最通用的 OpenAI 默认维度
-            
-            print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
-            print(f"==========================================")
-            return [[0.0] * dim for _ in input]
+        def __call__(self, input):
+        import urllib.request
+        import json
+
+        model_name = getattr(self, "model_name", "") or settings.LLM_EMBEDDING_MODEL
+        is_vision = "vision" in model_name.lower()
+
+        if is_vision:
+            try:
+                # ── 多模态向量 API 路径 ──
+                # 拼接多模态 API 地址：/api/v3/embeddings/multimodal
+                base_url = (self.api_base or settings.EMBEDDING_BASE_URL).rstrip("/")
+                url = f"{base_url}/embeddings/multimodal"
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key or settings.EMBEDDING_API_KEY}"
+                }
+                
+                # 组装符合方舟多模态规范的 input
+                multimodal_input = [{"type": "text", "text": doc} for doc in input]
+                
+                payload = {
+                    "model": model_name,
+                    "encoding_format": "float",
+                    "input": multimodal_input
+                }
+                
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST"
+                )
+                
+                with urllib.request.urlopen(req, timeout=15.0) as response:
+                    res_data = json.loads(response.read().decode("utf-8"))
+                    
+                # 提取返回的 embeddings 列表
+                embeddings = [item["embedding"] for item in res_data.get("data", [])]
+                if embeddings and len(embeddings) > 0:
+                    self.__class__._cached_dim = len(embeddings[0])
+                return embeddings
+            except Exception as e:
+                print(f"==========================================")
+                print(f"[WARNING] Multimodal Embedding API call failed: {e}")
+                
+                dim = self.__class__._cached_dim
+                if dim is None:
+                    dim = 1024  # 豆包多模态模型默认为 1024 维
+                print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
+                print(f"==========================================")
+                return [[0.0] * dim for _ in input]
+        else:
+            # ── 标准文本向量 API 路径 ──
+            try:
+                embeddings = super().__call__(input)
+                if embeddings and len(embeddings) > 0:
+                    # 动态缓存正确的向量维度
+                    self.__class__._cached_dim = len(embeddings[0])
+                return embeddings
+            except Exception as e:
+                print(f"==========================================")
+                print(f"[WARNING] Embedding API call failed: {e}")
+                
+                # 自适应推断向量维度：优先使用缓存 -> 其次分析模型名称 -> 最后兜底 1536
+                dim = self.__class__._cached_dim
+                if dim is None:
+                    model_lower = model_name.lower()
+                    if "3-large" in model_lower:
+                        dim = 3072
+                    elif "ada-002" in model_lower or "3-small" in model_lower:
+                        dim = 1536
+                    elif "bge-large" in model_lower or "doubao" in model_lower:
+                        dim = 1024
+                    else:
+                        dim = 1536  # 最通用的 OpenAI 默认维度
+                
+                print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
+                print(f"==========================================")
+                return [[0.0] * dim for _ in input]
 
 openai_ef = RobustOpenAIEmbeddingFunction(
     api_key=settings.EMBEDDING_API_KEY,
