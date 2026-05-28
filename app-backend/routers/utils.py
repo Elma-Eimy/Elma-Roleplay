@@ -36,7 +36,10 @@ def upload_avatar(file: UploadFile = File(...)):
                 detail=f"文件过大，最大允许 {MAX_AVATAR_SIZE_BYTES // 1024 // 1024} MB。"
             )
 
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        filename = os.path.basename(file.filename or "avatar.png")
+        if not filename:
+            filename = "avatar.png"
+        file_path = os.path.join(UPLOAD_DIR, filename)
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
