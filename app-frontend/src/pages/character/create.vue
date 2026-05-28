@@ -190,7 +190,47 @@ const chooseAvatar = () => {
 };
 
 const importCharacterCard = () => {
-  // 使用 uni.chooseFile 以同时支持选择 PNG 图片和 JSON 配置文件
+  // #ifdef APP-PLUS
+  // 手机 App 平台：由于不支持 uni.chooseFile，使用 uni.chooseImage 从相册选择 PNG 角色卡
+  // 指定 sizeType: ['original']（原图）以防止图片被系统压缩导致 EXIF/iTXt 元数据丢失
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['original'],
+    sourceType: ['album'],
+    success: async (res) => {
+      uni.showLoading({ title: '正在解析角色卡...' });
+      try {
+        const tempFilePath = res.tempFilePaths[0];
+        const parseRes = await parseCharacter(tempFilePath);
+        form.value = {
+          ...form.value,
+          ...parseRes.data
+        };
+        
+        // 自动作为头像图片上传并填充预览
+        try {
+          const uploadRes = await uploadAvatar(tempFilePath);
+          avatarPreview.value = uploadRes.avatar_path;
+        } catch (uploadErr) {
+          console.error("Auto avatar upload failed", uploadErr);
+        }
+        
+        uni.showToast({ title: '解析并导入成功', icon: 'success' });
+      } catch (e) {
+        console.error("Parsing failed", e);
+        uni.showToast({ title: '解析失败，请检查格式', icon: 'none' });
+      } finally {
+        uni.hideLoading();
+      }
+    },
+    fail: (err) => {
+      console.log("选择图片取消或失败", err);
+    }
+  });
+  // #endif
+
+  // #ifndef APP-PLUS
+  // 非 App 平台（H5网页等）：使用 uni.chooseFile 以同时支持选择 PNG 图片和 JSON 配置文件
   uni.chooseFile({
     count: 1,
     type: "all",
@@ -229,6 +269,7 @@ const importCharacterCard = () => {
       console.log("选择文件取消或失败", err);
     }
   });
+  // #endif
 };
 
 const saveCharacter = async () => {
