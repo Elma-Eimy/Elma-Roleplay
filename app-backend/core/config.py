@@ -73,6 +73,20 @@ class Settings:
         self.APP_HISTORY_FETCH_MAX = int(app_config.get("history_fetch_max", 500))
         self.APP_RETRIEVAL_MAX_DISTANCE = float(app_config.get("retrieval_max_distance", 1.2))
         self.APP_COGNITION_MAX_WORDS = int(app_config.get("cognition_max_words", 200))
+        
+        # 混合打分与时间衰减高级配置
+        self.APP_RETRIEVAL_WEIGHT_SIMILARITY = float(app_config.get("retrieval_weight_similarity", 0.6))
+        self.APP_RETRIEVAL_WEIGHT_IMPORTANCE = float(app_config.get("retrieval_weight_importance", 0.2))
+        self.APP_RETRIEVAL_WEIGHT_TIME = float(app_config.get("retrieval_weight_time", 0.2))
+        self.APP_RETRIEVAL_HALF_LIFE_TURNS = int(app_config.get("retrieval_half_life_turns", 50))
+        self.APP_RETRIEVAL_CANDIDATE_MULTIPLIER = int(app_config.get("retrieval_candidate_multiplier", 3))
+        self.APP_RETRIEVAL_ANCESTOR_WEIGHT = float(app_config.get("retrieval_ancestor_weight", 0.8))
+        self.APP_RP_TIME_TIERS = app_config.get("rp_time_tiers", [
+            {"max_turns": 30, "label": "刚刚"},
+            {"max_turns": 100, "label": "近期"},
+            {"max_turns": 300, "label": "一段时间前"},
+            {"max_turns": 9999999, "label": "很久以前"}
+        ])
 
     def update_and_persist(self, updates: dict):
         """
@@ -90,7 +104,13 @@ class Settings:
             "lorebook_scan_depth": int,
             "lorebook_token_budget": int,
             "lorebook_max_recursive_passes": int,
-            "cognition_max_words": int
+            "cognition_max_words": int,
+            "retrieval_weight_similarity": float,
+            "retrieval_weight_importance": float,
+            "retrieval_weight_time": float,
+            "retrieval_half_life_turns": int,
+            "retrieval_candidate_multiplier": int,
+            "retrieval_ancestor_weight": float
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -160,6 +180,30 @@ class Settings:
             elif field == "cognition_max_words":
                 self.APP_COGNITION_MAX_WORDS = converted_val
                 self.config.setdefault("app", {})["cognition_max_words"] = converted_val
+                app_updated = True
+            elif field == "retrieval_weight_similarity":
+                self.APP_RETRIEVAL_WEIGHT_SIMILARITY = converted_val
+                self.config.setdefault("app", {})["retrieval_weight_similarity"] = converted_val
+                app_updated = True
+            elif field == "retrieval_weight_importance":
+                self.APP_RETRIEVAL_WEIGHT_IMPORTANCE = converted_val
+                self.config.setdefault("app", {})["retrieval_weight_importance"] = converted_val
+                app_updated = True
+            elif field == "retrieval_weight_time":
+                self.APP_RETRIEVAL_WEIGHT_TIME = converted_val
+                self.config.setdefault("app", {})["retrieval_weight_time"] = converted_val
+                app_updated = True
+            elif field == "retrieval_half_life_turns":
+                self.APP_RETRIEVAL_HALF_LIFE_TURNS = converted_val
+                self.config.setdefault("app", {})["retrieval_half_life_turns"] = converted_val
+                app_updated = True
+            elif field == "retrieval_candidate_multiplier":
+                self.APP_RETRIEVAL_CANDIDATE_MULTIPLIER = converted_val
+                self.config.setdefault("app", {})["retrieval_candidate_multiplier"] = converted_val
+                app_updated = True
+            elif field == "retrieval_ancestor_weight":
+                self.APP_RETRIEVAL_ANCESTOR_WEIGHT = converted_val
+                self.config.setdefault("app", {})["retrieval_ancestor_weight"] = converted_val
                 app_updated = True
 
         # 3. 序列化回写到 config.yaml，确保重启不丢失
