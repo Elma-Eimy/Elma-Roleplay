@@ -56,14 +56,28 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = 
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
 
-        # ── Step 2: 保存用户消息 ──
-        user_msg = models.ChatMessage(
-            session_id=session.id,
-            role=MessageRole.user,
-            content=request.user_message,
-        )
-        db.add(user_msg)
-        db.commit()
+        # ── Step 2: 获取/保存用户消息 ──
+        if request.is_regenerate:
+            # 找到数据库中本会话的最后一条用户消息
+            user_msg = (
+                db.query(models.ChatMessage)
+                .filter(
+                    models.ChatMessage.session_id == session.id,
+                    models.ChatMessage.role == MessageRole.user
+                )
+                .order_by(models.ChatMessage.id.desc())
+                .first()
+            )
+            if not user_msg:
+                raise HTTPException(status_code=400, detail="No user message found to regenerate")
+        else:
+            user_msg = models.ChatMessage(
+                session_id=session.id,
+                role=MessageRole.user,
+                content=request.user_message,
+            )
+            db.add(user_msg)
+            db.commit()
 
         # ── Step 3: 检索相关记忆（RAG） ──
         memories = memory_manager.retrieve_memories(
@@ -165,14 +179,28 @@ def chat_stream(
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
 
-        # ── Step 2: 保存用户消息 ──
-        user_msg = models.ChatMessage(
-            session_id=session.id,
-            role=MessageRole.user,
-            content=request.user_message,
-        )
-        db.add(user_msg)
-        db.commit()
+        # ── Step 2: 获取/保存用户消息 ──
+        if request.is_regenerate:
+            # 找到数据库中本会话的最后一条用户消息
+            user_msg = (
+                db.query(models.ChatMessage)
+                .filter(
+                    models.ChatMessage.session_id == session.id,
+                    models.ChatMessage.role == MessageRole.user
+                )
+                .order_by(models.ChatMessage.id.desc())
+                .first()
+            )
+            if not user_msg:
+                raise HTTPException(status_code=400, detail="No user message found to regenerate")
+        else:
+            user_msg = models.ChatMessage(
+                session_id=session.id,
+                role=MessageRole.user,
+                content=request.user_message,
+            )
+            db.add(user_msg)
+            db.commit()
 
         # ── Step 3: 检索相关记忆（RAG） ──
         memories = memory_manager.retrieve_memories(
