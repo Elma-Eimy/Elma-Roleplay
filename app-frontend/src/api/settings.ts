@@ -38,6 +38,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lorebook_token_budget: 3000,
   lorebook_max_recursive_passes: 3,
   cognition_max_words: 200,
+  retrieval_half_life_turns: 50,
+  retrieval_candidate_multiplier: 3,
+  max_tokens: 4096,
 };
 
 // ===================== API 接口函数 =====================
