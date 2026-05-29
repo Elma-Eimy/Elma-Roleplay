@@ -141,6 +141,8 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = 
             "affection_change": affection_change,
             "affection_score": persona.affection_score,
             "model_used": response_data.get("model_used"),  # 方便前端展示当前对话使用的模型
+            "user_message_id": user_msg.id,
+            "assistant_message_id": ai_msg.id,
         }
     finally:
         lock.release()
@@ -350,7 +352,9 @@ def chat_stream(
                     "emotion_tag": emotion_tag,
                     "affection_change": affection_change,
                     "affection_score": persona.affection_score,
-                    "model_used": model
+                    "model_used": model,
+                    "user_message_id": user_msg.id,
+                    "assistant_message_id": ai_msg.id,
                 }
                 yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
 
