@@ -256,16 +256,34 @@ let isAndroid = false;
 isAndroid = uni.getSystemInfoSync().platform === 'android';
 // #endif
 
+const triggerPhasedScroll = () => {
+  scrollToBottom();
+  // 阶段式定时置底：在软键盘弹起的动效（通常约 250ms-350ms）中关键时间节点触发多次重算置底，
+  // 从而让滚动区随着键盘高度的拉升而平滑、无延迟地跟随触底。
+  setTimeout(scrollToBottom, 60);
+  setTimeout(scrollToBottom, 120);
+  setTimeout(scrollToBottom, 200);
+  setTimeout(scrollToBottom, 300);
+  setTimeout(scrollToBottom, 400);
+};
+
 // #ifdef APP-PLUS
 const onKeyboardChange = (res: any) => {
   // Android 平台由于配置了 adjustResize，WebView 会自动调整大小以适应键盘，无需手动用占位高度推起内容
   // iOS 平台 WebView 保持原有高度不变，必须通过键盘占位高度来将输入区域推到键盘上方
   keyboardHeight.value = isAndroid ? 0 : res.keyboardHeight;
   if (res.keyboardHeight > 0) {
-    scrollToBottom();
+    triggerPhasedScroll();
   }
 };
 // #endif
+
+// 监听输入框焦点的获取状态，当聚焦时同步开启阶段式置底动效
+watch(isInputFocused, (focused) => {
+  if (focused) {
+    triggerPhasedScroll();
+  }
+});
 
 onMounted(() => {
   // #ifdef APP-PLUS
