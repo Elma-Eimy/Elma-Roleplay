@@ -9,6 +9,7 @@ llm:
   memory_temperature: 0.3
   max_tokens: 4096
   reasoning_mode: false
+  timeout: 60
 app:
   context_history_limit: 15
   retrieval_top_k: 3
