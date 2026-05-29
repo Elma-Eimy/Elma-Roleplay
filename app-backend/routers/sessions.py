@@ -6,6 +6,7 @@ from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate
 import services.memory_manager as memory_manager
 from core.config import settings
+from core.locking import cleanup_session_lock
 
 router = APIRouter()
 
@@ -234,6 +235,8 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
     """
     try:
         result = memory_manager.safe_delete_session(session_id, db)
+        # 清理内存中歘留的对应异步锁，防止长期运行后内存缓慢增长
+        cleanup_session_lock(session_id)
         return {"message": "Session deleted successfully", **result}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
