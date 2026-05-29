@@ -286,7 +286,8 @@ def retrieve_memories(
             ]
         }
 
-    fetch_k = top_k * settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER
+    # Bug8修复：加 max(1, ...) 防止配置异常时 n_results=0 导致 ChromaDB 报错
+    fetch_k = max(1, top_k * settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER)
 
     # Step 3: 单次查询 (粗排)
     try:
@@ -329,11 +330,16 @@ def retrieve_memories(
         sim_score = max(0.0, 1.0 - (dist / settings.APP_RETRIEVAL_MAX_DISTANCE))
         imp_score = float(meta.get("importance_score", 0.5))
         
-        # 计算逻辑时间衰减
-        source_msg_id = int(meta.get("source_message_id", current_msg_id))
-        turns_passed = max(0, current_msg_id - source_msg_id)
-        half_life = max(1, settings.APP_RETRIEVAL_HALF_LIFE_TURNS)
-        time_score = 0.5 ** (turns_passed / half_life)
+        # 计算逻辑时间衰减（类型感知：客观事实在单会话内不应用逻辑时间衰减，时间得分保持满分）
+        mem_type = meta.get("memory_type", "fact")
+        if mem_type == "fact":
+            time_score = 1.0
+            turns_passed = 0
+        else:
+            source_msg_id = int(meta.get("source_message_id", current_msg_id))
+            turns_passed = max(0, current_msg_id - source_msg_id)
+            half_life = max(1, settings.APP_RETRIEVAL_HALF_LIFE_TURNS)
+            time_score = 0.5 ** (turns_passed / half_life)
         
         # 混合打分
         final_score = (
