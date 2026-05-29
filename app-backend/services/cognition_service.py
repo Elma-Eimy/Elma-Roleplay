@@ -332,12 +332,12 @@ def update_cognition_state(persona_id: int, db: DBSession) -> str | None:
     # LLM Prompt
     system_prompt = f"""你是一个角色认知更新专家。你需要基于角色当前的认知状态 and 最近的对话，生成更新后的认知摘要。
 
-认知摘要应当描述"角色此刻对自己、世界和用户的整体认知"，它将直接组装进角色的 System Prompt。
+认知摘要应当描述"角色（名字为：{persona.character.name}）此刻对自己、世界和用户的整体认知"，它将直接组装进角色的 System Prompt。
 
 要求：
 1. 保留旧认知中仍然有效的部分
 2. 融入新对话中产生的重要认知变化
-3. 用简洁的第三人称描述（如"她认为..."、"他知道..."）
+3. 必须使用角色（名字为：{persona.character.name}）自己的第一人称视角描述（如"作为 {persona.character.name}，我认为..."、"我知道..."、"我感觉..."），禁止使用第三人称（如"他"、"她"、"{persona.character.name}认为..."），以使生成的内容能够作为 {persona.character.name} 的第一人称心声无缝融入扮演设定。
 4. 控制在 {settings.APP_COGNITION_MAX_WORDS} 字以内
 5. 直接返回纯文本，不要使用 JSON 或 markdown 格式"""
 
