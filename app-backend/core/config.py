@@ -39,6 +39,8 @@ class Settings:
         self.LLM_MEMORY_TEMPERATURE = float(llm_config.get("memory_temperature", 0.3))
         self.LLM_MAX_TOKENS = int(llm_config.get("max_tokens", 4096))
         self.LLM_REASONING_MODE = bool(llm_config.get("reasoning_mode", False))
+        # LLM 请求超时秒数；思考模型首 token 延迟可能超过 15s，默认设为 60s
+        self.LLM_TIMEOUT = float(llm_config.get("timeout", 60.0))
 
         # config.yaml 中配置的默认激活模型（未传 use_reasoning 时的回退）
         if self.LLM_REASONING_MODE:
