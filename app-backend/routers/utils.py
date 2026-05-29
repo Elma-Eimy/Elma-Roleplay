@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
+import uuid
 from core.config import settings
 from schemas import SettingsUpdate
 
@@ -39,7 +40,9 @@ def upload_avatar(file: UploadFile = File(...)):
         filename = os.path.basename(file.filename or "avatar.png")
         if not filename:
             filename = "avatar.png"
-        file_path = os.path.join(UPLOAD_DIR, filename)
+        # 加 UUID 短码前缀，防止同名头像相互覆盖
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
