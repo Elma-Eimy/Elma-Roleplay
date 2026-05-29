@@ -14,7 +14,7 @@ import json
 import re
 import chromadb
 import time
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
 import core.models as models
@@ -28,9 +28,9 @@ import core.models as models
 CHROMA_DATA_PATH = settings.STORAGE_CHROMA_DB_PATH
 chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 
-# 兼容 OpenAI 的稳健嵌入函数
+# OpenAI Compatible Robust Embedding Function
 class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
-    # 用于缓存向量维度的静态类成员
+    # Static class member to cache vector dimension
     _cached_dim = None
 
     def __call__(self, input):
@@ -78,7 +78,7 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 
                 data_field = res_data.get("data", [])
                 
-                # 提取嵌入
+                # Extract embeddings
                 embeddings = []
                 if isinstance(data_field, dict):
                     # Single dictionary format support: {"embedding": [...]}
@@ -108,12 +108,12 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 
                 dim = self.__class__._cached_dim
                 if dim is None:
-                    dim = 1024
+                    dim = 2048  # Match the real model's default dimension of 2048
                 print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
                 print(f"==========================================")
                 return [[0.0] * dim for _ in input]
         else:
-            # 标准文本 API 端点
+            # Standard Text API endpoint
             try:
                 embeddings = super().__call__(input)
                 if embeddings and len(embeddings) > 0:
@@ -145,12 +145,20 @@ openai_ef = RobustOpenAIEmbeddingFunction(
     model_name=settings.LLM_EMBEDDING_MODEL
 )
 
-# LLM 对话客户端
+# LLM 对话客户端 (同步)
 llm_client = OpenAI(
     api_key=settings.CHAT_API_KEY,
     base_url=settings.CHAT_BASE_URL,
-    timeout=15.0
+    timeout=settings.LLM_TIMEOUT
 )
+
+# LLM 对话客户端 (异步)
+llm_client_async = AsyncOpenAI(
+    api_key=settings.CHAT_API_KEY,
+    base_url=settings.CHAT_BASE_URL,
+    timeout=settings.LLM_TIMEOUT
+)
+
 # LLM_MODEL 保留为全局默认值（memory_manager 等内部调用的回退）
 LLM_MODEL = settings.ACTIVE_CHAT_MODEL
 
@@ -198,16 +206,11 @@ def build_system_prompt(
             sections.append(f"【性格特点】\n{character.personality}")
 
     # 2. 结构化输出指令 (静态)
-    json_instructions = """【重要：输出格式要求】
-你必须且只能以有效的 JSON 格式进行响应。响应必须严格以 '{' 开头，以 '}' 结尾，绝对不要包含任何 markdown 标记（如 ```json）。
-你的 JSON 响应必须且仅包含以下键：
-{
-  "reply": "你的角色扮演回复文本（字符串）",
-  "emotion_tag": "当前心情标签（中文字符串，如'开心'、'平静'、'困惑'、'害羞'等多个情绪词语，这里只是举例几个而已。）",
-  "affection_change": 0
-}
-请确保 affection_change 是整数类型（取值范围为 -5 到 5），绝对不要包含多余的键或格式。"""
-    sections.append(json_instructions)
+    xml_instructions = """【重要：输出格式要求】
+你必须且只能按照以下 XML 标签结构进行回复，绝对不要包含任何 markdown 代码块标记（如 ```xml 或 ```html）：
+<reply>你的第一人称角色扮演回复文本（支持动作星号包裹与台词双引号包裹）</reply>
+<status emotion="当前心情标签（例如：开心、平静、害羞等单个词语）" affection_change="好感度整数变化量（必须是整数，范围在 -5 到 5 之间）"/>"""
+    sections.append(xml_instructions)
 
     # 3. 后置扮演规则 (静态)
     post_instructions = character.post_history_instructions or None
@@ -367,45 +370,238 @@ def _log_llm_stream_wrapper(stream, model_name: str, messages: list):
             pass
         raise e
 
-def _extract_json_block(text: str) -> dict | None:
-    """
-    尝试以多种容错方式从文本中解析提取 JSON 字典。
-    - 支持标准 JSON 解析。
-    - 兼容包含 ```json ... ``` 或 ``` ... ``` 标记的代码块。
-    - 兼容以非大括号字符开头或结尾的杂乱文本，自动截取首个大括号块。
-    """
-    if not text:
-        return None
-    text = text.strip()
+
+async def _log_llm_stream_wrapper_async(stream, model_name: str, messages: list):
+    """透明代理异步流的迭代过程，捕获并向 llm_debug.log 写入每一次 chunk 产生的正文与思考过程。"""
+    log_file = "llm_debug.log"
+    start_time = time.time()
     
-    # 1. 尝试直接解析
+    # 立即记录请求起始部分
     try:
-        return json.loads(text)
-    except Exception:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\n" + "="*80 + "\n")
+            f.write(f"🌐 [STREAM REQUEST] Model: {model_name} | Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("--- MESSAGES SENT TO LLM ---\n")
+            f.write(json.dumps(messages, ensure_ascii=False, indent=2) + "\n")
+            f.write("----------------------------\n")
+    except:
         pass
         
-    # 2. 尝试从 ```json ... ``` 代码块中提取
-    match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
+    full_content = []
+    full_reasoning = []
+    
+    try:
+        async for chunk in stream:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+                content_delta = getattr(delta, "content", None) or ""
+                reasoning_delta = getattr(delta, "reasoning_content", None) or ""
+                
+                if content_delta:
+                    full_content.append(content_delta)
+                if reasoning_delta:
+                    full_reasoning.append(reasoning_delta)
+            yield chunk
             
-    # 3. 尝试搜索第一个 {...} 大括号块
-    match = re.search(r'(\{.*?\})', text, re.DOTALL)
-    if match:
+        elapsed = time.time() - start_time
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"📥 [STREAM RESPONSE COMPLETED] Elapsed: {elapsed:.2f}s\n")
+            if full_reasoning:
+                f.write("--- RAW REASONING CONTENT ---\n")
+                f.write("".join(full_reasoning) + "\n")
+            f.write("--- RAW CONTENT ---\n")
+            f.write("".join(full_content) + "\n")
+            f.write("="*80 + "\n")
+    except Exception as e:
+        elapsed = time.time() - start_time
         try:
-            return json.loads(match.group(1))
-        except Exception:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"❌ [STREAM ERROR] Elapsed: {elapsed:.2f}s | Error: {str(e)}\n")
+                f.write("="*80 + "\n")
+        except:
             pass
-    return None
+        raise e
+
+def _extract_xml_block(text: str) -> dict:
+    """
+    使用正则表达式，从文本中提取 <reply>...</reply> 以及 <status emotion="..." affection_change="..."/>
+    使用不区分大小写且容忍空格的正则表达式，以防模型输出 <Reply>、</reply  > 等格式。
+    """
+    if not text:
+        return {"reply": "", "emotion_tag": "平静", "affection_change": 0}
+    
+    text = text.strip()
+    
+    # 提取 <reply>...</reply>（不区分大小写，容忍空格）
+    reply_match = re.search(r'<\s*reply\s*>(.*?)</\s*reply\s*>', text, re.DOTALL | re.IGNORECASE)
+    if reply_match:
+        reply = reply_match.group(1).strip()
+    else:
+        # 兼容性兜底：若无标签或格式破坏，过滤掉 status 标签并把整段作为 reply
+        clean_text = re.sub(r'<\s*status\s+.*?>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        # 清理可能残留的闭合标签
+        clean_text = re.sub(r'</\s*reply\s*>', '', clean_text, flags=re.IGNORECASE)
+        reply = clean_text.strip()
+
+    # 提取 <status emotion="..." affection_change="..." />
+    # 使用 ["\'] 以完美兼容双引号与单引号包裹的 XML 属性，且不区分大小写
+    status_match = re.search(r'<\s*status\s+emotion=["\']([^"\']*)["\']\s+affection_change=["\']([^"\']*)["\']\s*/?>', text, re.IGNORECASE)
+    if not status_match:
+        # 兼容属性顺序颠倒的情况
+        status_match = re.search(r'<\s*status\s+affection_change=["\']([^"\']*)["\']\s+emotion=["\']([^"\']*)["\']\s*/?>', text, re.IGNORECASE)
+        if status_match:
+            try:
+                affection_change = int(status_match.group(1) or 0)
+            except ValueError:
+                affection_change = 0
+            emotion_tag = status_match.group(2) or "平静"
+        else:
+            emotion_tag = "平静"
+            affection_change = 0
+    else:
+        emotion_tag = status_match.group(1) or "平静"
+        try:
+            affection_change = int(status_match.group(2) or 0)
+        except ValueError:
+            affection_change = 0
+
+    return {
+        "reply": reply,
+        "emotion_tag": emotion_tag,
+        "affection_change": affection_change
+    }
 
 # ══════════════════════════════════════════════
 # LLM 回复生成
 # ══════════════════════════════════════════════
 
-def generate_reply(
+async def _build_chat_messages(
+    character,
+    persona,
+    recent_history: list[dict],
+    user_message: str,
+    retrieved_memories: list[dict] | None = None,
+    db=None,
+) -> list[dict]:
+    """
+    组装 LLM 所需的完整 messages 列表（system + history + 动态上下文）。
+
+    被 generate_reply 和 generate_reply_stream 共同调用，消除重复代码。
+    包含以下步骤：
+      1. 构建静态 System Prompt 并提取动态要素
+      2. 若是子会话，拉取父会话最后 4 条消息作为 Few-shot 伪历史
+      3. 组装 messages 列表（system + history in XML format）
+      4. 拼接动态上下文块（场景 / 认知 / 心情 / Lorebook / RAG）到最后的 user 消息
+      5. 调用前主动提交释放 SQLite 文件锁
+    """
+    # Step 1: 组装缓存友好型静态 System Prompt 并抽取动态要素
+    prompt_result = build_system_prompt(
+        character=character,
+        persona=persona,
+        retrieved_memories=retrieved_memories,
+        recent_history=recent_history,
+        user_message=user_message,
+    )
+
+    # Step 2: 动态示例继承（子会话拉取父会话最后 4 条作为 Few-shot 伪历史）
+    if persona and persona.parent_persona_id and db is not None:
+        from fastapi.concurrency import run_in_threadpool
+
+        def fetch_parent_history():
+            parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
+            if parent_persona:
+                return db.query(models.ChatMessage).filter(
+                    models.ChatMessage.session_id == parent_persona.session_id,
+                    models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
+                ).order_by(models.ChatMessage.id.desc()).limit(4).all()
+            return []
+
+        parent_msgs = await run_in_threadpool(fetch_parent_history)
+        if parent_msgs:
+            parent_msgs.reverse()
+            parent_history_formatted = [
+                {
+                    "role": msg.role.value,
+                    "content": msg.content,
+                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
+                    "affection_change": getattr(msg, "affection_change", 0)
+                }
+                for msg in parent_msgs
+            ]
+            recent_history = parent_history_formatted + recent_history
+
+    # Step 3: 构建 messages 列表（首位为单条静态 system prompt）
+    messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
+
+    # 历史消息：assistant 消息统一包装为 XML 格式保持上下文一致性
+    for msg in recent_history:
+        if msg["role"] == "assistant":
+            content_str = msg["content"]
+            emo = msg.get("emotion_tag") or "平静"
+            change = msg.get("affection_change") or 0
+            fallback_xml = f"<reply>{content_str}</reply>\n<status emotion=\"{emo}\" affection_change=\"{int(change)}\"/>"
+            messages.append({"role": "assistant", "content": fallback_xml})
+        else:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Step 4: 动态上下文包装，统一挂载到最后一轮 User 消息中
+    dynamic_context_blocks = []
+
+    # 4.1 场景与认知状态
+    scenario = prompt_result.get("scenario")
+    if scenario:
+        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
+
+    cognition = prompt_result.get("cognition_state")
+    if cognition:
+        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
+
+    # 4.2 心情与好感度
+    status_parts = []
+    aff_score = prompt_result.get("affection_score")
+    if aff_score is not None:
+        status_parts.append(f"对用户好感度: {aff_score}")
+    mood = prompt_result.get("current_mood")
+    if mood:
+        status_parts.append(f"当前心情: {mood}")
+    if status_parts:
+        dynamic_context_blocks.append("<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
+
+    # 4.3 世界书 (Lorebook) 知识
+    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
+    lore_contents = []
+    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
+        content = e.get("content", "").strip()
+        if content:
+            lore_contents.append(content)
+    if lore_contents:
+        dynamic_context_blocks.append("<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
+
+    # 4.4 召回长期记忆 (RAG)
+    retrieved_mem = prompt_result.get("retrieved_memories_text")
+    if retrieved_mem:
+        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
+
+    # 4.5 拼装增强的 User 消息内容
+    enhanced_user_content = ""
+    if dynamic_context_blocks:
+        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
+        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
+    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
+
+    messages.append({"role": "user", "content": enhanced_user_content})
+
+    # Step 5: 调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
+    if db is not None:
+        try:
+            from fastapi.concurrency import run_in_threadpool
+            await run_in_threadpool(db.commit)
+        except Exception as e:
+            print(f"[WARN] chat_engine._build_chat_messages: 释放 SQLite 锁失败: {e}")
+
+    return messages
+
+async def generate_reply(
     character,
     persona,
     recent_history: list[dict],
@@ -417,163 +613,33 @@ def generate_reply(
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
     """
-    # Step 1: 组装 缓存友好型 静态 System Prompt 并抽取动态要素
-    prompt_result = build_system_prompt(
+    model = _resolve_model(use_reasoning)
+    messages = await _build_chat_messages(
         character=character,
         persona=persona,
-        retrieved_memories=retrieved_memories,
         recent_history=recent_history,
         user_message=user_message,
+        retrieved_memories=retrieved_memories,
+        db=db,
     )
 
-    # 动态示例继承：如果是子会话，拉取父会话最后 4 条消息作为真实的 Few-shot 伪历史
-    if persona and persona.parent_persona_id and db is not None:
-        parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
-        if parent_persona:
-            parent_msgs = db.query(models.ChatMessage).filter(
-                models.ChatMessage.session_id == parent_persona.session_id,
-                models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
-            ).order_by(models.ChatMessage.id.desc()).limit(4).all()
-            
-            parent_msgs.reverse()
-            parent_history_formatted = [
-                {
-                    "role": msg.role.value, 
-                    "content": msg.content,
-                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
-                    "affection_change": getattr(msg, "affection_change", 0)
-                }
-                for msg in parent_msgs
-            ]
-            # 拼接到真实的 recent_history 最前方，由后续统一处理 assistant JSON 封装
-            recent_history = parent_history_formatted + recent_history
-
-    # Step 2: 构建 messages 列表 (首位为单条静态 system prompt)
-    messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
-
-    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，保留真实的情绪/好感变动
-    for msg in recent_history:
-        if msg["role"] == "assistant":
-            content_str = msg["content"]
-            try:
-                # 检查是否已经是 JSON 格式
-                json.loads(content_str)
-                messages.append({"role": "assistant", "content": content_str})
-            except Exception:
-                # 否则，利用携带的真实情绪字段重新包装为标准 JSON 格式
-                emo = msg.get("emotion_tag") or "平静"
-                change = msg.get("affection_change") or 0
-                fallback_json = json.dumps({
-                    "reply": content_str,
-                    "emotion_tag": emo,
-                    "affection_change": int(change)
-                }, ensure_ascii=False)
-                messages.append({"role": "assistant", "content": fallback_json})
-        else:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-
-    # Step 3: 动态上下文包装 (XML 闭包标签) 并统一挂载到最后一轮 User 消息中
-    dynamic_context_blocks = []
-
-    # 3.1 场景与认知状态
-    scenario = prompt_result.get("scenario")
-    if scenario:
-        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
-    
-    cognition = prompt_result.get("cognition_state")
-    if cognition:
-        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
-        
-    # 3.2 心情与好感度
-    status_parts = []
-    aff_score = prompt_result.get("affection_score")
-    if aff_score is not None:
-        status_parts.append(f"对用户好感度: {aff_score}")
-    mood = prompt_result.get("current_mood")
-    if mood:
-        status_parts.append(f"当前心情: {mood}")
-    if status_parts:
-        dynamic_context_blocks.append(f"<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
-
-    # 3.3 世界书 (Lorebook) 知识
-    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
-    lore_contents = []
-    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
-        content = e.get("content", "").strip()
-        if content:
-            lore_contents.append(content)
-    if lore_contents:
-        dynamic_context_blocks.append(f"<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
-
-    # 3.4 召回长期记忆 (RAG)
-    retrieved_mem = prompt_result.get("retrieved_memories_text")
-    if retrieved_mem:
-        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
-
-    # 3.5 拼装增强的 User 消息内容，确保上下文与提问有清晰边界
-    enhanced_user_content = ""
-    if dynamic_context_blocks:
-        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
-        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
-    
-    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
-
-    messages.append({"role": "user", "content": enhanced_user_content})
-
-    # 在调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
-    if db is not None:
-        try:
-            db.commit()
-        except Exception as e:
-            print(f"[WARN] chat_engine.generate_reply: 释放 SQLite 锁失败: {e}")
-
-    # Step 4: 调用 LLM
-    model = _resolve_model(use_reasoning)
-    
-    # 针对 DeepSeek-V4/V3 或任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
-    is_deepseek = "deepseek" in model.lower()
-    resp_fmt = None if is_deepseek else {"type": "json_object"}
-    max_t = settings.LLM_MAX_TOKENS
-    
-    start_time = time.time()
     try:
-        response_raw = llm_client.chat.completions.with_raw_response.create(
+        response = await llm_client_async.chat.completions.create(
             model=model,
             messages=messages,
-            response_format=resp_fmt,
             temperature=settings.LLM_TEMPERATURE,
-            max_tokens=max_t,
+            max_tokens=settings.LLM_MAX_TOKENS,
         )
-        elapsed = time.time() - start_time
-        
-        # 记录及解析响应
-        # _log_llm_non_stream(model, messages, response_raw, elapsed)
-        response = response_raw.parse()
 
         content = response.choices[0].message.content
-        
-        # 使用高容错方法提取并解析 JSON
-        result = _extract_json_block(content)
-        if result:
-            reply = result.get("reply", "")
-            emotion_tag = result.get("emotion_tag", "平静")
-            affection_change = int(result.get("affection_change", 0))
-        else:
-            try:
-                print(f"[WARN] chat_engine.generate_reply: JSON 解析失败，开启备用解析模式。原始返回内容: {repr(content)}")
-            except UnicodeEncodeError:
-                # 兼容 Windows 控制台 GBK 编码防崩溃
-                safe_content = content.encode('ascii', errors='replace').decode('ascii')
-                print(f"[WARN] chat_engine.generate_reply: JSON 解析失败，开启备用解析模式。原始返回内容 (安全模式): {repr(safe_content)}")
-            reply = content.strip()
-            emotion_tag = "平静"
-            affection_change = 0
 
-        # 容错：确保返回值包含必要字段
+        # 使用高容错方法提取并解析 XML
+        result = _extract_xml_block(content)
+
         return {
-            "reply": reply,
-            "emotion_tag": emotion_tag,
-            "affection_change": affection_change,
+            "reply": result["reply"],
+            "emotion_tag": result["emotion_tag"],
+            "affection_change": result["affection_change"],
             "model_used": model,
         }
 
@@ -590,7 +656,7 @@ def generate_reply(
         }
 
 
-def generate_reply_stream(
+async def generate_reply_stream(
     character,
     persona,
     recent_history: list[dict],
@@ -602,135 +668,26 @@ def generate_reply_stream(
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
     """
-    # Step 1: 组装 缓存友好型 静态 System Prompt 并抽取动态要素
-    prompt_result = build_system_prompt(
+    model = _resolve_model(use_reasoning)
+    messages = await _build_chat_messages(
         character=character,
         persona=persona,
-        retrieved_memories=retrieved_memories,
         recent_history=recent_history,
         user_message=user_message,
+        retrieved_memories=retrieved_memories,
+        db=db,
     )
 
-    # 动态示例继承：如果是子会话，拉取父会话最后 4 条消息作为真实的 Few-shot 伪历史
-    if persona and persona.parent_persona_id and db is not None:
-        parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
-        if parent_persona:
-            parent_msgs = db.query(models.ChatMessage).filter(
-                models.ChatMessage.session_id == parent_persona.session_id,
-                models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
-            ).order_by(models.ChatMessage.id.desc()).limit(4).all()
-            
-            parent_msgs.reverse()
-            parent_history_formatted = [
-                {
-                    "role": msg.role.value, 
-                    "content": msg.content,
-                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
-                    "affection_change": getattr(msg, "affection_change", 0)
-                }
-                for msg in parent_msgs
-            ]
-            # 拼接到真实的 recent_history 最前方，由后续统一处理 assistant JSON 封装
-            recent_history = parent_history_formatted + recent_history
-
-    # Step 2: 构建 messages 列表 (首位为单条静态 system prompt)
-    messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
-
-    # 添加对话历史，并确保 assistant 的历史消息均格式化为 JSON 字符串，保留真实的情绪/好感变动
-    for msg in recent_history:
-        if msg["role"] == "assistant":
-            content_str = msg["content"]
-            try:
-                # 检查是否已经是 JSON 格式
-                json.loads(content_str)
-                messages.append({"role": "assistant", "content": content_str})
-            except Exception:
-                # 否则，利用携带的真实情绪字段重新包装为标准 JSON 格式
-                emo = msg.get("emotion_tag") or "平静"
-                change = msg.get("affection_change") or 0
-                fallback_json = json.dumps({
-                    "reply": content_str,
-                    "emotion_tag": emo,
-                    "affection_change": int(change)
-                }, ensure_ascii=False)
-                messages.append({"role": "assistant", "content": fallback_json})
-        else:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-
-    # Step 3: 动态上下文包装 (XML 闭包标签) 并统一挂载到最后一轮 User 消息中
-    dynamic_context_blocks = []
-
-    # 3.1 场景与认知状态
-    scenario = prompt_result.get("scenario")
-    if scenario:
-        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
-    
-    cognition = prompt_result.get("cognition_state")
-    if cognition:
-        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
-        
-    # 3.2 心情与好感度
-    status_parts = []
-    aff_score = prompt_result.get("affection_score")
-    if aff_score is not None:
-        status_parts.append(f"对用户好感度: {aff_score}")
-    mood = prompt_result.get("current_mood")
-    if mood:
-        status_parts.append(f"当前心情: {mood}")
-    if status_parts:
-        dynamic_context_blocks.append(f"<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
-
-    # 3.3 世界书 (Lorebook) 知识
-    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
-    lore_contents = []
-    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
-        content = e.get("content", "").strip()
-        if content:
-            lore_contents.append(content)
-    if lore_contents:
-        dynamic_context_blocks.append(f"<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
-
-    # 3.4 召回长期记忆 (RAG)
-    retrieved_mem = prompt_result.get("retrieved_memories_text")
-    if retrieved_mem:
-        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
-
-    # 3.5 拼装增强的 User 消息内容，确保上下文与提问有清晰边界
-    enhanced_user_content = ""
-    if dynamic_context_blocks:
-        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
-        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
-    
-    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
-
-    messages.append({"role": "user", "content": enhanced_user_content})
-
-    # 在调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
-    if db is not None:
-        try:
-            db.commit()
-        except Exception as e:
-            print(f"[WARN] chat_engine.generate_reply_stream: 释放 SQLite 锁失败: {e}")
-
-    # Step 4: 调用 LLM
-    model = _resolve_model(use_reasoning)
-    
-    # 针对 DeepSeek-V4/V3 或任何 DeepSeek 模型，完全禁用 JSON Mode 约束以防 logits processor 冲突导致返回空白，而由高容错解析器 _extract_json_block 负责解析
-    is_deepseek = "deepseek" in model.lower()
-    resp_fmt = None if is_deepseek else {"type": "json_object"}
-    max_t = settings.LLM_MAX_TOKENS
-    
     try:
-        response = llm_client.chat.completions.create(
+        response = await llm_client_async.chat.completions.create(
             model=model,
             messages=messages,
-            response_format=resp_fmt,
             temperature=settings.LLM_TEMPERATURE,
-            max_tokens=max_t,
+            max_tokens=settings.LLM_MAX_TOKENS,
             stream=True,
         )
         # 包装并记录流输出
-        logged_stream = _log_llm_stream_wrapper(response, model, messages)
+        logged_stream = _log_llm_stream_wrapper_async(response, model, messages)
         return logged_stream, model
 
     except Exception as e:
