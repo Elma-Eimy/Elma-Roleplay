@@ -1,157 +1,143 @@
-# AI Roleplay System — 智能角色扮演系统主文档
+# AI Roleplay System — 智能角色扮演系统全栈主文档
 
-这是一个端到端的 AI 角色扮演（AI Roleplay）应用程序。项目由前端 UniApp 移动端/网页端应用与后端 FastAPI 核心大脑两部分组成，具备深度长期记忆检索（RAG）、动态情感表情渲染、微认知更新等前沿特性。
+这是一个前沿、高可用、高完整性的端到端 AI 角色扮演（AI Roleplay）应用程序。项目由**前端多端应用核心（Vue 3 + UniApp + TypeScript）**与**后端智能大脑服务（FastAPI + SQLAlchemy + SQLite + ChromaDB）**组成。系统面向单用户私有化部署设计，具备深度长期记忆检索（RAG）、动态情感与表情渲染、树状分支会话、渐进式折叠参数面板等核心特性。
 
 ---
 
-## 项目目录结构
+## 📌 项目目录结构
 
 ```text
 /APP
-├── app-backend/       # Python 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
+├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
+│   ├── core/          # 数据库、配置、会话锁、鉴权逻辑
+│   ├── routers/       # 聊天、会话、角色卡管理及系统 API
+│   ├── services/      # 聊天生成、RAG 记忆、世界书匹配、认知更新服务
+│   └── README.md      # 后端专属详细技术设计与接口文档
 └── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript + UnoCSS)
+    ├── src/
+    │   ├── pages/     # 首页、聊天页、角色卡管理页、高级设置页
+    │   ├── components/# 通用动态 UI 组件
+    │   ├── store/     # Pinia 全局状态与会话管理
+    │   └── api/       # API 客户端与网络拦截器
+    └── API_TABLE.md   # 前端对接后端详细 API 数据模型参考
 ```
 
 ---
 
-## 系统架构图 (System Architecture)
+## 🏗️ 全栈系统架构图
 
 ```mermaid
 graph TD
     %% Frontend Group
-    subgraph Frontend [app-frontend: Vue 3 / UniApp / TS]
-        UI[User Interface & Dialog Views]
-        EC[Dynamic Emotion Canvas / Diff Expressions]
-        LS[Local Storage / Runtime API Config]
+    subgraph Frontend [app-frontend: Vue 3 / UniApp]
+        UI[聊天与角色管理界面]
+        EC[动态情感与差分表情 Canvas]
+        SS[高级参数折叠设置面板]
+        LS[本地持久化 API 缓存层]
     end
 
     %% Backend Group
     subgraph Backend [app-backend: FastAPI Core Engine]
-        API[FastAPI Router Endpoints]
-        PNG[Zero-Dependency SillyTavern V2 Parser]
-        SSE[SSE Stream / Inline JSON Parser]
-        BG[Asynchronous Background Tasks]
+        API[FastAPI 核心路由器]
+        LOCK[会话级 asyncio.Lock 锁]
+        SSE[SSE 异步流式生成器]
+        LRE[Aho-Corasick 世界书引擎]
+        BG[后台异步记忆提取任务]
     end
 
     %% Storage Group
-    subgraph Storage [Data Layer]
-        DB[(SQLAlchemy SQLite: Sessions, Messages, Personas)]
-        VDB[(ChromaDB Vector: Long-term Memories)]
+    subgraph Storage [持久化存储层]
+        DB[(SQLAlchemy SQLite WAL: 会话与消息树)]
+        VDB[(ChromaDB: 长期记忆向量隔离库)]
     end
 
     %% LLM Group
-    LLM[OpenAI / LLM API Provider]
+    LLM[OpenAI 兼容大模型 / 嵌入接口]
 
     %% Relationships
-    UI -->|HTTP / SSE Streaming| API
-    PNG -->|Card parsing| API
-    API -->|Read/Write Session Trees| DB
-    API -->|RAG Vector Query| VDB
-    API -->|Inference request| LLM
-    SSE -->|Stream partial extraction| UI
-    BG -->|Asynchronous Memory extraction| DB
-    BG -->|Cognitive State compilation| VDB
+    UI -->|HTTP / SSE 流| API
+    UI -->|运行时 API 热重定向| LS
+    API -->|并发保护/时序写安全| LOCK
+    API -->|递归 SQL 查询会话树| DB
+    API -->|RAG 余弦/时间/重要性检索| VDB
+    API -->|Prompt Caching 友好提示词| LLM
+    SSE -->|流式 Token 提取并解析| UI
+    BG -->|手动/自动触发记忆提纯| DB
+    BG -->|异步凝结自我认知| VDB
+    LRE -->|高并发世界书扫描| API
 ```
 
 ---
 
-## 核心产品特性
+## 核心全栈产品特性
 
-1. **动态情感与差分表情包渲染 (Dynamic Emotion Canvas)**
-   - 后端在生成文本的同时，通过大模型自动输出精准的中文 `emotion_tag`（如：开心、生气、平静、害羞等）与好感度增减 `affection_change`。
-   - 前端动态监听情感标签，进行差分表情包的平滑切换与预加载，角色神情随对话语境实时变化，无白屏闪烁。
+### 1. 动态情感与差分表情渲染 (Dynamic Emotion Canvas)
+* **智能情感分析**：后端在生成回复文本时，通过大模型自动输出精准的中文情感标签 `emotion_tag`（如：开心、害羞、生气、平静等）及好感度增减 `affection_change`。
+* **平滑表情过渡**：前端实时监听情感标签，进行差分表情包的无白屏闪烁平滑切换与预加载。角色的神情随对话语境实时流转，好感度分数实时落库并反馈在 UI 状态条中。
+* **状态回滚安全链**：当用户在前端手动删除某条 AI 回复消息时，后端自动逆向回滚对应的好感度分数及角色心情，确保角色情感状态与对话历史的逻辑闭环。
 
-2. **长期与短期记忆双轨引擎 (Hybrid Memory Engine)**
-   - **短期记忆**：基于 **SQLite** (`SQLAlchemy`) 存储关系型对话上下文。
-   - **长期记忆 (RAG)**：基于 **ChromaDB** 向量数据库，在发送对话时，自动切片并匹配背景设定中相关性最高的人设片段。
-   - **记忆提纯**：支持会话级自动/手动触发“记忆提纯”（Memory Compaction），将聊天中产生的核心事件凝结为长期记忆持久化存储。
-   - **微认知系统**：实时追踪角色对用户的关系变化，提炼并动态更新角色对用户的独特“认知状态”（Cognition State）。
+### 2. 长期与短期记忆双轨检索引擎 (Hybrid Memory Engine)
+* **关系型短期上下文**：基于 SQLite WAL 关系型数据库存储最新对话，配合高缓存命中设计。
+* **隔离型长期记忆 (RAG)**：基于 ChromaDB 向量数据库，为每个角色卡隔离存储记忆分片。在发送对话时，自动切片并匹配相关性最高的人设片段。
+* **混合打分算法**：检索排序采用多维打分策略：**余弦相似度（60%）+ 记忆重要性评级（20%）+ 时间半衰期衰减（20%）**。
+* **微观认知提纯系统**：会话满足条数阈值后自动/手动触发“记忆提纯（Compaction）”，由后台 LLM 提凝聊天核心事实并持久化；基于高重要性记忆，自动迭代更新角色对用户的独特“认知状态（Cognition State）”，实现长期深度的性格演化。
 
-3. **分支会话继承与级联安全链**
-   - 玩家可以在对话的任意一处拉出一条平行时空“子分支会话”，完美继承父会话的历史消息。
-   - 提供安全的级联重连算法：当父会话被删除时，子会话会自动向上重新链接到更上一级的祖先会话，保证聊天时间线和引用关系的绝对完整。
+### 3. 多分支会话继承与级联安全链 (Session Tree)
+* **平行宇宙分叉**：用户可以从对话树的任意节点 fork 出新的“子分支会话”，完美继承父会话的历史消息、好感度、心情及认知状态。
+* **级联重连保护**：当某个父会话被物理删除时，系统自动执行级联向上重连算法，将所有子会话挂载至更上一级的祖先会话，确保聊天链与 RAG 跨代检索的绝对完整。
 
-4. **开箱即用：局域网零配自动寻址与排错 (LAN Discovery Tool)**
-   - 后端启动时会自动探测当前主机在局域网内所有活跃网卡的 IPv4 地址（排除本地回环）。
-   - 在控制台中以高可读性的 ASCII 横幅格式打印所有可用的局域网 IP，并附带针对手机联调的详细防火墙和网络配置排错指引，彻底解决联调部署时手机端因输入错 IP 而连不上后端的痛点。
+### 4. 渐进式折叠参数控制面板 (Collapsible Settings Panel)
+* **13 项全量参数同步**：前端设置页面完美映射了后端的全套大模型及 RAG 算法参数（包括 `temperature`、`max_tokens`、时间半衰期 `retrieval_half_life_turns`、候选池放大倍率 `retrieval_candidate_multiplier` 等）。
+* **渐进式视觉隐藏**：为防止复杂算法干扰普通用户，仅默认外露 4 项基础参数。其他 9 项高阶底层参数收纳于精心设计的虚线边框折叠胶囊按钮内，辅以 180° 旋转箭头指示器和灵动的点按动效，带来极佳的微交互反馈。所有更改通过 API 热更新并同步保存到后端的 `config.yaml`。
 
-5. **渐进式高级配置与折叠式参数面板 (Collapsible Advanced Settings)**
-   - 前端设置页面已完美同步后端全部 13 项 AI 对话生成与记忆检索参数，新增支持最大输出 Token 数 (`max_tokens`)、时间衰减半衰期 (`retrieval_half_life_turns`) 以及检索候选池放大倍率 (`retrieval_candidate_multiplier`) 的前端动态修改与持久化落库。
-   - **高可读性与精美 UI 反馈**：为了防止复杂的算法参数干扰普通用户，默认在“AI 引擎参数”卡片中仅展示 4 项最基础的配置。下方采用精心设计的虚线边框折叠胶囊按钮（`.advanced-toggle-btn`），将 9 项高阶底层参数优雅隐藏。折叠状态下有清晰的灰色辅助标签提示所包含的项目，并配合 180 度旋转箭头指示器和精细的点按动效，带来极佳的交互体验。
+### 5. 无碰撞抗抖动自适应置底滚动引擎 (Robust Chat Scroller)
+针对 UniApp/HTML5 容器中高频流式输出与动态高度渲染可能导致的滚动回弹、未完全触底等顽固痛点，前端实现了多重物理锁机制：
+* **初始化滚动锁 (Initialization Lock)**：引入 `isInitLoading` 锁定，屏蔽初始历史消息加载引发的多次重复置底竞争。
+* **动画冲突避让**：在流式打字输出期间，自动关闭滚动过渡动画（`scrollWithAnimation = false`）以规避原生渲染动画冲突；发送消息或流式结束时自动恢复弹性缓动动画。
+* **渲染延迟补偿与像素微调**：采用 `80ms` 延迟，为 DOM 渲染新高度预留空隙。同时使用 `999999 - Math.random()` 随机微调机制强力唤醒 Vue 的属性监听器，实现 100% 稳定的绝对置底滚动。
 
-6. **无碰撞抗抖动自适应置底滚动引擎 (Robust Chat Scroller)**
-   - 彻底解决 UniApp/HTML5 容器中高频流式输出与动态高度渲染可能导致的滚动回弹、未完全触底等顽固痛点：
-     - **初始化滚动锁 (Initialization Lock)**：引入 `isInitLoading` 状态锁定，屏蔽初始历史消息加载和状态变更引发的多路重叠滚动竞争，确保进入页面时平滑、无抖动地瞬间单次置底。
-     - **动画冲突避让**：在流式打字输出高频节流更新期间，自动关闭滚动过渡动画（`scrollWithAnimation = false`）以规避原生渲染动画冲突；在发送消息或流式结束时自动恢复弹性缓动动画。
-     - **布局计算补偿延迟与随机微调**：在 `scrollToBottom` 中增加 `80ms` 延迟，给渲染引擎留出计算 DOM 新高度的空隙。同时采用 `999999 - Math.random()` 随机微调机制，强力唤醒 Vue 的属性变化监听器，实现 100% 稳定的绝对置底滚动。
-
----
-
-## 后端核心技术特性 (app-backend)
-
-后端作为本系统的“智能大脑”，在服务架构、提示词工程、高并发安全、及长期检索（RAG）管道上实现了如下关键工程优化：
-
-1. **缓存友好型提示词引擎 (Prompt Caching & Alternating Roles)**
-   - **纯静态设定分离**：重构提示词拼接逻辑，将核心人物卡设定、输出范式及对话示例等**静态数据**放入主 `system_prompt` 中，最大化激活各大 API 服务商的 Prompt Caching，大幅降低延迟与消耗。
-   - **动态 XML 闭包装箱**：将自我认知状态、RAG 召回记忆等**高动态上下文**使用 `<thought>` / `<memories>` / `<lorebook>` 等 XML 闭包标签包裹，注入到最新一条 `user` 消息的尾端，实现动静内容完美分离。
-2. **异步线程安全会话锁 (Session Lock)**
-   - 引入全局并发锁与 30s 获取超时机制。针对流式接口 `/chat/stream`，实现了**锁的延迟释放机制**（将锁释放绑定到 SSE 异步生成器的 `finally` 块中），彻底杜绝由于多客户端请求竞态导致的历史消息写入乱序或覆盖。
-3. **自愈式向量维度自动对齐 (Embedding Dimension Self-healing)**
-   - 在 Embedding 管道中引入维度探测与静态缓存，当检测到第三方嵌入 API 暂时故障或 Collection 切换时，可动态自愈并以准确维度对齐的零向量进行 Fallback，根治了 ChromaDB 报错崩溃问题。
-4. **服务层 Facade 外观模式拆分**
-   - 将臃肿的数据处理解耦为独立的世界书扫描引擎 (`lorebook_engine.py`)、会话级联重连逻辑 (`session_service.py`) 及微观认知总结服务 (`cognition_service.py`)，由 `MemoryManager` 外观层统一协调，确保 100% 向后兼容。
-5. **零依赖 ST Card V2 角色卡解析**
-   - 支持原生 PNG 角色卡解析，自主提取 `tEXt` / `zTXt` / `iTXt` 数据块内容，自动过滤并清洗 HTML 标签为 Markdown，减少上下文开销并防范注入风险。
+### 6. 开箱即用：局域网零配自动寻址与排错 (LAN Discovery Tool)
+* **多网卡自动探针**：后端启动时会自动探测当前主机在局域网内所有活跃网卡的 IPv4 地址（排除本地回环）。
+* **高可读性 ASCII 横幅**：在控制台中以高亮横幅打印所有可用的局域网 IP，并附带针对手机联调的详细防火墙和网络配置排错指引，彻底解决联调部署时手机端因输入错 IP 而连不上后端的痛点。
+* **运行时动态重定向**：前端设置页支持一键填写“后端 API 地址”，该配置直接写入持久化缓存 `uni.setStorageSync` 中。所有后续网络请求和流式 SSE 自动切换为新地址，零代码修改即可进行手机真机局域网部署。
 
 ---
 
-## 后端服务部署 (app-backend)
+## 后端服务详解 (app-backend)
 
-后端采用 FastAPI 框架，底层数据库集成 SQLite 与 ChromaDB 向量检索。
+后端基于 FastAPI 提供高性能异步网络服务，底层结合 SQLite WAL 模式与 ChromaDB 向量数据库。
 
-### 1. 环境依赖准备
-* 系统要求：Windows / macOS / Linux
-* 运行环境：Python 3.10 及以上版本
+### 1. 核心技术优势
+* **Prompt Caching 友好设计**：核心人物卡设定、输出范式及对话示例等**静态数据**放入主 `system_prompt` 中，最大化激活各大 API 服务商的 Prompt Caching 机制，大幅降低高额 Token 消耗。动态上下文（微观认知、RAG 记忆、世界书等）使用标准的 XML 闭包包裹，动态追加至最新一轮 `user` 消息的尾端。
+* **异步线程安全会话锁**：引入全局并发锁与获取超时机制。针对流式接口 `/chat/stream`，实现了**锁的延迟释放机制**（将锁释放绑定到 SSE 异步生成器的 `finally` 块中），彻底杜绝由于多客户端请求竞态导致的历史消息写入乱序或覆盖。
+* **自愈式向量维度自动对齐**：在 Embedding 管道中引入维度探测与静态缓存，当检测到第三方嵌入 API 暂时故障时，可动态自愈并以准确维度对齐的零向量进行 Fallback，根治了 ChromaDB 报错崩溃问题。
+* **Aho-Corasick 世界书引擎**：世界书扫描使用高效的多模式匹配自动机（Aho-Corasick），支持常驻/选择性匹配，设定可根据最近会话按 Token 预算限制自动深度迭代触发。
 
-### 2. 快速启动指南
-```bash
-# 1. 进入后端根目录
-cd app-backend
+### 2. 快速部署 (app-backend)
+1. **安装环境依赖**（推荐 Python 3.10+）：
+   ```bash
+   cd app-backend
+   python -m venv venv
+   # Windows 激活虚拟环境
+   venv\Scripts\activate
+   # macOS/Linux 激活虚拟环境
+   source venv/bin/activate
 
-# 2. 创建并激活虚拟环境 (以Windows为例)
-python -m venv venv
-venv\Scripts\activate
-
-# 3. 安装依赖包
-pip install -r requirements.txt
-
-# 4. 配置环境变量与参数
-# 复制或编辑 .env 文件，填写你的大模型 API_KEY 
-# 编辑 config.yaml 配置模型名称、嵌入模型及 RAG 检索参数
-
-# 5. 启动服务 (自动监听全网口，提供局域网外部设备访问)
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-### 3. 部署控制台输出效果
-后端成功启动后，将自动呈现以下指引横幅，部署者可直接将局域网 IP 填入前端进行真机联调试玩：
-```text
-================================================================================
- [OK] AI Roleplay Backend 已成功启动并就绪！
-================================================================================
- 1. 本地开发调试地址 (当前机器访问):
-    -> http://127.0.0.1:8000
-
- 2. 局域网访问地址 (同一 Wi-Fi 或局域网内的手机/其他设备访问):
-    -> http://192.168.1.105:8000
-    -> http://10.0.0.12:8000
-
- * 使用提示：
-    - 如果在手机 App/小程序中连接此后端，请在设置中输入上述任意一个局域网地址。
-    - 确保手机与运行本后端的电脑连接在【同一个 Wi-Fi】下。
-    - 若连接失败，请检查电脑防火墙是否允许 8000 端口入站流量。
-================================================================================
-```
+   pip install -r requirements.txt
+   ```
+2. **配置环境变量**：
+   在 `app-backend/` 目录下创建 `.env` 文件：
+   ```dotenv
+   CHAT_API_KEY=sk-xxxxxxxxxxxxxxxx       # 对话模型 API 密钥
+   EMBEDDING_API_KEY=sk-xxxxxxxxxxxxxxxx  # 向量模型 API 密钥
+   ACCESS_API_KEY=                        # 公网访问保护密钥（本地开发留空即可）
+   ```
+3. **调整模型与运行参数**：
+   修改 `app-backend/config.yaml`，配置模型服务商 Base URL、模型名称及默认的 LLM 请求超时（`timeout: 60`）。
+4. **启动服务**：
+   ```bash
+   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   ```
 
 ---
 
@@ -159,55 +145,67 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 前端基于 Vue 3 + Vite + TypeScript + UniApp + Pinia 架构，支持编译为小程序、Android APK、iOS App 以及 H5 网页。
 
-### 1. 开发调试
-```bash
-# 1. 进入前端根目录
-cd app-frontend
-
-# 2. 安装项目依赖
-npm install
-
-# 3. 运行本地开发服务器 (以编译至H5端为例)
-npm run dev
-```
-
-### 2. 配置后端连接
-项目预留了灵活的后端寻址设置：
-* **开发环境默认值**：在开发阶段，前端会自动读取 `import.meta.env.VITE_API_BASE_URL` 或回退至 `http://127.0.0.1:8000`。
-* **运行时动态修改**：在应用内的 **设置页面**，用户可以直接修改 **后端 API Base URL**，该配置会即时通过 `uni.setStorageSync` 写入持久化缓存中，所有后续网络请求（`request`）都会自动切换为新地址，非常适合真机局域网部署与切换。
+### 1. 开发与调试
+1. **安装项目依赖**：
+   ```bash
+   cd app-frontend
+   npm install
+   ```
+2. **启动本地 H5 开发服务器**：
+   ```bash
+   npm run dev:h5
+   ```
+3. **构建多端包（以 H5 / 微信小程序为例）**：
+   ```bash
+   # 构建 H5 静态资源
+   npm run build:h5
+   # 构建微信小程序包
+   npm run build:mp-weixin
+   ```
 
 ---
 
-## 自动化测试验证 (Backend Tests)
+## 局域网真机极速部署与联调指引 (极重要)
 
-后端提供了多套自动化与集成测试脚本，用以保障核心记忆管道和 API 会话树的演进正确性。在 `app-backend` 目录下，您可以激活虚拟环境后运行：
+当在真实手机、Pad 或另一台局域网电脑上测试时，如果无法与后端建立连接，请依次进行如下排查：
+
+1. **统一局域网检查**：请确保您的手机/测试设备连接的 Wi-Fi 与启动后端的电脑处于同一路由子网下。
+2. **Windows 防火墙放行**：
+   默认情况下，Windows 防火墙可能会拦截未授权的 8000 端口入站流量。
+   * **解决方法**：打开 `控制面板 -> 系统和安全 -> Windows Defender 防火墙 -> 高级设置 -> 入站规则`，新建一条规则放行 **TCP 协议 8000 端口**，或者允许运行后端的 `python.exe` 进程穿越防火墙。
+3. **获取局域网 IP**：
+   启动后端时，控制台将高亮输出局域网网卡 IP（例如：`http://192.168.1.105:8000`）。
+4. **前端一键绑定**：
+   进入前端 App，在“设置”页面中直接将该局域网 IP 填入 **后端 API Base URL** 栏，点击保存。前端将自动热重定向所有网络通信和流式传输（SSE），免去繁琐的重新打包过程。
+5. **HTTPS 混合内容安全限制限制**：
+   如果您把前端打包为了 H5 网页并部署在带有 HTTPS 的域名上，此时浏览器会出于安全策略拦截向局域网 HTTP 后端发起的明文请求。推荐使用**手机 App/微信小程序调试**，或者在浏览器安全选项中临时勾选“允许混合内容”。
+
+---
+
+## 自动化测试验证
+
+后端提供了多套自动化与集成测试脚本，用以保障核心逻辑在频繁重构中的演进正确性。在 `app-backend` 目录下，运行以下指令：
 
 1. **世界书独立单元测试**：
    ```bash
    python test_lorebook.py
    ```
-   - 验证常驻触发、selective 模糊匹配、递归唤醒以及 Token 预算等预算截断规则。
+   *验证关键词自动机匹配、selective 模糊匹配、递归唤醒以及 Token 预算截断逻辑。*
 2. **记忆提纯与 RAG 闭环验证**：
    ```bash
    python test_closed_loop_memory.py
    ```
-   - 模拟完整写入事实 $\rightarrow$ 触发记忆总结归档 $\rightarrow$ 校验 ChromaDB 召回及发问回传，验证混合检索精排打分。
+   *模拟完整写入事实 $\rightarrow$ 后台触发记忆总结归档 $\rightarrow$ 校验 ChromaDB 召回及发问回传，验证混合检索精排打分。*
 3. **API 全流程继承测试**：
    ```bash
    python test_api.py
    ```
-   - 涵盖从角色创建、会话新建、流式对话、分支宇宙（会话树继承）到父会话删除级联重连的所有业务流。
+   *涵盖从角色创建、会话新建、流式对话、分支宇宙（会话树继承）到父会话删除级联重连的所有业务流。*
 
 ---
 
-## 网络与防火墙排错指引（极重要）
+## 网络安全与部署说明
 
-当在真实手机、Pad 或另一台局域网电脑上测试时，如果无法与后端建立连接，请依次进行如下排查：
-
-1. **统一局域网检查**：请确保手机所连接的 Wi-Fi 与启动后端的电脑处于同一子网。
-2. **Windows 防火墙入站规则放行**：
-   - 默认情况下，Windows 防火墙可能会拦截未授权的 8000 端口外部入站流量。
-   - **解决方法**：打开 `控制面板 -> 系统和安全 -> Windows Defender 防火墙 -> 高级设置 -> 入站规则`，新建一条规则放行 **TCP 协议 8000 端口**，或者允许 `python.exe` 穿越防火墙。
-3. **混合内容安全限制（HTTPS H5 专属）**：
-   - 如果您把前端打包为了 H5 网页并部署在带有 HTTPS 的域名上，此时浏览器会出于安全策略拦截向局域网 HTTP 后端（`http://192.168.x.x:8000`）发起的明文请求。
-   - **解决方法**：推荐使用手机 App/微信小程序调试，或者在浏览器安全选项中为您的测试网站临时勾选“允许混合内容”。
+* **私有部署设计**：本项目数据库未做多租户物理隔离，旨在为用户提供**极致的单人私有化角色扮演体验**。如需公网部署，请务必在 `.env` 中配置强密钥 `ACCESS_API_KEY`，或在架构前部套一层反向代理（如 Nginx + SSL + Auth）。
+* **头像文件重命名规则**：为了防止同名头像或角色卡文件被覆盖，上传的文件名会自动加 UUID 唯一前缀，原始文件名保留在后缀（如 `uuid8_character_name.png`），并存放在 `app-backend/assets/avatars/` 下。
+* **ChromaDB 与 SQLite 备份**：ChromaDB 向量数据位于 `app-backend/chroma_data/`，SQLite 关系型数据位于 `app-backend/data.db`，备份或迁移时请将两个目录/文件一并保存。
