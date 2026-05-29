@@ -52,6 +52,57 @@ def process_lorebook(
     scan_text = "\n".join(scan_parts)
     
     # 4. 条目触发匹配 (支持递归扫描)
+    # 4. 构建 Aho-Corasick 自动机 (仅构建一次以取得最优匹配性能)
+    from services.ahocorasick import AhoCorasick
+    
+    ac_insensitive = AhoCorasick()
+    ac_sensitive = AhoCorasick()
+    
+    has_insensitive = False
+    has_sensitive = False
+    
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict) or not entry.get("enabled", True):
+            continue
+        # 常驻条目不需要加入自动机，会在扫描时直接触发
+        if bool(entry.get("constant", False)):
+            continue
+            
+        case_sensitive = bool(entry.get("case_sensitive", False))
+        
+        # 提取 Keys 与 Secondary Keys
+        keys = entry.get("keys", [])
+        if not isinstance(keys, list):
+            keys = [keys] if keys else []
+        secondary_keys = entry.get("secondary_keys", [])
+        if not isinstance(secondary_keys, list):
+            secondary_keys = [secondary_keys] if secondary_keys else []
+            
+        if case_sensitive:
+            for k in keys:
+                if k:
+                    ac_sensitive.add_keyword(str(k), (idx, "primary"))
+                    has_sensitive = True
+            for sk in secondary_keys:
+                if sk:
+                    ac_sensitive.add_keyword(str(sk), (idx, "secondary"))
+                    has_sensitive = True
+        else:
+            for k in keys:
+                if k:
+                    ac_insensitive.add_keyword(str(k).lower(), (idx, "primary"))
+                    has_insensitive = True
+            for sk in secondary_keys:
+                if sk:
+                    ac_insensitive.add_keyword(str(sk).lower(), (idx, "secondary"))
+                    has_insensitive = True
+                    
+    if has_insensitive:
+        ac_insensitive.make_automaton()
+    if has_sensitive:
+        ac_sensitive.make_automaton()
+        
+    # 5. 条目触发匹配 (支持递归扫描)
     max_passes = settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES if recursive_scanning else 1
     triggered_indexes = set()
     triggered_entries = []
@@ -59,49 +110,74 @@ def process_lorebook(
     current_scan_text = scan_text
     
     for _ in range(max_passes):
+        # Bug5修复：将 constant 条目的触发和关键词匹配的触发分离记录。
+        # new_trigger_added 仅跟踪"是否有新关键词命中"，不受 constant 常驻触发影响，
+        # 从而当只有常驻条目被识别时能尽早退出循环
         new_trigger_added = False
+        
+        # 首先：触发所有尚未触发的常驻条目 (Constant)
         for idx, entry in enumerate(entries):
             if idx in triggered_indexes:
                 continue
-                
-            if not isinstance(entry, dict):
+            if not isinstance(entry, dict) or not entry.get("enabled", True):
                 continue
-                
-            if not entry.get("enabled", True):
-                continue
-                
-            constant = bool(entry.get("constant", False))
-            if constant:
+            if bool(entry.get("constant", False)):
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
-                new_trigger_added = True
+                # 常驻条目不更新 new_trigger_added，不干扰循环提前退出的判断
                 content = entry.get("content", "")
                 if content:
                     current_scan_text += "\n" + content
+        
+        # 记录本轮搜索中匹配到的关键词
+        matched_primaries = {}
+        matched_secondaries = {}
+        
+        # 匹配不区分大小写的关键词
+        if has_insensitive:
+            text_lower = current_scan_text.lower()
+            for start, end, key, value in ac_insensitive.search_all(text_lower):
+                idx, key_type = value
+                if idx in triggered_indexes:
+                    continue
+                if key_type == "primary":
+                    matched_primaries.setdefault(idx, set()).add(key)
+                else:
+                    matched_secondaries.setdefault(idx, set()).add(key)
+                    
+        # 匹配区分大小写的关键词
+        if has_sensitive:
+            for start, end, key, value in ac_sensitive.search_all(current_scan_text):
+                idx, key_type = value
+                if idx in triggered_indexes:
+                    continue
+                if key_type == "primary":
+                    matched_primaries.setdefault(idx, set()).add(key)
+                else:
+                    matched_secondaries.setdefault(idx, set()).add(key)
+                    
+        # 评估触发条件
+        for idx in (set(matched_primaries.keys()) | set(matched_secondaries.keys())):
+            if idx in triggered_indexes:
                 continue
                 
-            keys = entry.get("keys", [])
-            secondary_keys = entry.get("secondary_keys", [])
+            entry = entries[idx]
             selective = bool(entry.get("selective", False))
-            case_sensitive = bool(entry.get("case_sensitive", False))
             
+            keys = entry.get("keys", [])
             if not isinstance(keys, list):
                 keys = [keys] if keys else []
+            has_primary_keys = any(k for k in keys if k)
+            
+            secondary_keys = entry.get("secondary_keys", [])
             if not isinstance(secondary_keys, list):
                 secondary_keys = [secondary_keys] if secondary_keys else []
-                
-            if not case_sensitive:
-                text_to_search = current_scan_text.lower()
-                keys_to_search = [str(k).lower() for k in keys if k]
-                secondary_keys_to_search = [str(k).lower() for k in secondary_keys if k]
-            else:
-                text_to_search = current_scan_text
-                keys_to_search = [str(k) for k in keys if k]
-                secondary_keys_to_search = [str(k) for k in secondary_keys if k]
-                
-            primary_matched = any(k in text_to_search for k in keys_to_search) if keys_to_search else False
+            has_secondary_keys = any(sk for sk in secondary_keys if sk)
+            
+            primary_matched = (idx in matched_primaries) if has_primary_keys else False
+            
             if selective:
-                secondary_matched = any(k in text_to_search for k in secondary_keys_to_search) if secondary_keys_to_search else False
+                secondary_matched = (idx in matched_secondaries) if has_secondary_keys else False
                 matched = primary_matched and secondary_matched
             else:
                 matched = primary_matched
@@ -109,7 +185,7 @@ def process_lorebook(
             if matched:
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
-                new_trigger_added = True
+                new_trigger_added = True  # 关键词命中才设为 True
                 content = entry.get("content", "")
                 if content:
                     current_scan_text += "\n" + content
