@@ -15,6 +15,8 @@ export interface ChatResponse {
   affection_change: number;
   affection_score: number;
   model_used?: string;
+  user_message_id?: number;
+  assistant_message_id?: number;
 }
 
 // ===================== API 接口函数 =====================
