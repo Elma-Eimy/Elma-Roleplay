@@ -7,6 +7,7 @@ from schemas import CharacterCreate
 import json
 import os
 import shutil
+import uuid
 
 router = APIRouter()
 
@@ -46,7 +47,9 @@ def parse_character(file: UploadFile = File(...)):
         filename = os.path.basename(file.filename or "card.png")
         if not filename:
             filename = "card.png"
-        file_path = os.path.join(UPLOAD_DIR, filename)
+        # 加 UUID 短码前缀，防止同名角色卡相互覆盖
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
