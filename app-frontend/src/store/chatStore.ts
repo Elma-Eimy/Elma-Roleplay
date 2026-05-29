@@ -148,7 +148,7 @@ export const useChatStore = defineStore("chat", () => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
         (meta) => {
-          const finalId = Date.now();
+          const finalId = (meta as any).assistant_message_id || Date.now();
           finalizeStream(streamPlaceholderId, {
             id: finalId,
             role: "assistant",
@@ -199,7 +199,7 @@ export const useChatStore = defineStore("chat", () => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
         (meta) => {
-          const finalId = Date.now();
+          const finalId = (meta as any).assistant_message_id || Date.now();
           finalizeStream(streamPlaceholderId, {
             id: finalId,
             role: "assistant",
@@ -214,6 +214,9 @@ export const useChatStore = defineStore("chat", () => {
           const userIdx = messages.value.findIndex((m) => m.tempId === tempId);
           if (userIdx !== -1) {
             messages.value[userIdx].status = "done";
+            if ((meta as any).user_message_id) {
+              messages.value[userIdx].id = (meta as any).user_message_id;
+            }
           }
 
           // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
