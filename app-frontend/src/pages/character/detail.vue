@@ -42,34 +42,33 @@
           </view>
         </view>
 
-        <!-- 角色背景描述卡片 -->
-        <view class="section-card">
-          <text class="section-title">人设背景描述</text>
-          <scroll-view scroll-y class="section-scroll-container">
-            <rich-text class="section-body" :nodes="renderedDescription" />
-          </scroll-view>
+        <!-- 页签导航栏 -->
+        <view class="tabs-nav">
+          <view 
+            class="tab-item" 
+            :class="{ 'is-active': activeTab === 'sessions' }"
+            @tap="activeTab = 'sessions'"
+          >
+            <text class="tab-label">故事宇宙 ({{ sessions.length }})</text>
+          </view>
+          <view 
+            class="tab-item" 
+            :class="{ 'is-active': activeTab === 'profile' }"
+            @tap="activeTab = 'profile'"
+          >
+            <text class="tab-label">人设细节</text>
+          </view>
+          <view 
+            class="tab-item" 
+            :class="{ 'is-active': activeTab === 'lorebook' }"
+            @tap="activeTab = 'lorebook'"
+          >
+            <text class="tab-label">专属世界书 ({{ lorebookEntries.length }})</text>
+          </view>
         </view>
 
-        <view class="section-card" v-if="character.scenario">
-          <text class="section-title">所处场景环境</text>
-          <scroll-view scroll-y class="section-scroll-container">
-            <rich-text class="section-body" :nodes="renderedScenario" />
-          </scroll-view>
-        </view>
-
-        <view class="section-card" v-if="character.first_mes">
-          <text class="section-title">开场白预设</text>
-          <scroll-view scroll-y class="section-scroll-container">
-            <rich-text class="section-body italic" :nodes="renderedFirstMes" />
-          </scroll-view>
-        </view>
-
-        <!-- 多重平行故事宇宙（衍生会话分支） -->
-        <view class="branches-header">
-          <text class="branches-title">衍生故事宇宙 (平行世界)</text>
-        </view>
-
-        <view class="branches-list">
+        <!-- Tab 1: 故事宇宙分支列表 -->
+        <view v-if="activeTab === 'sessions'" class="branches-list">
           <view 
             class="branch-card" 
             v-for="session in sessions" 
@@ -105,6 +104,61 @@
             <text class="empty-branches-text">尚未开启任何故事宇宙。点击下方开启平行世界。</text>
           </view>
         </view>
+
+        <!-- Tab 2: 人设细节卡片 -->
+        <view v-if="activeTab === 'profile'" class="profile-details-section">
+          <!-- 角色背景描述卡片 -->
+          <view class="section-card">
+            <text class="section-title">人设背景描述</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body" :nodes="renderedDescription" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.scenario">
+            <text class="section-title">所处场景环境</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body" :nodes="renderedScenario" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.first_mes">
+            <text class="section-title">开场白预设</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body italic" :nodes="renderedFirstMes" />
+            </scroll-view>
+          </view>
+        </view>
+
+        <!-- Tab 3: 专属世界书列表 -->
+        <view v-if="activeTab === 'lorebook'" class="lorebook-section">
+          <view class="lore-grid" v-if="lorebookEntries.length > 0">
+            <view 
+              class="lore-card" 
+              v-for="(entry, index) in lorebookEntries" 
+              :key="index"
+            >
+              <view class="lore-card-header">
+                <view class="lore-key-row">
+                  <text class="lore-tag" v-for="key in entry.keys" :key="key">{{ key }}</text>
+                </view>
+                <text class="lore-status-badge" :class="{ 'constant': entry.constant }">
+                  {{ entry.constant ? '常驻' : '条件触发' }}
+                </text>
+              </view>
+              <view class="lore-meta-row">
+                <text class="lore-meta-item">优先级: {{ entry.priority || 100 }}</text>
+                <text class="lore-meta-item" v-if="entry.secondary_keys && entry.secondary_keys.length > 0">
+                  联合过滤: {{ entry.secondary_keys.join(', ') }}
+                </text>
+              </view>
+              <text class="lore-content">{{ entry.content }}</text>
+            </view>
+          </view>
+          <view v-else class="empty-branches">
+            <text class="empty-branches-text">该角色卡尚未配置任何专属世界书条目。</text>
+          </view>
+        </view>
       </view>
     </scroll-view>
 
@@ -119,6 +173,7 @@
     <!-- 新建平行宇宙分支模态框 -->
     <NewSessionModal 
       v-model:isOpen="isNewBranchModalOpen" 
+      :alternateGreetings="(character?.extensions?.alternate_greetings as string[] | undefined)"
       @confirm="startNewBranch"
     />
 
@@ -159,6 +214,35 @@ const isNewBranchModalOpen = ref(false);
 const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
 const activeParentSessionId = ref<number | null>(null);
+const activeTab = ref<"sessions" | "profile" | "lorebook">("sessions");
+
+const lorebookEntries = computed(() => {
+  const entries: any[] = [];
+  const charBook = character.value?.extensions?.character_book as any;
+  if (charBook && Array.isArray(charBook.entries)) {
+    charBook.entries.forEach((e: any) => {
+      if (e && e.enabled !== false) {
+        let keys = e.keys;
+        if (!Array.isArray(keys)) {
+          keys = keys ? [keys] : [];
+        }
+        let secondaryKeys = e.secondary_keys;
+        if (!Array.isArray(secondaryKeys)) {
+          secondaryKeys = secondaryKeys ? [secondaryKeys] : [];
+        }
+        
+        entries.push({
+          keys: keys.filter(Boolean),
+          secondary_keys: secondaryKeys.filter(Boolean),
+          content: e.content || "",
+          constant: !!e.constant,
+          priority: e.priority
+        });
+      }
+    });
+  }
+  return entries;
+});
 
 const getParentSessionTitle = (parentId: number | null) => {
   if (!parentId) return "";
@@ -302,14 +386,15 @@ const openNewBranchModal = () => {
   isNewBranchModalOpen.value = true;
 };
 
-const startNewBranch = async (title: string) => {
+const startNewBranch = async (payload: { title: string; greeting_index: number | null }) => {
   if (characterId.value === null) return;
   try {
     uni.showLoading({ title: '正在开启故事...' });
     const res = await createSession({
       character_id: characterId.value,
       parent_session_id: activeParentSessionId.value,
-      title
+      title: payload.title,
+      greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
     uni.hideLoading();
     uni.navigateTo({
@@ -881,5 +966,128 @@ const formatDate = (dateString: string) => {
 }
 .action-icon-fallback {
   display: none;
+}
+
+/* ===== 页签导航 (Tabs Nav) ===== */
+.tabs-nav {
+  display: flex;
+  margin: 0 36rpx 28rpx 36rpx;
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.03);
+  border-radius: 20rpx;
+  padding: 6rpx;
+}
+
+.tab-item {
+  flex: 1;
+  padding: 16rpx 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16rpx;
+  transition: all 0.2s ease;
+}
+
+.tab-item.is-active {
+  background-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.tab-label {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #8e8e93;
+  transition: color 0.2s ease;
+}
+
+.tab-item.is-active .tab-label {
+  color: #1c1c1e;
+}
+
+/* ===== 专属世界书 (Lorebook Section) ===== */
+.lorebook-section {
+  padding: 0 36rpx;
+}
+
+.lore-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.lore-card {
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 24rpx;
+  padding: 28rpx;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.lore-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16rpx;
+}
+
+.lore-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  flex: 1;
+}
+
+.lore-tag {
+  font-size: 20rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+  background-color: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.02);
+  padding: 4rpx 14rpx;
+  border-radius: 40rpx;
+}
+
+.lore-status-badge {
+  font-size: 18rpx;
+  font-weight: 600;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background-color: rgba(230, 126, 34, 0.08);
+  color: #e67e22;
+  white-space: nowrap;
+}
+
+.lore-status-badge.constant {
+  background-color: rgba(46, 204, 113, 0.08);
+  color: #2ecc71;
+}
+
+.lore-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.lore-meta-item {
+  font-size: 18rpx;
+  font-weight: 500;
+  color: #8e8e93;
+  background-color: rgba(0, 0, 0, 0.01);
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.lore-content {
+  font-size: 24rpx;
+  color: #48484a;
+  line-height: 1.5;
+  background-color: rgba(0, 0, 0, 0.01);
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  border: 1px solid rgba(0, 0, 0, 0.01);
+  word-break: break-all;
 }
 </style>
