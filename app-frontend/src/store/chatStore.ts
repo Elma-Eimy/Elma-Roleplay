@@ -11,6 +11,7 @@ export type MessageStatus = "sending" | "streaming" | "done" | "error";
 export interface ChatMessage extends Message {
   status?: MessageStatus;
   tempId?: string; // Optimistic update ID before server confirms
+  clientId?: string; // Stable client-side unique ID for DOM rendering
 }
 
 export const useChatStore = defineStore("chat", () => {
@@ -78,11 +79,18 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 将历史消息记录加载至本地 store 中 */
   function setHistory(history: Message[]) {
-    messages.value = history.map((m) => ({ ...m, status: "done" }));
+    messages.value = history.map((m) => ({
+      ...m,
+      status: "done",
+      clientId: `msg-${m.id}`
+    }));
   }
 
   /** 在消息列表末尾追加一条新消息 */
   function appendMessage(message: ChatMessage) {
+    if (!message.clientId) {
+      message.clientId = message.id ? `msg-${message.id}` : `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    }
     messages.value.push(message);
   }
 
@@ -247,8 +255,10 @@ export const useChatStore = defineStore("chat", () => {
   /** 乐观更新：在服务器确认前立即向列表添加用户发送的消息 */
   function addOptimisticUserMessage(content: string): string {
     const tempId = `temp-${Date.now()}`;
+    const clientId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     messages.value.push({
       id: -Date.now(), // 使用负数 ID 与服务器返回的真实正数 ID 做区分
+      clientId,
       role: "user",
       content,
       emotion_tag: null,
@@ -263,8 +273,10 @@ export const useChatStore = defineStore("chat", () => {
   /** 乐观更新：向列表追加一条流式传输专用的 AI 占位消息 */
   function addStreamingPlaceholder(): string {
     const tempId = `stream-${Date.now()}`;
+    const clientId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     messages.value.push({
       id: -Date.now() - 1,
+      clientId,
       role: "assistant",
       content: "",
       emotion_tag: null,
