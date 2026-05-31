@@ -35,7 +35,7 @@
       <view class="chat-list-padding">
         <ChatBubble
           v-for="msg in chatStore.messages"
-          :key="msg.id || msg.tempId"
+          :key="msg.clientId || msg.id"
           :message="msg"
           :avatarUrl="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
           :characterName="personaStore.characterName"
@@ -581,7 +581,7 @@ const onLoadMore = () => {
   overflow: hidden;
 }
 
-/* 动态磨砂玻璃背景图层 */
+/* 动态角色立绘背景图层 */
 .chat-bg {
   position: absolute;
   top: 0;
@@ -590,10 +590,28 @@ const onLoadMore = () => {
   height: 100%;
   background-size: cover;
   background-position: center;
-  opacity: 0.08; /* 降低不透明度使其更为隐约透明 */
-  filter: blur(4rpx); /* 减少模糊半径以增加识别度，呈现更精致的半透效果 */
+  opacity: 0.16; /* 提高不透明度，使角色立绘轮廓清晰可见 */
+  filter: grayscale(8%) contrast(98%); /* 轻微黑白化与对比度调整，使其优雅融入背景 */
   pointer-events: none;
   z-index: 0;
+}
+
+/* 渐变遮罩：使立绘边缘自然过渡到网页/App的底色 (#fafafa) */
+.chat-bg::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    #fafafa 0%,
+    transparent 12%,
+    transparent 88%,
+    #fafafa 100%
+  );
+  pointer-events: none;
 }
 
 /* ===== 自定义导航栏头部 ===== */
