@@ -252,9 +252,9 @@ export async function sendMessageStream(
       });
     };
 
-    if (requestTask && typeof requestTask.onChunkReceived === "function") {
+    if (requestTask && typeof (requestTask as any).onChunkReceived === "function") {
       let buffer = "";
-      requestTask.onChunkReceived((res) => {
+      (requestTask as any).onChunkReceived((res: any) => {
         try {
           if (!res || !res.data) return;
           
