@@ -213,6 +213,9 @@ def _extract_v2_data(raw_data: dict) -> dict:
             alt_greetings.append(_html_to_markdown(g))
         else:
             alt_greetings.append(g)
+            
+    # 融合 alternate_greetings 到 extensions 以持久化存储
+    extensions["alternate_greetings"] = alt_greetings
 
     # 清洗 extensions 内的世界书 entries 的内容为 Markdown
     if 'character_book' in extensions and isinstance(extensions['character_book'], dict):

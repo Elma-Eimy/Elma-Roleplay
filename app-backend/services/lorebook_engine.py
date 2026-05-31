@@ -1,10 +1,11 @@
 import json
+from typing import Optional
 from core.config import settings
 
 def process_lorebook(
     character,
-    recent_history: list[dict] | None,
-    user_message: str | None
+    recent_history: Optional[list],
+    user_message: Optional[str]
 ) -> dict:
     """
     处理角色专属的世界书（Lorebook/CharacterBook）匹配与筛选。

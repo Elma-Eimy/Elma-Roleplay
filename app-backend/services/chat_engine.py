@@ -14,6 +14,7 @@ import json
 import re
 import chromadb
 import time
+from typing import Optional
 from openai import OpenAI, AsyncOpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
@@ -162,7 +163,7 @@ llm_client_async = AsyncOpenAI(
 # LLM_MODEL 保留为全局默认值（memory_manager 等内部调用的回退）
 LLM_MODEL = settings.ACTIVE_CHAT_MODEL
 
-def _resolve_model(use_reasoning: bool | None) -> str:
+def _resolve_model(use_reasoning: Optional[bool]) -> str:
     """
     根据请求参数决定本次调用使用哪个模型。
 
@@ -187,9 +188,9 @@ from services.lorebook_engine import process_lorebook
 def build_system_prompt(
     character,
     persona,
-    retrieved_memories: list[dict] | None = None,
-    recent_history: list[dict] | None = None,
-    user_message: str | None = None
+    retrieved_memories: Optional[list] = None,
+    recent_history: Optional[list] = None,
+    user_message: Optional[str] = None
 ) -> dict:
     """
     重构后：静态 System Prompt 组装。返回静态部分，并提取动态变量供 User Message 拼接。
@@ -478,11 +479,11 @@ def _extract_xml_block(text: str) -> dict:
 async def _build_chat_messages(
     character,
     persona,
-    recent_history: list[dict],
+    recent_history: list,
     user_message: str,
-    retrieved_memories: list[dict] | None = None,
+    retrieved_memories: Optional[list] = None,
     db=None,
-) -> list[dict]:
+) -> list:
     """
     组装 LLM 所需的完整 messages 列表（system + history + 动态上下文）。
 
@@ -604,11 +605,11 @@ async def _build_chat_messages(
 async def generate_reply(
     character,
     persona,
-    recent_history: list[dict],
+    recent_history: list,
     user_message: str,
-    retrieved_memories: list[dict] | None = None,
+    retrieved_memories: Optional[list] = None,
     db = None,
-    use_reasoning: bool | None = None,
+    use_reasoning: Optional[bool] = None,
 ) -> dict:
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
@@ -659,11 +660,11 @@ async def generate_reply(
 async def generate_reply_stream(
     character,
     persona,
-    recent_history: list[dict],
+    recent_history: list,
     user_message: str,
-    retrieved_memories: list[dict] | None = None,
+    retrieved_memories: Optional[list] = None,
     db = None,
-    use_reasoning: bool | None = None,
+    use_reasoning: Optional[bool] = None,
 ):
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。

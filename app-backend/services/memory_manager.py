@@ -16,6 +16,7 @@ ChromaDB 架构：
 import json
 import time
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core import models
 from core.models import MemoryChunk, SessionPersona, ChatMessage, MemoryType, Session
@@ -112,9 +113,9 @@ def _build_chroma_metadata(
     persona_id: int,
     memory_type: MemoryType,
     importance_score: float,
-    origin_session_id: int | None,
+    origin_session_id: Optional[int],
     created_at: datetime,
-    source_message_id: int | None
+    source_message_id: Optional[int]
 ) -> dict:
     """
     构建 ChromaDB metadata 字典，严格对齐 SQLite MemoryChunk 字段类型。
@@ -147,8 +148,8 @@ def add_memory_chunk(
     content: str,
     memory_type: MemoryType,
     importance_score: float,
-    origin_session_id: int | None,
-    source_message_id: int | None,
+    origin_session_id: Optional[int],
+    source_message_id: Optional[int],
     db: DBSession,
     auto_commit: bool = True
 ) -> MemoryChunk:
@@ -241,9 +242,9 @@ def retrieve_memories(
     character_id: int,
     query: str,
     db: DBSession,
-    top_k: int | None = None,
-    min_importance: float | None = None
-) -> list[dict]:
+    top_k: Optional[int] = None,
+    min_importance: Optional[float] = None
+) -> list:
     """
     跨继承链检索相关记忆。始终只需 1 次 ChromaDB 查询。
 

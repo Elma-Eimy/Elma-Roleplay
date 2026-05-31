@@ -3,6 +3,7 @@
 """
 
 import json
+from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core.models import SessionPersona, ChatMessage, MemoryType
 from services.chat_engine import llm_client
@@ -289,7 +290,7 @@ def get_cognition_unseen_count(persona_id: int, session_id: int, db: DBSession) 
     return query.count()
 
 
-def update_cognition_state(persona_id: int, db: DBSession) -> str | None:
+def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
     """
     调用 LLM 更新 SessionPersona.cognition_state（角色宏观认知摘要）。
 
