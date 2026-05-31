@@ -87,16 +87,71 @@ def create_session(request: SessionCreate, db: Session = Depends(get_db)):
 
     db.add(persona)
 
-    # 仅在非继承（全新）模式下，插入角色的 first_mes 作为第一条 AI 消息
-    if not request.parent_session_id and character.first_mes:
-        first_message = models.ChatMessage(
-            session_id=session.id,
-            role=MessageRole.assistant,
-            content=character.first_mes,
-            emotion_tag="平静",
-            affection_change=0,
-        )
-        db.add(first_message)
+    # 仅在非继承（全新）模式下，插入第一条 AI 消息作为开场白
+    if not request.parent_session_id:
+        first_content = character.first_mes
+        scenario_override = None
+
+        if request.greeting_index is not None and character.extensions:
+            try:
+                import json
+                ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
+                alt_greetings = ext.get("alternate_greetings", [])
+                if 0 <= request.greeting_index < len(alt_greetings):
+                    first_content = alt_greetings[request.greeting_index]
+            except Exception as e:
+                print(f"[WARN] Failed to parse alternate greeting: {e}")
+
+        # 强兼容性场景/地点解析算法
+        if first_content:
+            try:
+                import re
+                
+                # 规则 1：匹配以常见地点、地图、交通、建筑类 Emoji 开头的三级标题（置于首位以防关键字干扰）
+                # 例如：### 📍 Abandoned Warehouse, ### 🗺️ Tokyo Port | Night, ### 🏠 Safehouse
+                emoji_match = re.search(
+                    r'###\s*(?:[📍🗺️🌐⚔️🏠🏢🏫🌄🌅🌇🌆🌃🧭🎪🎡🎢])\s*([^\n|#]+)',
+                    first_content
+                )
+                if emoji_match:
+                    scenario_override = emoji_match.group(1).strip()
+                
+                # 规则 2：匹配高优先级地点/场景关键字（支持 ### 标题、[中括号] 或纯文本开头）
+                # 例如：### Location: Shinjuku | Night, [地点: 学校], Scene: Bar
+                if not scenario_override:
+                    loc_kw_match = re.search(
+                        r'(?:###\s*|\[\s*|\b)(?:Location|Scene|地点|当前地点)\s*[:：]\s*([^\n|#\]\)]+)',
+                        first_content,
+                        re.IGNORECASE
+                    )
+                    if loc_kw_match:
+                        scenario_override = loc_kw_match.group(1).strip()
+                
+                # 规则 3：低优先级退避规则：匹配 Scenario / 场景关键字
+                # 例如：### Scenario: Fighting in Shinjuku
+                if not scenario_override:
+                    scen_kw_match = re.search(
+                        r'(?:###\s*|\[\s*|\b)(?:Scenario|Scenario\s*\d+|场景|当前场景)\s*[:：]\s*([^\n|#\]\)]+)',
+                        first_content,
+                        re.IGNORECASE
+                    )
+                    if scen_kw_match:
+                        scenario_override = scen_kw_match.group(1).strip()
+            except Exception as e:
+                print(f"[WARN] Failed to extract location from opening message: {e}")
+
+        if scenario_override:
+            persona.current_scenario_override = scenario_override
+
+        if first_content:
+            first_message = models.ChatMessage(
+                session_id=session.id,
+                role=MessageRole.assistant,
+                content=first_content,
+                emotion_tag="平静",
+                affection_change=0,
+            )
+            db.add(first_message)
 
     db.commit()
     db.refresh(session)
