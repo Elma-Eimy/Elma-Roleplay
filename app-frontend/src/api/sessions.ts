@@ -56,6 +56,7 @@ export interface CreateSessionParams {
   character_id: number;
   parent_session_id?: number | null;
   title: string;
+  greeting_index?: number;
 }
 
 export interface CreateSessionResponse {
@@ -162,11 +163,18 @@ export async function createSession(
     // 如果是全新的首个会话（无父级会话），插入角色的第一条问候消息。
     if (!params.parent_session_id) {
       db.messages[newSessionId] = [];
-      if (char && char.first_mes) {
+      let firstContent = char ? char.first_mes : "";
+      if (params.greeting_index !== undefined && char && char.extensions?.alternate_greetings) {
+        const alt = char.extensions.alternate_greetings as string[];
+        if (params.greeting_index >= 0 && params.greeting_index < alt.length) {
+          firstContent = alt[params.greeting_index];
+        }
+      }
+      if (firstContent) {
         db.messages[newSessionId].push({
           id: Date.now() + 2,
           role: "assistant",
-          content: char.first_mes,
+          content: firstContent,
           emotion_tag: "Calm",
           affection_change: 0,
           created_at: new Date().toISOString(),
