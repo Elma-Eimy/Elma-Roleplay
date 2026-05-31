@@ -388,7 +388,7 @@
 import { ref, reactive } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import TabBar from "@/components/common/TabBar.vue";
-import { USE_MOCK, getSavedBaseUrl, setSavedBaseUrl } from "@/api/config";
+import { USE_MOCK, getSavedBaseUrl, setSavedBaseUrl, setSavedApiKey } from "@/api/config";
 import { getSettings, updateSettings, DEFAULT_SETTINGS } from "@/api/settings";
 import type { AppSettings } from "@/api/settings";
 
@@ -461,8 +461,10 @@ const closeKeyModal = () => {
 
 const saveApiKey = () => {
   try {
-    uni.setStorageSync("api_access_key", apiKeyInput.value.trim());
-    apiKeyConfigured.value = !!apiKeyInput.value.trim();
+    const trimmed = apiKeyInput.value.trim();
+    uni.setStorageSync("api_access_key", trimmed);
+    setSavedApiKey(trimmed); // 更新内存缓存
+    apiKeyConfigured.value = !!trimmed;
     uni.showToast({ title: "密钥保存成功", icon: "success" });
   } catch (e) {
     uni.showToast({ title: "保存失败", icon: "none" });
