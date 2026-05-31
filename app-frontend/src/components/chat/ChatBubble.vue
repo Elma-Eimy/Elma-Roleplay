@@ -2,10 +2,7 @@
   <view 
     class="chat-bubble-wrapper" 
     :class="{ 'is-user': isUser }" 
-    @touchstart="onTouchStart"
-    @touchmove="onTouchMove"
-    @touchend="onTouchEnd"
-    @touchcancel="onTouchCancel"
+    @longpress="handleLongPress"
     @contextmenu.prevent="handleLongPress"
   >
     <!-- AI 头像（仅对 AI 显示） -->
@@ -98,56 +95,6 @@ const emit = defineEmits<{
   (e: "longpress", message: ChatMessage): void;
 }>();
 
-let touchTimer: any = null;
-let startX = 0;
-let startY = 0;
-let isTriggered = false;
-
-const onTouchStart = (e: TouchEvent) => {
-  if (props.message.status === 'sending' || props.message.status === 'streaming') return;
-  
-  isTriggered = false;
-  const touch = e.touches[0];
-  startX = touch.clientX;
-  startY = touch.clientY;
-  
-  if (touchTimer) clearTimeout(touchTimer);
-  
-  // 设置 800ms 的长按阈值，避免轻触或上下滑动滚动列表时误触
-  touchTimer = setTimeout(() => {
-    isTriggered = true;
-    handleLongPress();
-  }, 800);
-};
-
-const onTouchMove = (e: TouchEvent) => {
-  if (!touchTimer || isTriggered) return;
-  
-  const touch = e.touches[0];
-  const deltaX = Math.abs(touch.clientX - startX);
-  const deltaY = Math.abs(touch.clientY - startY);
-  
-  // 如果手指位移超过 10 像素（表明用户在滚动列表），立即取消长按判定
-  if (deltaX > 10 || deltaY > 10) {
-    clearTimeout(touchTimer);
-    touchTimer = null;
-  }
-};
-
-const onTouchEnd = () => {
-  if (touchTimer) {
-    clearTimeout(touchTimer);
-    touchTimer = null;
-  }
-};
-
-const onTouchCancel = () => {
-  if (touchTimer) {
-    clearTimeout(touchTimer);
-    touchTimer = null;
-  }
-};
-
 const handleLongPress = (e?: Event) => {
   // 阻止 H5 平台上浏览器原生的右键菜单
   if (e) e.preventDefault?.();
@@ -232,6 +179,18 @@ const renderedThought = computed(() => {
   margin-bottom: 8rpx;
   gap: 16rpx;
   align-items: flex-start;
+  animation: bubble-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes bubble-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .chat-bubble-wrapper.is-user {
