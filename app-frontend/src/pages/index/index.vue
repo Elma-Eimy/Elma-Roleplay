@@ -230,9 +230,9 @@ const saveRename = async () => {
   }
 };
 
-const startNewSession = (title: string) => {
+const startNewSession = (payload: { title: string; greeting_index: number | null }) => {
   uni.navigateTo({
-    url: `/pages/chat/chat?title=${encodeURIComponent(title)}`
+    url: `/pages/chat/chat?title=${encodeURIComponent(payload.title)}`
   });
 };
 
