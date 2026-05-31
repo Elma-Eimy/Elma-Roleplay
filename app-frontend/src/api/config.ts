@@ -29,19 +29,29 @@ export const DEFAULT_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
 };
 
+let cachedApiKey: string | null = null;
+
+export function setSavedApiKey(newKey: string) {
+  cachedApiKey = newKey;
+}
+
 /** 动态获取请求头的辅助函数，若配置了认证密钥则会自动携带 */
 export function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const headers: Record<string, string> = {
     ...customHeaders,
   };
   
-  try {
-    const key = uni.getStorageSync("api_access_key");
-    if (key) {
-      headers["X-API-Key"] = key;
+  if (cachedApiKey === null) {
+    try {
+      cachedApiKey = uni.getStorageSync("api_access_key") || "";
+    } catch (e) {
+      console.error("Failed to read api_access_key", e);
+      cachedApiKey = ""; // Prevents infinite retry on storage failures
     }
-  } catch (e) {
-    console.error("Failed to read api_access_key", e);
+  }
+  
+  if (cachedApiKey) {
+    headers["X-API-Key"] = cachedApiKey;
   }
   
   return headers;
