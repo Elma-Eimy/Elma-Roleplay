@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class CharacterCreate(BaseModel):
     name: str
@@ -16,8 +17,9 @@ class CharacterCreate(BaseModel):
 
 class SessionCreate(BaseModel):
     character_id: int
-    parent_session_id: int | None = None
+    parent_session_id: Optional[int] = None
     title: str = "New Story"
+    greeting_index: Optional[int] = None
 
 class SessionTitleUpdate(BaseModel):
     title: str
@@ -29,7 +31,7 @@ class ChatRequest(BaseModel):
     # True  → 强制使用思考模型（chat_model）
     # False → 强制使用非思考模型（non_reasoning_chat_model）
     # None  → 沿用 config.yaml 的默认配置（reasoning_mode 字段）
-    use_reasoning: bool | None = None
+    use_reasoning: Optional[bool] = None
     is_regenerate: bool = False
 
 
@@ -38,16 +40,16 @@ class MessageUpdate(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    temperature: float | None = None
-    reasoning_mode: bool | None = None
-    context_history_limit: int | None = None
-    retrieval_top_k: int | None = None
-    retrieval_min_importance: float | None = None
-    retrieval_max_distance: float | None = None
-    lorebook_scan_depth: int | None = None
-    lorebook_token_budget: int | None = None
-    lorebook_max_recursive_passes: int | None = None
-    cognition_max_words: int | None = None
-    retrieval_half_life_turns: int | None = None
-    retrieval_candidate_multiplier: int | None = None
-    max_tokens: int | None = None
+    temperature: Optional[float] = None
+    reasoning_mode: Optional[bool] = None
+    context_history_limit: Optional[int] = None
+    retrieval_top_k: Optional[int] = None
+    retrieval_min_importance: Optional[float] = None
+    retrieval_max_distance: Optional[float] = None
+    lorebook_scan_depth: Optional[int] = None
+    lorebook_token_budget: Optional[int] = None
+    lorebook_max_recursive_passes: Optional[int] = None
+    cognition_max_words: Optional[int] = None
+    retrieval_half_life_turns: Optional[int] = None
+    retrieval_candidate_multiplier: Optional[int] = None
+    max_tokens: Optional[int] = None
