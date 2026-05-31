@@ -92,7 +92,7 @@
           <view class="form-group">
             <text class="label">角色标签</text>
             <text class="label-hint">多个标签用英文逗号分隔，保存时自动转换</text>
-            <input class="input" :value="(form.tags || []).join(', ')" @input="e => form.tags = e.detail.value.split(',').map((t: string) => t.trim()).filter(Boolean)" placeholder="例如：funny, fantasy, helper" />
+            <input class="input" :value="(form.tags || []).join(', ')" @input="(e: any) => form.tags = e.detail.value.split(',').map((t: string) => t.trim()).filter(Boolean)" placeholder="例如：funny, fantasy, helper" />
           </view>
         </view>
 
