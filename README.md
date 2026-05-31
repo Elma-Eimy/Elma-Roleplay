@@ -4,7 +4,7 @@
 
 ---
 
-## 📌 项目目录结构
+## 项目目录结构
 
 ```text
 /APP
@@ -86,17 +86,25 @@ graph TD
 * **平行宇宙分叉**：用户可以从对话树的任意节点 fork 出新的“子分支会话”，完美继承父会话的历史消息、好感度、心情及认知状态。
 * **级联重连保护**：当某个父会话被物理删除时，系统自动执行级联向上重连算法，将所有子会话挂载至更上一级的祖先会话，确保聊天链与 RAG 跨代检索的绝对完整。
 
-### 4. 渐进式折叠参数控制面板 (Collapsible Settings Panel)
+### 4. 多重故事线选择与场景动态覆盖 (Multi-branch Route & Location Override)
+* **开场剧情路线选择**：前端 [NewSessionModal.vue](file:///g:/APP/app-frontend/src/components/common/NewSessionModal.vue) 结构化解析并展示角色卡中配置的 `alternate_greetings`（多重开场白），为用户呈现包含剧情路线名称、地标位置、阵营徽章及正文预览的卡片，供用户挑选故事的任意起点。
+* **地点智能提取与覆盖**：后端在创建会话时，利用强兼容场景提取算法，自动识别开场白中的 `### 📍 (地点)` 标记或 `Location/Scene/地点/场景:` 文本前缀，将其写入 `SessionPersona.current_scenario_override`。AI 在后续的聊天生成中会自动继承并在 System Prompt 中叠加该地点上下文，完美融入新场景。
+
+### 5. 专属世界书 (Lorebook) 百科可视化面板
+* **结构化百科展示**：在角色详情页 [detail.vue](file:///g:/APP/app-frontend/src/pages/character/detail.vue) 中新增“专属世界书”页签，将角色卡中封装的百科条目卡片化渲染。
+* **条目属性直观调试**：卡片直观标明了每个条目的激活 `keys`（主关键词标签）、`secondary_keys`（联合过滤词）、`constant`（常驻/条件触发徽章）及匹配优先级，使得百科内容的阅读与设定审查极为方便。
+
+### 6. 渐进式折叠参数控制面板 (Collapsible Settings Panel)
 * **13 项全量参数同步**：前端设置页面完美映射了后端的全套大模型及 RAG 算法参数（包括 `temperature`、`max_tokens`、时间半衰期 `retrieval_half_life_turns`、候选池放大倍率 `retrieval_candidate_multiplier` 等）。
 * **渐进式视觉隐藏**：为防止复杂算法干扰普通用户，仅默认外露 4 项基础参数。其他 9 项高阶底层参数收纳于精心设计的虚线边框折叠胶囊按钮内，辅以 180° 旋转箭头指示器和灵动的点按动效，带来极佳的微交互反馈。所有更改通过 API 热更新并同步保存到后端的 `config.yaml`。
 
-### 5. 无碰撞抗抖动自适应置底滚动引擎 (Robust Chat Scroller)
+### 7. 无碰撞抗抖动自适应置底滚动引擎 (Robust Chat Scroller)
 针对 UniApp/HTML5 容器中高频流式输出与动态高度渲染可能导致的滚动回弹、未完全触底等顽固痛点，前端实现了多重物理锁机制：
 * **初始化滚动锁 (Initialization Lock)**：引入 `isInitLoading` 锁定，屏蔽初始历史消息加载引发的多次重复置底竞争。
 * **动画冲突避让**：在流式打字输出期间，自动关闭滚动过渡动画（`scrollWithAnimation = false`）以规避原生渲染动画冲突；发送消息或流式结束时自动恢复弹性缓动动画。
 * **渲染延迟补偿与像素微调**：采用 `80ms` 延迟，为 DOM 渲染新高度预留空隙。同时使用 `999999 - Math.random()` 随机微调机制强力唤醒 Vue 的属性监听器，实现 100% 稳定的绝对置底滚动。
 
-### 6. 开箱即用：局域网零配自动寻址与排错 (LAN Discovery Tool)
+### 8. 开箱即用：局域网零配自动寻址与排错 (LAN Discovery Tool)
 * **多网卡自动探针**：后端启动时会自动探测当前主机在局域网内所有活跃网卡的 IPv4 地址（排除本地回环）。
 * **高可读性 ASCII 横幅**：在控制台中以高亮横幅打印所有可用的局域网 IP，并附带针对手机联调的详细防火墙和网络配置排错指引，彻底解决联调部署时手机端因输入错 IP 而连不上后端的痛点。
 * **运行时动态重定向**：前端设置页支持一键填写“后端 API 地址”，该配置直接写入持久化缓存 `uni.setStorageSync` 中。所有后续网络请求和流式 SSE 自动切换为新地址，零代码修改即可进行手机真机局域网部署。
