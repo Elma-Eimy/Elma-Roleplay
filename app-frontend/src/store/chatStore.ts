@@ -121,6 +121,8 @@ export const useChatStore = defineStore("chat", () => {
   async function regenerateChatMessage(sessionId: number) {
     if (isLoading.value) return;
     
+    const personaStore = usePersonaStore();
+    
     // 1. 查找最后一条属于用户的历史消息以提取其内容
     const lastUserMsg = [...messages.value].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
@@ -128,17 +130,11 @@ export const useChatStore = defineStore("chat", () => {
     isLoading.value = true;
     clearError();
 
-    // 2. 如果当前最后一条消息是 AI 的回复，在后端物理删除它并从本地消息缓存中移出
+    // 2. 如果当前最后一条消息是 AI 的回复，直接从本地消息缓存中移出
+    //（后端在 /chat 接口收到 is_regenerate: true 时会自动物理删除最新的 AI 消息，这里无需调用 apiDeleteMessage，防止发生“双重删除”导致上一条回复也被删掉的 Bug）
     const lastMsg = messages.value[messages.value.length - 1];
     if (lastMsg && lastMsg.role === "assistant") {
-      try {
-        await apiDeleteMessage(lastMsg.id);
-        messages.value.pop();
-      } catch (e) {
-        console.error("Failed to delete last AI message for regeneration", e);
-        isLoading.value = false;
-        return;
-      }
+      messages.value.pop();
     }
 
     // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
@@ -150,7 +146,8 @@ export const useChatStore = defineStore("chat", () => {
           session_id: sessionId, 
           user_message: lastUserMsg.content,
           use_reasoning: useReasoning.value,
-          is_regenerate: true
+          is_regenerate: true,
+          user_nickname: personaStore.userNickname
         },
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
@@ -167,7 +164,6 @@ export const useChatStore = defineStore("chat", () => {
           });
           
           // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
-          const personaStore = usePersonaStore();
           personaStore.applyAffectionChange(
             meta.affection_change,
             meta.affection_score,
@@ -190,6 +186,9 @@ export const useChatStore = defineStore("chat", () => {
   /** 发送一条新消息并处理流式返回的分块数据 */
   async function sendChatMessage(sessionId: number, text: string) {
     if (isLoading.value) return;
+    
+    const personaStore = usePersonaStore();
+    
     isLoading.value = true;
     clearError();
 
@@ -201,7 +200,8 @@ export const useChatStore = defineStore("chat", () => {
         { 
           session_id: sessionId, 
           user_message: text,
-          use_reasoning: useReasoning.value
+          use_reasoning: useReasoning.value,
+          user_nickname: personaStore.userNickname
         },
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
@@ -228,7 +228,6 @@ export const useChatStore = defineStore("chat", () => {
           }
 
           // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
-          const personaStore = usePersonaStore();
           personaStore.applyAffectionChange(
             meta.affection_change,
             meta.affection_score,
