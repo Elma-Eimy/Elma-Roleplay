@@ -280,6 +280,7 @@ def update_session_title(
     }
 
 @router.delete("/{session_id}")
+@router.post("/{session_id}/delete")
 def delete_session(session_id: int, db: Session = Depends(get_db)):
     """
     安全删除会话。
@@ -345,6 +346,7 @@ def update_message(message_id: int, request: MessageUpdate, db: Session = Depend
     }
 
 @router.delete("/messages/{message_id}")
+@router.post("/messages/{message_id}/delete")
 def delete_message(message_id: int, db: Session = Depends(get_db)):
     """
     删除单条聊天消息，并执行好感度与心情回滚缓冲，同时提供未提纯和认知指针的安全降级保护。
