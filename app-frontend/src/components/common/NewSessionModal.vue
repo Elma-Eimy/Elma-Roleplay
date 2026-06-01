@@ -59,10 +59,14 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import { PhX } from "@phosphor-icons/vue";
+import { usePersonaStore } from "@/store/personaStore";
+
+const personaStore = usePersonaStore();
 
 const props = defineProps<{
   isOpen: boolean;
   alternateGreetings?: string[];
+  characterName?: string;
 }>();
 
 const emit = defineEmits<{
@@ -88,6 +92,15 @@ watch(() => props.isOpen, (newVal) => {
     selectedRouteIndex.value = -1;
   }
 });
+
+const replacePlaceholders = (text: string) => {
+  if (!text) return "";
+  const charName = props.characterName || "角色";
+  const userName = personaStore.userNickname;
+  return text
+    .replace(/\{\{char\}\}/gi, charName)
+    .replace(/\{\{user\}\}/gi, userName);
+};
 
 const routeOptions = computed<RouteOption[]>(() => {
   const options: RouteOption[] = [];
@@ -130,10 +143,11 @@ const routeOptions = computed<RouteOption[]>(() => {
       let bodyText = "";
       const textParts = greeting.split('---');
       if (textParts.length > 1) {
-        bodyText = textParts[1].replace(/\*.*?\*/g, '').replace(/\{\{char\}\}/g, 'AI').trim();
+        bodyText = textParts[1].replace(/\*.*?\*/g, '').trim();
       } else {
         bodyText = greeting;
       }
+      bodyText = replacePlaceholders(bodyText);
       const preview = bodyText.substring(0, 90) + (bodyText.length > 90 ? "..." : "");
 
       options.push({
