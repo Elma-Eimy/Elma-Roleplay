@@ -68,35 +68,66 @@
         </view>
 
         <!-- Tab 1: 故事宇宙分支列表 -->
-        <view v-if="activeTab === 'sessions'" class="branches-list">
-          <view 
-            class="branch-card" 
-            v-for="session in sessions" 
-            :key="session.id"
-            @tap="resumeSession(session)"
-            @longpress="onSessionLongPress(session)"
-            @contextmenu.prevent="onSessionLongPress(session)"
-          >
-            <view class="branch-card-header">
-              <view class="branch-title-area">
-                <text class="branch-name">{{ session.title || '平行宇宙会话' }}</text>
-                <text class="branch-parent-tag" v-if="session.parent_session_id">
-                   衍生自: {{ getParentSessionTitle(session.parent_session_id) }}
-                </text>
-              </view>
-              <view class="branch-meta">
-                <view class="meta-item mood">
-                  <text class="meta-label">心境:</text>
-                  <text class="meta-value">{{ session.persona?.current_mood || '平静' }}</text>
-                </view>
-                <view class="meta-item affection">
-                  <text class="meta-label">好感:</text>
-                  <text class="meta-value score">{{ session.persona?.affection_score || 0 }} 💖</text>
-                </view>
-              </view>
+        <view v-if="activeTab === 'sessions'" class="branches-tab-content">
+          <!-- 视图模式切换栏（平铺列表 vs 时空分支树） -->
+          <view v-if="sessions.length > 0" class="view-mode-toggle-row">
+            <view 
+              class="toggle-pill" 
+              :class="{ 'is-active': viewMode === 'tree' }" 
+              @tap="viewMode = 'tree'"
+            >
+              <text class="toggle-pill-text">🌌 时空分叉树</text>
             </view>
-            <text class="branch-preview">{{ session.lastMessage || '尚无对话记录...' }}</text>
-            <text class="branch-date">{{ formatDate(session.updated_at) }}</text>
+            <view 
+              class="toggle-pill" 
+              :class="{ 'is-active': viewMode === 'list' }" 
+              @tap="viewMode = 'list'"
+            >
+              <text class="toggle-pill-text">📋 时间线列表</text>
+            </view>
+          </view>
+
+          <!-- 1) 树形图视图 -->
+          <view v-if="viewMode === 'tree' && sessions.length > 0" class="tree-view-wrapper">
+            <BranchTreeView 
+              :sessions="sessions" 
+              @tap-node="resumeSession"
+              @longpress-node="onSessionLongPress"
+              @branch-node="handleTreeNodeBranch"
+            />
+          </view>
+
+          <!-- 2) 传统扁平列表视图 -->
+          <view v-else-if="viewMode === 'list' && sessions.length > 0" class="branches-list">
+            <view 
+              class="branch-card" 
+              v-for="session in sessions" 
+              :key="session.id"
+              @tap="resumeSession(session)"
+              @longpress="onSessionLongPress(session)"
+              @contextmenu.prevent="onSessionLongPress(session)"
+            >
+              <view class="branch-card-header">
+                <view class="branch-title-area">
+                  <text class="branch-name">{{ session.title || '平行宇宙会话' }}</text>
+                  <text class="branch-parent-tag" v-if="session.parent_session_id">
+                     衍生自: {{ getParentSessionTitle(session.parent_session_id) }}
+                  </text>
+                </view>
+                <view class="branch-meta">
+                  <view class="meta-item mood">
+                    <text class="meta-label">心境:</text>
+                    <text class="meta-value">{{ session.persona?.current_mood || '平静' }}</text>
+                  </view>
+                  <view class="meta-item affection">
+                    <text class="meta-label">好感:</text>
+                    <text class="meta-value score">{{ session.persona?.affection_score || 0 }} 💖</text>
+                  </view>
+                </view>
+              </view>
+              <text class="branch-preview">{{ session.lastMessage || '尚无对话记录...' }}</text>
+              <text class="branch-date">{{ formatDate(session.updated_at) }}</text>
+            </view>
           </view>
 
           <!-- 平行宇宙分支空状态 -->
@@ -174,6 +205,7 @@
     <NewSessionModal 
       v-model:isOpen="isNewBranchModalOpen" 
       :alternateGreetings="(character?.extensions?.alternate_greetings as string[] | undefined)"
+      :characterName="character?.name"
       @confirm="startNewBranch"
     />
 
@@ -198,13 +230,17 @@ import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl } from "@/api
 import type { CharacterDetail } from "@/api/characters";
 import { getSessions, deleteSession, updateSessionTitle, createSession, getSessionHistory } from "@/api/sessions";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
+import BranchTreeView from "@/components/chat/BranchTreeView.vue";
+import { usePersonaStore } from "@/store/personaStore";
 import MarkdownIt from "markdown-it";
 
 const md = new MarkdownIt({
-  html: false,
+  html: true,
   breaks: true,
   linkify: true,
 });
+
+const personaStore = usePersonaStore();
 
 const characterId = ref<number | null>(null);
 const character = ref<CharacterDetail | null>(null);
@@ -215,6 +251,17 @@ const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
 const activeParentSessionId = ref<number | null>(null);
 const activeTab = ref<"sessions" | "profile" | "lorebook">("sessions");
+const viewMode = ref<"list" | "tree">("tree");
+
+// 替换 {{char}} / {{user}} 占位符
+const replacePlaceholders = (text: string) => {
+  if (!text) return "";
+  const charName = character.value?.name || "角色";
+  const userName = personaStore.userNickname;
+  return text
+    .replace(/\{\{char\}\}/gi, charName)
+    .replace(/\{\{user\}\}/gi, userName);
+};
 
 const lorebookEntries = computed(() => {
   const entries: any[] = [];
@@ -256,32 +303,42 @@ const personalityTags = computed(() => {
 });
 
 const renderedDescription = computed(() => {
-  const content = character.value?.description || "";
+  let content = character.value?.description || "";
   if (!content) return "";
+  content = replacePlaceholders(content);
   let html = md.render(content);
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
   return html;
 });
 
 const renderedScenario = computed(() => {
-  const content = character.value?.scenario || "";
+  let content = character.value?.scenario || "";
   if (!content) return "";
+  content = replacePlaceholders(content);
   let html = md.render(content);
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
   return html;
 });
 
 const renderedFirstMes = computed(() => {
-  const content = character.value?.first_mes || "";
+  let content = character.value?.first_mes || "";
   if (!content) return "";
+  content = replacePlaceholders(content);
   let html = md.render(content);
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
   return html;
 });
 
@@ -383,6 +440,11 @@ const changePortrait = () => {
 
 const openNewBranchModal = () => {
   activeParentSessionId.value = null;
+  isNewBranchModalOpen.value = true;
+};
+
+const handleTreeNodeBranch = (session: any) => {
+  activeParentSessionId.value = session.id;
   isNewBranchModalOpen.value = true;
 };
 
@@ -670,8 +732,14 @@ const formatDate = (dateString: string) => {
 
 .section-body :deep(.md-em) {
   font-style: italic;
-  color: #3a3a3c;
+  color: #8e8e93; /* 旁白/动作采用更淡雅的灰色 */
   padding: 0 4rpx;
+  font-weight: normal;
+}
+
+.section-body :deep(.md-dialogue) {
+  color: #1c1c1e; /* 对话更加突出 */
+  font-weight: 550; /* 略微加粗 */
 }
 
 .section-body.italic {
@@ -1089,5 +1157,45 @@ const formatDate = (dateString: string) => {
   border-radius: 12rpx;
   border: 1px solid rgba(0, 0, 0, 0.01);
   word-break: break-all;
+}
+
+/* ===== 视图模式切换栏 ===== */
+.view-mode-toggle-row {
+  display: flex;
+  margin: 0 36rpx 28rpx 36rpx;
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.03);
+  border-radius: 16rpx;
+  padding: 4rpx;
+}
+
+.toggle-pill {
+  flex: 1;
+  padding: 12rpx 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12rpx;
+  transition: all 0.2s ease;
+}
+
+.toggle-pill.is-active {
+  background-color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.toggle-pill-text {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #8e8e93;
+  transition: color 0.2s ease;
+}
+
+.toggle-pill.is-active .toggle-pill-text {
+  color: #1c1c1e;
+}
+
+.tree-view-wrapper {
+  padding: 0 36rpx;
 }
 </style>
