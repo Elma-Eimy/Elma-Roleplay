@@ -302,7 +302,7 @@ export async function updateSessionTitle(
 
 /**
  * 删除会话并安全地重联其子分支会话。
- * DELETE /sessions/{session_id}
+ * DELETE /sessions/{session_id} -> 改为 POST /sessions/{session_id}/delete 避开移动端及网关 DELETE 限制
  */
 export async function deleteSession(
   sessionId: number
@@ -338,8 +338,8 @@ export async function deleteSession(
     };
   }
 
-  return request<DeleteSessionResponse>(`/sessions/${sessionId}`, {
-    method: "DELETE",
+  return request<DeleteSessionResponse>(`/sessions/${sessionId}/delete`, {
+    method: "POST",
   });
 }
 
@@ -438,7 +438,7 @@ export async function updateMessage(
 
 /**
  * 删除单条消息（回滚/撤销对话状态）。
- * DELETE /sessions/messages/{message_id}
+ * DELETE /sessions/messages/{message_id} -> 改为 POST /sessions/messages/{message_id}/delete 避开移动端及网关限制
  */
 export async function deleteMessage(
   messageId: number
@@ -468,7 +468,7 @@ export async function deleteMessage(
     };
   }
 
-  return request<DeleteMessageResponse>(`/sessions/messages/${messageId}`, {
-    method: "DELETE",
+  return request<DeleteMessageResponse>(`/sessions/messages/${messageId}/delete`, {
+    method: "POST",
   });
 }
