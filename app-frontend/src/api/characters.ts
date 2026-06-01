@@ -301,7 +301,7 @@ export async function updateCharacter(
 
 /**
  * 删除角色并级联清空其所有会话和记忆。
- * DELETE /characters/{character_id}
+ * DELETE /characters/{character_id} -> 改为 POST /characters/{character_id}/delete 避开移动端及网关限制
  */
 export async function deleteCharacter(
   characterId: number
@@ -325,8 +325,8 @@ export async function deleteCharacter(
     };
   }
 
-  return request<DeleteCharacterResponse>(`/characters/${characterId}`, {
-    method: "DELETE",
+  return request<DeleteCharacterResponse>(`/characters/${characterId}/delete`, {
+    method: "POST",
   });
 }
 
