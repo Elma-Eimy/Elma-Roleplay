@@ -192,6 +192,7 @@ def update_character(character_id: int, character_data: CharacterCreate, db: Ses
     }
 
 @router.delete("/{character_id}")
+@router.post("/{character_id}/delete")
 def delete_character(character_id: int, db: Session = Depends(get_db)):
     """删除指定角色，并清理关联会话和向量数据库"""
     character = db.get(models.Character, character_id)
