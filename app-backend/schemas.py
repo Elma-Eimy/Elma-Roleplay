@@ -33,6 +33,7 @@ class ChatRequest(BaseModel):
     # None  → 沿用 config.yaml 的默认配置（reasoning_mode 字段）
     use_reasoning: Optional[bool] = None
     is_regenerate: bool = False
+    user_nickname: Optional[str] = "用户"
 
 
 class MessageUpdate(BaseModel):
