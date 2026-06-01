@@ -233,12 +233,18 @@ export async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${getBaseUrl()}${endpoint}`;
+  const method = (options.method ?? "GET") as "GET" | "POST" | "PUT" | "DELETE";
+
   const headers = getHeaders({
     ...DEFAULT_HEADERS,
     ...((options.headers as Record<string, string>) ?? {}),
   });
 
-  const method = (options.method ?? "GET") as "GET" | "POST" | "PUT" | "DELETE";
+  // GET 和 DELETE 请求通常不应包含 Content-Type 头部，否则部分移动端原生网络库会因检测到该头部而尝试发送空 body，引发错误
+  if (method === "GET" || method === "DELETE") {
+    delete headers["Content-Type"];
+  }
+
   let data: any = undefined;
   if (options.body) {
     if (typeof options.body === "string") {
@@ -253,12 +259,11 @@ export async function request<T>(
   }
 
   return new Promise((resolve, reject) => {
-    uni.request({
+    const reqOptions: any = {
       url,
       method,
       header: headers,
-      data,
-      success: (res) => {
+      success: (res: any) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data as T);
         } else {
@@ -266,9 +271,15 @@ export async function request<T>(
           reject(new Error(`[API Error ${res.statusCode}] ${endpoint}: ${errMsg}`));
         }
       },
-      fail: (err) => {
+      fail: (err: any) => {
         reject(new Error(err.errMsg || "网络连接失败"));
       }
-    });
+    };
+
+    if (data !== undefined) {
+      reqOptions.data = data;
+    }
+
+    uni.request(reqOptions);
   });
 }
