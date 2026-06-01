@@ -183,6 +183,7 @@ def _resolve_model(use_reasoning: Optional[bool]) -> str:
 # ══════════════════════════════════════════════
 
 from services.lorebook_engine import process_lorebook
+from services.prompt_compiler import compile_system_prompt, replace_placeholders
 
 
 def build_system_prompt(
@@ -190,51 +191,36 @@ def build_system_prompt(
     persona,
     retrieved_memories: Optional[list] = None,
     recent_history: Optional[list] = None,
-    user_message: Optional[str] = None
+    user_message: Optional[str] = None,
+    user_nickname: str = "用户"
 ) -> dict:
     """
-    重构后：静态 System Prompt 组装。返回静态部分，并提取动态变量供 User Message 拼接。
+    重构后：静态 System Prompt 组装与编译。返回已编译静态部分，并提取动态变量供 User Message 拼接。
     """
-    sections = []
+    char_name = character.name or "AI"
+    user_name = user_nickname or "用户"
 
-    # 1. 核心人设 (静态)
-    if character.system_prompt_override:
-        sections.append(character.system_prompt_override)
-    else:
-        if character.description:
-            sections.append(f"【角色设定】\n{character.description}")
-        if character.personality:
-            sections.append(f"【性格特点】\n{character.personality}")
-
-    # 2. 结构化输出指令 (静态)
-    xml_instructions = """【重要：输出格式要求】
-你必须且只能按照以下 XML 标签结构进行回复，绝对不要包含任何 markdown 代码块标记（如 ```xml 或 ```html）：
-<reply>你的第一人称角色扮演回复文本（支持动作星号包裹与台词双引号包裹）</reply>
-<status emotion="当前心情标签（例如：开心、平静、害羞等单个词语）" affection_change="好感度整数变化量（必须是整数，范围在 -5 到 5 之间）"/>"""
-    sections.append(xml_instructions)
-
-    # 3. 后置扮演规则 (静态)
-    post_instructions = character.post_history_instructions or None
-    if post_instructions:
-        sections.append(f"【扮演补充规则】\n{post_instructions}")
-
-    # 4. 对话示例 (静态 - 仅非子会话附加以保 caching)
-    if not (persona and persona.parent_persona_id):
-        if character.mes_example and character.mes_example.strip():
-            sections.append(f"【对话示例】\n{character.mes_example.strip()}")
-
-    system_prompt = "\n\n".join(sections)
+    system_prompt = compile_system_prompt(character, persona, user_nickname)
 
     # ── 动态变量处理 ──
     
     # 世界书 (Lorebook) 匹配
     lorebook_result = {"before_char": [], "after_char": []}
     if recent_history is not None or user_message is not None:
+        # 在传递给世界书扫描前，先解析历史记录和用户消息中的占位符
+        resolved_history = None
+        if recent_history is not None:
+            resolved_history = [
+                {**msg, "content": replace_placeholders(msg["content"], char_name, user_name)}
+                for msg in recent_history
+            ]
+        resolved_user_message = replace_placeholders(user_message, char_name, user_name) if user_message is not None else None
+
         try:
             lorebook_result = process_lorebook(
                 character=character,
-                recent_history=recent_history,
-                user_message=user_message
+                recent_history=resolved_history,
+                user_message=resolved_user_message
             )
         except Exception as e:
             print(f"[WARN] build_system_prompt: 处理世界书匹配失败: {e}")
@@ -483,6 +469,7 @@ async def _build_chat_messages(
     user_message: str,
     retrieved_memories: Optional[list] = None,
     db=None,
+    user_nickname: str = "用户",
 ) -> list:
     """
     组装 LLM 所需的完整 messages 列表（system + history + 动态上下文）。
@@ -495,6 +482,9 @@ async def _build_chat_messages(
       4. 拼接动态上下文块（场景 / 认知 / 心情 / Lorebook / RAG）到最后的 user 消息
       5. 调用前主动提交释放 SQLite 文件锁
     """
+    char_name = character.name or "AI"
+    user_name = user_nickname or "用户"
+
     # Step 1: 组装缓存友好型静态 System Prompt 并抽取动态要素
     prompt_result = build_system_prompt(
         character=character,
@@ -502,6 +492,7 @@ async def _build_chat_messages(
         retrieved_memories=retrieved_memories,
         recent_history=recent_history,
         user_message=user_message,
+        user_nickname=user_nickname,
     )
 
     # Step 2: 动态示例继承（子会话拉取父会话最后 4 条作为 Few-shot 伪历史）
@@ -537,13 +528,14 @@ async def _build_chat_messages(
     # 历史消息：assistant 消息统一包装为 XML 格式保持上下文一致性
     for msg in recent_history:
         if msg["role"] == "assistant":
-            content_str = msg["content"]
+            content_str = replace_placeholders(msg["content"], char_name, user_name)
             emo = msg.get("emotion_tag") or "平静"
             change = msg.get("affection_change") or 0
             fallback_xml = f"<reply>{content_str}</reply>\n<status emotion=\"{emo}\" affection_change=\"{int(change)}\"/>"
             messages.append({"role": "assistant", "content": fallback_xml})
         else:
-            messages.append({"role": msg["role"], "content": msg["content"]})
+            content_str = replace_placeholders(msg["content"], char_name, user_name)
+            messages.append({"role": msg["role"], "content": content_str})
 
     # Step 4: 动态上下文包装，统一挂载到最后一轮 User 消息中
     dynamic_context_blocks = []
@@ -551,10 +543,12 @@ async def _build_chat_messages(
     # 4.1 场景与认知状态
     scenario = prompt_result.get("scenario")
     if scenario:
+        scenario = replace_placeholders(scenario, char_name, user_name)
         dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
 
     cognition = prompt_result.get("cognition_state")
     if cognition:
+        cognition = replace_placeholders(cognition, char_name, user_name)
         dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
 
     # 4.2 心情与好感度
@@ -574,6 +568,7 @@ async def _build_chat_messages(
     for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
         content = e.get("content", "").strip()
         if content:
+            content = replace_placeholders(content, char_name, user_name)
             lore_contents.append(content)
     if lore_contents:
         dynamic_context_blocks.append("<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
@@ -581,6 +576,7 @@ async def _build_chat_messages(
     # 4.4 召回长期记忆 (RAG)
     retrieved_mem = prompt_result.get("retrieved_memories_text")
     if retrieved_mem:
+        retrieved_mem = replace_placeholders(retrieved_mem, char_name, user_name)
         dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
 
     # 4.5 拼装增强的 User 消息内容
@@ -588,7 +584,9 @@ async def _build_chat_messages(
     if dynamic_context_blocks:
         enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
         enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
-    enhanced_user_content += f"【当前用户的最新消息：】\n{user_message}"
+    
+    resolved_user_message = replace_placeholders(user_message, char_name, user_name)
+    enhanced_user_content += f"【当前用户的最新消息：】\n{resolved_user_message}"
 
     messages.append({"role": "user", "content": enhanced_user_content})
 
@@ -610,6 +608,7 @@ async def generate_reply(
     retrieved_memories: Optional[list] = None,
     db = None,
     use_reasoning: Optional[bool] = None,
+    user_nickname: str = "用户",
 ) -> dict:
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
@@ -622,6 +621,7 @@ async def generate_reply(
         user_message=user_message,
         retrieved_memories=retrieved_memories,
         db=db,
+        user_nickname=user_nickname,
     )
 
     try:
@@ -665,6 +665,7 @@ async def generate_reply_stream(
     retrieved_memories: Optional[list] = None,
     db = None,
     use_reasoning: Optional[bool] = None,
+    user_nickname: str = "用户",
 ):
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
@@ -677,6 +678,7 @@ async def generate_reply_stream(
         user_message=user_message,
         retrieved_memories=retrieved_memories,
         db=db,
+        user_nickname=user_nickname,
     )
 
     try:
