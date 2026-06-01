@@ -159,6 +159,29 @@
             </view>
           </view>
 
+          <!-- 👤 我的设定区域 -->
+          <view class="panel-section">
+            <text class="section-title">我的设定</text>
+            <view class="setting-row">
+              <view class="setting-row-left">
+                <image 
+                  class="setting-row-icon" 
+                  src="/static/icons/menu_user_plus.svg" 
+                  mode="aspectFit" 
+                />
+                <text class="setting-row-label">我的昵称</text>
+              </view>
+              <input 
+                class="drawer-nickname-input" 
+                v-model="userNicknameInput" 
+                @blur="saveUserNickname"
+                confirm-type="done"
+                @confirm="saveUserNickname"
+                placeholder="请输入你的昵称..."
+              />
+            </view>
+          </view>
+
           <!-- ④ 对话配置开关项 -->
           <view class="panel-section">
             <text class="section-title">对话设置</text>
@@ -233,6 +256,21 @@ const scrollTop = ref(0);
 const scrollWithAnimation = ref(false);
 const isStatusPanelOpen = ref(false);
 const isInitLoading = ref(true);
+
+const userNicknameInput = ref(personaStore.userNickname);
+
+watch(() => personaStore.userNickname, (newVal) => {
+  userNicknameInput.value = newVal;
+});
+
+const saveUserNickname = () => {
+  const name = userNicknameInput.value.trim();
+  if (name) {
+    personaStore.updateUserNickname(name);
+  } else {
+    userNicknameInput.value = personaStore.userNickname;
+  }
+};
 
 // 软键盘弹起时，iOS 端需移除底部安全区域的高度占位，防止出现双重空白间距
 const inputWrapperStyle = computed(() => {
@@ -1134,6 +1172,25 @@ const onLoadMore = () => {
   font-size: 27rpx;
   font-weight: 500;
   color: #1c1c1e;
+}
+
+.drawer-nickname-input {
+  font-size: 26rpx;
+  color: #1c1c1e;
+  text-align: right;
+  width: 260rpx;
+  height: 64rpx; /* 增加高度使比例协调 */
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 16rpx; /* 更加圆润的外观 */
+  padding: 0 20rpx; /* 左右内边距，去除上下边距实现完美垂直居中 */
+  box-sizing: border-box; /* 包含边框宽度在高度中计算 */
+}
+
+.drawer-nickname-input:focus {
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
 }
 
 .custom-toggle {
