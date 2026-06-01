@@ -496,8 +496,10 @@ const onSessionLongPress = (session: any) => {
               try {
                 await deleteSession(session.id);
                 await loadCharacterData(characterId.value);
-              } catch (e) {
+                uni.showToast({ title: '删除成功', icon: 'success' });
+              } catch (e: any) {
                 console.error("Failed to delete branch", e);
+                uni.showToast({ title: e.message || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
               }
             }
           }
