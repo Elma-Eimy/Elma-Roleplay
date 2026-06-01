@@ -23,6 +23,9 @@ export const usePersonaStore = defineStore("persona", () => {
   /** 是否正在加载人设状态详情 */
   const isLoadingPersona = ref(false);
 
+  /** 玩家自定义昵称，默认为“用户” */
+  const userNickname = ref(uni.getStorageSync("user_nickname") || "用户");
+
   // ===== 计算属性 (Getters) =====
 
   const hasActiveCharacter = computed(() => activeCharacter.value !== null);
@@ -154,6 +157,15 @@ export const usePersonaStore = defineStore("persona", () => {
     }
   }
 
+  /** 更新并持久化玩家自定义昵称 */
+  function updateUserNickname(newName: string) {
+    const trimmed = newName.trim();
+    if (trimmed) {
+      userNickname.value = trimmed;
+      uni.setStorageSync("user_nickname", trimmed);
+    }
+  }
+
   /** 重置整个 Store 的状态变量 */
   function $reset() {
     activeCharacter.value = null;
@@ -170,6 +182,7 @@ export const usePersonaStore = defineStore("persona", () => {
     currentPersona,
     isLoadingCharacters,
     isLoadingPersona,
+    userNickname,
     // Getters
     hasActiveCharacter,
     characterName,
@@ -189,6 +202,7 @@ export const usePersonaStore = defineStore("persona", () => {
     clearActiveCharacter,
     upsertCharacterInList,
     removeCharacterFromList,
+    updateUserNickname,
     $reset,
   };
 });
