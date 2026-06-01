@@ -82,7 +82,10 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import type { ChatMessage } from "@/store/chatStore";
+import { usePersonaStore } from "@/store/personaStore";
 import MarkdownIt from "markdown-it";
+
+const personaStore = usePersonaStore();
 
 const props = defineProps<{
   message: ChatMessage;
@@ -121,7 +124,7 @@ const hasMeta = computed(() => {
 });
 
 const md = new MarkdownIt({
-  html: false,
+  html: true,
   breaks: true,
   linkify: true,
 });
@@ -129,8 +132,20 @@ const md = new MarkdownIt({
 // 推理思维链内容解析
 const isThoughtExpanded = ref(false);
 
+// 替换 {{char}} / {{user}} 占位符
+const replacePlaceholders = (text: string) => {
+  if (!text) return "";
+  const charName = props.characterName || "角色";
+  const userName = personaStore.userNickname;
+  return text
+    .replace(/\{\{char\}\}/gi, charName)
+    .replace(/\{\{user\}\}/gi, userName);
+};
+
 const parsedContent = computed(() => {
-  const content = props.message.content || "";
+  let content = props.message.content || "";
+  content = replacePlaceholders(content);
+  
   if (isUser.value) {
     return { thought: "", reply: content };
   }
@@ -157,6 +172,9 @@ const renderedMarkdown = computed(() => {
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
   return html;
 });
 
@@ -167,6 +185,8 @@ const renderedThought = computed(() => {
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
   return html;
 });
 </script>
@@ -275,8 +295,14 @@ const renderedThought = computed(() => {
 
 .markdown-content :deep(.md-em) {
   font-style: italic;
-  color: #3a3a3c;
+  color: #8e8e93; /* 旁白/动作采用更淡雅的灰色 */
   padding: 0 4rpx;
+  font-weight: normal;
+}
+
+.markdown-content :deep(.md-dialogue) {
+  color: #1c1c1e; /* 对话更加突出 */
+  font-weight: 550; /* 略微加粗，突出说话内容 */
 }
 
 /* ===== 元数据区域 ===== */
