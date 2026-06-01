@@ -7,6 +7,7 @@ export interface ChatRequest {
   user_message: string;
   use_reasoning?: boolean;
   is_regenerate?: boolean;
+  user_nickname?: string;
 }
 
 export interface ChatResponse {
@@ -240,7 +241,9 @@ export async function sendMessageStream(
               emotion_tag: fallbackRes.data.emotion_tag,
               affection_change: fallbackRes.data.affection_change,
               affection_score: fallbackRes.data.affection_score,
-              model_used: fallbackRes.data.model_used
+              model_used: fallbackRes.data.model_used,
+              user_message_id: fallbackRes.data.user_message_id,
+              assistant_message_id: fallbackRes.data.assistant_message_id
             });
           } else {
             onError(new Error("网络请求失败"));
