@@ -133,6 +133,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             retrieved_memories=memories,
             db=db,
             use_reasoning=request.use_reasoning,  # None 则走 config.yaml 默认配置
+            user_nickname=request.user_nickname,
         )
 
         reply_text = response_data.get("reply", "")
@@ -287,6 +288,7 @@ async def chat_stream(
                 retrieved_memories=memories,
                 db=db,
                 use_reasoning=request.use_reasoning,
+                user_nickname=request.user_nickname,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")
