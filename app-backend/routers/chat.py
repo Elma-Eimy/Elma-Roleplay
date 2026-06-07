@@ -146,6 +146,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
             repetition_penalty=request.repetition_penalty,
+            reasoning_effort=request.reasoning_effort,
         )
 
         reply_text = response_data.get("reply", "")
@@ -338,6 +339,7 @@ async def chat_stream(
                 presence_penalty=request.presence_penalty,
                 frequency_penalty=request.frequency_penalty,
                 repetition_penalty=request.repetition_penalty,
+                reasoning_effort=request.reasoning_effort,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")

@@ -73,7 +73,8 @@ def get_settings():
         "top_p": settings.LLM_TOP_P,
         "presence_penalty": settings.LLM_PRESENCE_PENALTY,
         "frequency_penalty": settings.LLM_FREQUENCY_PENALTY,
-        "repetition_penalty": settings.LLM_REPETITION_PENALTY
+        "repetition_penalty": settings.LLM_REPETITION_PENALTY,
+        "reasoning_effort": settings.LLM_REASONING_EFFORT
     }
 
 
