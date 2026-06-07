@@ -4,13 +4,12 @@ venv/
 # 2. Python 编译缓存
 __pycache__/
 
-# 3. 本地关系型数据库
+# 3. 运行态本地数据存储目录（SQLite 和 ChromaDB）
+data/
 data.db
-
-# 4. ChromaDB 向量数据库本地持久化目录
 chroma_data/
 
-# 5. 环境变量与机密配置
+# 5. 环境变量与机密配置（强烈建议提前加上，防止密钥泄露）
 .env
 
 # 6. 资源文件
@@ -26,7 +25,8 @@ data.db-shm
 data.db-wal
 
 # 9. 其他
-# test_api.py
-# test_lorebook.py
-# test_parse.py
+spec_v2.md
+test_api.py
+test_lorebook.py
+test_parse.py
 llm_debug.log
