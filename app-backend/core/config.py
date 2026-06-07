@@ -45,6 +45,9 @@ class Settings:
         self.LLM_PRESENCE_PENALTY = float(llm_config.get("presence_penalty", 0.0))
         self.LLM_FREQUENCY_PENALTY = float(llm_config.get("frequency_penalty", 0.0))
         self.LLM_REPETITION_PENALTY = float(llm_config.get("repetition_penalty", 1.0))
+        self.LLM_REASONING_EFFORT = llm_config.get("reasoning_effort", None)
+        if self.LLM_REASONING_EFFORT is not None:
+            self.LLM_REASONING_EFFORT = str(self.LLM_REASONING_EFFORT)
 
         # config.yaml 中配置的默认激活模型（未传 use_reasoning 时的回退）
         if self.LLM_REASONING_MODE:
@@ -128,7 +131,8 @@ class Settings:
             "top_p": float,
             "presence_penalty": float,
             "frequency_penalty": float,
-            "repetition_penalty": float
+            "repetition_penalty": float,
+            "reasoning_effort": str
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -182,6 +186,10 @@ class Settings:
             elif field == "repetition_penalty":
                 self.LLM_REPETITION_PENALTY = converted_val
                 self.config.setdefault("llm", {})["repetition_penalty"] = converted_val
+                llm_updated = True
+            elif field == "reasoning_effort":
+                self.LLM_REASONING_EFFORT = converted_val if converted_val else None
+                self.config.setdefault("llm", {})["reasoning_effort"] = self.LLM_REASONING_EFFORT
                 llm_updated = True
             elif field == "context_history_limit":
                 self.APP_CONTEXT_HISTORY_LIMIT = converted_val
