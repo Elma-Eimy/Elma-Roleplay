@@ -74,7 +74,10 @@ def get_settings():
         "presence_penalty": settings.LLM_PRESENCE_PENALTY,
         "frequency_penalty": settings.LLM_FREQUENCY_PENALTY,
         "repetition_penalty": settings.LLM_REPETITION_PENALTY,
-        "reasoning_effort": settings.LLM_REASONING_EFFORT
+        "reasoning_effort": settings.LLM_REASONING_EFFORT,
+        "lorebook_semantic_enabled": settings.APP_LOREBOOK_SEMANTIC_ENABLED,
+        "lorebook_semantic_top_k": settings.APP_LOREBOOK_SEMANTIC_TOP_K,
+        "lorebook_semantic_max_distance": settings.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE
     }
 
 

@@ -216,6 +216,14 @@ def delete_character(character_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"[WARN] Failed to delete ChromaDB collection '{collection_name}': {e}")
 
+    # 2b. 清除该角色的世界书向量集合 (lorebook_{character_id})
+    lore_col_name = f"lorebook_{character_id}"
+    try:
+        chroma_client.delete_collection(lore_col_name)
+        print(f"[INFO] Deleted ChromaDB lorebook collection: {lore_col_name}")
+    except Exception as e:
+        print(f"[WARN] Failed to delete ChromaDB lorebook collection '{lore_col_name}': {e}")
+
     # 3. 级联删除关联的会话 (Session)
     session_ids = [p.session_id for p in personas]
     if session_ids:
