@@ -41,6 +41,10 @@ class Settings:
         self.LLM_REASONING_MODE = bool(llm_config.get("reasoning_mode", False))
         # LLM 请求超时秒数；思考模型首 token 延迟可能超过 15s，默认设为 60s
         self.LLM_TIMEOUT = float(llm_config.get("timeout", 60.0))
+        self.LLM_TOP_P = float(llm_config.get("top_p", 1.0))
+        self.LLM_PRESENCE_PENALTY = float(llm_config.get("presence_penalty", 0.0))
+        self.LLM_FREQUENCY_PENALTY = float(llm_config.get("frequency_penalty", 0.0))
+        self.LLM_REPETITION_PENALTY = float(llm_config.get("repetition_penalty", 1.0))
 
         # config.yaml 中配置的默认激活模型（未传 use_reasoning 时的回退）
         if self.LLM_REASONING_MODE:
@@ -112,7 +116,11 @@ class Settings:
             "retrieval_weight_time": float,
             "retrieval_half_life_turns": int,
             "retrieval_candidate_multiplier": int,
-            "retrieval_ancestor_weight": float
+            "retrieval_ancestor_weight": float,
+            "top_p": float,
+            "presence_penalty": float,
+            "frequency_penalty": float,
+            "repetition_penalty": float
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -150,6 +158,22 @@ class Settings:
                 else:
                     self.ACTIVE_CHAT_MODEL = self.CHAT_MODEL_NON_REASONING
                 self.config.setdefault("llm", {})["reasoning_mode"] = converted_val
+                llm_updated = True
+            elif field == "top_p":
+                self.LLM_TOP_P = converted_val
+                self.config.setdefault("llm", {})["top_p"] = converted_val
+                llm_updated = True
+            elif field == "presence_penalty":
+                self.LLM_PRESENCE_PENALTY = converted_val
+                self.config.setdefault("llm", {})["presence_penalty"] = converted_val
+                llm_updated = True
+            elif field == "frequency_penalty":
+                self.LLM_FREQUENCY_PENALTY = converted_val
+                self.config.setdefault("llm", {})["frequency_penalty"] = converted_val
+                llm_updated = True
+            elif field == "repetition_penalty":
+                self.LLM_REPETITION_PENALTY = converted_val
+                self.config.setdefault("llm", {})["repetition_penalty"] = converted_val
                 llm_updated = True
             elif field == "context_history_limit":
                 self.APP_CONTEXT_HISTORY_LIMIT = converted_val

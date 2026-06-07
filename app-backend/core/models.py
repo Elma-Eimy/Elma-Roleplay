@@ -8,7 +8,7 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Text, Float,
+    Column, Integer, String, Text, Float, Boolean,
     ForeignKey, DateTime, Enum as SAEnum
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -277,6 +277,10 @@ class ChatMessage(Base):
     # 消息级微状态（溯源用，不参与 RAG）
     emotion_tag      = Column(String(50),  nullable=True)  # 发出本条消息时角色的情绪标签
     affection_change = Column(Integer, nullable=True)  # 本条消息带来的好感度变动量（正/负）
+
+    # Swipe 候选回复支持
+    parent_id  = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=True, index=True)
+    is_active  = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime, default=func.now())
 
