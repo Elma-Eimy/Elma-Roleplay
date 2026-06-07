@@ -65,6 +65,9 @@ class Settings:
         self.APP_LOREBOOK_SCAN_DEPTH = int(app_config.get("lorebook_scan_depth", 5))
         self.APP_LOREBOOK_TOKEN_BUDGET = int(app_config.get("lorebook_token_budget", 3000))
         self.APP_LOREBOOK_MAX_RECURSIVE_PASSES = int(app_config.get("lorebook_max_recursive_passes", 3))
+        self.APP_LOREBOOK_SEMANTIC_ENABLED = bool(app_config.get("lorebook_semantic_enabled", True))
+        self.APP_LOREBOOK_SEMANTIC_TOP_K = int(app_config.get("lorebook_semantic_top_k", 3))
+        self.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE = float(app_config.get("lorebook_semantic_max_distance", 1.1))
 
         # 存储与路径配置
         self.STORAGE_SQLITE_DB_PATH = str(app_config.get("sqlite_db_path", "data.db"))
@@ -132,7 +135,10 @@ class Settings:
             "presence_penalty": float,
             "frequency_penalty": float,
             "repetition_penalty": float,
-            "reasoning_effort": str
+            "reasoning_effort": str,
+            "lorebook_semantic_enabled": bool,
+            "lorebook_semantic_top_k": int,
+            "lorebook_semantic_max_distance": float
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -218,6 +224,18 @@ class Settings:
             elif field == "lorebook_max_recursive_passes":
                 self.APP_LOREBOOK_MAX_RECURSIVE_PASSES = converted_val
                 self.config.setdefault("app", {})["lorebook_max_recursive_passes"] = converted_val
+                app_updated = True
+            elif field == "lorebook_semantic_enabled":
+                self.APP_LOREBOOK_SEMANTIC_ENABLED = converted_val
+                self.config.setdefault("app", {})["lorebook_semantic_enabled"] = converted_val
+                app_updated = True
+            elif field == "lorebook_semantic_top_k":
+                self.APP_LOREBOOK_SEMANTIC_TOP_K = converted_val
+                self.config.setdefault("app", {})["lorebook_semantic_top_k"] = converted_val
+                app_updated = True
+            elif field == "lorebook_semantic_max_distance":
+                self.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE = converted_val
+                self.config.setdefault("app", {})["lorebook_semantic_max_distance"] = converted_val
                 app_updated = True
             elif field == "cognition_max_words":
                 self.APP_COGNITION_MAX_WORDS = converted_val
