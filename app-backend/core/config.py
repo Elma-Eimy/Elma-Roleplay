@@ -65,8 +65,16 @@ class Settings:
 
         # 存储与路径配置
         self.STORAGE_SQLITE_DB_PATH = str(app_config.get("sqlite_db_path", "data.db"))
+        if not os.path.isabs(self.STORAGE_SQLITE_DB_PATH):
+            self.STORAGE_SQLITE_DB_PATH = os.path.abspath(os.path.join(parent_dir, self.STORAGE_SQLITE_DB_PATH))
+            
         self.STORAGE_CHROMA_DB_PATH = str(app_config.get("chroma_db_path", "./chroma_data"))
+        if not os.path.isabs(self.STORAGE_CHROMA_DB_PATH):
+            self.STORAGE_CHROMA_DB_PATH = os.path.abspath(os.path.join(parent_dir, self.STORAGE_CHROMA_DB_PATH))
+            
         self.STORAGE_UPLOAD_AVATAR_DIR = str(app_config.get("upload_avatar_dir", "./assets/avatars"))
+        if not os.path.isabs(self.STORAGE_UPLOAD_AVATAR_DIR):
+            self.STORAGE_UPLOAD_AVATAR_DIR = os.path.abspath(os.path.join(parent_dir, self.STORAGE_UPLOAD_AVATAR_DIR))
 
         # 安全与限制配置
         self.SECURITY_CORS_ORIGINS = app_config.get("cors_origins", ["*"])

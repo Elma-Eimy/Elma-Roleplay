@@ -11,6 +11,11 @@ db_path = settings.STORAGE_SQLITE_DB_PATH
 if not os.path.isabs(db_path):
     db_path = os.path.join(BASE_DIR, db_path)
 
+# 确保数据库所在的父目录存在，避免 SQLite 启动报错
+db_dir = os.path.dirname(db_path)
+if db_dir:
+    os.makedirs(db_dir, exist_ok=True)
+
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
 engine = create_engine(
