@@ -39,6 +39,7 @@ class ChatRequest(BaseModel):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
+    reasoning_effort: Optional[str] = None
 
 
 class MessageUpdate(BaseModel):
@@ -63,6 +64,7 @@ class SettingsUpdate(BaseModel):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
+    reasoning_effort: Optional[str] = None
 
 class SwitchCandidateRequest(BaseModel):
     message_id: int
