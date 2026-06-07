@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from core.database import get_db
 from core import models
 from core.models import MessageRole
@@ -19,7 +20,10 @@ def get_session_history_with_inheritance(session_id: int, db: Session, limit: in
     """
     messages = (
         db.query(models.ChatMessage)
-        .filter(models.ChatMessage.session_id == session_id)
+        .filter(
+            models.ChatMessage.session_id == session_id,
+            models.ChatMessage.is_active == True
+        )
         .order_by(models.ChatMessage.id.desc())
         .limit(limit)
         .all()
@@ -150,6 +154,8 @@ def create_session(request: SessionCreate, db: Session = Depends(get_db)):
                 content=first_content,
                 emotion_tag="平静",
                 affection_change=0,
+                parent_id=None,
+                is_active=True,
             )
             db.add(first_message)
 
@@ -244,19 +250,53 @@ def get_session_history(
 
     messages = get_session_history_with_inheritance(session_id, db, fetch_limit)
 
+    session_history = []
+    for m in messages:
+        msg_dict = {
+            "id": m.id,
+            "role": m.role.value,
+            "content": m.content,
+            "emotion_tag": m.emotion_tag,
+            "affection_change": m.affection_change,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "parent_id": m.parent_id,
+            "is_active": m.is_active,
+        }
+        
+        if m.role.value == "assistant":
+            # 查找此轮对话的所有候选回复列表
+            candidates = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == session_id,
+                models.ChatMessage.role == MessageRole.assistant,
+                models.ChatMessage.parent_id == m.parent_id
+            ).order_by(models.ChatMessage.id).all()
+            
+            if not candidates:
+                candidates = [m]
+                
+            msg_dict["candidates"] = [
+                {
+                    "id": c.id,
+                    "content": c.content,
+                    "emotion_tag": c.emotion_tag,
+                    "affection_change": c.affection_change,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in candidates
+            ]
+            
+            active_idx = 0
+            for idx, c in enumerate(candidates):
+                if c.id == m.id:
+                    active_idx = idx
+                    break
+            msg_dict["active_index"] = active_idx
+            
+        session_history.append(msg_dict)
+
     return {
         "session_id": session_id,
-        "messages": [
-            {
-                "id": m.id,
-                "role": m.role.value,
-                "content": m.content,
-                "emotion_tag": m.emotion_tag,
-                "affection_change": m.affection_change,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in messages
-        ],
+        "messages": session_history,
     }
 
 @router.put("/{session_id}/title")
@@ -337,6 +377,9 @@ def update_message(message_id: int, request: MessageUpdate, db: Session = Depend
         raise HTTPException(status_code=404, detail="Message not found")
 
     message.content = request.content
+    session = db.get(models.Session, message.session_id)
+    if session:
+        session.updated_at = func.now()
     db.commit()
     db.refresh(message)
     return {
@@ -364,25 +407,65 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
     ).first()
 
     if persona:
-        # ── 1a. 好感度回滚 ──
-        # 仅当删除 assistant 消息且存在好感度变动时，逆向扣减/恢复好感度
-        if message.role == MessageRole.assistant and message.affection_change is not None:
-            persona.affection_score -= message.affection_change
-            # 钳位确保好感度不小于 0
-            persona.affection_score = max(0, persona.affection_score)
+        # ── 1a. 好感度与心情回退 & Swipe 候选回退处理 ──
+        if message.role == MessageRole.assistant:
+            sibling = None
+            if message.is_active:
+                sibling = db.query(models.ChatMessage).filter(
+                    models.ChatMessage.session_id == session_id,
+                    models.ChatMessage.role == MessageRole.assistant,
+                    models.ChatMessage.parent_id == message.parent_id,
+                    models.ChatMessage.id != message_id
+                ).order_by(models.ChatMessage.id.desc()).first()
 
-        # ── 1b. 情绪状态回滚 ──
-        # 查找在当前被删消息时间线之前的最近一条 assistant 消息
-        prev_assistant_msg = db.query(models.ChatMessage).filter(
-            models.ChatMessage.session_id == session_id,
-            models.ChatMessage.role == MessageRole.assistant,
-            models.ChatMessage.id < message_id
-        ).order_by(models.ChatMessage.id.desc()).first()
+            if sibling:
+                # 激活替补候选版本
+                sibling.is_active = True
+                old_change = message.affection_change or 0
+                new_change = sibling.affection_change or 0
+                persona.affection_score = persona.affection_score - old_change + new_change
+                persona.affection_score = max(0, min(100, persona.affection_score))
+                persona.current_mood = sibling.emotion_tag or "平静"
+            else:
+                # 没有候选替补，常规回滚
+                if message.affection_change is not None:
+                    persona.affection_score -= message.affection_change
+                    persona.affection_score = max(0, persona.affection_score)
 
-        if prev_assistant_msg:
-            persona.current_mood = prev_assistant_msg.emotion_tag or "平静"
-        else:
-            persona.current_mood = "平静"
+                # ── 1b. 情绪状态回滚 ──
+                # 查找在当前被删消息时间线之前的最近一条 assistant 消息
+                prev_assistant_msg = db.query(models.ChatMessage).filter(
+                    models.ChatMessage.session_id == session_id,
+                    models.ChatMessage.role == MessageRole.assistant,
+                    models.ChatMessage.id < message_id
+                ).order_by(models.ChatMessage.id.desc()).first()
+
+                if prev_assistant_msg:
+                    persona.current_mood = prev_assistant_msg.emotion_tag or "平静"
+                else:
+                    persona.current_mood = "平静"
+        elif message.role == MessageRole.user:
+            # 找到将被级联删除的、当前处于激活状态的 AI 回复
+            active_child = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == session_id,
+                models.ChatMessage.role == MessageRole.assistant,
+                models.ChatMessage.parent_id == message_id,
+                models.ChatMessage.is_active == True
+            ).first()
+            if active_child and active_child.affection_change is not None:
+                persona.affection_score -= active_child.affection_change
+                persona.affection_score = max(0, persona.affection_score)
+            
+            # 回滚情绪状态至上一轮对话的最近一条 AI 消息
+            prev_assistant_msg = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == session_id,
+                models.ChatMessage.role == MessageRole.assistant,
+                models.ChatMessage.id < message_id
+            ).order_by(models.ChatMessage.id.desc()).first()
+            if prev_assistant_msg:
+                persona.current_mood = prev_assistant_msg.emotion_tag or "平静"
+            else:
+                persona.current_mood = "平静"
 
         # ── 1c. 记忆提纯与认知指针安全降级保护 ──
         # 如果被删的消息 ID 刚好等于分界指针，安全寻找上一条消息 ID 进行向前递减
@@ -402,6 +485,9 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
 
     # 2. 物理删除消息记录
     db.delete(message)
+    session = db.get(models.Session, session_id)
+    if session:
+        session.updated_at = func.now()
     db.commit()
 
     return {

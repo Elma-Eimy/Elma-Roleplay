@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from core.database import get_db, SessionLocal
 from core import models
 from core.models import MessageRole
-from schemas import ChatRequest
+from schemas import ChatRequest, SwitchCandidateRequest
 from core.config import settings
 import services.chat_engine as chat_engine
 import services.memory_manager as memory_manager
@@ -62,7 +63,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                     db.query(models.ChatMessage)
                     .filter(
                         models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.user
+                        models.ChatMessage.role == MessageRole.user,
+                        models.ChatMessage.is_active == True
                     )
                     .order_by(models.ChatMessage.id.desc())
                     .first()
@@ -70,24 +72,29 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 if not user_msg:
                     raise HTTPException(status_code=400, detail="No user message found to regenerate")
 
-                # Bug3修复：删除最近一条 assistant 消息，防止旧回复堆积
+                # Swipe 候选支持：不删除旧回复，而是将其设为 inactive 并回退其好感度
                 old_reply = (
                     db.query(models.ChatMessage)
                     .filter(
                         models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.assistant
+                        models.ChatMessage.role == MessageRole.assistant,
+                        models.ChatMessage.parent_id == user_msg.id,
+                        models.ChatMessage.is_active == True
                     )
-                    .order_by(models.ChatMessage.id.desc())
                     .first()
                 )
                 if old_reply:
-                    db.delete(old_reply)
+                    old_reply.is_active = False
+                    if persona and old_reply.affection_change is not None:
+                        persona.affection_score -= old_reply.affection_change
+                        persona.affection_score = max(0, persona.affection_score)
                     db.commit()
             else:
                 user_msg = models.ChatMessage(
                     session_id=session.id,
                     role=MessageRole.user,
                     content=request.user_message,
+                    is_active=True
                 )
                 db.add(user_msg)
                 db.commit()
@@ -129,11 +136,16 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             character=character,
             persona=persona,
             recent_history=recent_history,
-            user_message=request.user_message,
+            user_message=user_msg.content if request.is_regenerate else request.user_message,
             retrieved_memories=memories,
             db=db,
             use_reasoning=request.use_reasoning,  # None 则走 config.yaml 默认配置
             user_nickname=request.user_nickname,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty,
+            repetition_penalty=request.repetition_penalty,
         )
 
         reply_text = response_data.get("reply", "")
@@ -149,16 +161,40 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 content=reply_text,
                 emotion_tag=emotion_tag,
                 affection_change=affection_change,
+                parent_id=user_msg.id,
+                is_active=True
             )
             db.add(ai_msg)
             p.affection_score += affection_change
             p.current_mood = emotion_tag
+            session_obj = db.get(models.Session, request.session_id)
+            if session_obj:
+                session_obj.updated_at = func.now()
             db.commit()
             db.refresh(ai_msg)
             db.refresh(p)
-            return ai_msg.id, p.affection_score
+            
+            # 查询候选列表
+            candidates = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == request.session_id,
+                models.ChatMessage.role == MessageRole.assistant,
+                models.ChatMessage.parent_id == user_msg.id
+            ).order_by(models.ChatMessage.id).all()
+            
+            candidates_list = [
+                {
+                    "id": c.id,
+                    "role": c.role.value,
+                    "content": c.content,
+                    "emotion_tag": c.emotion_tag,
+                    "affection_change": c.affection_change,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in candidates
+            ]
+            return ai_msg.id, p.affection_score, candidates_list
 
-        ai_msg_id, final_affection_score = await run_in_threadpool(save_response_data)
+        ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(save_response_data)
 
         # ── Step 7: 自动触发检查（使用 BackgroundTasks，后台异步执行，不阻塞当前响应） ──
         background_tasks.add_task(run_auto_trigger_checks, request.session_id, persona.id)
@@ -171,6 +207,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             "model_used": response_data.get("model_used"),  # 方便前端展示当前对话使用的模型
             "user_message_id": user_msg.id,
             "assistant_message_id": ai_msg_id,
+            "candidates": candidates_list,
+            "active_index": len(candidates_list) - 1,
         }
     finally:
         lock.release()
@@ -216,7 +254,8 @@ async def chat_stream(
                     db.query(models.ChatMessage)
                     .filter(
                         models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.user
+                        models.ChatMessage.role == MessageRole.user,
+                        models.ChatMessage.is_active == True
                     )
                     .order_by(models.ChatMessage.id.desc())
                     .first()
@@ -224,24 +263,29 @@ async def chat_stream(
                 if not user_msg:
                     raise HTTPException(status_code=400, detail="No user message found to regenerate")
 
-                # Bug3修复：删除最近一条 assistant 消息，防止旧回复堆积
+                # Swipe 候选支持：不删除旧回复，而是将其设为 inactive 并回退其好感度
                 old_reply = (
                     db.query(models.ChatMessage)
                     .filter(
                         models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.assistant
+                        models.ChatMessage.role == MessageRole.assistant,
+                        models.ChatMessage.parent_id == user_msg.id,
+                        models.ChatMessage.is_active == True
                     )
-                    .order_by(models.ChatMessage.id.desc())
                     .first()
                 )
                 if old_reply:
-                    db.delete(old_reply)
+                    old_reply.is_active = False
+                    if persona and old_reply.affection_change is not None:
+                        persona.affection_score -= old_reply.affection_change
+                        persona.affection_score = max(0, persona.affection_score)
                     db.commit()
             else:
                 user_msg = models.ChatMessage(
                     session_id=session.id,
                     role=MessageRole.user,
                     content=request.user_message,
+                    is_active=True
                 )
                 db.add(user_msg)
                 db.commit()
@@ -289,6 +333,11 @@ async def chat_stream(
                 db=db,
                 use_reasoning=request.use_reasoning,
                 user_nickname=request.user_nickname,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                presence_penalty=request.presence_penalty,
+                frequency_penalty=request.frequency_penalty,
+                repetition_penalty=request.repetition_penalty,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")
@@ -383,16 +432,40 @@ async def chat_stream(
                         content=reply_text,
                         emotion_tag=emotion_tag,
                         affection_change=affection_change,
+                        parent_id=user_msg.id,
+                        is_active=True
                     )
                     db.add(ai_msg)
                     p.affection_score += affection_change
                     p.current_mood = emotion_tag
+                    session_obj = db.get(models.Session, session_id)
+                    if session_obj:
+                        session_obj.updated_at = func.now()
                     db.commit()
                     db.refresh(ai_msg)
                     db.refresh(p)
-                    return ai_msg.id, p.affection_score
 
-                ai_msg_id, final_affection_score = await run_in_threadpool(save_stream_response)
+                    # 查询候选列表
+                    candidates = db.query(models.ChatMessage).filter(
+                        models.ChatMessage.session_id == session_id,
+                        models.ChatMessage.role == MessageRole.assistant,
+                        models.ChatMessage.parent_id == user_msg.id
+                    ).order_by(models.ChatMessage.id).all()
+                    
+                    candidates_list = [
+                        {
+                            "id": c.id,
+                            "role": c.role.value,
+                            "content": c.content,
+                            "emotion_tag": c.emotion_tag,
+                            "affection_change": c.affection_change,
+                            "created_at": c.created_at.isoformat() if c.created_at else None,
+                        }
+                        for c in candidates
+                    ]
+                    return ai_msg.id, p.affection_score, candidates_list
+
+                ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(save_stream_response)
  
                 # 触发后台机制检查
                 background_tasks.add_task(run_auto_trigger_checks, session_id, persona.id)
@@ -405,6 +478,8 @@ async def chat_stream(
                     "model_used": model,
                     "user_message_id": user_msg.id,
                     "assistant_message_id": ai_msg_id,
+                    "candidates": candidates_list,
+                    "active_index": len(candidates_list) - 1,
                 }
                 yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
 
@@ -448,3 +523,71 @@ def run_auto_trigger_checks(session_id: int, persona_id: int):
         print(f"[WARN] 自动认知更新失败: {e}")
     finally:
         db.close()
+
+
+@router.post("/switch_candidate")
+async def switch_candidate(request: SwitchCandidateRequest, db: Session = Depends(get_db)):
+    """
+    切换同一轮对话下的激活 AI 候选回复版本，并同步调整好感度及心情。
+    """
+    msg = db.get(models.ChatMessage, request.message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+        
+    if msg.role != MessageRole.assistant:
+        raise HTTPException(status_code=400, detail="Only assistant messages can be switched")
+        
+    if msg.parent_id is None:
+        raise HTTPException(status_code=400, detail="Cannot switch candidates for a message without a parent message")
+        
+    session_id = msg.session_id
+    
+    # 查找该会话关联的 SessionPersona 实体以执行状态回退与重新应用
+    persona = db.query(models.SessionPersona).filter(
+        models.SessionPersona.session_id == session_id
+    ).first()
+    
+    # 查找当前该 turn 下已激活的回复
+    old_active = db.query(models.ChatMessage).filter(
+        models.ChatMessage.session_id == session_id,
+        models.ChatMessage.role == MessageRole.assistant,
+        models.ChatMessage.parent_id == msg.parent_id,
+        models.ChatMessage.is_active == True
+    ).first()
+    
+    # 将此 turn 的所有候选回复全部设为 is_active = False
+    db.query(models.ChatMessage).filter(
+        models.ChatMessage.session_id == session_id,
+        models.ChatMessage.role == MessageRole.assistant,
+        models.ChatMessage.parent_id == msg.parent_id
+    ).update({"is_active": False})
+    
+    # 将新选择的回复设为 is_active = True
+    msg.is_active = True
+    
+    # 更新好感度及心情
+    if persona:
+        if old_active and old_active.affection_change is not None:
+            persona.affection_score -= old_active.affection_change
+        if msg.affection_change is not None:
+            persona.affection_score += msg.affection_change
+        persona.affection_score = max(0, min(100, persona.affection_score))
+        persona.current_mood = msg.emotion_tag or "平静"
+        
+    # Touch session updated_at
+    session_obj = db.get(models.Session, session_id)
+    if session_obj:
+        session_obj.updated_at = func.now()
+        
+    db.commit()
+    db.refresh(msg)
+    if persona:
+        db.refresh(persona)
+        
+    return {
+        "message": "Candidate switched successfully",
+        "message_id": msg.id,
+        "is_active": msg.is_active,
+        "affection_score": persona.affection_score if persona else None,
+        "current_mood": persona.current_mood if persona else None
+    }

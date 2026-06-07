@@ -69,7 +69,11 @@ def get_settings():
         "cognition_max_words": settings.APP_COGNITION_MAX_WORDS,
         "retrieval_half_life_turns": settings.APP_RETRIEVAL_HALF_LIFE_TURNS,
         "retrieval_candidate_multiplier": settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER,
-        "max_tokens": settings.LLM_MAX_TOKENS
+        "max_tokens": settings.LLM_MAX_TOKENS,
+        "top_p": settings.LLM_TOP_P,
+        "presence_penalty": settings.LLM_PRESENCE_PENALTY,
+        "frequency_penalty": settings.LLM_FREQUENCY_PENALTY,
+        "repetition_penalty": settings.LLM_REPETITION_PENALTY
     }
 
 
