@@ -11,13 +11,15 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.database import SessionLocal
 from core import models
+from core.config import settings
 import chromadb
 
 
 def query_sqlite():
     db = SessionLocal()
     print("\n" + "=" * 50)
-    print("📊 SQLite 数据库概览 (data.db)")
+    db_name = os.path.basename(settings.STORAGE_SQLITE_DB_PATH)
+    print(f"📊 SQLite 数据库概览 ({db_name})")
     print("=" * 50)
 
     # ── 角色 ──
@@ -72,10 +74,11 @@ def query_sqlite():
 
 def query_chroma():
     print("\n" + "=" * 50)
-    print("🧠 ChromaDB 向量记忆库概览 (chroma_data/)")
+    chroma_name = os.path.basename(settings.STORAGE_CHROMA_DB_PATH)
+    print(f"🧠 ChromaDB 向量记忆库概览 ({chroma_name}/)")
     print("=" * 50)
 
-    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_data")
+    chroma_path = settings.STORAGE_CHROMA_DB_PATH
     if not os.path.exists(chroma_path):
         print("ChromaDB 目录不存在，暂无记忆数据。")
         return

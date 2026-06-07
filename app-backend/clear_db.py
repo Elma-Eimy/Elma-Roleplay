@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.database import engine
 from core import models
+from core.config import settings
 
 
 def clear_databases():
@@ -24,7 +25,8 @@ def clear_databases():
         return
 
     # 1. 清空 SQLite 数据库
-    print("\n[1/2] 正在清空 SQLite 数据库 (data.db)...")
+    db_name = os.path.basename(settings.STORAGE_SQLITE_DB_PATH)
+    print(f"\n[1/2] 正在清空 SQLite 数据库 ({db_name})...")
     try:
         models.Base.metadata.drop_all(bind=engine)
         models.Base.metadata.create_all(bind=engine)
@@ -36,7 +38,7 @@ def clear_databases():
 
     # 2. 清空 ChromaDB
     print("\n[2/2] 正在清空 ChromaDB 向量数据库...")
-    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_data")
+    chroma_path = settings.STORAGE_CHROMA_DB_PATH
     if os.path.exists(chroma_path):
         try:
             shutil.rmtree(chroma_path)

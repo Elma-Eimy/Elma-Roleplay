@@ -24,8 +24,8 @@ app:
   lorebook_scan_depth: 5
   lorebook_token_budget: 3000
   lorebook_max_recursive_passes: 3
-  sqlite_db_path: data.db
-  chroma_db_path: ./chroma_data
+  sqlite_db_path: data/data.db
+  chroma_db_path: data/chroma_data
   upload_avatar_dir: ./assets/avatars
   cors_origins:
   - '*'
