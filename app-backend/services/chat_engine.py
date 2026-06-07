@@ -609,6 +609,11 @@ async def generate_reply(
     db = None,
     use_reasoning: Optional[bool] = None,
     user_nickname: str = "用户",
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ) -> dict:
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
@@ -624,13 +629,35 @@ async def generate_reply(
         user_nickname=user_nickname,
     )
 
+    # 1. 解析角色专属配置
+    ext = {}
+    if character.extensions:
+        try:
+            ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
+        except Exception:
+            pass
+
+    # 2. 优先级链合并：Request -> Character Extensions -> Global Settings
+    final_temp = temperature if temperature is not None else ext.get("temperature", settings.LLM_TEMPERATURE)
+    final_top_p = top_p if top_p is not None else ext.get("top_p", settings.LLM_TOP_P)
+    final_presence = presence_penalty if presence_penalty is not None else ext.get("presence_penalty", settings.LLM_PRESENCE_PENALTY)
+    final_frequency = frequency_penalty if frequency_penalty is not None else ext.get("frequency_penalty", settings.LLM_FREQUENCY_PENALTY)
+    final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
+
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": final_temp,
+        "top_p": final_top_p,
+        "presence_penalty": final_presence,
+        "frequency_penalty": final_frequency,
+        "max_tokens": settings.LLM_MAX_TOKENS,
+    }
+    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
+        kwargs["extra_body"] = {"repetition_penalty": final_repetition}
+
     try:
-        response = await llm_client_async.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=settings.LLM_TEMPERATURE,
-            max_tokens=settings.LLM_MAX_TOKENS,
-        )
+        response = await llm_client_async.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content
 
@@ -666,6 +693,11 @@ async def generate_reply_stream(
     db = None,
     use_reasoning: Optional[bool] = None,
     user_nickname: str = "用户",
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ):
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
@@ -681,14 +713,36 @@ async def generate_reply_stream(
         user_nickname=user_nickname,
     )
 
+    # 1. 解析角色专属配置
+    ext = {}
+    if character.extensions:
+        try:
+            ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
+        except Exception:
+            pass
+
+    # 2. 优先级链合并：Request -> Character Extensions -> Global Settings
+    final_temp = temperature if temperature is not None else ext.get("temperature", settings.LLM_TEMPERATURE)
+    final_top_p = top_p if top_p is not None else ext.get("top_p", settings.LLM_TOP_P)
+    final_presence = presence_penalty if presence_penalty is not None else ext.get("presence_penalty", settings.LLM_PRESENCE_PENALTY)
+    final_frequency = frequency_penalty if frequency_penalty is not None else ext.get("frequency_penalty", settings.LLM_FREQUENCY_PENALTY)
+    final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
+
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": final_temp,
+        "top_p": final_top_p,
+        "presence_penalty": final_presence,
+        "frequency_penalty": final_frequency,
+        "max_tokens": settings.LLM_MAX_TOKENS,
+        "stream": True,
+    }
+    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
+        kwargs["extra_body"] = {"repetition_penalty": final_repetition}
+
     try:
-        response = await llm_client_async.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=settings.LLM_TEMPERATURE,
-            max_tokens=settings.LLM_MAX_TOKENS,
-            stream=True,
-        )
+        response = await llm_client_async.chat.completions.create(**kwargs)
         # 包装并记录流输出
         logged_stream = _log_llm_stream_wrapper_async(response, model, messages)
         return logged_stream, model
