@@ -1,6 +1,93 @@
 import json
+import hashlib
+import os
 from typing import Optional
 from core.config import settings
+from services.chat_engine import chroma_client, openai_ef
+
+def sync_lorebook_collection(character_id: int, entries: list) -> bool:
+    """
+    自愈式世界书索引同步：
+    通过计算 entries 的内容 Hash 存入一个特殊的 document_id = "__hash__"，
+    并在每次匹配前进行比对。如果发生任何变更或不存在，则清空重建该 collection 的索引，
+    实现无感升级与配置同步。
+    """
+    collection_name = f"lorebook_{character_id}"
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        embedding_function=openai_ef
+    )
+    
+    # 仅对启用且非全局常驻 (non-constant) 的条目进行向量表示及相似度匹配
+    vector_entries = [
+        e for e in entries 
+        if isinstance(e, dict) and e.get("enabled", True) and not e.get("constant", False)
+    ]
+    
+    # 构建内容 Payload Hash 串
+    hash_payload = json.dumps(vector_entries, sort_keys=True)
+    current_hash = hashlib.md5(hash_payload.encode('utf-8')).hexdigest()
+    
+    # 检查已存哈希
+    needs_reindex = True
+    try:
+        stored_hash_doc = collection.get(ids=["__hash__"])
+        if stored_hash_doc and stored_hash_doc.get("documents"):
+            stored_hash = stored_hash_doc["documents"][0]
+            if stored_hash == current_hash:
+                needs_reindex = False
+    except Exception:
+        pass
+        
+    if needs_reindex:
+        print(f"[INFO] Lorebook: 检测到角色 {character_id} 的世界书发生变化，正在重构向量索引...")
+        # 1. 清空原 collection 所有条目
+        try:
+            all_docs = collection.get(include=[])
+            if all_docs and all_docs.get("ids"):
+                collection.delete(ids=all_docs["ids"])
+        except Exception as e:
+            print(f"[WARN] 清空旧世界书索引失败: {e}")
+            
+        # 2. 批量构建新增条目
+        ids = []
+        documents = []
+        metadatas = []
+        
+        # 写入版本特征哈希，标识此 collection 已就绪
+        ids.append("__hash__")
+        documents.append(current_hash)
+        metadatas.append({"entry_idx": -1, "position": "", "priority": 0, "insertion_order": 0, "is_hash": True})
+        
+        for idx, entry in enumerate(entries):
+            if not isinstance(entry, dict) or not entry.get("enabled", True):
+                continue
+            if bool(entry.get("constant", False)):
+                continue
+                
+            content = entry.get("content", "").strip()
+            if not content:
+                continue
+                
+            ids.append(f"entry_{idx}")
+            documents.append(content)
+            metadatas.append({
+                "entry_idx": idx,
+                "position": str(entry.get("position", "after_char")),
+                "priority": int(entry.get("priority", 100)),
+                "insertion_order": int(entry.get("insertion_order", 100)),
+                "is_hash": False
+            })
+            
+        if len(ids) > 1:
+            try:
+                collection.add(ids=ids, documents=documents, metadatas=metadatas)
+                print(f"[INFO] Lorebook: 角色 {character_id} 成功向量化了 {len(ids)-1} 条世界书背景条目。")
+            except Exception as e:
+                print(f"[ERROR] 角色 {character_id} 向量化世界书失败: {e}")
+                return False
+    return True
+
 
 def process_lorebook(
     character,
@@ -9,6 +96,10 @@ def process_lorebook(
 ) -> dict:
     """
     处理角色专属的世界书（Lorebook/CharacterBook）匹配与筛选。
+    支持：
+      1. 常驻条目 (constant=True) 自动使能。
+      2. 关键词匹配 (Aho-Corasick) 状态触发。
+      3. 向量语义匹配 (Semantic Similarity) 状态触发。
     """
     if not recent_history and not user_message:
         return {"before_char": [], "after_char": []}
@@ -52,8 +143,11 @@ def process_lorebook(
         scan_parts.append(user_message)
     scan_text = "\n".join(scan_parts)
     
-    # 4. 条目触发匹配 (支持递归扫描)
-    # 4. 构建 Aho-Corasick 自动机 (仅构建一次以取得最优匹配性能)
+    triggered_indexes = set()
+    triggered_entries = []
+
+    # 4. Aho-Corasick 精准关键词触发分支
+    # 构建 Aho-Corasick 自动机 (仅构建一次以取得最优匹配性能)
     from services.ahocorasick import AhoCorasick
     
     ac_insensitive = AhoCorasick()
@@ -105,15 +199,9 @@ def process_lorebook(
         
     # 5. 条目触发匹配 (支持递归扫描)
     max_passes = settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES if recursive_scanning else 1
-    triggered_indexes = set()
-    triggered_entries = []
-    
     current_scan_text = scan_text
     
     for _ in range(max_passes):
-        # Bug5修复：将 constant 条目的触发和关键词匹配的触发分离记录。
-        # new_trigger_added 仅跟踪"是否有新关键词命中"，不受 constant 常驻触发影响，
-        # 从而当只有常驻条目被识别时能尽早退出循环
         new_trigger_added = False
         
         # 首先：触发所有尚未触发的常驻条目 (Constant)
@@ -125,7 +213,6 @@ def process_lorebook(
             if bool(entry.get("constant", False)):
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
-                # 常驻条目不更新 new_trigger_added，不干扰循环提前退出的判断
                 content = entry.get("content", "")
                 if content:
                     current_scan_text += "\n" + content
@@ -186,15 +273,58 @@ def process_lorebook(
             if matched:
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
-                new_trigger_added = True  # 关键词命中才设为 True
+                new_trigger_added = True
                 content = entry.get("content", "")
                 if content:
                     current_scan_text += "\n" + content
                     
         if not new_trigger_added:
             break
-            
-    # 5. 预算控制与排序
+
+    # 6. ChromaDB 向量语义模糊匹配分支
+    if settings.APP_LOREBOOK_SEMANTIC_ENABLED:
+        try:
+            # 6.1 同步构建/更新 Chroma 索引
+            if sync_lorebook_collection(character.id, entries):
+                # 6.2 查询 collection
+                collection_name = f"lorebook_{character.id}"
+                collection = chroma_client.get_collection(
+                    name=collection_name,
+                    embedding_function=openai_ef
+                )
+                
+                # 6.3 用最新消息做检索 query
+                semantic_query = user_message if user_message else scan_text
+                
+                # 查询匹配的条目
+                query_res = collection.query(
+                    query_texts=[semantic_query],
+                    n_results=settings.APP_LOREBOOK_SEMANTIC_TOP_K,
+                    where={"is_hash": False}, # 排除哈希条目
+                    include=["metadatas", "distances"]
+                )
+                
+                if query_res and query_res.get("metadatas") and query_res["metadatas"][0]:
+                    metas = query_res["metadatas"][0]
+                    dists = query_res["distances"][0] if query_res.get("distances") else [0.0] * len(metas)
+                    
+                    for meta, dist in zip(metas, dists):
+                        if dist <= settings.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE:
+                            idx = int(meta["entry_idx"])
+                            if idx not in triggered_indexes and idx < len(entries):
+                                entry = entries[idx]
+                                # 对于 selective (选择性触发) 条目，影响面较广，保留原来的硬性匹配逻辑
+                                selective = bool(entry.get("selective", False))
+                                if selective:
+                                    continue
+                                
+                                triggered_indexes.add(idx)
+                                triggered_entries.append(entry)
+                                print(f"[INFO] Lorebook: 向量检索召回了世界书条目 #{idx} (距离: {dist:.3f})")
+        except Exception as e:
+            print(f"[WARN] Lorebook: 向量检索世界书失败 (已忽略): {e}")
+
+    # 7. 预算控制与排序
     triggered_entries.sort(key=lambda e: (
         int(e.get("insertion_order", 100)),
         int(e.get("priority", 100))
@@ -211,7 +341,7 @@ def process_lorebook(
             selected_entries.append(entry)
             budget_used += content_len
             
-    # 6. 分类位置归宿
+    # 8. 分类位置归宿
     before_char = []
     after_char = []
     for entry in selected_entries:
