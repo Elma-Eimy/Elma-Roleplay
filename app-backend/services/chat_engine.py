@@ -614,6 +614,7 @@ async def generate_reply(
     presence_penalty: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> dict:
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
@@ -643,18 +644,36 @@ async def generate_reply(
     final_presence = presence_penalty if presence_penalty is not None else ext.get("presence_penalty", settings.LLM_PRESENCE_PENALTY)
     final_frequency = frequency_penalty if frequency_penalty is not None else ext.get("frequency_penalty", settings.LLM_FREQUENCY_PENALTY)
     final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
+    final_reasoning_effort = reasoning_effort if reasoning_effort is not None else ext.get("reasoning_effort", settings.LLM_REASONING_EFFORT)
+
+    is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
 
     kwargs = {
         "model": model,
         "messages": messages,
-        "temperature": final_temp,
-        "top_p": final_top_p,
-        "presence_penalty": final_presence,
-        "frequency_penalty": final_frequency,
         "max_tokens": settings.LLM_MAX_TOKENS,
     }
+
+    # 根据模型和推理状态注入参数（推理模型可能不支持 temperature 或者是受限的，且支持 reasoning_effort）
+    if "o1" in model.lower() or "o3" in model.lower() or "pro" in model.lower():
+        if final_reasoning_effort:
+            kwargs["reasoning_effort"] = final_reasoning_effort
+    else:
+        kwargs["temperature"] = final_temp
+        kwargs["top_p"] = final_top_p
+        kwargs["presence_penalty"] = final_presence
+        kwargs["frequency_penalty"] = final_frequency
+
+    extra_body = {}
     if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
-        kwargs["extra_body"] = {"repetition_penalty": final_repetition}
+        extra_body["repetition_penalty"] = final_repetition
+
+    # 如果是 DeepSeek 模型且开启了思考，根据文档需要传入 thinking: {"type": "enabled"}
+    if "deepseek" in model.lower() and is_reasoning_active:
+        extra_body["thinking"] = {"type": "enabled"}
+
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
     try:
         response = await llm_client_async.chat.completions.create(**kwargs)
@@ -698,6 +717,7 @@ async def generate_reply_stream(
     presence_penalty: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
+    reasoning_effort: Optional[str] = None,
 ):
     """
     基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
@@ -727,19 +747,37 @@ async def generate_reply_stream(
     final_presence = presence_penalty if presence_penalty is not None else ext.get("presence_penalty", settings.LLM_PRESENCE_PENALTY)
     final_frequency = frequency_penalty if frequency_penalty is not None else ext.get("frequency_penalty", settings.LLM_FREQUENCY_PENALTY)
     final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
+    final_reasoning_effort = reasoning_effort if reasoning_effort is not None else ext.get("reasoning_effort", settings.LLM_REASONING_EFFORT)
+
+    is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
 
     kwargs = {
         "model": model,
         "messages": messages,
-        "temperature": final_temp,
-        "top_p": final_top_p,
-        "presence_penalty": final_presence,
-        "frequency_penalty": final_frequency,
         "max_tokens": settings.LLM_MAX_TOKENS,
         "stream": True,
     }
+
+    # 根据模型和推理状态注入参数（推理模型可能不支持 temperature 或者是受限的，且支持 reasoning_effort）
+    if "o1" in model.lower() or "o3" in model.lower() or "pro" in model.lower():
+        if final_reasoning_effort:
+            kwargs["reasoning_effort"] = final_reasoning_effort
+    else:
+        kwargs["temperature"] = final_temp
+        kwargs["top_p"] = final_top_p
+        kwargs["presence_penalty"] = final_presence
+        kwargs["frequency_penalty"] = final_frequency
+
+    extra_body = {}
     if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
-        kwargs["extra_body"] = {"repetition_penalty": final_repetition}
+        extra_body["repetition_penalty"] = final_repetition
+
+    # 如果是 DeepSeek 模型且开启了思考，根据文档需要传入 thinking: {"type": "enabled"}
+    if "deepseek" in model.lower() and is_reasoning_active:
+        extra_body["thinking"] = {"type": "enabled"}
+
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
     try:
         response = await llm_client_async.chat.completions.create(**kwargs)
