@@ -34,6 +34,11 @@ class ChatRequest(BaseModel):
     use_reasoning: Optional[bool] = None
     is_regenerate: bool = False
     user_nickname: Optional[str] = "用户"
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
 
 
 class MessageUpdate(BaseModel):
@@ -54,3 +59,10 @@ class SettingsUpdate(BaseModel):
     retrieval_half_life_turns: Optional[int] = None
     retrieval_candidate_multiplier: Optional[int] = None
     max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+
+class SwitchCandidateRequest(BaseModel):
+    message_id: int

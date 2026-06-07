@@ -10,6 +10,10 @@ llm:
   max_tokens: 4096
   reasoning_mode: false
   timeout: 60
+  top_p: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
 app:
   context_history_limit: 15
   retrieval_top_k: 3

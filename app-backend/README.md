@@ -205,7 +205,7 @@ app:
 | GET | `/characters` | 获取所有角色简要列表 |
 | GET | `/characters/{id}` | 获取角色完整设定 |
 | PUT | `/characters/{id}` | 更新角色设定 |
-| DELETE | `/characters/{id}` | 级联删除角色、所有会话及 ChromaDB 向量集合 |
+| DELETE / POST | `/characters/{id}` 或 `/characters/{id}/delete` | 级联删除角色、所有会话及 ChromaDB 向量集合 (POST 用于移动端及网关避让) |
 
 ### 会话管理 `/sessions`
 
@@ -216,11 +216,11 @@ app:
 | GET | `/sessions/{id}` | 获取会话详情（含 Persona 完整状态） |
 | GET | `/sessions/{id}/history` | 获取会话聊天历史（支持 `limit` 参数） |
 | PUT | `/sessions/{id}/title` | 修改会话标题 |
-| DELETE | `/sessions/{id}` | 安全删除会话，自动重连子节点继承链 |
+| DELETE / POST | `/sessions/{id}` 或 `/sessions/{id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于移动端及网关避让) |
 | POST | `/sessions/{id}/trigger_summary` | 手动触发记忆提纯 |
 | POST | `/sessions/{id}/trigger_cognition` | 手动触发认知状态更新 |
 | PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
-| DELETE | `/sessions/messages/{message_id}` | 删除消息（自动回滚好感度与心情状态） |
+| DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感度与心情状态，POST 用于移动端及网关避让） |
 
 ### 对话核心 `/chat`
 
@@ -302,6 +302,7 @@ python test_api.py
 ## 注意事项
 
 - **本项目为单用户私有部署设计**，数据库无用户隔离，请勿直接暴露到公网（建议设置 `ACCESS_API_KEY` 或套一层反向代理）。
+- **移动端与 Nginx 兼容（DELETE 降级避让）**：为防范移动原生客户端及 Nginx 反向代理层在 HTTP 强跳转 HTTPS 时自动将 `DELETE` 重定向并降级为 `GET` 的现象，所有的物理删除接口均已挂载 `DELETE` 和 `POST .../delete` 双通道路径。移动端开发或联调时推荐统一走 `POST .../delete` 通道。
 - 上传的头像/角色卡文件名会自动加 UUID 前缀防止同名覆盖，原始文件名保留在后缀。
 - LLM 超时默认 60 秒，可在 `config.yaml` 的 `timeout` 字段调整；思考模型（如 DeepSeek-R1）首 token 延迟较长，建议不低于 60 秒。
 - ChromaDB 数据位于 `./chroma_data/`，SQLite 数据位于 `./data.db`，备份时两者一并保存。
