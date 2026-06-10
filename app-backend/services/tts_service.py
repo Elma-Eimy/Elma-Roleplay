@@ -24,6 +24,11 @@ class TTSService:
         if not text:
             return ""
 
+        # 0. 预清洗：移去前缀角色名（如 "Sora: " 或 "Sora："）与首尾的双引号/单引号
+        text = re.sub(r'^[a-zA-Z0-9_\u4e00-\u9fa5\s]+[:：]\s*', '', text)
+        text = text.strip()
+        text = re.sub(r'^["\'“「”」\s]+|["\'“「”」\s]+$', '', text)
+
         # 情绪关键词映射表 -> 对应 MiMo 风格标签
         emotions = {
             "悲伤": ["悲伤", "难过", "哭泣", "哀伤", "伤心", "委屈", "沮丧", "低落", "叹息"],
@@ -212,7 +217,9 @@ class TTSService:
             result = re.sub(r'\s+', ' ', result_cleaned).strip()
             return result
         except Exception as e:
-            print(f"[WARN] LLM 预处理失败: {e}，回退使用正则规则预处理器。")
+            import traceback
+            print(f"[WARN] LLM 预处理失败，回退使用正则规则预处理器。详细报错原因:")
+            traceback.print_exc()
             return self.preprocess_roleplay_text_rules(text)
 
     def preprocess_roleplay_text_llm_sync(self, text: str, character_name: str = None) -> str:
@@ -319,7 +326,9 @@ class TTSService:
             result = re.sub(r'\s+', ' ', result_cleaned).strip()
             return result
         except Exception as e:
-            print(f"[WARN] (同步) LLM 预处理失败: {e}，回退使用正则规则预处理器。")
+            import traceback
+            print(f"[WARN] (同步) LLM 预处理失败，回退使用正则规则预处理器。详细报错原因:")
+            traceback.print_exc()
             return self.preprocess_roleplay_text_rules(text)
 
     @classmethod
