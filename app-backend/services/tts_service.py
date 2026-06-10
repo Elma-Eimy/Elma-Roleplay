@@ -17,8 +17,8 @@ class TTSService:
         """
         规则/正则预处理器：
         1. 匹配提取并解析动作/心理描写（包括 *...*、(...)、（...）、[...]、【...】、［...］、{...}、｛...｝）。
-        2. 扫描动作描写中的情绪关键词，映射为 MiMo 原生支持的情感标签（如 <style>开心</style>）。
-        3. 扫描动作描写中的声音事件关键词，转换为 MiMo 的声音标记（如 （叹气）、[inhale]）。
+        2. 扫描动作描写中的情绪关键词，映射为 MiMo 原生支持的情感标签（如 [开心]）。
+        3. 扫描动作描写中的声音事件关键词，转换为 MiMo 的声音标记（如 [叹气]、[吸气]）。
         4. 剔除所有纯肢体动作的描述（不发音），只保留人物对白以及情感和声音事件修饰，避免合成软件读出动作词。
         """
         if not text:
@@ -34,17 +34,17 @@ class TTSService:
             "唱歌": ["唱歌", "哼歌", "唱"]
         }
 
-        # 声音事件关键词映射表 -> 对应中文括号拟人事件
+        # 声音事件关键词映射表 -> 对应中括号拟人事件
         sound_events = {
             "叹气": ["叹气", "叹了口气", "叹息", "唉"],
             "笑声": ["笑声", "笑", "微笑", "吃吃地笑", "咯咯", "呵呵", "哈哈"],
             "哭泣": ["哭泣", "哭", "抽泣", "呜咽", "流泪", "啜泣"],
             "咳嗽": ["咳嗽", "咳", "清了清嗓子"],
-            "吸气": ["吸气", "深呼吸", "喘气", "呼吸", "倒戏口凉气"]
+            "吸气": ["吸气", "深呼吸", "喘气", "呼吸", "倒吸口凉气"]
         }
 
         # 匹配星号、中英文圆/方/花括号
-        pattern = r'(?:\*([^*]+)\*|（([^）]+)）|\(([^)]+)\)|【([^】]+)】|\[([^\]]+)\]|［([^］]+)］|\{([^\}]+)\}|｛([^｝]+)｝)'
+        pattern = r'(?:\*([^*]+)\*|（([^）]+)）|\(([^)]+)\)|【([^】]+)】|\[([^\]]+)\]|［([^］]+)］|\{[^\}]+\}|｛[^｝]+｝)'
 
         def replace_match(match):
             content = None
@@ -69,20 +69,20 @@ class TTSService:
             for sound, keywords in sound_events.items():
                 if any(kw in content_str for kw in keywords):
                     if sound == "叹气":
-                        detected_sound = "（叹气）"
+                        detected_sound = "[叹气]"
                     elif sound == "笑声":
-                        detected_sound = "（笑声）"
+                        detected_sound = "[笑声]"
                     elif sound == "哭泣":
-                        detected_sound = "（哭声）"
+                        detected_sound = "[哭声]"
                     elif sound == "咳嗽":
-                        detected_sound = "（咳嗽）"
+                        detected_sound = "[咳嗽]"
                     elif sound == "吸气":
-                        detected_sound = "[inhale]"
+                        detected_sound = "[吸气]"
                     break
 
             result_parts = []
             if detected_style:
-                result_parts.append(f"<style>{detected_style}</style>")
+                result_parts.append(f"[{detected_style}]")
             if detected_sound:
                 result_parts.append(detected_sound)
 
@@ -100,87 +100,64 @@ class TTSService:
 
     def _normalize_style_tags(self, text: str) -> str:
         """
-        将任何非标准 style 标签映射到 MiMo 支持的 6 个标准情感：
-        开心、悲伤、愤怒、温柔、悄悄话、唱歌
+        兼容性处理：如果大模型依然输出了 <style>xxx</style>，转换为 [xxx] 格式
         """
         if not text:
             return ""
-            
-        emotions_map = {
-            "悲伤": ["悲伤", "难过", "哭", "哀", "伤心", "委屈", "沮", "低落", "叹", "伤感", "疲惫", "累"],
-            "开心": ["开心", "高兴", "喜", "兴奋", "笑", "娇嗔", "快乐", "爽朗", "甜蜜", "激动"],
-            "愤怒": ["生气", "愤怒", "意难平", "脑", "暴怒", "愤", "不满", "气", "咬牙"],
-            "温柔": ["温柔", "体贴", "深情", "柔", "宠", "轻声", "娇羞", "羞", "害羞", "温暖", "欣慰", "平静"],
-            "悄悄话": ["悄悄话", "耳语", "悄悄", "低语", "窃窃私语", "小声", "嘟囔"],
-            "唱歌": ["唱歌", "哼歌", "唱"]
-        }
-        
-        def replace_style(match):
-            style_val = match.group(1).strip()
-            # 寻找匹配的标准类别
-            for std_style, keywords in emotions_map.items():
-                if style_val == std_style or any(kw in style_val for kw in keywords):
-                    return f"<style>{std_style}</style>"
-            # 如果未找到任何匹配，默认转为温柔
-            return "<style>温柔</style>"
-            
-        # 替换所有的 <style>...</style>
-        return re.sub(r'<\s*style\s*>(.*?)</\s*style\s*>', replace_style, text, flags=re.IGNORECASE)
+        return re.sub(r'<\s*style\s*>(.*?)</\s*style\s*>', r'[\1]', text, flags=re.IGNORECASE)
 
-    async def preprocess_roleplay_text_llm(self, text: str) -> str:
+    async def preprocess_roleplay_text_llm(self, text: str, character_name: str = None) -> str:
         """
-        LLM 预处理器：
-        使用快速的大模型（如 deepseek-v4-flash）进行语义分析，剔除无关的肢体动作/心理描写，
-        提取语气与声效并映射为 MiMo 原生支持的情感标签（如 <style>开心</style>）与声效标记（如 （叹气）、[inhale]）。
+        至臻 LLM 预处理器：
+        使用快速的大模型（如 deepseek-v4-flash）进行语义分析，剔除纯物理动作/旁白/场景叙述，
+        提取情感、语气和发声事件并转化为 MiMo v2.5 官方支持的 [风格/情绪/动作] 方括号控制标签，并合理嵌入到台词对白的不同位置。
         """
         if not text or not text.strip():
             return ""
 
-        # 避免循环引用，在方法内部动态引入
         from services.chat_engine import llm_client_async
         from core.config import settings
 
+        target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
+
         system_prompt = (
-            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和角色台词的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
+            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和多人对话的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
             "处理规则：\n"
-            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。（注意：台词中角色说出口的语气拟声词如“唉”、“哼”、“呜呜”、“哈哈”、“呀”、“啊”、“哦”等属于台词，绝对不要当作旁白删除，必须保留在台词内）。\n"
-            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！但角色口头说出来的语气词不是旁白，不要删除。\n"
-            "3. 提取动作描述或台词本身的情绪与语气，使用以下 MiMo 原生支持的 XML 样式标签包裹对应的台词（或放在台词开头）：\n"
-            "   - <style>开心</style>：适用于高兴、喜悦、兴奋、娇嗔、撒娇、笑等情绪。\n"
-            "   - <style>悲伤</style>：适用于难过、哭泣、哀伤、伤心、委屈、沮丧、低落等情绪。\n"
-            "   - <style>愤怒</style>：适用于生气、愤怒、意难平、脑火、暴怒、不满等情绪。\n"
-            "   - <style>温柔</style>：适用于温柔、体贴、深情、柔和、宠溺、轻声、娇羞、害羞等语气或情绪。\n"
-            "   - <style>悄悄话</style>：适用于耳语、低语、窃窃私语、小声、嘟囔等。\n"
-            "   - <style>唱歌</style>：适用于唱歌、哼歌等。\n"
-            "4. 提取动作描写中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
-            "   - （叹气）\n"
-            "   - （笑声）\n"
-            "   - （哭声）\n"
-            "   - （咳嗽）\n"
-            "   - [inhale] (吸气/深呼吸)\n"
-            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。特别提醒：台词中原本就包含的口语语气发音词（例如“唉”、“呜呜”、“哼”、“哈哈”、“嘿”等），必须原样保留在台词文本中，绝对不要将其删除或替换为声音标记！声音标记仅作为音效插入，不能代替原本的发音词。\n"
-            "5. 保证输出连贯，只包含经过处理的台词与相应的 <style> 和声音标记。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。如果输入文本包含台词，绝对不能输出为空白。"
+            f"1. {target_info}\n"
+            "   - 必须绝对剔除所有的纯物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
+            "   - 台词中原本就包含的口语语气发音词（例如“唉”、“哼”、“呜呜”、“哈哈”、“嘿”、“呀”、“啊”、“哦”等），绝对不能删除，必须在台词原样中保留！\n"
+            "   - 如果有其他角色的台词（如“Reina: '...'”），而目标不是该角色，必须将其彻底舍弃。\n"
+            "2. 在提取出的台词开头添加整体的情绪/风格标签，格式为 [风格] 待合成内容。支持同时设置多种风格，将多个风格置于同一个方括号内，如 [温柔 怅然] 或 [冷漠，低沉]。\n"
+            "   推荐基础情绪风格：开心/悲伤/愤怒/恐惧/惊讶/兴奋/委屈/平静/冷漠/怅然/欣慰/无奈/愧疚/释然/温柔/高冷/活泼/严肃/慵懒/俏皮/深沉等。\n"
+            "3. 如果台词中包含多种不同的心情、语气转变或声音特效，支持在文本的中间或任意位置插入细粒度方括号控制标签，格式为 [音频标签]。\n"
+            "   推荐细粒度标签：吸气/深呼吸/叹气/长叹一口气/喘息/紧张/害怕/激动/疲惫/撒娇/颤抖/轻笑/大笑/抽泣/呜呜/小声/语速加快/提高音量等。\n"
+            "   （如需体验唱歌，必须在歌词前加上 [唱歌] 或 [sing] 标签）。\n"
+            "4. 保证输出连贯，只包含提取出的台词与相应的 [风格/控制] 方括号标签。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。"
         )
 
         user_content = (
             "示例 1：\n"
-            "输入：*她咬了缩下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
-            "输出：<style>悲伤</style>\"你...你昨天怎么没来找我嘛...\"\n\n"
+            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
+            "输出：[悲伤，叹气]唉，今天在学校真的好累啊。[开心，轻笑]不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
             "示例 2：\n"
-            "输入：我没事。（叹了口气）只是有点累了。\n"
-            "输出：<style>温柔</style>我没事。（叹气）只是有点累了。\n\n"
+            "输入：*她咬了紧下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
+            "输出：[委屈，吸气]\"你...你昨天怎么没来找我嘛...\"\n\n"
             "示例 3：\n"
-            "输入：我红着脸，有些不好意思地低下头。其实，我也很想你。\n"
-            "输出：<style>温柔</style>其实，我也很想你。\n\n"
+            "输入：我没事。（叹了口气）只是有点累了。\n"
+            "输出：[温柔，疲惫]我没事。[长叹一口气]只是有点累了。\n\n"
             "示例 4：\n"
             "输入：【摸摸头】别伤心了，有我在呢。\n"
-            "输出：<style>温柔</style>别伤心了，有我在呢。\n\n"
+            "输出：[温柔]别伤心了，有我在呢。\n\n"
             "示例 5：\n"
             "输入：她微微一笑说道：“你终于来啦。”\n"
-            "输出：<style>温柔</style>“你终于来啦。”\n\n"
-            "示例 6：\n"
-            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
-            "输出：<style>悲伤</style>（叹气）唉，今天在学校真的好累啊。（笑声）<style>开心</style>不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
+            "输出：[温柔，轻笑]“你终于来啦。”\n\n"
+            "示例 6（目标角色为 Vera）：\n"
+            "输入：Reina Kuroda sat behind a desk. Reina: \"Volkov movement near the eastern ports.\"\n"
+            "Now, Vera stood in the shadow. She drew her sidearm and pointed it directly at your chest.\n"
+            "Vera: \"This is the first time we work together. So listen carefully.\"\n"
+            "Her voice was low, unhurried.\n"
+            "Vera: \"Do not slow me down. Be useful, or I will kill you myself.\"\n"
+            "输出：[高冷，严肃]“This is the first time we work together. So listen carefully。”[冷漠，低沉]“Do not slow me down. Be useful, or I will kill you myself。”\n\n"
             f"输入：{text}\n"
             "输出："
         )
@@ -199,40 +176,46 @@ class TTSService:
             result = response.choices[0].message.content.strip()
             if result.startswith("```"):
                 result = re.sub(r"^```[a-zA-Z]*\n|```$", "", result).strip()
-            # 情感标签标准化
+            
+            # 兼容性处理：如果大模型依然输出了 <style>xxx</style>，转换为 [xxx] 格式
             result = self._normalize_style_tags(result)
             
             # Post-processing 双重清理过滤：
-            # 1. 移去 "输出："、"处理后："、"规范文本如下：" 等大模型前缀词
+            # 1. 移去 "输出："、"处理后：" 等前缀词
             result = re.sub(r'^(?:输出|处理后|转换后|结果|整理后|规范文本|预处理结果|预处理后|清洗后)[:：\s]*', '', result)
             result = re.sub(r'^.*?如下[:：\s]*', '', result, flags=re.IGNORECASE)
             
-            # 保护声音标记：暂时替换为特有的占位符，避免被强力清理规则误杀
-            result = result.replace("（叹气）", "___SIGH___")
-            result = result.replace("（笑声）", "___LAUGH___")
-            result = result.replace("（哭声）", "___CRY___")
-            result = result.replace("（咳嗽）", "___COUGH___")
-            result = result.replace("[inhale]", "___INHALE___")
-
-            # 2. 强力防漏：剔除任何可能残留的 *动作*、(动作)、（动作）以及各类方括号、花括号内的肢体叙述
-            result = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|\[[^\]]+\]|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result)
+            # 2. 规范化：统一把所有的（风格/发声）或 (风格/发声) 转换为 [风格/发声]
+            def normalize_brackets(match):
+                content = next((g for g in match.groups() if g is not None), "").strip()
+                if content and len(content) <= 12:
+                    return f"[{content}]"
+                return match.group(0)
             
-            # 还原声音标记
-            result = result.replace("___SIGH___", "（叹气）")
-            result = result.replace("___LAUGH___", "（笑声）")
-            result = result.replace("___CRY___", "（哭声）")
-            result = result.replace("___COUGH___", "（咳嗽）")
-            result = result.replace("___INHALE___", "[inhale]")
+            result = re.sub(r'(?:（([^）]+)）|\(([^)]+)\)|［([^］]+)］|【([^】]+)】)', normalize_brackets, result)
             
-            result = re.sub(r'\s+', ' ', result).strip()
+            # 3. 提取并保护所有的方括号控制标签，用占位符替换以防被强力清理规则过滤
+            tags = []
+            def protect_tag(match):
+                tags.append(match.group(0))
+                return f"___TAG_{len(tags)-1}___"
+            
+            result_protected = re.sub(r'\[([^\]]+)\]', protect_tag, result)
 
-            # print(f"[INFO] LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
+            # 4. 强力防漏：剔除任何可能残留的 *动作* 以及非标签的肢体叙述（不匹配被保护的方括号，只剔除多余的圆括号、花括号、方头括号等）
+            result_cleaned = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result_protected)
+            
+            # 5. 还原所有的方括号控制标签
+            for i, tag in enumerate(tags):
+                result_cleaned = result_cleaned.replace(f"___TAG_{i}___", tag)
+            
+            result = re.sub(r'\s+', ' ', result_cleaned).strip()
             return result
         except Exception as e:
             print(f"[WARN] LLM 预处理失败: {e}，回退使用正则规则预处理器。")
             return self.preprocess_roleplay_text_rules(text)
 
-    def preprocess_roleplay_text_llm_sync(self, text: str) -> str:
+    def preprocess_roleplay_text_llm_sync(self, text: str, character_name: str = None) -> str:
         """
         同步LLM 预处理器，供同步接口或测试调用。
         """
@@ -242,47 +225,46 @@ class TTSService:
         from services.chat_engine import llm_client
         from core.config import settings
 
+        target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
+
         system_prompt = (
-            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和角色台词的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
+            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和多人对话的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
             "处理规则：\n"
-            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。（注意：台词中角色说出口的语气拟声词如“唉”、“哼”、“呜呜”、“哈哈”、“呀”、“啊”、“哦”等属于台词，绝对不要当作旁白删除，必须保留在台词内）。\n"
-            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！但角色口头说出来的语气词不是旁白，不要删除。\n"
-            "3. 提取动作描述或台词本身的情绪与语气，使用以下 MiMo 原生支持的 XML 样式标签包裹对应的台词（或放在台词开头）：\n"
-            "   - <style>开心</style>：适用于高兴、喜悦、兴奋、娇嗔、撒娇、笑等情绪。\n"
-            "   - <style>悲伤</style>：适用于难过、哭泣、哀伤、伤心、委屈、沮丧、低落等情绪。\n"
-            "   - <style>愤怒</style>：适用于生气、愤怒、意难平、脑火、暴怒、不满等情绪。\n"
-            "   - <style>温柔</style>：适用于温柔、体贴、深情、柔和、宠溺、轻声、娇羞、害羞等语气或情绪。\n"
-            "   - <style>悄悄话</style>：适用于耳语、低语、窃窃私语、小声、嘟囔等。\n"
-            "   - <style>唱歌</style>：适用于唱歌、哼歌等。\n"
-            "4. 提取动作描写中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
-            "   - （叹气）\n"
-            "   - （笑声）\n"
-            "   - （哭声）\n"
-            "   - （咳嗽）\n"
-            "   - [inhale] (吸气/深呼吸)\n"
-            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。特别提醒：台词中原本就包含的口语语气发音词（例如“唉”、“呜呜”、“哼”、“哈哈”、“嘿”等），必须原样保留在台词文本中，绝对不要将其删除或替换为声音标记！声音标记仅作为音效插入，不能代替原本的发音词。\n"
-            "5. 保证输出连贯，只包含经过处理的台词与相应的 <style> 和声音标记。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。如果输入文本包含台词，绝对不能输出为空白。"
+            f"1. {target_info}\n"
+            "   - 必须绝对剔除所有的纯物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
+            "   - 台词中原本就包含的口语语气发音词（例如“唉”、“哼”、“呜呜”、“哈哈”、“嘿”、“呀”、“啊”、“哦”等），绝对不能删除，必须在台词原样中保留！\n"
+            "   - 如果有其他角色的台词（如“Reina: '...'”），而目标不是该角色，必须将其彻底舍弃。\n"
+            "2. 在提取出的台词开头添加整体的情绪/风格标签，格式为 [风格] 待合成内容。支持同时设置多种风格，将多个风格置于同一个方括号内，如 [温柔 怅然] 或 [冷漠，低沉]。\n"
+            "   推荐基础情绪风格：开心/悲伤/愤怒/恐惧/惊讶/兴奋/委屈/平静/冷漠/怅然/欣慰/无奈/愧疚/释然/温柔/高冷/活泼/严肃/慵懒/俏皮/深沉等。\n"
+            "3. 如果台词中包含多种不同的心情、语气转变或声音特效，支持在文本的中间或任意位置插入细粒度方括号控制标签，格式为 [音频标签]。\n"
+            "   推荐细粒度标签：吸气/深呼吸/叹气/长叹一口气/喘息/紧张/害怕/激动/疲惫/撒娇/颤抖/轻笑/大笑/抽泣/呜呜/小声/语速加快/提高音量等。\n"
+            "   （如需体验唱歌，必须在歌词前加上 [唱歌] 或 [sing] 标签）。\n"
+            "4. 保证输出连贯，只包含提取出的台词与相应的 [风格/控制] 方括号标签。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。"
         )
 
         user_content = (
             "示例 1：\n"
-            "输入：*她咬了咬下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
-            "输出：<style>悲伤</style>\"你...你昨天怎么没来找我嘛...\"\n\n"
+            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
+            "输出：[悲伤，叹气]唉，今天在学校真的好累啊。[开心，轻笑]不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
             "示例 2：\n"
-            "输入：我没事。（叹了口气）只是有点累了。\n"
-            "输出：<style>温柔</style>我没事。（叹气）只是有点累了。\n\n"
+            "输入：*她咬了玩下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
+            "输出：[委屈，吸气]\"你...你昨天怎么没来找我嘛...\"\n\n"
             "示例 3：\n"
-            "输入：我红着脸，有些不好意思地低下头。其实，我也很想你。\n"
-            "输出：<style>温柔</style>其实，我也很想你。\n\n"
+            "输入：我没事。（叹了口气）只是有点累了。\n"
+            "输出：[温柔，疲惫]我没事。[长叹一口气]只是有点累了。\n\n"
             "示例 4：\n"
             "输入：【摸摸头】别伤心了，有我在呢。\n"
-            "输出：<style>温柔</style>别伤心了，有我在呢。\n\n"
+            "输出：[温柔]别伤心了，有我在呢。\n\n"
             "示例 5：\n"
             "输入：她微微一笑说道：“你终于来啦。”\n"
-            "输出：<style>温柔</style>“你终于来啦。”\n\n"
-            "示例 6：\n"
-            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
-            "输出：<style>悲伤</style>（叹气）唉，今天在学校真的好累啊。（笑声）<style>开心</style>不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
+            "输出：[温柔，轻笑]“你终于来啦。”\n\n"
+            "示例 6（目标角色为 Vera）：\n"
+            "输入：Reina Kuroda sat behind a desk. Reina: \"Volkov movement near the eastern ports.\"\n"
+            "Now, Vera stood in the shadow. She drew her sidearm and pointed it directly at your chest.\n"
+            "Vera: \"This is the first time we work together. So listen carefully.\"\n"
+            "Her voice was low, unhurried.\n"
+            "Vera: \"Do not slow me down. Be useful, or I will kill you myself.\"\n"
+            "输出：[高冷，严肃]“This is the first time we work together. So listen carefully。”[冷漠，低沉]“Do not slow me down. Be useful, or I will kill you myself。”\n\n"
             f"输入：{text}\n"
             "输出："
         )
@@ -301,34 +283,40 @@ class TTSService:
             result = response.choices[0].message.content.strip()
             if result.startswith("```"):
                 result = re.sub(r"^```[a-zA-Z]*\n|```$", "", result).strip()
-            # 情感标签标准化
+            
+            # 兼容性处理：如果大模型依然输出了 <style>xxx</style>，转换为 [xxx] 格式
             result = self._normalize_style_tags(result)
             
             # Post-processing 双重清理过滤：
-            # 1. 移去 "输出："、"处理后："、"规范文本如下：" 等大模型前缀词
+            # 1. 移去 "输出："、"处理后：" 等前缀词
             result = re.sub(r'^(?:输出|处理后|转换后|结果|整理后|规范文本|预处理结果|预处理后|清洗后)[:：\s]*', '', result)
             result = re.sub(r'^.*?如下[:：\s]*', '', result, flags=re.IGNORECASE)
             
-            # 保护声音标记：暂时替换为特有的占位符，避免被强力清理规则误杀
-            result = result.replace("（叹气）", "___SIGH___")
-            result = result.replace("（笑声）", "___LAUGH___")
-            result = result.replace("（哭声）", "___CRY___")
-            result = result.replace("（咳嗽）", "___COUGH___")
-            result = result.replace("[inhale]", "___INHALE___")
-
-            # 2. 强力防漏：剔除任何可能残留的 *动作*、(动作)、（动作）以及各类方括号、花括号内的肢体叙述
-            result = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|\[[^\]]+\]|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result)
+            # 2. 规范化：统一把所有的（风格/发声）或 (风格/发声) 转换为 [风格/发声]
+            def normalize_brackets(match):
+                content = next((g for g in match.groups() if g is not None), "").strip()
+                if content and len(content) <= 12:
+                    return f"[{content}]"
+                return match.group(0)
             
-            # 还原声音标记
-            result = result.replace("___SIGH___", "（叹气）")
-            result = result.replace("___LAUGH___", "（笑声）")
-            result = result.replace("___CRY___", "（哭声）")
-            result = result.replace("___COUGH___", "（咳嗽）")
-            result = result.replace("___INHALE___", "[inhale]")
+            result = re.sub(r'(?:（([^）]+)）|\(([^)]+)\)|［([^］]+)］|【([^】]+)】)', normalize_brackets, result)
             
-            result = re.sub(r'\s+', ' ', result).strip()
+            # 3. 提取并保护所有的方括号控制标签，用占位符替换以防被强力清理规则过滤
+            tags = []
+            def protect_tag(match):
+                tags.append(match.group(0))
+                return f"___TAG_{len(tags)-1}___"
+            
+            result_protected = re.sub(r'\[([^\]]+)\]', protect_tag, result)
 
-            # print(f"[INFO] (同步) LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
+            # 4. 强力防漏：剔除任何可能残留的 *动作* 以及非标签的肢体叙述（不匹配被保护的方括号，只剔除多余的圆括号、花括号、方头括号等）
+            result_cleaned = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result_protected)
+            
+            # 5. 还原所有的方括号控制标签
+            for i, tag in enumerate(tags):
+                result_cleaned = result_cleaned.replace(f"___TAG_{i}___", tag)
+            
+            result = re.sub(r'\s+', ' ', result_cleaned).strip()
             return result
         except Exception as e:
             print(f"[WARN] (同步) LLM 预处理失败: {e}，回退使用正则规则预处理器。")
@@ -350,7 +338,7 @@ class TTSService:
 
     async def generate_speech_async(self, text: str, voice: str = None, speed: float = 1.0, message_id: int = None, db = None) -> str:
         """
-        异步方法：合成文本为音频 WAV 文件，自动进行哈希缓存，并返回相对于静态路由的音频 URL 路径。
+        异步方法：合成文本为音频 MP3 文件，自动进行哈希缓存，并返回相对于静态路由的音频 URL 路径。
         """
         if not settings.TTS_ENABLED:
             raise ValueError("TTS 语音合成服务在配置中已被禁用。")
@@ -365,6 +353,7 @@ class TTSService:
         is_message_bound = False
         db_message = None
 
+        character_name = None
         if message_id is not None and db is not None:
             from core.models import ChatMessage
             db_message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
@@ -379,15 +368,23 @@ class TTSService:
             filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
-            # 检查数据库中是否存在 audio_path 且物理文件确实存在
-            if db_message.audio_path:
+            # 尝试获取说话的角色名字以过滤旁白
+            try:
+                session = db_message.session
+                if session and session.persona and session.persona.character:
+                    character_name = session.persona.character.name
+            except Exception as e:
+                print(f"[WARN] 获取角色名称失败: {e}")
+
+            # 检查数据库中是否存在 audio_path 且为 mp3 文件，且物理文件确实存在
+            if db_message.audio_path and db_message.audio_path.endswith(".mp3"):
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
                     print(f"[INFO] TTS (数据库绑定模式) 缓存命中: {cached_filepath}")
                     return db_message.audio_path
                 else:
-                    print(f"[WARN] TTS (数据库绑定模式) 物理文件已丢失: {cached_filepath}，触发被动重建...")
+                    print(f"[WARN] TTS (数据库绑定模式) 物理文件已丢失或格式不符: {cached_filepath}，触发被动重建...")
         else:
             if not text or not text.strip():
                 raise ValueError("合成文本不能为空。")
@@ -405,12 +402,13 @@ class TTSService:
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
                 print(f"[INFO] TTS 缓存命中: {filepath}")
                 return f"/audio/{filename}"
+
         # 敏感词或密钥检查
         if not settings.MIMO_API_KEY:
             raise ValueError("未配置 MIMO_API_KEY，无法调用云端语音合成接口。")
 
         # 文本清洗与规范化 (只在缓存未命中时才触发，极其节省 LLM API 开销和时间！)
-        text_clean = await self.preprocess_roleplay_text_llm(text)
+        text_clean = await self.preprocess_roleplay_text_llm(text, character_name=character_name)
         if not text_clean or not text_clean.strip():
             text_clean = text.strip()
 
@@ -506,6 +504,7 @@ class TTSService:
         is_message_bound = False
         db_message = None
 
+        character_name = None
         if message_id is not None and db is not None:
             from core.models import ChatMessage
             db_message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
@@ -518,14 +517,22 @@ class TTSService:
             filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
-            if db_message.audio_path:
+            # 尝试获取说话的角色名字以过滤旁白
+            try:
+                session = db_message.session
+                if session and session.persona and session.persona.character:
+                    character_name = session.persona.character.name
+            except Exception as e:
+                print(f"[WARN] 获取角色名称失败: {e}")
+
+            if db_message.audio_path and db_message.audio_path.endswith(".mp3"):
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
                     print(f"[INFO] (同步) TTS (数据库绑定模式) 缓存命中: {cached_filepath}")
                     return db_message.audio_path
                 else:
-                    print(f"[WARN] (同步) TTS (数据库绑定模式) 物理文件已丢失: {cached_filepath}，触发被动重建...")
+                    print(f"[WARN] (同步) TTS (数据库绑定模式) 物理文件已丢失或格式不符: {cached_filepath}，触发被动重建...")
         else:
             if not text or not text.strip():
                 raise ValueError("合成文本不能为空。")
@@ -543,7 +550,7 @@ class TTSService:
         if not settings.MIMO_API_KEY:
             raise ValueError("未配置 MIMO_API_KEY，无法调用云端语音合成接口。")
 
-        text_clean = self.preprocess_roleplay_text_llm_sync(text)
+        text_clean = self.preprocess_roleplay_text_llm_sync(text, character_name=character_name)
         if not text_clean or not text_clean.strip():
             text_clean = text.strip()
 
