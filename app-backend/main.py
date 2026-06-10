@@ -14,29 +14,6 @@ from routers import utils_router, characters_router, sessions_router, chat_route
 # 初始化并建表
 Base.metadata.create_all(bind=engine)
 
-def run_migrations(db_engine):
-    from sqlalchemy import inspect, text
-    inspector = inspect(db_engine)
-    columns = [col['name'] for col in inspector.get_columns('chat_messages')]
-    
-    with db_engine.begin() as conn:
-        if 'parent_id' not in columns:
-            try:
-                # SQLite supports adding columns. Let's add parent_id
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN parent_id INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE"))
-                print("[MIGRATION] Successfully added parent_id to chat_messages.")
-            except Exception as e:
-                print(f"[MIGRATION] Error adding parent_id: {e}")
-        if 'is_active' not in columns:
-            try:
-                # Add is_active column default True
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
-                print("[MIGRATION] Successfully added is_active to chat_messages.")
-            except Exception as e:
-                print(f"[MIGRATION] Error adding is_active: {e}")
-
-run_migrations(engine)
-
 app = FastAPI(
     title="AI Roleplay Backend",
     version="2.0",
@@ -59,6 +36,11 @@ app.add_middleware(
 
 # 挂载静态文件目录以允许前端访问头像等静态资源
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
+# 挂载语音合成缓存目录
+import os
+os.makedirs(settings.TTS_CACHE_DIR, exist_ok=True)
+app.mount("/audio", StaticFiles(directory=settings.TTS_CACHE_DIR), name="audio")
 
 # 注册各个功能模块的路由
 app.include_router(utils_router)  # 基础及文件上传端点

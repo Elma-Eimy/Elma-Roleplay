@@ -25,9 +25,6 @@ app:
   lorebook_scan_depth: 5
   lorebook_token_budget: 3000
   lorebook_max_recursive_passes: 3
-  lorebook_semantic_enabled: true
-  lorebook_semantic_top_k: 3
-  lorebook_semantic_max_distance: 1.1
   sqlite_db_path: data/data.db
   chroma_db_path: data/chroma_data
   upload_avatar_dir: ./assets/avatars
@@ -40,3 +37,11 @@ app:
   cognition_max_words: 200
   retrieval_half_life_turns: 50
   retrieval_candidate_multiplier: 3
+
+tts:
+  enabled: true
+  base_url: "https://api.xiaomimimo.com/v1"
+  model: "mimo-v2.5-tts"
+  default_voice: "冰糖"
+  cache_dir: "data/audio_cache"
+  max_cache_files: 500

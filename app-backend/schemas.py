@@ -65,9 +65,13 @@ class SettingsUpdate(BaseModel):
     frequency_penalty: Optional[float] = None
     repetition_penalty: Optional[float] = None
     reasoning_effort: Optional[str] = None
-    lorebook_semantic_enabled: Optional[bool] = None
-    lorebook_semantic_top_k: Optional[int] = None
-    lorebook_semantic_max_distance: Optional[float] = None
 
 class SwitchCandidateRequest(BaseModel):
     message_id: int
+
+
+class TTSRequest(BaseModel):
+    message_id: Optional[int] = None
+    text: str
+    voice: Optional[str] = None
+    speed: Optional[float] = 1.0
