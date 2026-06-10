@@ -29,12 +29,14 @@
       class="chat-scroll-area" 
       scroll-y 
       :scroll-top="scrollTop"
+      :scroll-into-view="scrollIntoViewId"
       :scroll-with-animation="scrollWithAnimation"
       @scrolltoupper="onLoadMore"
     >
       <view class="chat-list-padding">
         <ChatBubble
           v-for="msg in chatStore.messages"
+          :id="msg.clientId"
           :key="msg.clientId || msg.id"
           :message="msg"
           :avatarUrl="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
@@ -202,6 +204,161 @@
                 <view class="toggle-thumb"></view>
               </view>
             </view>
+
+            <view class="setting-row cursor-pointer" style="margin-top: 20rpx;" @tap="showAdvancedParams = !showAdvancedParams">
+              <view class="setting-row-left">
+                <image 
+                  class="setting-row-icon" 
+                  :src="showAdvancedParams ? '/static/icons/settings_sliders_active.svg' : '/static/icons/settings_sliders.svg'" 
+                  mode="aspectFit" 
+                />
+                <text class="setting-row-label">高级采样参数</text>
+              </view>
+              <image 
+                class="advanced-chevron" 
+                :class="{ 'is-active': showAdvancedParams }" 
+                src="/static/icons/settings_chevron.svg" 
+                mode="aspectFit" 
+              />
+            </view>
+
+            <!-- 当展开高级采样参数时展示 -->
+            <view class="drawer-sliders-container" v-if="showAdvancedParams">
+              <!-- Temperature -->
+              <view class="drawer-slider-row">
+                <view class="drawer-slider-header">
+                  <text class="drawer-slider-label">创意温度 (Temperature)</text>
+                  <view class="drawer-slider-value-wrapper">
+                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.temperature === null }">
+                      {{ chatStore.temperature !== null ? chatStore.temperature.toFixed(1) : '默认 (1.0)' }}
+                    </text>
+                    <text 
+                      v-if="chatStore.temperature !== null" 
+                      class="drawer-slider-reset" 
+                      @tap.stop="chatStore.temperature = null"
+                    >重置</text>
+                  </view>
+                </view>
+                <slider
+                  class="drawer-slider-component"
+                  :value="Math.round((chatStore.temperature ?? 1.0) * 10)"
+                  :min="1" :max="20" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="18"
+                  @change="(e: any) => chatStore.temperature = e.detail.value / 10"
+                />
+              </view>
+
+              <!-- Top P -->
+              <view class="drawer-slider-row">
+                <view class="drawer-slider-header">
+                  <text class="drawer-slider-label">核采样比例 (Top P)</text>
+                  <view class="drawer-slider-value-wrapper">
+                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.top_p === null }">
+                      {{ chatStore.top_p !== null ? chatStore.top_p.toFixed(2) : '默认 (1.00)' }}
+                    </text>
+                    <text 
+                      v-if="chatStore.top_p !== null" 
+                      class="drawer-slider-reset" 
+                      @tap.stop="chatStore.top_p = null"
+                    >重置</text>
+                  </view>
+                </view>
+                <slider
+                  class="drawer-slider-component"
+                  :value="Math.round((chatStore.top_p ?? 1.0) * 100)"
+                  :min="10" :max="100" :step="5"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="18"
+                  @change="(e: any) => chatStore.top_p = e.detail.value / 100"
+                />
+              </view>
+
+              <!-- Presence Penalty -->
+              <view class="drawer-slider-row">
+                <view class="drawer-slider-header">
+                  <text class="drawer-slider-label">存在惩罚 (Presence Penalty)</text>
+                  <view class="drawer-slider-value-wrapper">
+                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.presence_penalty === null }">
+                      {{ chatStore.presence_penalty !== null ? chatStore.presence_penalty.toFixed(1) : '默认 (0.0)' }}
+                    </text>
+                    <text 
+                      v-if="chatStore.presence_penalty !== null" 
+                      class="drawer-slider-reset" 
+                      @tap.stop="chatStore.presence_penalty = null"
+                    >重置</text>
+                  </view>
+                </view>
+                <slider
+                  class="drawer-slider-component"
+                  :value="Math.round(((chatStore.presence_penalty ?? 0.0) + 2) * 10)"
+                  :min="0" :max="40" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="18"
+                  @change="(e: any) => chatStore.presence_penalty = (e.detail.value / 10) - 2"
+                />
+              </view>
+
+              <!-- Frequency Penalty -->
+              <view class="drawer-slider-row">
+                <view class="drawer-slider-header">
+                  <text class="drawer-slider-label">频率惩罚 (Frequency Penalty)</text>
+                  <view class="drawer-slider-value-wrapper">
+                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.frequency_penalty === null }">
+                      {{ chatStore.frequency_penalty !== null ? chatStore.frequency_penalty.toFixed(1) : '默认 (0.0)' }}
+                    </text>
+                    <text 
+                      v-if="chatStore.frequency_penalty !== null" 
+                      class="drawer-slider-reset" 
+                      @tap.stop="chatStore.frequency_penalty = null"
+                    >重置</text>
+                  </view>
+                </view>
+                <slider
+                  class="drawer-slider-component"
+                  :value="Math.round(((chatStore.frequency_penalty ?? 0.0) + 2) * 10)"
+                  :min="0" :max="40" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="18"
+                  @change="(e: any) => chatStore.frequency_penalty = (e.detail.value / 10) - 2"
+                />
+              </view>
+
+              <!-- Repetition Penalty -->
+              <view class="drawer-slider-row">
+                <view class="drawer-slider-header">
+                  <text class="drawer-slider-label">重复度惩罚 (Repetition Penalty)</text>
+                  <view class="drawer-slider-value-wrapper">
+                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.repetition_penalty === null }">
+                      {{ chatStore.repetition_penalty !== null ? chatStore.repetition_penalty.toFixed(2) : '默认 (1.00)' }}
+                    </text>
+                    <text 
+                      v-if="chatStore.repetition_penalty !== null" 
+                      class="drawer-slider-reset" 
+                      @tap.stop="chatStore.repetition_penalty = null"
+                    >重置</text>
+                  </view>
+                </view>
+                <slider
+                  class="drawer-slider-component"
+                  :value="Math.round((chatStore.repetition_penalty ?? 1.0) * 100)"
+                  :min="50" :max="200" :step="5"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="18"
+                  @change="(e: any) => chatStore.repetition_penalty = e.detail.value / 100"
+                />
+              </view>
+            </view>
           </view>
 
           <!-- ⑤ 记忆管理手动操作区 -->
@@ -245,6 +402,8 @@ import { getAvatarUrl } from "@/api/characters";
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 
+const showAdvancedParams = ref(false);
+
 // 状态变量
 const currentSessionId = ref<number | null>(null);
 
@@ -253,6 +412,7 @@ const inputText = ref("");
 const isInputFocused = ref(false);
 // 使用单调递增值，确保每次 scrollTop 变化都被 scroll-view 检测到
 const scrollTop = ref(0);
+const scrollIntoViewId = ref("");
 const scrollWithAnimation = ref(false);
 const isStatusPanelOpen = ref(false);
 const isInitLoading = ref(true);
@@ -601,8 +761,27 @@ const deleteCurrentSession = () => {
   });
 };
 
-const onLoadMore = () => {
-  console.log("Load older messages");
+const onLoadMore = async () => {
+  if (chatStore.isLoading || chatStore.messages.length === 0) return;
+  
+  const oldestMsg = chatStore.messages[0];
+  const oldestClientId = oldestMsg ? oldestMsg.clientId : null;
+  
+  // 临时关闭滚动动画，防止历史记录渲染导致画面乱闪或位置突变
+  scrollWithAnimation.value = false;
+  
+  const hasMore = await chatStore.loadMoreHistory();
+  if (hasMore && oldestClientId) {
+    // 渲染完成后重新强制定位视窗到之前的最上方那条消息，维持视觉稳定性
+    await nextTick();
+    setTimeout(() => {
+      scrollIntoViewId.value = oldestClientId;
+      // 随后延时清空锁，保证用户后续发送新回复时的置底行为正常进行
+      setTimeout(() => {
+        scrollIntoViewId.value = "";
+      }, 100);
+    }, 50);
+  }
 };
 </script>
 
@@ -1202,6 +1381,94 @@ const onLoadMore = () => {
   transition: background-color 0.25s ease;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+/* ===== Drawer Sliders styles ===== */
+.drawer-sliders-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+  margin-top: 24rpx;
+  padding: 20rpx;
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 16rpx;
+}
+
+.drawer-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.drawer-slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.drawer-slider-label {
+  font-size: 24rpx;
+  font-weight: 500;
+  color: #3a3a3c;
+}
+
+.drawer-slider-value-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.drawer-slider-value {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+  background-color: rgba(0, 0, 0, 0.04);
+  padding: 2rpx 10rpx;
+  border-radius: 12rpx;
+}
+
+.drawer-slider-value.is-default {
+  color: #8e8e93;
+  font-weight: 500;
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.drawer-slider-reset {
+  font-size: 22rpx;
+  font-weight: 500;
+  color: #8e8e93;
+  cursor: pointer;
+  padding: 2rpx 8rpx;
+  background-color: rgba(0,0,0,0.02);
+  border: 1px solid rgba(0,0,0,0.04);
+  border-radius: 8rpx;
+  transition: all 0.2s;
+}
+
+.drawer-slider-reset:active {
+  color: #1c1c1e;
+  background-color: rgba(0,0,0,0.08);
+}
+
+.advanced-chevron {
+  width: 28rpx;
+  height: 28rpx;
+  opacity: 0.6;
+  transition: transform 0.25s ease;
+}
+
+.advanced-chevron.is-active {
+  transform: rotate(180deg);
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.drawer-slider-component {
+  margin: 0;
+  width: 100%;
 }
 
 .custom-toggle.is-on {
