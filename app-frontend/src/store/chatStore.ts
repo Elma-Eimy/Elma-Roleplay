@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage } from "@/api/sessions";
+import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
 import type { ChatResponse } from "@/api/chat";
@@ -32,11 +32,21 @@ export const useChatStore = defineStore("chat", () => {
   /** 从服务端接收到的最新对话元数据 */
   const lastMeta = ref<Omit<ChatResponse, "reply"> | null>(null);
 
+  /** 当前正在播放语音的消息 ID */
+  const activeAudioMessageId = ref<number | null>(null);
+
   /** 若上一次请求失败，所记录的错误提示信息 */
   const errorMessage = ref<string | null>(null);
 
   /** 是否对聊天回复启用深度思考推理模型 */
   const useReasoning = ref(false);
+
+  /** 自定义采样参数值 */
+  const temperature = ref<number | null>(null);
+  const top_p = ref<number | null>(null);
+  const presence_penalty = ref<number | null>(null);
+  const frequency_penalty = ref<number | null>(null);
+  const repetition_penalty = ref<number | null>(null);
 
   // ===== 计算属性 (Getters) =====
 
@@ -59,6 +69,14 @@ export const useChatStore = defineStore("chat", () => {
     errorMessage.value = null;
     lastMeta.value = null;
     isLoading.value = true;
+    
+    // 加载会话历史时重置当前自定义参数，以保证使用后端新会话的默认值
+    temperature.value = null;
+    top_p.value = null;
+    presence_penalty.value = null;
+    frequency_penalty.value = null;
+    repetition_penalty.value = null;
+
     try {
       const res = await getSessionHistory(sessionId);
       setHistory(res.messages);
@@ -147,7 +165,12 @@ export const useChatStore = defineStore("chat", () => {
           user_message: lastUserMsg.content,
           use_reasoning: useReasoning.value,
           is_regenerate: true,
-          user_nickname: personaStore.userNickname
+          user_nickname: personaStore.userNickname,
+          temperature: temperature.value ?? undefined,
+          top_p: top_p.value ?? undefined,
+          presence_penalty: presence_penalty.value ?? undefined,
+          frequency_penalty: frequency_penalty.value ?? undefined,
+          repetition_penalty: repetition_penalty.value ?? undefined,
         },
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
@@ -161,6 +184,10 @@ export const useChatStore = defineStore("chat", () => {
             affection_change: meta.affection_change,
             created_at: new Date().toISOString(),
             model_used: (meta as any).model_used,
+            parent_id: (meta as any).user_message_id,
+            is_active: true,
+            candidates: (meta as any).candidates,
+            active_index: (meta as any).active_index,
           });
           
           // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
@@ -201,7 +228,12 @@ export const useChatStore = defineStore("chat", () => {
           session_id: sessionId, 
           user_message: text,
           use_reasoning: useReasoning.value,
-          user_nickname: personaStore.userNickname
+          user_nickname: personaStore.userNickname,
+          temperature: temperature.value ?? undefined,
+          top_p: top_p.value ?? undefined,
+          presence_penalty: presence_penalty.value ?? undefined,
+          frequency_penalty: frequency_penalty.value ?? undefined,
+          repetition_penalty: repetition_penalty.value ?? undefined,
         },
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
@@ -214,8 +246,11 @@ export const useChatStore = defineStore("chat", () => {
             emotion_tag: meta.emotion_tag,
             affection_change: meta.affection_change,
             created_at: new Date().toISOString(),
-            // Optional model_used metadata
             model_used: (meta as any).model_used,
+            parent_id: (meta as any).user_message_id,
+            is_active: true,
+            candidates: (meta as any).candidates,
+            active_index: (meta as any).active_index,
           });
           
           // 用服务器确认的数据替换用户消息的临时 ID/tempId 并归档
@@ -325,8 +360,162 @@ export const useChatStore = defineStore("chat", () => {
     errorMessage.value = null;
   }
 
+  async function switchActiveCandidate(messageId: number, targetCandidateId: number) {
+    stopMessageTTS(); // 切换候选版本时立刻停止当前播放的音频，避免音画不同步
+    errorMessage.value = null;
+    try {
+      const res = await apiSwitchCandidate(targetCandidateId);
+      
+      const msgIdx = messages.value.findIndex((m) => m.id === messageId);
+      if (msgIdx !== -1) {
+        const targetMsg = messages.value[msgIdx];
+        const candidate = targetMsg.candidates?.find((c) => c.id === targetCandidateId);
+        if (candidate) {
+          targetMsg.id = candidate.id;
+          targetMsg.content = candidate.content;
+          targetMsg.emotion_tag = candidate.emotion_tag;
+          targetMsg.affection_change = candidate.affection_change;
+          targetMsg.created_at = candidate.created_at;
+          targetMsg.audio_path = (candidate as any).audio_path || null;
+          
+          const activeIdx = targetMsg.candidates?.findIndex((c) => c.id === targetCandidateId) ?? 0;
+          targetMsg.active_index = activeIdx;
+        }
+      }
+      
+      const personaStore = usePersonaStore();
+      if (res.affection_score !== null) {
+        personaStore.applyAffectionChange(
+          0,
+          res.affection_score,
+          res.current_mood || undefined
+        );
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to switch reply version");
+    }
+  }
+
+  let innerAudioContext: any = null;
+
+  function initAudioContext() {
+    if (!innerAudioContext) {
+      // #ifdef APP-PLUS || H5 || MP-WEIXIN
+      innerAudioContext = uni.createInnerAudioContext();
+      // #endif
+      if (innerAudioContext) {
+        innerAudioContext.onPlay(() => {
+          console.log("Audio playing...");
+        });
+        innerAudioContext.onEnded(() => {
+          console.log("Audio finished.");
+          activeAudioMessageId.value = null;
+        });
+        innerAudioContext.onError((err: any) => {
+          console.error("Audio error:", err);
+          activeAudioMessageId.value = null;
+          uni.showToast({ title: "语音播放失败", icon: "none" });
+        });
+        innerAudioContext.onStop(() => {
+          console.log("Audio stopped.");
+          activeAudioMessageId.value = null;
+        });
+      }
+    }
+  }
+
+  async function playMessageTTS(messageId: number, content: string) {
+    initAudioContext();
+    if (!innerAudioContext) {
+      uni.showToast({ title: "您的平台不支持音频播放", icon: "none" });
+      return;
+    }
+
+    // 如果当前正在播放的就是这条消息，点击则是停止播放
+    if (activeAudioMessageId.value === messageId) {
+      innerAudioContext.stop();
+      activeAudioMessageId.value = null;
+      return;
+    }
+
+    // 如果正在播放其他消息，先停止
+    if (activeAudioMessageId.value !== null) {
+      innerAudioContext.stop();
+    }
+
+    const msgIdx = messages.value.findIndex((m) => m.id === messageId);
+    if (msgIdx === -1) return;
+
+    const msg = messages.value[msgIdx];
+    let audioUrl = msg.audio_path;
+
+    if (!audioUrl) {
+      uni.showLoading({ title: "正在合成语音..." });
+      try {
+        const { generateTTS } = await import("@/api/chat");
+        const res = await generateTTS(messageId, content);
+        audioUrl = res.audio_url;
+        msg.audio_path = audioUrl;
+        uni.hideLoading();
+      } catch (e: any) {
+        uni.hideLoading();
+        uni.showToast({ title: e.message || "语音合成失败", icon: "none" });
+        return;
+      }
+    }
+
+    if (audioUrl) {
+      const { getBaseUrl } = await import("@/api/config");
+      const fullUrl = audioUrl.startsWith("http") ? audioUrl : `${getBaseUrl()}${audioUrl}`;
+      console.log("Playing audio:", fullUrl);
+      activeAudioMessageId.value = messageId;
+      innerAudioContext.src = fullUrl;
+      innerAudioContext.play();
+    } else {
+      uni.showToast({ title: "未获取到有效的语音文件", icon: "none" });
+    }
+  }
+
+  function stopMessageTTS() {
+    if (innerAudioContext && activeAudioMessageId.value !== null) {
+      innerAudioContext.stop();
+      activeAudioMessageId.value = null;
+    }
+  }
+
+  async function loadMoreHistory() {
+    if (isLoading.value || activeSessionId.value === null) return false;
+    if (messages.value.length === 0) return false;
+    
+    const validMessages = messages.value.filter((m) => m.id > 0);
+    if (validMessages.length === 0) return false;
+    
+    const oldestMsgId = validMessages[0].id;
+    isLoading.value = true;
+    
+    try {
+      const res = await getSessionHistory(activeSessionId.value, 50, oldestMsgId);
+      if (res.messages && res.messages.length > 0) {
+        const newMsgs = res.messages.map((m) => ({
+          ...m,
+          status: "done" as const,
+          clientId: `msg-${m.id}`
+        }));
+        messages.value = [...newMsgs, ...messages.value];
+        isLoading.value = false;
+        return true;
+      }
+    } catch (e: any) {
+      console.error("Failed to load more chat history", e);
+    } finally {
+      isLoading.value = false;
+    }
+    return false;
+  }
+
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    stopMessageTTS();
     activeSessionId.value = null;
     messages.value = [];
     isLoading.value = false;
@@ -334,6 +523,12 @@ export const useChatStore = defineStore("chat", () => {
     lastMeta.value = null;
     errorMessage.value = null;
     useReasoning.value = false;
+    temperature.value = null;
+    top_p.value = null;
+    presence_penalty.value = null;
+    frequency_penalty.value = null;
+    repetition_penalty.value = null;
+    activeAudioMessageId.value = null;
   }
 
   return {
@@ -345,6 +540,12 @@ export const useChatStore = defineStore("chat", () => {
     lastMeta,
     errorMessage,
     useReasoning,
+    temperature,
+    top_p,
+    presence_penalty,
+    frequency_penalty,
+    repetition_penalty,
+    activeAudioMessageId,
     // Getters
     hasMessages,
     isStreaming,
@@ -362,6 +563,10 @@ export const useChatStore = defineStore("chat", () => {
     addStreamingPlaceholder,
     appendStreamChunk,
     finalizeStream,
+    switchActiveCandidate,
+    playMessageTTS,
+    stopMessageTTS,
+    loadMoreHistory,
     setError,
     clearError,
     $reset,
