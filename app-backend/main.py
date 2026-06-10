@@ -37,10 +37,57 @@ app.add_middleware(
 # 挂载静态文件目录以允许前端访问头像等静态资源
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-# 挂载语音合成缓存目录
+# 挂载语音合成缓存目录（使用自定义路由以支持缓存文件被手动删除后的延迟自愈重建）
 import os
+import re
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+from core.database import SessionLocal
+from services.tts_service import TTSService
+
 os.makedirs(settings.TTS_CACHE_DIR, exist_ok=True)
-app.mount("/audio", StaticFiles(directory=settings.TTS_CACHE_DIR), name="audio")
+
+@app.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    """
+    语音文件请求接口：
+    若本地物理文件存在，直接返回；
+    若文件被删除但为数据库绑定语音（msg_{id}_{voice}_{speed}.mp3），自动触发被动延时自愈重建。
+    """
+    filepath = os.path.join(settings.TTS_CACHE_DIR, filename)
+    if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+        return FileResponse(filepath)
+
+    # 匹配规则：msg_{message_id}_{voice}_{speed}.mp3
+    match = re.match(r'^msg_(\d+)_([^_]+)_([\d.]+)\.mp3$', filename)
+    if match:
+        message_id = int(match.group(1))
+        voice = match.group(2)
+        try:
+            speed = float(match.group(3))
+        except ValueError:
+            speed = 1.0
+
+        print(f"[INFO] 静态语音文件已从磁盘丢失，触发被动延迟重建: {filename} (Message ID: {message_id})")
+        db = SessionLocal()
+        try:
+            tts_service = TTSService.get_instance()
+            await tts_service.generate_speech_async(
+                text="",
+                voice=voice,
+                speed=speed,
+                message_id=message_id,
+                db=db
+            )
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                print(f"[SUCCESS] 延迟重建语音成功: {filepath}")
+                return FileResponse(filepath)
+        except Exception as e:
+            print(f"[ERROR] 延迟重建语音失败: {e}")
+        finally:
+            db.close()
+
+    raise HTTPException(status_code=404, detail="Audio file not found")
 
 # 注册各个功能模块的路由
 app.include_router(utils_router)  # 基础及文件上传端点
