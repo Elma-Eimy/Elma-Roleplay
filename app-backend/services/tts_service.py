@@ -129,7 +129,7 @@ class TTSService:
 
     async def preprocess_roleplay_text_llm(self, text: str) -> str:
         """
-        至臻 LLM 预处理器：
+        LLM 预处理器：
         使用快速的大模型（如 deepseek-v4-flash）进行语义分析，剔除无关的肢体动作/心理描写，
         提取语气与声效并映射为 MiMo 原生支持的情感标签（如 <style>开心</style>）与声效标记（如 （叹气）、[inhale]）。
         """
@@ -143,8 +143,8 @@ class TTSService:
         system_prompt = (
             "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和角色台词的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
             "处理规则：\n"
-            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
-            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！\n"
+            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。（注意：台词中角色说出口的语气拟声词如“唉”、“哼”、“呜呜”、“哈哈”、“呀”、“啊”、“哦”等属于台词，绝对不要当作旁白删除，必须保留在台词内）。\n"
+            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！但角色口头说出来的语气词不是旁白，不要删除。\n"
             "3. 提取动作描述或台词本身的情绪与语气，使用以下 MiMo 原生支持的 XML 样式标签包裹对应的台词（或放在台词开头）：\n"
             "   - <style>开心</style>：适用于高兴、喜悦、兴奋、娇嗔、撒娇、笑等情绪。\n"
             "   - <style>悲伤</style>：适用于难过、哭泣、哀伤、伤心、委屈、沮丧、低落等情绪。\n"
@@ -152,19 +152,19 @@ class TTSService:
             "   - <style>温柔</style>：适用于温柔、体贴、深情、柔和、宠溺、轻声、娇羞、害羞等语气或情绪。\n"
             "   - <style>悄悄话</style>：适用于耳语、低语、窃窃私语、小声、嘟囔等。\n"
             "   - <style>唱歌</style>：适用于唱歌、哼歌等。\n"
-            "4. 提取台词中或动作中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
+            "4. 提取动作描写中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
             "   - （叹气）\n"
             "   - （笑声）\n"
             "   - （哭声）\n"
             "   - （咳嗽）\n"
             "   - [inhale] (吸气/深呼吸)\n"
-            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。\n"
+            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。特别提醒：台词中原本就包含的口语语气发音词（例如“唉”、“呜呜”、“哼”、“哈哈”、“嘿”等），必须原样保留在台词文本中，绝对不要将其删除或替换为声音标记！声音标记仅作为音效插入，不能代替原本的发音词。\n"
             "5. 保证输出连贯，只包含经过处理的台词与相应的 <style> 和声音标记。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。如果输入文本包含台词，绝对不能输出为空白。"
         )
 
         user_content = (
             "示例 1：\n"
-            "输入：*她咬了咬下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
+            "输入：*她咬了缩下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
             "输出：<style>悲伤</style>\"你...你昨天怎么没来找我嘛...\"\n\n"
             "示例 2：\n"
             "输入：我没事。（叹了口气）只是有点累了。\n"
@@ -178,6 +178,9 @@ class TTSService:
             "示例 5：\n"
             "输入：她微微一笑说道：“你终于来啦。”\n"
             "输出：<style>温柔</style>“你终于来啦。”\n\n"
+            "示例 6：\n"
+            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
+            "输出：<style>悲伤</style>（叹气）唉，今天在学校真的好累啊。（笑声）<style>开心</style>不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
             f"输入：{text}\n"
             "输出："
         )
@@ -223,7 +226,7 @@ class TTSService:
             
             result = re.sub(r'\s+', ' ', result).strip()
 
-            print(f"[INFO] LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
+            # print(f"[INFO] LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
             return result
         except Exception as e:
             print(f"[WARN] LLM 预处理失败: {e}，回退使用正则规则预处理器。")
@@ -231,7 +234,7 @@ class TTSService:
 
     def preprocess_roleplay_text_llm_sync(self, text: str) -> str:
         """
-        同步至臻 LLM 预处理器，供同步接口或测试调用。
+        同步LLM 预处理器，供同步接口或测试调用。
         """
         if not text or not text.strip():
             return ""
@@ -242,8 +245,8 @@ class TTSService:
         system_prompt = (
             "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和角色台词的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
             "处理规则：\n"
-            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
-            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！\n"
+            "1. 仅保留角色说出口的台词对白。台词可能被双引号包裹，也可能没有符号包裹。必须绝对剔除所有的物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。（注意：台词中角色说出口的语气拟声词如“唉”、“哼”、“呜呜”、“哈哈”、“呀”、“啊”、“哦”等属于台词，绝对不要当作旁白删除，必须保留在台词内）。\n"
+            "2. 不管这些动作描写、心理描写、旁白或叙述是用星号（*）、圆括号（()、（））、方括号（[]、［］、【】）包裹，还是没有任何包裹（直接作为普通文本写在句中），一律必须彻底删除，绝不能出现在输出结果中！但角色口头说出来的语气词不是旁白，不要删除。\n"
             "3. 提取动作描述或台词本身的情绪与语气，使用以下 MiMo 原生支持的 XML 样式标签包裹对应的台词（或放在台词开头）：\n"
             "   - <style>开心</style>：适用于高兴、喜悦、兴奋、娇嗔、撒娇、笑等情绪。\n"
             "   - <style>悲伤</style>：适用于难过、哭泣、哀伤、伤心、委屈、沮丧、低落等情绪。\n"
@@ -251,13 +254,13 @@ class TTSService:
             "   - <style>温柔</style>：适用于温柔、体贴、深情、柔和、宠溺、轻声、娇羞、害羞等语气或情绪。\n"
             "   - <style>悄悄话</style>：适用于耳语、低语、窃窃私语、小声、嘟囔等。\n"
             "   - <style>唱歌</style>：适用于唱歌、哼歌等。\n"
-            "4. 提取台词中或动作中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
+            "4. 提取动作描写中的声效/声音事件，并转换成以下原生声音标记插入到合适的位置：\n"
             "   - （叹气）\n"
             "   - （笑声）\n"
             "   - （哭声）\n"
             "   - （咳嗽）\n"
             "   - [inhale] (吸气/深呼吸)\n"
-            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。\n"
+            "   注意：这些声音标记（如“（叹气）”等）应当只在原句中确实有叹气、笑声等发音事件时才保留，动作描写本身如“拍了拍你的肩”、“转过头去”等物理动作绝对不应保留。特别提醒：台词中原本就包含的口语语气发音词（例如“唉”、“呜呜”、“哼”、“哈哈”、“嘿”等），必须原样保留在台词文本中，绝对不要将其删除或替换为声音标记！声音标记仅作为音效插入，不能代替原本的发音词。\n"
             "5. 保证输出连贯，只包含经过处理的台词与相应的 <style> 和声音标记。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。如果输入文本包含台词，绝对不能输出为空白。"
         )
 
@@ -277,6 +280,9 @@ class TTSService:
             "示例 5：\n"
             "输入：她微微一笑说道：“你终于来啦。”\n"
             "输出：<style>温柔</style>“你终于来啦。”\n\n"
+            "示例 6：\n"
+            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
+            "输出：<style>悲伤</style>（叹气）唉，今天在学校真的好累啊。（笑声）<style>开心</style>不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
             f"输入：{text}\n"
             "输出："
         )
@@ -322,7 +328,7 @@ class TTSService:
             
             result = re.sub(r'\s+', ' ', result).strip()
 
-            print(f"[INFO] (同步) LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
+            # print(f"[INFO] (同步) LLM 预处理成功：原文本='{text}' -> 预处理文本='{result}'")
             return result
         except Exception as e:
             print(f"[WARN] (同步) LLM 预处理失败: {e}，回退使用正则规则预处理器。")
@@ -369,8 +375,8 @@ class TTSService:
             text = db_message.content
             is_message_bound = True
 
-            # 命名为：msg_{message_id}_{voice}_{speed:.2f}.wav
-            filename = f"msg_{message_id}_{voice}_{speed:.2f}.wav"
+            # 命名为：msg_{message_id}_{voice}_{speed:.2f}.mp3
+            filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
             # 检查数据库中是否存在 audio_path 且物理文件确实存在
@@ -392,14 +398,13 @@ class TTSService:
             # 注意：此处用 text 而不是 text_clean，能够 100% 避免重复播放时的 LLM 耗时及哈希抖动
             hash_input = f"{text.strip()}_{voice}_{speed:.2f}"
             md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
-            filename = f"{md5_hash}.wav"
+            filename = f"{md5_hash}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
             # 命中缓存，直接返回静态 URL
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
                 print(f"[INFO] TTS 缓存命中: {filepath}")
                 return f"/audio/{filename}"
-
         # 敏感词或密钥检查
         if not settings.MIMO_API_KEY:
             raise ValueError("未配置 MIMO_API_KEY，无法调用云端语音合成接口。")
@@ -426,7 +431,7 @@ class TTSService:
                 }
             ],
             "audio": {
-                "format": "wav",
+                "format": "mp3",
                 "voice": voice
             }
         }
@@ -510,7 +515,7 @@ class TTSService:
             text = db_message.content
             is_message_bound = True
 
-            filename = f"msg_{message_id}_{voice}_{speed:.2f}.wav"
+            filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
             if db_message.audio_path:
@@ -528,7 +533,7 @@ class TTSService:
         if not is_message_bound:
             hash_input = f"{text.strip()}_{voice}_{speed:.2f}"
             md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
-            filename = f"{md5_hash}.wav"
+            filename = f"{md5_hash}.mp3"
             filepath = os.path.join(cache_dir, filename)
 
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
@@ -557,7 +562,7 @@ class TTSService:
                 }
             ],
             "audio": {
-                "format": "wav",
+                "format": "mp3",
                 "voice": voice
             }
         }
@@ -617,10 +622,10 @@ class TTSService:
             if not os.path.exists(cache_dir):
                 return
 
-            # 获取目录下所有 wav 文件及其修改时间
+            # 获取目录下所有 mp3 文件及其修改时间
             files = []
             for f in os.listdir(cache_dir):
-                if f.endswith(".wav"):
+                if f.endswith(".mp3"):
                     p = os.path.join(cache_dir, f)
                     try:
                         files.append((p, os.path.getmtime(p)))
