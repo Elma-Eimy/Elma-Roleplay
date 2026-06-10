@@ -1,8 +1,11 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 import os
 import uuid
+from sqlalchemy.orm import Session
+from core.database import get_db
 from core.config import settings
-from schemas import SettingsUpdate
+from schemas import SettingsUpdate, TTSRequest
+from services.tts_service import TTSService
 
 router = APIRouter()
 
@@ -74,10 +77,7 @@ def get_settings():
         "presence_penalty": settings.LLM_PRESENCE_PENALTY,
         "frequency_penalty": settings.LLM_FREQUENCY_PENALTY,
         "repetition_penalty": settings.LLM_REPETITION_PENALTY,
-        "reasoning_effort": settings.LLM_REASONING_EFFORT,
-        "lorebook_semantic_enabled": settings.APP_LOREBOOK_SEMANTIC_ENABLED,
-        "lorebook_semantic_top_k": settings.APP_LOREBOOK_SEMANTIC_TOP_K,
-        "lorebook_semantic_max_distance": settings.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE
+        "reasoning_effort": settings.LLM_REASONING_EFFORT
     }
 
 
@@ -96,4 +96,25 @@ def update_settings(request: SettingsUpdate):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
+
+
+@router.post("/utils/tts")
+async def text_to_speech(request: TTSRequest, db: Session = Depends(get_db)):
+    """
+    文字转语音合成接口（云端 MIMO-v2.5-tts API）
+    """
+    try:
+        tts_service = TTSService.get_instance()
+        audio_url = await tts_service.generate_speech_async(
+            text=request.text,
+            voice=request.voice,
+            speed=request.speed or 1.0,
+            message_id=request.message_id,
+            db=db
+        )
+        return {"audio_url": audio_url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
 

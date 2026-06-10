@@ -11,20 +11,22 @@ from core.locking import cleanup_session_lock
 
 router = APIRouter()
 
-def get_session_history_with_inheritance(session_id: int, db: Session, limit: int) -> list[models.ChatMessage]:
+def get_session_history_with_inheritance(session_id: int, db: Session, limit: int, before_id: int = None) -> list[models.ChatMessage]:
     """
     获取指定会话的聊天历史记录。
     按照时间正序排列（最旧的在前面，最新的在后面）。
     注：根据对齐后的颗粒度要求，开启子会话时不再合并父会话的原始消息记录，
     以便子会话独立于父会话重新起步，因此此处仅拉取当前会话的消息，不再递归向上追溯。
     """
+    query = db.query(models.ChatMessage).filter(
+        models.ChatMessage.session_id == session_id,
+        models.ChatMessage.is_active == True
+    )
+    if before_id is not None:
+        query = query.filter(models.ChatMessage.id < before_id)
+
     messages = (
-        db.query(models.ChatMessage)
-        .filter(
-            models.ChatMessage.session_id == session_id,
-            models.ChatMessage.is_active == True
-        )
-        .order_by(models.ChatMessage.id.desc())
+        query.order_by(models.ChatMessage.id.desc())
         .limit(limit)
         .all()
     )
@@ -237,6 +239,7 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db)):
 def get_session_history(
     session_id: int,
     limit: int = Query(None, ge=1, description="获取聊天历史记录的条数限制"),
+    before_id: int = Query(None, description="仅获取此消息ID之前的历史消息"),
     db: Session = Depends(get_db),
 ):
     """获取会话的聊天历史"""
@@ -248,7 +251,7 @@ def get_session_history(
     fetch_limit = limit if limit is not None else settings.APP_HISTORY_FETCH_DEFAULT
     fetch_limit = min(fetch_limit, settings.APP_HISTORY_FETCH_MAX)
 
-    messages = get_session_history_with_inheritance(session_id, db, fetch_limit)
+    messages = get_session_history_with_inheritance(session_id, db, fetch_limit, before_id)
 
     session_history = []
     for m in messages:
@@ -261,6 +264,7 @@ def get_session_history(
             "created_at": m.created_at.isoformat() if m.created_at else None,
             "parent_id": m.parent_id,
             "is_active": m.is_active,
+            "audio_path": m.audio_path,
         }
         
         if m.role.value == "assistant":
@@ -281,6 +285,7 @@ def get_session_history(
                     "emotion_tag": c.emotion_tag,
                     "affection_change": c.affection_change,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "audio_path": c.audio_path,
                 }
                 for c in candidates
             ]
@@ -377,6 +382,9 @@ def update_message(message_id: int, request: MessageUpdate, db: Session = Depend
         raise HTTPException(status_code=404, detail="Message not found")
 
     message.content = request.content
+    # 内容被修改，重置关联的 TTS 音频文件路径以防止播放旧音档导致音画不同步
+    message.audio_path = None
+    
     session = db.get(models.Session, message.session_id)
     if session:
         session.updated_at = func.now()

@@ -190,6 +190,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                     "emotion_tag": c.emotion_tag,
                     "affection_change": c.affection_change,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "audio_path": c.audio_path,
                 }
                 for c in candidates
             ]
@@ -462,6 +463,7 @@ async def chat_stream(
                             "emotion_tag": c.emotion_tag,
                             "affection_change": c.affection_change,
                             "created_at": c.created_at.isoformat() if c.created_at else None,
+                            "audio_path": c.audio_path,
                         }
                         for c in candidates
                     ]
