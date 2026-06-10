@@ -175,7 +175,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 }
 
 .header-title {
-  font-size: 20rpx;
+  font-size: 24rpx;
   color: #8e8e93;
   font-weight: 600;
   padding: 0 20rpx;

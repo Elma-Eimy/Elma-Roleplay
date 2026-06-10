@@ -18,7 +18,12 @@
       <text v-if="!isUser && showName" class="name-tag">{{ characterName }}</text>
 
       <!-- 消息气泡 -->
-      <view class="bubble" :class="[isUser ? 'user-bubble' : 'ai-bubble']">
+      <view 
+        class="bubble" 
+        :class="[isUser ? 'user-bubble' : 'ai-bubble']"
+        @touchstart="handleTouchStart"
+        @touchend="handleTouchEnd"
+      >
         
         <!-- AI 的深度思考过程容器 -->
         <view v-if="!isUser && hasThought" class="thought-container" :class="{ 'is-expanded': isThoughtExpanded }">
@@ -63,8 +68,39 @@
 
       </view>
 
-      <!-- 元数据信息（情绪标签、好感度变动与所使用的模型） -->
-      <view v-if="!isUser && hasMeta" class="meta-area">
+      <!-- AI 候选版本切换器 (Swipe Multi-Replies) -->
+      <view 
+        v-if="!isUser && message.candidates && message.candidates.length > 1" 
+        class="candidate-pager"
+        @longpress.stop=""
+        @contextmenu.prevent.stop=""
+      >
+        <view class="pager-btn prev" @tap.stop="switchCandidateVersion(-1)">
+          <text class="pager-arrow">◀</text>
+        </view>
+        <text class="pager-text">{{ (message.active_index ?? 0) + 1 }} / {{ message.candidates.length }}</text>
+        <view class="pager-btn next" @tap.stop="switchCandidateVersion(1)">
+          <text class="pager-arrow">▶</text>
+        </view>
+      </view>
+
+      <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
+      <view v-if="!isUser" class="meta-area">
+        <!-- 语音播报按钮 -->
+        <view 
+          v-if="message.status === 'done'"
+          class="meta-tag tts-btn" 
+          :class="{ 'is-playing': chatStore.activeAudioMessageId === message.id }"
+          @tap="playTTS"
+        >
+          <view v-if="chatStore.activeAudioMessageId === message.id" class="waveform">
+            <view class="wave-bar bar-1"></view>
+            <view class="wave-bar bar-2"></view>
+            <view class="wave-bar bar-3"></view>
+          </view>
+          <image v-else class="tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
+          <text class="tts-text">{{ chatStore.activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
+        </view>
         <view v-if="message.emotion_tag" class="meta-tag emotion">
           {{ message.emotion_tag }}
         </view>
@@ -82,8 +118,11 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import type { ChatMessage } from "@/store/chatStore";
+import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import MarkdownIt from "markdown-it";
+
+const chatStore = useChatStore();
 
 const personaStore = usePersonaStore();
 
@@ -112,6 +151,57 @@ const handleLongPress = (e?: Event) => {
       });
     } catch (_) {}
     emit("longpress", props.message);
+  }
+};
+
+// ── Swipe Multi-Replies 逻辑 ──
+const touchStartX = ref(0);
+const touchStartY = ref(0);
+
+const handleTouchStart = (e: TouchEvent) => {
+  if (isUser.value || !props.message.candidates || props.message.candidates.length <= 1) return;
+  touchStartX.value = e.touches[0].clientX;
+  touchStartY.value = e.touches[0].clientY;
+};
+
+const handleTouchEnd = (e: TouchEvent) => {
+  if (isUser.value || !props.message.candidates || props.message.candidates.length <= 1) return;
+  const deltaX = e.changedTouches[0].clientX - touchStartX.value;
+  const deltaY = e.changedTouches[0].clientY - touchStartY.value;
+  
+  if (Math.abs(deltaX) > 60 && Math.abs(deltaY) < 40) {
+    if (deltaX > 0) {
+      switchCandidateVersion(-1);
+    } else {
+      switchCandidateVersion(1);
+    }
+  }
+};
+
+const switchCandidateVersion = async (direction: number) => {
+  if (chatStore.isLoading || !props.message.candidates || props.message.status === 'streaming') return;
+  const len = props.message.candidates.length;
+  const currentIdx = props.message.active_index ?? 0;
+  let targetIdx = currentIdx + direction;
+  
+  if (targetIdx < 0) {
+    targetIdx = len - 1;
+  } else if (targetIdx >= len) {
+    targetIdx = 0;
+  }
+  
+  const targetCandidate = props.message.candidates[targetIdx];
+  if (targetCandidate) {
+    try {
+      uni.vibrateShort({ success: () => {} });
+    } catch (_) {}
+    await chatStore.switchActiveCandidate(props.message.id, targetCandidate.id);
+  }
+};
+
+const playTTS = () => {
+  if (props.message.id) {
+    chatStore.playMessageTTS(props.message.id, props.message.content);
   }
 };
 
@@ -254,6 +344,7 @@ const renderedThought = computed(() => {
   position: relative;
   word-break: break-word;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
+  touch-action: pan-y; /* 限制垂直滚动，防止与手机端侧滑手势或返回冲突 */
 }
 
 /* ===== AI 气泡（高级白） ===== */
@@ -344,6 +435,70 @@ const renderedThought = computed(() => {
   color: #8e8e93;
   background-color: rgba(0, 0, 0, 0.01);
   border-color: rgba(0, 0, 0, 0.03);
+}
+
+/* ===== TTS Button & Waveform Styles ===== */
+.tts-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tts-btn.is-playing {
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.2);
+  background-color: rgba(16, 185, 129, 0.05);
+}
+
+.tts-icon {
+  width: 20rpx;
+  height: 20rpx;
+  flex-shrink: 0;
+}
+
+.tts-text {
+  font-size: 19rpx;
+  font-weight: 500;
+}
+
+.waveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 3rpx;
+  width: 20rpx;
+  height: 20rpx;
+}
+
+.wave-bar {
+  width: 3rpx;
+  height: 6rpx;
+  background-color: #10b981;
+  border-radius: 2rpx;
+  animation: bounce 0.8s ease-in-out infinite alternate;
+}
+
+.bar-1 {
+  animation-delay: 0.1s;
+}
+
+.bar-2 {
+  animation-delay: 0.3s;
+  height: 12rpx;
+}
+
+.bar-3 {
+  animation-delay: 0.5s;
+}
+
+@keyframes bounce {
+  from {
+    height: 6rpx;
+  }
+  to {
+    height: 18rpx;
+  }
 }
 
 /* ===== 状态指示器 ===== */
@@ -533,5 +688,54 @@ const renderedThought = computed(() => {
 
 .thought-markdown-content :deep(.md-em) {
   font-style: italic;
+}
+
+/* ===== AI 候选版本切换器 (Swipe Multi-Replies) ===== */
+.candidate-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  gap: 16rpx;
+  margin-top: 10rpx;
+  margin-left: 10rpx;
+  padding: 6rpx 16rpx;
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.03);
+  border-radius: 30rpx;
+  transition: all 0.2s;
+  z-index: 10;
+}
+
+.candidate-pager:active {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.pager-btn {
+  width: 56rpx;
+  height: 56rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.pager-btn:active {
+  transform: scale(0.85);
+}
+
+.pager-arrow {
+  font-size: 18rpx;
+  color: #8e8e93;
+}
+
+.pager-text {
+  font-size: 20rpx;
+  color: #8e8e93;
+  font-weight: 600;
+  min-width: 60rpx;
+  text-align: center;
+  letter-spacing: 0.5px;
 }
 </style>

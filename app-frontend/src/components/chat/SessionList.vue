@@ -222,7 +222,7 @@ const formatDate = (dateString: string) => {
 }
 
 .session-title {
-  font-size: 28rpx;
+  font-size: 32rpx;
   font-weight: 600;
   color: #111827;
   display: block;
@@ -239,15 +239,15 @@ const formatDate = (dateString: string) => {
 }
 
 .session-date {
-  font-size: 22rpx;
+  font-size: 24rpx;
   color: #6b7280;
 }
 
 .session-mood {
-  font-size: 20rpx;
+  font-size: 24rpx;
   color: #4b5563;
   background-color: #f3f4f6;
-  padding: 4rpx 12rpx;
+  padding: 6rpx 16rpx;
   border-radius: 100rpx;
 }
 
@@ -263,7 +263,7 @@ const formatDate = (dateString: string) => {
   color: #9ca3af;
 }
 
-/* ===== 会话分支徽章 ===== */
+/* ===== 从属分支徽章 ===== */
 .title-row {
   display: flex;
   align-items: center;
@@ -276,10 +276,10 @@ const formatDate = (dateString: string) => {
 }
 
 .branch-badge {
-  font-size: 18rpx;
+  font-size: 22rpx;
   color: #10b981;
   background-color: rgba(16, 185, 129, 0.1);
-  padding: 2rpx 10rpx;
+  padding: 4rpx 12rpx;
   border-radius: 6rpx;
   font-weight: 600;
   flex-shrink: 0;

@@ -218,17 +218,17 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 
 .latest-badge {
   position: absolute;
-  top: -12rpx;
+  top: -16rpx;
   right: 20rpx;
   background-color: #1c1c1e;
   border-radius: 6rpx;
-  padding: 2rpx 10rpx;
+  padding: 4rpx 12rpx;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
   z-index: 2;
 }
 
 .latest-badge-text {
-  font-size: 16rpx;
+  font-size: 20rpx;
   color: #ffffff;
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -242,7 +242,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 }
 
 .card-title {
-  font-size: 26rpx;
+  font-size: 32rpx;
   font-weight: 600;
   color: #1c1c1e;
   white-space: nowrap;
@@ -261,10 +261,10 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   display: flex;
   align-items: center;
   gap: 4rpx;
-  font-size: 18rpx;
+  font-size: 22rpx;
   background-color: rgba(0, 0, 0, 0.02);
   border: 1px solid rgba(0, 0, 0, 0.03);
-  padding: 2rpx 10rpx;
+  padding: 6rpx 16rpx;
   border-radius: 40rpx;
 }
 
@@ -281,7 +281,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 }
 
 .card-preview {
-  font-size: 24rpx;
+  font-size: 28rpx;
   color: #8e8e93;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -289,7 +289,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.4;
-  min-height: 34rpx;
+  min-height: 38rpx;
 }
 
 .card-footer {
@@ -302,7 +302,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 }
 
 .card-date {
-  font-size: 18rpx;
+  font-size: 22rpx;
   color: #c7c7cc;
   font-weight: 500;
 }
@@ -316,7 +316,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   display: flex;
   align-items: center;
   gap: 6rpx;
-  padding: 8rpx 16rpx;
+  padding: 10rpx 20rpx;
   border-radius: 30rpx;
   background-color: rgba(0, 0, 0, 0.02);
   transition: all 0.2s;
@@ -335,12 +335,12 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 }
 
 .action-icon {
-  width: 22rpx;
-  height: 22rpx;
+  width: 26rpx;
+  height: 26rpx;
 }
 
 .action-text {
-  font-size: 18rpx;
+  font-size: 22rpx;
   font-weight: 600;
   color: #48484a;
 }
