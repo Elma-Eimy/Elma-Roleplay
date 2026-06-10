@@ -133,19 +133,23 @@ const loadRecentSessions = async () => {
       try {
         const hRes = await getSessionHistory(s.id, 1);
         if (hRes.messages.length > 0) {
-          const rawMsg = hRes.messages[hRes.messages.length - 1].content;
+          const lastMsg = hRes.messages[hRes.messages.length - 1];
+          const rawMsg = lastMsg.content;
           s.lastMessage = rawMsg ? rawMsg.replace(/\s+/g, " ").trim() : "";
+          s.lastMessageTime = lastMsg.created_at || s.updated_at;
         } else {
           s.lastMessage = "开启新的聊天...";
+          s.lastMessageTime = s.updated_at;
         }
       } catch (err) {
         s.lastMessage = "开启新的聊天...";
+        s.lastMessageTime = s.updated_at;
       }
     });
     await Promise.all(historyPromises);
 
-    // 4. 按最近更新时间进行倒序排列
-    allSessions.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    // 4. 按最近消息发送时间进行倒序排列
+    allSessions.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
     sessions.value = allSessions;
   } catch (e) {
     console.error("Failed to load recent sessions", e);
