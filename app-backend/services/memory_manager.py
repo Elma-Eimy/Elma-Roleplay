@@ -314,7 +314,10 @@ def retrieve_memories(
     current_msg_id = 0
     persona = db.get(SessionPersona, persona_id)
     if persona:
-        current_msg = db.query(ChatMessage).filter(ChatMessage.session_id == persona.session_id).order_by(ChatMessage.id.desc()).first()
+        current_msg = db.query(ChatMessage).filter(
+            ChatMessage.session_id == persona.session_id,
+            ChatMessage.is_active == True
+        ).order_by(ChatMessage.id.desc()).first()
         if current_msg:
             current_msg_id = current_msg.id
 

@@ -24,7 +24,8 @@ def get_unsummarized_count(session_id: int, db: DBSession) -> int:
         return 0
 
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
+        ChatMessage.session_id == session_id,
+        ChatMessage.is_active == True
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
@@ -60,7 +61,8 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     # Step 2: 只查询尚未总结的消息（增量查询）
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
+        ChatMessage.session_id == session_id,
+        ChatMessage.is_active == True
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
@@ -282,7 +284,8 @@ def get_cognition_unseen_count(persona_id: int, session_id: int, db: DBSession) 
         return 0
 
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
+        ChatMessage.session_id == session_id,
+        ChatMessage.is_active == True
     )
     if persona.last_cognition_update_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
@@ -311,7 +314,8 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
 
     # 查询自上次认知更新以来的消息
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
+        ChatMessage.session_id == session_id,
+        ChatMessage.is_active == True
     )
     if persona.last_cognition_update_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
