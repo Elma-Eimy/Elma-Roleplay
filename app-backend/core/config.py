@@ -15,6 +15,7 @@ class Settings:
         self.EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "your-embedding-api-key")
         # 公网访问控制密钥；为空时跳过认证（本地开发模式）
         self.ACCESS_API_KEY = os.getenv("ACCESS_API_KEY", "")
+        self.MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
         
         # 非敏感配置从 config.yaml 获取
         self.config = self._load_yaml_config()
@@ -65,9 +66,6 @@ class Settings:
         self.APP_LOREBOOK_SCAN_DEPTH = int(app_config.get("lorebook_scan_depth", 5))
         self.APP_LOREBOOK_TOKEN_BUDGET = int(app_config.get("lorebook_token_budget", 3000))
         self.APP_LOREBOOK_MAX_RECURSIVE_PASSES = int(app_config.get("lorebook_max_recursive_passes", 3))
-        self.APP_LOREBOOK_SEMANTIC_ENABLED = bool(app_config.get("lorebook_semantic_enabled", True))
-        self.APP_LOREBOOK_SEMANTIC_TOP_K = int(app_config.get("lorebook_semantic_top_k", 3))
-        self.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE = float(app_config.get("lorebook_semantic_max_distance", 1.1))
 
         # 存储与路径配置
         self.STORAGE_SQLITE_DB_PATH = str(app_config.get("sqlite_db_path", "data.db"))
@@ -108,6 +106,18 @@ class Settings:
             {"max_turns": 9999999, "label": "很久以前"}
         ])
 
+        # TTS 语音合成配置 (MIMO API)
+        tts_config = self.config.get("tts", {})
+        self.TTS_ENABLED = bool(tts_config.get("enabled", True))
+        self.TTS_MIMO_BASE_URL = str(tts_config.get("base_url", "https://api.xiaomimimo.com/v1"))
+        self.TTS_MIMO_MODEL = str(tts_config.get("model", "mimo-v2.5-tts"))
+        self.TTS_DEFAULT_VOICE = str(tts_config.get("default_voice", "冰糖"))
+        
+        self.TTS_CACHE_DIR = str(tts_config.get("cache_dir", "data/audio_cache"))
+        if not os.path.isabs(self.TTS_CACHE_DIR):
+            self.TTS_CACHE_DIR = os.path.abspath(os.path.join(parent_dir, self.TTS_CACHE_DIR))
+        self.TTS_MAX_CACHE_FILES = int(tts_config.get("max_cache_files", 500))
+
     def update_and_persist(self, updates: dict):
         """
         动态更新内存中的运行时配置，并将其同步回写持久化到 config.yaml。
@@ -135,10 +145,7 @@ class Settings:
             "presence_penalty": float,
             "frequency_penalty": float,
             "repetition_penalty": float,
-            "reasoning_effort": str,
-            "lorebook_semantic_enabled": bool,
-            "lorebook_semantic_top_k": int,
-            "lorebook_semantic_max_distance": float
+            "reasoning_effort": str
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -224,18 +231,6 @@ class Settings:
             elif field == "lorebook_max_recursive_passes":
                 self.APP_LOREBOOK_MAX_RECURSIVE_PASSES = converted_val
                 self.config.setdefault("app", {})["lorebook_max_recursive_passes"] = converted_val
-                app_updated = True
-            elif field == "lorebook_semantic_enabled":
-                self.APP_LOREBOOK_SEMANTIC_ENABLED = converted_val
-                self.config.setdefault("app", {})["lorebook_semantic_enabled"] = converted_val
-                app_updated = True
-            elif field == "lorebook_semantic_top_k":
-                self.APP_LOREBOOK_SEMANTIC_TOP_K = converted_val
-                self.config.setdefault("app", {})["lorebook_semantic_top_k"] = converted_val
-                app_updated = True
-            elif field == "lorebook_semantic_max_distance":
-                self.APP_LOREBOOK_SEMANTIC_MAX_DISTANCE = converted_val
-                self.config.setdefault("app", {})["lorebook_semantic_max_distance"] = converted_val
                 app_updated = True
             elif field == "cognition_max_words":
                 self.APP_COGNITION_MAX_WORDS = converted_val
