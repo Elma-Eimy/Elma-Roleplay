@@ -31,13 +31,20 @@
         <!-- 角色基本名称与标签区域 -->
         <view class="char-header-section">
           <text class="char-name">{{ character.name }}</text>
-          <view class="tag-row" v-if="character.personality">
+          <view class="tag-row" v-if="character.personality || (character.tags && character.tags.length > 0)">
             <view 
               class="personality-tag" 
               v-for="tag in personalityTags" 
-              :key="tag"
+              :key="'pers-' + tag"
             >
               {{ tag }}
+            </view>
+            <view 
+              class="character-tag" 
+              v-for="tag in (character.tags || [])" 
+              :key="'tag-' + tag"
+            >
+              #{{ tag }}
             </view>
           </view>
         </view>
@@ -157,6 +164,34 @@
             <text class="section-title">开场白预设</text>
             <scroll-view scroll-y class="section-scroll-container">
               <rich-text class="section-body italic" :nodes="renderedFirstMes" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.mes_example">
+            <text class="section-title">对话句式示例</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body dialogue-example" :nodes="renderedMesExample" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.creator_notes">
+            <text class="section-title">创作者备忘录</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body" :nodes="renderedCreatorNotes" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.system_prompt_override">
+            <text class="section-title">系统设定覆盖 (System Prompt Override)</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body code-text" :nodes="renderedSystemPromptOverride" />
+            </scroll-view>
+          </view>
+
+          <view class="section-card" v-if="character.post_history_instructions">
+            <text class="section-title">历史末端注入指令 (Post History Instructions)</text>
+            <scroll-view scroll-y class="section-scroll-container">
+              <rich-text class="section-body code-text" :nodes="renderedPostHistoryInstructions" />
             </scroll-view>
           </view>
         </view>
@@ -342,6 +377,50 @@ const renderedFirstMes = computed(() => {
   return html;
 });
 
+const renderedMesExample = computed(() => {
+  let content = character.value?.mes_example || "";
+  if (!content) return "";
+  content = replacePlaceholders(content);
+  let html = md.render(content);
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  html = html.replace(/<em>/g, '<em class="md-em">');
+  html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+  return html;
+});
+
+const renderedCreatorNotes = computed(() => {
+  let content = character.value?.creator_notes || "";
+  if (!content) return "";
+  content = replacePlaceholders(content);
+  let html = md.render(content);
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  html = html.replace(/<em>/g, '<em class="md-em">');
+  html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+  return html;
+});
+
+const renderedSystemPromptOverride = computed(() => {
+  let content = character.value?.system_prompt_override || "";
+  if (!content) return "";
+  content = replacePlaceholders(content);
+  let html = md.render("```\n" + content + "\n```");
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  return html;
+});
+
+const renderedPostHistoryInstructions = computed(() => {
+  let content = character.value?.post_history_instructions || "";
+  if (!content) return "";
+  content = replacePlaceholders(content);
+  let html = md.render("```\n" + content + "\n```");
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  return html;
+});
+
 onLoad((options) => {
   if (options && options.id) {
     characterId.value = parseInt(options.id, 10);
@@ -367,20 +446,31 @@ const loadCharacterData = async (id: number) => {
       sortedSessions.map(async (s) => {
         try {
           const hRes = await getSessionHistory(s.id, 1);
-          const lastMsg = hRes.messages.length > 0 
-            ? hRes.messages[hRes.messages.length - 1].content 
-            : "";
-          const cleanMsg = lastMsg ? lastMsg.replace(/\s+/g, ' ').trim() : "";
-          return { ...s, lastMessage: cleanMsg };
+          if (hRes.messages.length > 0) {
+            const lastMsgObj = hRes.messages[hRes.messages.length - 1];
+            const lastMsg = lastMsgObj.content || "";
+            const cleanMsg = lastMsg ? lastMsg.replace(/\s+/g, ' ').trim() : "";
+            return {
+              ...s,
+              lastMessage: cleanMsg,
+              lastMessageTime: lastMsgObj.created_at || s.updated_at
+            };
+          } else {
+            return {
+              ...s,
+              lastMessage: "",
+              lastMessageTime: s.updated_at
+            };
+          }
         } catch (e) {
-          return { ...s, lastMessage: "" };
+          return { ...s, lastMessage: "", lastMessageTime: s.updated_at };
         }
       })
     );
 
-    // 按更新时间降序对分支会话进行排序
+    // 按最近消息发送时间降序对分支会话进行排序
     decoratedSessions.sort(
-      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
     );
 
     sessions.value = decoratedSessions;
@@ -795,7 +885,7 @@ const formatDate = (dateString: string) => {
 }
 
 .branch-name {
-  font-size: 28rpx;
+  font-size: 32rpx;
   font-weight: 600;
   color: #1c1c1e;
   white-space: nowrap;
@@ -812,7 +902,7 @@ const formatDate = (dateString: string) => {
 }
 
 .branch-parent-tag {
-  font-size: 20rpx;
+  font-size: 24rpx;
   color: #8e8e93;
   font-weight: 500;
   white-space: nowrap;
@@ -831,10 +921,10 @@ const formatDate = (dateString: string) => {
 .meta-item {
   display: flex;
   gap: 4rpx;
-  font-size: 20rpx;
+  font-size: 24rpx;
   background-color: rgba(0, 0, 0, 0.02);
   border: 1px solid rgba(0, 0, 0, 0.03);
-  padding: 4rpx 12rpx;
+  padding: 6rpx 16rpx;
   border-radius: 40rpx;
 }
 
@@ -852,7 +942,7 @@ const formatDate = (dateString: string) => {
 }
 
 .branch-preview {
-  font-size: 26rpx;
+  font-size: 28rpx;
   color: #8e8e93;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -863,7 +953,7 @@ const formatDate = (dateString: string) => {
 }
 
 .branch-date {
-  font-size: 20rpx;
+  font-size: 24rpx;
   color: #c7c7cc;
   text-align: right;
   font-weight: 500;
@@ -1199,5 +1289,32 @@ const formatDate = (dateString: string) => {
 
 .tree-view-wrapper {
   padding: 0 36rpx;
+}
+
+.character-tag {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #007aff;
+  background-color: rgba(0, 122, 255, 0.05);
+  padding: 6rpx 20rpx;
+  border-radius: 40rpx;
+  border: 1px solid rgba(0, 122, 255, 0.05);
+}
+
+.section-body :deep(pre) {
+  background-color: #f2f2f7;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  font-family: monospace;
+  font-size: 24rpx;
+  color: #1c1c1e;
+  word-break: break-all;
+  white-space: pre-wrap;
+  margin: 10rpx 0;
+}
+
+.section-body.dialogue-example :deep(.md-dialogue) {
+  color: #007aff;
+  font-weight: 600;
 }
 </style>

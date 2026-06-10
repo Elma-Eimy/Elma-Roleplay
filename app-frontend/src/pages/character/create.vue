@@ -75,7 +75,7 @@
 
           <view class="form-group">
             <text class="label">创作者备忘录</text>
-            <input class="input" v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息" />
+            <textarea class="textarea-small" v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息（支持多行输入）..."></textarea>
           </view>
           
           <view class="form-group">
