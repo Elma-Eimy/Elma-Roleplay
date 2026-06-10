@@ -108,7 +108,7 @@
             <view class="advanced-toggle-row" @tap="showAdvanced = !showAdvanced">
               <view class="advanced-toggle-btn">
                 <text class="advanced-toggle-text">{{ showAdvanced ? '收起高级参数' : '展开高级参数' }}</text>
-                <text class="advanced-toggle-subtext" v-if="!showAdvanced">（包括重要度、世界书、Token限制等 9 项）</text>
+                <text class="advanced-toggle-subtext" v-if="!showAdvanced">（包括重要度、世界书、Token限制等 13 项）</text>
                 <image 
                   class="advanced-chevron" 
                   :class="{ 'is-active': showAdvanced }" 
@@ -120,6 +120,90 @@
 
             <!-- 高级参数折叠部分 -->
             <view class="advanced-section" :class="{ 'is-show': showAdvanced }">
+              <!-- 核采样比例 Top P 滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">核采样比例 (Top P)</text>
+                    <text class="engine-param-val">{{ engineSettings.top_p.toFixed(2) }}</text>
+                  </view>
+                  <text class="engine-param-desc">核采样概率阈值，只保留概率累加达到此值的高概率词汇（范围 0.10 ~ 1.00）</text>
+                </view>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round(engineSettings.top_p * 100)"
+                  :min="10" :max="100" :step="5"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.top_p = e.detail.value / 100"
+                />
+              </view>
+
+              <!-- 存在惩罚 Presence Penalty 滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">存在惩罚 (Presence Penalty)</text>
+                    <text class="engine-param-val">{{ engineSettings.presence_penalty.toFixed(1) }}</text>
+                  </view>
+                  <text class="engine-param-desc">对已出现过的词施加一次性惩罚，值越高越鼓励 AI 开启新话题（范围 -2.0 ~ 2.0）</text>
+                </view>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round((engineSettings.presence_penalty + 2) * 10)"
+                  :min="0" :max="40" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.presence_penalty = (e.detail.value / 10) - 2"
+                />
+              </view>
+
+              <!-- 频率惩罚 Frequency Penalty 滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">频率惩罚 (Frequency Penalty)</text>
+                    <text class="engine-param-val">{{ engineSettings.frequency_penalty.toFixed(1) }}</text>
+                  </view>
+                  <text class="engine-param-desc">根据词汇出现的累积频次施加惩罚，用于有效抑制复读机现象（范围 -2.0 ~ 2.0）</text>
+                </view>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round((engineSettings.frequency_penalty + 2) * 10)"
+                  :min="0" :max="40" :step="1"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.frequency_penalty = (e.detail.value / 10) - 2"
+                />
+              </view>
+
+              <!-- 重复度惩罚 Repetition Penalty 滑块行 -->
+              <view class="engine-row border-bottom">
+                <view class="engine-row-left">
+                  <view class="engine-name-row">
+                    <text class="engine-param-name">重复度惩罚 (Repetition Penalty)</text>
+                    <text class="engine-param-val">{{ engineSettings.repetition_penalty.toFixed(2) }}</text>
+                  </view>
+                  <text class="engine-param-desc">乘积型惩罚，主要用于本地及特定云端模型，1.0 代表不惩罚（范围 0.50 ~ 2.00）</text>
+                </view>
+                <slider
+                  class="engine-slider"
+                  :value="Math.round(engineSettings.repetition_penalty * 100)"
+                  :min="50" :max="200" :step="5"
+                  activeColor="#1c1c1e"
+                  backgroundColor="rgba(0,0,0,0.07)"
+                  block-color="#ffffff"
+                  block-size="20"
+                  @change="(e: any) => engineSettings.repetition_penalty = e.detail.value / 100"
+                />
+              </view>
+
               <!-- 记忆过滤最低重要度滑块行 -->
               <view class="engine-row border-bottom">
                 <view class="engine-row-left">
@@ -777,6 +861,8 @@ const handleResetDatabase = () => {
 
 .engine-slider {
   width: 100%;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 /* Custom Toggle (reused from chat.vue) */
