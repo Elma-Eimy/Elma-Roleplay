@@ -1,116 +1,345 @@
-# AI Roleplay Backend Engine — 角色扮演后端核心大脑
+# AI Roleplay Backend Engine
 
-这是一个基于 FastAPI、SQLite 和 ChromaDB 构建的高性能异步 AI 角色扮演（AI Roleplay）智能体后端。项目实现了高精度角色模拟、基于 RAG 的长期记忆检索、分支树状会话流管理以及角色微认知与好感度更新闭环。
-
----
-
-## 技术栈与系统架构
-
-- **网络框架**：FastAPI (Uvicorn) - 提供基于 Python 异步特性的高并发网络接口。
-- **关系型数据存储**：SQLAlchemy (SQLite) - 存储和管理结构化的会话、消息、角色卡配置以及 Persona 情感状态。
-- **向量数据库**：ChromaDB - 处理和检索高维嵌入（Embeddings），提供长期记忆检索（RAG）。
-- **大模型集成**：兼容 OpenAI API 规范的客户端。
+> 基于 FastAPI + SQLite + ChromaDB 构建的个人私有部署 AI 角色扮演后端。  
+> 支持高精度角色模拟、长期记忆 RAG 检索、分支树状会话、认知与好感度闭环演化、多模态语音合成（TTS）以及多分支候选回复机制。
 
 ---
 
-## 核心技术特性
+## 目录
 
-### 1. 缓存友好（Prompt Caching）与多模型兼容的提示词引擎
-- **静态人设分离**：重构了提示词拼装，将核心设定、性格、输出格式及对话示例等**纯静态内容**并入主 `system_prompt`，极大化激活了主流 API 的 Prompt Caching。
-- **XML 上下文闭包包装**：将当前场景、自我认知、好感状态、世界书知识、召回记忆等**高动态上下文**统一使用 XML 闭包标签包裹，注入到最新一条 `user` 消息尾端。
-- **API 交替角色兼容**：严格遵循 `system -> user / assistant -> user` 的角色交替序列，完美兼容 Claude、Gemini 及 DeepSeek 等对 alternating roles 有强限制的 API 节点。
-
-### 2. 线程安全的单会话并发锁（Session Lock）
-- 在对话路由中引入了全局线程安全并发锁与 30 秒获取超时机制。
-- 对非流式 `/chat` 进行局部锁同步保护与异常释放。
-- 对流式 `/chat/stream` 路由实现了**延迟释放机制**，将并发锁的释放生命周期延迟绑定到 SSE `StreamingResponse` 内部生成器的终态 `finally` 块中，彻底杜绝多客户端竞态导致的数据写错乱与对话时序混淆。
-
-### 3. 高容错与自愈式向量维度对齐（Embedding Dimension Self-healing）
-- **维度动态缓存与分析**：在 `RobustOpenAIEmbeddingFunction` 中引入静态缓存，且能够智能分析 `model_name`（如自动识别 `doubao` 映射为 `1024` 维），在 API 故障时提供准确维度的零向量 Fallback。
-- **Collection 维度主动探测**：获取角色 collection 时，主动查询库中已有文档的向量长度并强制对齐缓存，形成双重防线，根治由于切换模型或 API 故障造成的 ChromaDB `InvalidArgumentError` (维度不匹配) 崩溃。
-
-### 4. 模块化服务层解耦（Facade 设计模式）
-为保证代码的可读性和单一职责原则，将原本臃肿的服务文件拆分为以下独立子服务，并通过 `memory_manager.py` 外观层重新导出，保障了上层 API 路由与客户端的 100% 向后兼容性：
-- **[lorebook_engine.py](file:///g:/APP/app-backend/services/lorebook_engine.py)**：负责世界书扫描、深度限制、递归解析与 Token 预算控制。
-- **[session_service.py](file:///g:/APP/app-backend/services/session_service.py)**：负责会话物理删除、子会话继承关系重连以及 ChromaDB 级联数据一致性清理。
-- **[cognition_service.py](file:///g:/APP/app-backend/services/cognition_service.py)**：负责调用 LLM 提纯未总结历史对话、批量上限拦截（防止 Token 爆仓）以及自我认知的演变。
-
-### 5. 零依赖 SillyTavern Card V2 PNG 卡片解析器
-- 原生支持 SillyTavern 角色卡 PNG 格式的元数据解析，无需依赖体积庞大的第三方图像库。
-- 深度解析 PNG 数据块，包括 `tEXt`、经 Deflate 压缩的 `zTXt` 以及 `iTXt`（国际 UTF-8）格式。
-- 在数据入库阶段自动将 HTML 标签清洗为轻量化 Markdown，有效降低 LLM 上下文 Token 损耗并杜绝系统注入风险。
-
-### 6. 长期记忆检索（RAG）管道
-- 为每个角色动态挂载专属的 ChromaDB 向量集合，构建其长期记忆上下文。
-- 采用一次性 SQLite CTE 递归查询（规避 N+1 查询瓶颈）抓取祖先链。
-- 结合余弦距离、内容重要性评分和逻辑时间衰减进行**混合打分精排**。针对 `fact`（客观事实）长期记忆采取温和衰减底数（`0.95`），对分叉后的新线（子会话）进行代数递减惩罚。
+- [技术栈](#技术栈)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [配置说明](#配置说明)
+- [API 参考](#api-参考)
+- [目录结构](#目录结构)
+- [测试](#测试)
+- [注意事项](#注意事项)
 
 ---
 
-## API 快速参考
+## 技术栈
 
-### 通用与系统工具
-- `GET /` - 服务健康度检查。
-- `POST /upload/avatar` - 上传角色头像资产。
-- `GET /utils/settings` - 获取全局配置参数（支持自定义*遗忘半衰期*、*检索候选倍数*、*单次回复最大 Token* 等）。
-- `PUT /utils/settings` - 动态修改并持久化全局生成与检索设置。
-
-### 角色卡模板管理 (`/characters`)
-- `POST /characters/parse` - 解析 PNG/JSON 角色卡元数据（不存入数据库）。
-- `POST /characters/create` - 将新角色卡数据存入 SQLite 关系数据库。
-- `GET /characters` - 获取所有角色的简明列表。
-- `GET /characters/{character_id}` - 查询指定角色的详细配置设定。
-- `DELETE /characters/{character_id}` - 级联删除角色卡、关联会话树及 ChromaDB 向量集合。
-
-### 会话与消息管理 (`/sessions`)
-- `POST /sessions/create` - 创建全新会话或分叉出的继承子会话。
-- `GET /sessions` - 查询指定角色的历史会话树列表。
-- `GET /sessions/{session_id}/history` - 按严格时间线顺序召回继承链的对话历史。
-- `DELETE /sessions/{session_id}` - 安全删除会话并自动向上重连子会话。
-- `POST /sessions/{session_id}/trigger_summary` - 手动强制触发记忆提纯。
-- `POST /sessions/{session_id}/trigger_cognition` - 手动强制更新角色认知。
-
-### 对话核心 (`/chat`)
-- `POST /chat` - 非流式 RAG 对话接口。
-- `POST /chat/stream` - SSE 流式 RAG 对话接口。
+| 层级 | 技术 | 作用 |
+|------|------|------|
+| 网络框架 | FastAPI + Uvicorn | 异步 HTTP / SSE 流式接口 |
+| 关系型存储 | SQLAlchemy + SQLite (WAL) | 会话、消息、角色卡、Persona 状态 |
+| 向量数据库 | ChromaDB | 长期记忆嵌入存储与相似度检索 |
+| 语音合成 | Cloud MIMO-v2.5-tts | 高质感角色配音合成与人声效果渲染 |
+| LLM 接入 | OpenAI-compatible API | 对话生成、记忆提纯、认知更新、TTS 文本前处理 |
+| 高速匹配 | Aho-Corasick 自动机 | 世界书（Lorebook）关键词触发 |
 
 ---
 
-## 自动化测试验证
+## 核心特性
 
-### 1. 世界书独立单元测试
-```bash
-python test_lorebook.py
-```
-- 测试常驻常开拦截、selective 选择性触发、大小写敏感控制、递归多轮唤醒以及预算限制。
+### 1. Prompt Caching 友好的提示词引擎
 
-### 2. 闭环记忆提纯与 RAG 回溯测试
-```bash
-python test_closed_loop_memory.py
-```
-- 模拟端到端用户流：发送事实（"我叫小明我喜欢草莓蛋糕"） $\rightarrow$ 手动触发记忆提纯 $\rightarrow$ 直查校验 SQLite 与 ChromaDB 数据是否落库 $\rightarrow$ 检索精排打分断言 $\rightarrow$ 向 AI 发问检验 RAG 回传，实现 100% 数据流闭环验证。
+- **静态 / 动态内容彻底分离**：角色设定、性格描述、输出格式规范等纯静态内容归入 `system_prompt`，最大化命中主流 API 的 Prompt Cache。
+- **XML 上下文闭包注入**：当前场景、认知状态、好感心情、世界书条目、RAG 召回记忆等动态内容统一以 XML 标签包裹，追加到当轮 `user` 消息末尾。
+- **严格的角色交替序列**：`system → user/assistant → user`，完美兼容 Claude、Gemini、DeepSeek 等对 alternating roles 有强约束的 API。
 
-### 3. 会话树重连与 API 集成测试
-```bash
-python test_api.py
-```
-- 覆盖角色创建、多轮上下文聊天、会话继承、分支删除重连等完整业务路径。
+### 2. 多分支候选回复机制 (Swipe Multi-Replies)
+
+- **多版本生成**：同一轮对话支持生成和存储多个 AI 候选回复版本（Candidates）。
+- **活动版本切换**：通过 `/chat/switch_candidate` 接口，可自由设定某一条候选回复为活动状态（`is_active=True`），同时将其兄弟回复置为 `is_active=False`。
+- **元数据绑定**：每个候选回复版本在数据库中独立绑定其情绪标签（`emotion_tag`）、好感度变动（`affection_change`）以及生成的音频路径（`audio_path`）。切换候选回复时，好感度和情绪指标会自动联动回滚并重算，实现“音画同步、多版本安全切换”。
+
+### 3. 多模态语音合成（TTS）与自愈式 LRU 缓存管道
+
+- **人声情感与拟真事件支持**：接入云端 MIMO-v2.5-tts API，原生支持“开心、悲伤、愤怒、温柔、悄悄话、唱歌”等 6 种情感配音，以及“（叹气）、（笑声）、（哭声）、（咳嗽）、[inhale]（深呼吸/吸气）”等拟真声音事件。
+- **智能文本前处理（双预处理器）**：
+  - **至臻 LLM 预处理器**：使用非推理快速模型（如 `deepseek-v4-flash`）对角色发言进行预处理，**100% 剥离**非发音的物理动作、心理活动、场景叙述和对话前缀（如“她微微一笑说道：”），仅提取并保留实际发音的台词。
+  - **声音标记保护机制**：在过滤前对声效标记进行占位符暂存保护，过滤完毕后还原，确保合成的声音富有人声细节而不“机械读动作”。
+  - **正则规则预处理器**：在 LLM API 故障时提供自动回退，确保系统高可用。
+- **自愈式 LRU 缓存系统**：
+  - 生成的文件缓存于本地（`data/audio_cache`）。
+  - **物理丢失自愈**：当播放请求到达时，系统检测到数据库中存在 `audio_path` 但本地物理文件丢失（例如用户清理了缓存或被 LRU 线程淘汰），会**自动触发被动重建**重新合成，保障播放永不中断。
+  - **后台 LRU 清理**：由守护线程 `_prune_cache_background` 监控缓存文件总数，超限时根据最后修改时间自动淘汰老音频。
+- **音频静态托管**：后端在启动时会自动建立并挂载 `/audio` 静态服务，前端可直接通过 URL 进行流式音频播放，规避多端平台（App/微信小程序）内置 SVG 组件可能带来的兼容性报错。
+
+### 4. 数据库零手工免配置动态升级
+
+- **启动期自适应升级**：系统启动导入 `core/database.py` 时，会自动利用 `inspect` 工具扫描现有的 SQLite 数据库。
+- **动态 Alter Column**：检测到旧数据库缺少 `audio_path`、`parent_id` 或 `is_active` 字段时，会自动运行 SQL 指令进行在轨升级（如 `ALTER TABLE chat_messages ADD COLUMN audio_path VARCHAR(255) NULL`），彻底消除数据库结构变更导致的崩溃。
+
+### 5. 游标滚动分页历史消息 API
+
+- 会话历史查询接口 `/sessions/{id}/history` 升级支持 `limit`（数量限制）与 `before_id`（游标 ID）参数。
+- 前端可按需分段向前分页加载 50 条消息，规避了一次性加载上百条消息导致移动客户端渲染卡顿、Token 溢出的性能瓶颈，提供更流畅的滚动体验。
+
+### 6. 会话级异步并发锁
+
+- 使用 `asyncio.Lock` 实现单会话串行保证，完全在事件循环层挂起，零线程资源占用。
+- 非流式端点：`try/finally` 保证锁必然释放。
+- 流式端点：锁的生命周期绑定到 SSE `StreamingResponse` 生成器的 `finally` 块，彻底防止多客户端竞态导致的写乱序。
+- 会话删除时自动从锁字典中清理对应条目，防止长期运行内存增长。
+
+### 7. 长期记忆 RAG 检索管道
+
+- 每个角色拥有专属 ChromaDB Collection，按 Persona 隔离存储。
+- 进阶祖先链检索：使用单次 SQLite CTE 递归查询，规避 RAG 时出现多轮 N+1 查询。
+- **三维混合打分精排**：**余弦相似度（60%）+ 内容重要性（20%）+ 时间衰减（20%）**，对父辈及祖先会话条目额外施加代际惩罚权重。
+- 所有权重、半衰期、候选倍数均可在 `config.yaml` 中调整，无需重启即可通过 API 热更新。
+
+### 8. 会话继承树（分叉剧情线）
+
+- 支持从任意历史会话 fork 出子会话，继承好感度、认知状态、当前场景。
+- 删除中间节点时自动将子节点重连到父节点，继承链不断裂。
+- RAG 检索跨代际透明合并，代数越远权重越低。
+
+### 9. 认知与好感度闭环
+
+- **记忆提纯**：对话满足条数阈值后自动触发，LLM 提炼近期对话为结构化记忆条目，写入 SQLite + ChromaDB 双存储。
+- **认知更新**：基于高重要性记忆定期更新角色的自我认知状态文本（`cognition_state`）。
+- **好感度回滚**：删除 assistant 消息时自动逆向回滚好感值与心情状态。
+
+### 10. 零依赖 SillyTavern Card V2 解析器
+
+- 支持 PNG（`tEXt` / `zTXt` / `iTXt`）和 JSON 格式，无需第三方图像库。
+- 兼容 V1 / V2 规范及各平台变种字段。
+- 入库时自动将角色卡内的 HTML 标签清洗为 Markdown，降低 Token 消耗并防止注入。
 
 ---
 
-## 本地部署与调试
+## 快速开始
 
-### 1. 环境准备与安装
+### 1. 安装依赖
+
 ```bash
 python -m venv venv
-venv\Scripts\activate  # Unix 运行: source venv/bin/activate
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-### 2. 配置 `.env` 与 `config.yaml`
-- 创建并配置 `.env` 文件（参照项目中的只读环境变量）。
-- 启动服务：
+### 2. 配置环境变量
+
+在项目根目录创建 `.env` 文件：
+
+```dotenv
+# 对话模型的 API Key
+CHAT_API_KEY=sk-xxxxxxxxxxxxxxxx
+
+# Embedding 模型的 API Key（可与 CHAT_API_KEY 相同）
+EMBEDDING_API_KEY=sk-xxxxxxxxxxxxxxxx
+
+# 小米 MiMo 语音合成 API Key
+MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+
+# 公网访问保护密钥（留空则本地开发免鉴权）
+ACCESS_API_KEY=
+```
+
+### 3. 修改模型配置
+
+编辑 `config.yaml`（见下方[配置说明](#配置说明)），至少填写 `chat_base_url` 和模型名称。
+
+### 4. 启动服务
+
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
- G:\APP\app-backend\config.yaml
+
+启动后终端会打印本机局域网 IP，供手机/其他设备在同一 Wi-Fi 下访问。
+
+---
+
+## 配置说明
+
+所有非敏感配置集中在 `config.yaml`，修改后重启生效；部分参数也可通过 `PUT /utils/settings` API 热更新并自动持久化。
+
+```yaml
+llm:
+  chat_model: deepseek-v4-pro                  # 主（思考）模型
+  non_reasoning_chat_model: deepseek-v4-flash  # 快速（非思考）模型，兼用于 TTS 文本预处理
+  memory_model: deepseek-v4-flash              # 记忆提纯专用模型
+  embedding_model: doubao-embedding-vision-251215
+  chat_base_url: https://api.deepseek.com/v1
+  embedding_base_url: https://ark.cn-beijing.volces.com/api/v3
+  temperature: 0.7
+  memory_temperature: 0.3
+  max_tokens: 4096
+  reasoning_mode: false                        # true → 默认使用思考模型
+  timeout: 60                                  # LLM 请求超时秒数
+  top_p: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  repetition_penalty: 1.0
+  reasoning_effort: null
+
+app:
+  context_history_limit: 15                    # 注入 LLM 的最近对话条数
+  retrieval_top_k: 3                           # RAG 最终召回条数
+  memory_extract_history_limit: 20             # 记忆提纯扫描的历史条数上限
+  retrieval_min_importance: 0.3                # 记忆重要性过滤阈值（0~1）
+  retrieval_max_distance: 1.2                  # 向量余弦距离过滤上限
+  cognition_update_interval: 30                # 认知更新触发间隔（消息条数）
+  cognition_importance_threshold: 0.8          # 触发认知更新所需的记忆重要性门槛
+  cognition_max_words: 200                     # 认知状态文本最大字数
+  lorebook_scan_depth: 5                       # Lorebook 扫描最近 N 条消息
+  lorebook_token_budget: 3000                  # Lorebook 注入 Token 总预算
+  lorebook_max_recursive_passes: 3             # Lorebook 递归触发最大轮数
+
+  # 混合打分权重（三项之和建议为 1.0）
+  retrieval_weight_similarity: 0.6
+  retrieval_weight_importance: 0.2
+  retrieval_weight_time: 0.2
+  retrieval_half_life_turns: 50                # 时间衰减半衰期（轮次）
+  retrieval_candidate_multiplier: 3            # 粗排候选数 = top_k × multiplier
+  retrieval_ancestor_weight: 0.8               # 父代记忆的权重衰减系数
+
+  # 存储路径
+  sqlite_db_path: data/data.db
+  chroma_db_path: data/chroma_data
+  upload_avatar_dir: ./assets/avatars
+
+  # 安全与限制
+  cors_origins:
+    - "*"                                      # 生产环境建议改为具体域名
+  max_card_size_mb: 10
+
+  # 历史消息拉取
+  history_fetch_default: 50
+  history_fetch_max: 500
+
+tts:
+  enabled: true                                # 是否启用 TTS 语音播报
+  base_url: "https://api.xiaomimimo.com/v1"    # MIMO API 地址
+  model: "mimo-v2.5-tts"                       # 合成模型
+  default_voice: "冰糖"                        # 默认角色音色
+  cache_dir: "data/audio_cache"                # 音频缓存本地文件夹
+  max_cache_files: 500                         # LRU 缓存淘汰的最大文件数
+```
+
+### 动态可调参数（通过 `PUT /utils/settings` 无需重启）
+
+`temperature` · `max_tokens` · `reasoning_mode` · `context_history_limit` ·  
+`retrieval_top_k` · `retrieval_min_importance` · `retrieval_max_distance` ·  
+`lorebook_scan_depth` · `lorebook_token_budget` · `lorebook_max_recursive_passes` ·  
+`cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier`
+
+---
+
+## API 参考
+
+> 所有接口在 `.env` 中设置 `ACCESS_API_KEY` 后需在 Header 中携带 `X-API-Key: <your_key>`。  
+> 本地开发时留空 `ACCESS_API_KEY` 即可免鉴权。
+
+### 系统工具
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 服务健康检查 |
+| POST | `/upload/avatar` | 上传头像（PNG/JPG/WEBP，≤5MB） |
+| GET | `/utils/settings` | 获取当前运行时配置 |
+| PUT | `/utils/settings` | 热更新配置并持久化到 `config.yaml` |
+| POST | `/utils/tts` | 文本转语音合成接口（返回合成音频的挂载 URL） |
+
+### 角色卡管理 `/characters`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/characters/parse` | 解析 PNG/JSON 角色卡，返回结构化数据（不入库） |
+| POST | `/characters/create` | 将角色数据存入数据库 |
+| GET | `/characters` | 获取所有角色简要列表 |
+| GET | `/characters/{id}` | 获取角色完整设定 |
+| PUT | `/characters/{id}` | 更新角色设定 |
+| DELETE / POST | `/characters/{id}` 或 `/characters/{id}/delete` | 级联删除角色、所有会话及 ChromaDB 集合 (POST 用于避让) |
+
+### 会话管理 `/sessions`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/sessions/create` | 新建会话（指定 `parent_session_id` 则继承分叉） |
+| GET | `/sessions` | 查询角色的所有会话列表 |
+| GET | `/sessions/{id}` | 获取会话详情（含 Persona 完整状态） |
+| GET | `/sessions/{id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
+| PUT | `/sessions/{id}/title` | 修改会话标题 |
+| DELETE / POST | `/sessions/{id}` 或 `/sessions/{id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于避让) |
+| POST | `/sessions/{id}/trigger_summary` | 手动触发记忆提纯 |
+| POST | `/sessions/{id}/trigger_cognition` | 手动触发认知状态更新 |
+| PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
+| DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
+
+### 对话核心 `/chat`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/chat` | 非流式对话（等待完整回复） |
+| POST | `/chat/stream` | SSE 流式对话（逐 chunk 推送） |
+| POST | `/chat/switch_candidate` | 设定当前活跃的消息候选版本（切换 active_index 并联动好感度） |
+
+---
+
+## 目录结构
+
+```
+app-backend/
+├── main.py                  # 启动入口，路由注册，CORS
+├── config.yaml              # 非敏感运行时配置
+├── .env                     # 敏感密钥（不提交）
+├── requirements.txt
+├── query_db.py              # 数据库诊断工具
+├── clear_db.py              # 数据库重置清理脚本
+│
+├── core/
+│   ├── models.py            # SQLAlchemy ORM 模型定义
+│   ├── database.py          # 数据库连接、Session 工厂与自适应在轨迁移逻辑
+│   ├── config.py            # Settings 类，加载 .env + config.yaml
+│   ├── auth.py              # X-API-Key 鉴权依赖
+│   ├── locking.py           # 会话级 asyncio.Lock 管理
+│   └── utils.py             # 工具函数（获取本机 IP 等）
+│
+├── routers/
+│   ├── chat.py              # /chat 与 /chat/stream 及 /chat/switch_candidate
+│   ├── sessions.py          # /sessions 端点（分页历史、消息管理等）
+│   ├── characters.py        # /characters 端点
+│   └── utils.py             # /upload/avatar 与 /utils/tts 端点
+│
+├── services/
+│   ├── chat_engine.py       # LLM 调用、Prompt 组装、流式封装
+│   ├── tts_service.py       # TTS 前处理（动作过滤、声效保留）、云端合成、LRU 音频缓存
+│   ├── memory_manager.py    # RAG 检索、记忆存储、外观层入口
+│   ├── cognition_service.py # 记忆提纯、认知更新
+│   ├── lorebook_engine.py   # 世界书关键词匹配与注入
+│   ├── ahocorasick.py       # Aho-Corasick 自动机实现
+│   ├── session_service.py   # 会话删除与继承链重连
+│   └── parse.py             # SillyTavern 角色卡解析
+│
+├── schemas.py               # Pydantic 请求/响应模型
+└── data/
+    ├── data.db              # SQLite 数据库文件
+    ├── chroma_data/         # ChromaDB 向量文件夹
+    └── audio_cache/         # 合成音频缓存目录（.wav）
+```
+
+---
+
+## 测试
+
+```bash
+# 语音合成接口（TTS 预处理、动作过滤与声效保留）单元测试
+python test_tts_api.py
+
+# 世界书独立触发单元测试
+python test_lorebook.py
+
+# 记忆提纯与 RAG 闭环集成测试
+python test_closed_loop_memory.py
+
+# 会话树重连与 API 路由测试
+python test_api.py
+```
+
+---
+
+## 注意事项
+
+- **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
+- **自愈缓存策略**：本地音频缓存目录（`data/audio_cache/`）可以根据需要进行手动清理或重命名。系统带有自愈模式，如果物理文件丢失但数据库有路径，它会在用户下一次触发朗读时默默发起被动重建，完全不影响系统运行。
+- **历史分页性能**：通过 `/sessions/{id}/history` 查询历史记录时，参数 `before_id` 可作为分页游标，强烈建议前端在聊天页初始化时分步拉取（如每次获取 50 条），并在滚动触顶时按需往前拉取，避免长会话引起的内存暴涨。
+- **移动端与 Nginx 兼容（DELETE 降级避让）**：为防范移动原生客户端及 Nginx 反向代理层在 HTTP 强跳转 HTTPS 时自动将 `DELETE` 重定向并降级为 `GET` 的现象，所有的物理删除接口均已挂载 `DELETE` 和 `POST .../delete` 双通道路径。移动端开发或联调时推荐统一走 `POST .../delete` 通道。
