@@ -16,6 +16,10 @@ export interface AppSettings {
   retrieval_half_life_turns: number;
   retrieval_candidate_multiplier: number;
   max_tokens: number;
+  top_p: number;
+  presence_penalty: number;
+  frequency_penalty: number;
+  repetition_penalty: number;
 }
 
 export type SettingsUpdate = Partial<AppSettings>;
@@ -41,6 +45,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   retrieval_half_life_turns: 50,
   retrieval_candidate_multiplier: 3,
   max_tokens: 4096,
+  top_p: 1.0,
+  presence_penalty: 0.0,
+  frequency_penalty: 0.0,
+  repetition_penalty: 1.0,
 };
 
 // ===================== API 接口函数 =====================

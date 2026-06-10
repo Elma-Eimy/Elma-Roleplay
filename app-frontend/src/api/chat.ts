@@ -8,6 +8,11 @@ export interface ChatRequest {
   use_reasoning?: boolean;
   is_regenerate?: boolean;
   user_nickname?: string;
+  temperature?: number;
+  top_p?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  repetition_penalty?: number;
 }
 
 export interface ChatResponse {
@@ -18,6 +23,8 @@ export interface ChatResponse {
   model_used?: string;
   user_message_id?: number;
   assistant_message_id?: number;
+  candidates?: any[];
+  active_index?: number;
 }
 
 // ===================== API 接口函数 =====================
@@ -174,11 +181,33 @@ export async function sendMessageStream(
           dbFinal.messages[params.session_id].push(aiMsg);
           setMockDB(dbFinal);
 
+          const candidates_list = [];
+          if (params.is_regenerate) {
+            candidates_list.push({
+              id: aiMsg.id - 1000,
+              content: "这是先前的候选回复 (Mock)...",
+              emotion_tag: "Calm",
+              affection_change: 0,
+              created_at: new Date(Date.now() - 60000).toISOString()
+            });
+          }
+          candidates_list.push({
+            id: aiMsg.id,
+            content: aiMsg.content,
+            emotion_tag: aiMsg.emotion_tag,
+            affection_change: aiMsg.affection_change,
+            created_at: aiMsg.created_at
+          });
+
           onDone({
             emotion_tag,
             affection_change,
             affection_score: sessionFinal ? sessionFinal.persona.affection_score : 11,
             model_used: params.use_reasoning ? "mock-reasoning-model (Mock)" : "mock-standard-model (Mock)",
+            candidates: candidates_list,
+            active_index: candidates_list.length - 1,
+            user_message_id: Date.now() - 1,
+            assistant_message_id: aiMsg.id
           });
         }
       }, 30);
@@ -243,7 +272,9 @@ export async function sendMessageStream(
               affection_score: fallbackRes.data.affection_score,
               model_used: fallbackRes.data.model_used,
               user_message_id: fallbackRes.data.user_message_id,
-              assistant_message_id: fallbackRes.data.assistant_message_id
+              assistant_message_id: fallbackRes.data.assistant_message_id,
+              candidates: fallbackRes.data.candidates,
+              active_index: fallbackRes.data.active_index
             });
           } else {
             onError(new Error("网络请求失败"));
@@ -349,7 +380,30 @@ export async function sendMessageStream(
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        if (buffer.trim()) {
+          const lines = buffer.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const raw = line.slice(6).trim();
+              if (raw === "[DONE]") {
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                if (parsed.chunk) {
+                  onChunk(parsed.chunk);
+                } else {
+                  onDone(parsed as Omit<ChatResponse, "reply">);
+                }
+              } catch {
+                onChunk(raw);
+              }
+            }
+          }
+        }
+        break;
+      }
 
       const chunkText = decodeUtf8(value);
       buffer += chunkText;
@@ -379,4 +433,34 @@ export async function sendMessageStream(
     onError(err instanceof Error ? err : new Error(String(err)));
   }
   // #endif
+}
+
+/**
+ * 封装前端触发文本转语音 (TTS) 的 API。
+ * POST /utils/tts
+ */
+export interface TTSResponse {
+  audio_url: string;
+}
+
+export async function generateTTS(
+  messageId: number,
+  text: string,
+  voice?: string,
+  speed?: number
+): Promise<TTSResponse> {
+  if (USE_MOCK) {
+    return {
+      audio_url: ""
+    };
+  }
+  return request<TTSResponse>("/utils/tts", {
+    method: "POST",
+    body: JSON.stringify({
+      message_id: messageId,
+      text,
+      voice,
+      speed
+    })
+  });
 }

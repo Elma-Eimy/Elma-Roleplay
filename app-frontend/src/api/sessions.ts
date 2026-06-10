@@ -50,6 +50,11 @@ export interface Message {
   affection_change: number | null;
   created_at: string;
   model_used?: string;
+  parent_id?: number | null;
+  is_active?: boolean;
+  candidates?: Message[];
+  active_index?: number;
+  audio_path?: string | null;
 }
 
 export interface CreateSessionParams {
@@ -253,21 +258,27 @@ export async function getSession(sessionId: number): Promise<SessionDetail> {
  */
 export async function getSessionHistory(
   sessionId: number,
-  limit = 50
+  limit = 50,
+  beforeId?: number
 ): Promise<GetHistoryResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
     // 开启分支故事（子会话）时，不再合并父会话的历史消息，只读取本会话产生的聊天记录
-    const msgs = db.messages[sessionId] || [];
+    let msgs = db.messages[sessionId] || [];
+    if (beforeId !== undefined) {
+      msgs = msgs.filter((m) => m.id < beforeId);
+    }
     return {
       session_id: sessionId,
       messages: msgs.slice(-limit),
     };
   }
 
-  return request<GetHistoryResponse>(
-    `/sessions/${sessionId}/history?limit=${limit}`
-  );
+  const url = beforeId !== undefined
+    ? `/sessions/${sessionId}/history?limit=${limit}&before_id=${beforeId}`
+    : `/sessions/${sessionId}/history?limit=${limit}`;
+
+  return request<GetHistoryResponse>(url);
 }
 
 /**
@@ -470,5 +481,58 @@ export async function deleteMessage(
 
   return request<DeleteMessageResponse>(`/sessions/messages/${messageId}/delete`, {
     method: "POST",
+  });
+}
+
+export interface SwitchCandidateResponse {
+  message: string;
+  message_id: number;
+  is_active: boolean;
+  affection_score: number | null;
+  current_mood: string | null;
+}
+
+/**
+ * 切换激活的 AI 回复候选版本。
+ * POST /chat/switch_candidate
+ */
+export async function switchCandidate(
+  messageId: number
+): Promise<SwitchCandidateResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB();
+    let msg: any = null;
+    let sid: string = "";
+    for (const key in db.messages) {
+      const found = db.messages[key].find((m) => m.id === messageId);
+      if (found) {
+        msg = found;
+        sid = key;
+        break;
+      }
+    }
+    if (msg) {
+      const msgs = (db.messages as any)[sid] as any[];
+      if (msgs) {
+        msgs.forEach((m: any) => {
+          if (m.role === "assistant" && m.parent_id === msg.parent_id) {
+            m.is_active = (m.id === messageId);
+          }
+        });
+      }
+      setMockDB(db);
+    }
+    return {
+      message: "Candidate switched successfully (Mock)",
+      message_id: messageId,
+      is_active: true,
+      affection_score: 50,
+      current_mood: msg?.emotion_tag || "Calm",
+    };
+  }
+
+  return request<SwitchCandidateResponse>("/chat/switch_candidate", {
+    method: "POST",
+    body: JSON.stringify({ message_id: messageId }),
   });
 }
