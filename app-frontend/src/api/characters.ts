@@ -1,4 +1,4 @@
-import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
+import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders, getSavedApiKey } from "./config";
 
 // ===================== 类型定义 =====================
 
@@ -339,5 +339,10 @@ export function getAvatarUrl(avatarPath: string): string {
     return avatarPath;
   }
   const filename = avatarPath.replace(/^.*[\\/]/, "");
-  return `${getBaseUrl()}/assets/avatars/${filename}`;
+  let url = `${getBaseUrl()}/assets/avatars/${filename}`;
+  const apiKey = getSavedApiKey();
+  if (apiKey) {
+    url += `?token=${encodeURIComponent(apiKey)}`;
+  }
+  return url;
 }

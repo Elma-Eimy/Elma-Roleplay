@@ -35,6 +35,18 @@ export function setSavedApiKey(newKey: string) {
   cachedApiKey = newKey;
 }
 
+export function getSavedApiKey(): string {
+  if (cachedApiKey === null) {
+    try {
+      cachedApiKey = uni.getStorageSync("api_access_key") || "";
+    } catch (e) {
+      console.error("Failed to read api_access_key", e);
+      cachedApiKey = "";
+    }
+  }
+  return cachedApiKey;
+}
+
 /** 动态获取请求头的辅助函数，若配置了认证密钥则会自动携带 */
 export function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const headers: Record<string, string> = {
