@@ -21,20 +21,26 @@
 """
 
 import secrets
-from fastapi import Security, HTTPException, status
+from fastapi import Security, HTTPException, status, Query
 from fastapi.security import APIKeyHeader
+from typing import Optional
 from core.config import settings
 
 # Header 名称：X-API-Key
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-def verify_api_key(api_key: str = Security(_api_key_header)) -> None:
+def verify_api_key(
+    api_key_header: Optional[str] = Security(_api_key_header),
+    token: Optional[str] = Query(None),
+    api_key_query: Optional[str] = Query(None, alias="api_key")
+) -> None:
     """
-    FastAPI 依赖函数，校验请求中的 X-API-Key Header。
+    FastAPI 依赖函数，校验请求中的 API Key。
+    支持从 Header ('X-API-Key') 或 URL Query 参数 ('token' / 'api_key') 中提取密钥。
 
     - 若 settings.ACCESS_API_KEY 为空字符串：跳过校验（本地开发模式）
-    - 若 Header 缺失或值不匹配：返回 403 Forbidden
+    - 若 密钥缺失或值不匹配：返回 403 Forbidden
     - 使用 secrets.compare_digest 防止时序攻击
     """
     expected = settings.ACCESS_API_KEY
@@ -43,8 +49,11 @@ def verify_api_key(api_key: str = Security(_api_key_header)) -> None:
     if not expected:
         return
 
+    # 优先从 Header 获取，其次从 URL Query 参数获取
+    api_key = api_key_header or token or api_key_query
+
     if not api_key or not secrets.compare_digest(api_key, expected):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing API Key. Set the X-API-Key header.",
+            detail="Invalid or missing API Key.",
         )
