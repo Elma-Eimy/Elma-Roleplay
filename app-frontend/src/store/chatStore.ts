@@ -465,12 +465,46 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     if (audioUrl) {
-      const { getBaseUrl } = await import("@/api/config");
-      const fullUrl = audioUrl.startsWith("http") ? audioUrl : `${getBaseUrl()}${audioUrl}`;
+      const { getBaseUrl, getSavedApiKey } = await import("@/api/config");
+      let fullUrl = audioUrl.startsWith("http") ? audioUrl : `${getBaseUrl()}${audioUrl}`;
+      
+      // 附加 API Key 凭证以支持安全路由参数校验
+      const apiKey = getSavedApiKey();
+      if (apiKey) {
+        fullUrl += `${fullUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(apiKey)}`;
+      }
+      
       console.log("Playing audio:", fullUrl);
       activeAudioMessageId.value = messageId;
-      innerAudioContext.src = fullUrl;
+
+      // #ifdef APP-PLUS
+      // 移动端 App 下载到本地临时文件播放，解决原生 MediaPlayer 播放网络流可能失败或被拦截的问题
+      uni.downloadFile({
+        url: encodeURI(fullUrl),
+        success: (res) => {
+          if (res.statusCode === 200) {
+            console.log("Audio downloaded successfully:", res.tempFilePath);
+            innerAudioContext.src = res.tempFilePath;
+            innerAudioContext.play();
+          } else {
+            console.error("Audio download status error:", res.statusCode);
+            uni.showToast({ title: "音频下载失败", icon: "none" });
+            activeAudioMessageId.value = null;
+          }
+        },
+        fail: (err) => {
+          console.error("Audio download failed:", err);
+          uni.showToast({ title: "音频下载失败", icon: "none" });
+          activeAudioMessageId.value = null;
+        }
+      });
+      // #endif
+
+      // #ifndef APP-PLUS
+      // H5/小程序等平台直接在线播放
+      innerAudioContext.src = encodeURI(fullUrl);
       innerAudioContext.play();
+      // #endif
     } else {
       uni.showToast({ title: "未获取到有效的语音文件", icon: "none" });
     }
