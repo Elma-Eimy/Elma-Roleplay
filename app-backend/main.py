@@ -17,9 +17,6 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="AI Roleplay Backend",
     version="2.0",
-    # 全局注入 API Key 认证依赖，所有路由自动受保护
-    # 开发时只需保持 ACCESS_API_KEY 为空即可无密地测试
-    dependencies=[Depends(verify_api_key)],
     # TODO: 正式对外发布前，取消下面两行注释以关闭 API 文档页面
     # docs_url=None,
     # redoc_url=None,
@@ -47,7 +44,7 @@ from services.tts_service import TTSService
 
 os.makedirs(settings.TTS_CACHE_DIR, exist_ok=True)
 
-@app.get("/audio/{filename}")
+@app.get("/audio/{filename}", dependencies=[Depends(verify_api_key)])
 async def get_audio_file(filename: str):
     """
     语音文件请求接口：
@@ -90,10 +87,11 @@ async def get_audio_file(filename: str):
     raise HTTPException(status_code=404, detail="Audio file not found")
 
 # 注册各个功能模块的路由
-app.include_router(utils_router)  # 基础及文件上传端点
-app.include_router(characters_router, prefix="/characters", tags=["characters"])  # 角色卡模块
-app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])  # 会话管理模块
-app.include_router(chat_router, prefix="/chat", tags=["chat"])  # 对话通信模块
+# 注册功能模块路由（统一注入 API Key 认证以进行安全性保护）
+app.include_router(utils_router, dependencies=[Depends(verify_api_key)])  # 基础及文件上传端点
+app.include_router(characters_router, prefix="/characters", tags=["characters"], dependencies=[Depends(verify_api_key)])  # 角色卡模块
+app.include_router(sessions_router, prefix="/sessions", tags=["sessions"], dependencies=[Depends(verify_api_key)])  # 会话管理模块
+app.include_router(chat_router, prefix="/chat", tags=["chat"], dependencies=[Depends(verify_api_key)])  # 对话通信模块
 
 @app.on_event("startup")
 async def show_startup_banner():
