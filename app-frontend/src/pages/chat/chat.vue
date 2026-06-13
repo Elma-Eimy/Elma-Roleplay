@@ -114,329 +114,55 @@
     </view>
 
     <!-- 记忆与微观认知状态右侧抽屉面板 -->
-    <view v-if="isStatusPanelOpen" class="status-panel-backdrop" @tap="isStatusPanelOpen = false">
-      <view class="status-panel" @tap.stop>
-
-        <!-- 面板头部：仅包含关闭按钮 -->
-        <view class="panel-header">
-          <view class="close-btn" @tap="isStatusPanelOpen = false">
-            <image class="close-icon" src="/static/icons/drawer_close.svg" mode="aspectFit" />
-          </view>
-        </view>
-
-        <scroll-view scroll-y class="panel-content">
-
-          <!-- ① 角色卡片面板 -->
-          <view class="char-card">
-            <image
-              class="char-card-avatar"
-              :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
-              mode="aspectFill"
-            />
-            <view class="char-card-info">
-              <text class="char-card-name">{{ personaStore.characterName }}</text>
-              <view class="mood-badge">
-                <view class="mood-dot"></view>
-                <text class="mood-text">{{ personaStore.currentMood || '在线' }}</text>
-              </view>
-            </view>
-          </view>
-
-          <!-- ② 好感度数值与进度条 -->
-          <view class="panel-section">
-            <view class="section-title-row">
-              <text class="section-title">好感度</text>
-              <text class="affection-value">{{ affectionEmoji }} {{ personaStore.affectionScore }} / 100</text>
-            </view>
-            <view class="progress-bg">
-              <view class="progress-bar-gradient" :style="{ width: personaStore.affectionPercent + '%' }"></view>
-            </view>
-          </view>
-
-          <!-- ③ 微观认知状态显示区 -->
-          <view class="panel-section">
-            <text class="section-title">微观认知</text>
-            <view class="cognition-box">
-              <text class="cognition-text">{{ personaStore.cognitionState || '暂无认知记录。' }}</text>
-            </view>
-          </view>
-
-          <!-- 👤 我的设定区域 -->
-          <view class="panel-section">
-            <text class="section-title">我的设定</text>
-            <view class="setting-row">
-              <view class="setting-row-left">
-                <image 
-                  class="setting-row-icon" 
-                  src="/static/icons/menu_user_plus.svg" 
-                  mode="aspectFit" 
-                />
-                <text class="setting-row-label">我的昵称</text>
-              </view>
-              <input 
-                class="drawer-nickname-input" 
-                v-model="userNicknameInput" 
-                @blur="saveUserNickname"
-                confirm-type="done"
-                @confirm="saveUserNickname"
-                placeholder="请输入你的昵称..."
-              />
-            </view>
-          </view>
-
-          <!-- ④ 对话配置开关项 -->
-          <view class="panel-section">
-            <text class="section-title">对话设置</text>
-            <view class="setting-row">
-              <view class="setting-row-left">
-                <image 
-                  class="setting-row-icon" 
-                  :src="chatStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
-                  mode="aspectFit" 
-                />
-                <text class="setting-row-label">深度思考模式</text>
-              </view>
-              <view
-                class="custom-toggle"
-                :class="{ 'is-on': chatStore.useReasoning }"
-                @tap="chatStore.useReasoning = !chatStore.useReasoning"
-              >
-                <view class="toggle-thumb"></view>
-              </view>
-            </view>
-
-            <view class="setting-row cursor-pointer" style="margin-top: 20rpx;" @tap="showAdvancedParams = !showAdvancedParams">
-              <view class="setting-row-left">
-                <image 
-                  class="setting-row-icon" 
-                  :src="showAdvancedParams ? '/static/icons/settings_sliders_active.svg' : '/static/icons/settings_sliders.svg'" 
-                  mode="aspectFit" 
-                />
-                <text class="setting-row-label">高级采样参数</text>
-              </view>
-              <image 
-                class="advanced-chevron" 
-                :class="{ 'is-active': showAdvancedParams }" 
-                src="/static/icons/settings_chevron.svg" 
-                mode="aspectFit" 
-              />
-            </view>
-
-            <!-- 当展开高级采样参数时展示 -->
-            <view class="drawer-sliders-container" v-if="showAdvancedParams">
-              <!-- Temperature -->
-              <view class="drawer-slider-row">
-                <view class="drawer-slider-header">
-                  <text class="drawer-slider-label">创意温度 (Temperature)</text>
-                  <view class="drawer-slider-value-wrapper">
-                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.temperature === null }">
-                      {{ chatStore.temperature !== null ? chatStore.temperature.toFixed(1) : '默认 (1.0)' }}
-                    </text>
-                    <text 
-                      v-if="chatStore.temperature !== null" 
-                      class="drawer-slider-reset" 
-                      @tap.stop="chatStore.temperature = null"
-                    >重置</text>
-                  </view>
-                </view>
-                <slider
-                  class="drawer-slider-component"
-                  :value="Math.round((chatStore.temperature ?? 1.0) * 10)"
-                  :min="1" :max="20" :step="1"
-                  activeColor="#1c1c1e"
-                  backgroundColor="rgba(0,0,0,0.07)"
-                  block-color="#ffffff"
-                  block-size="18"
-                  @change="(e: any) => chatStore.temperature = e.detail.value / 10"
-                />
-              </view>
-
-              <!-- Top P -->
-              <view class="drawer-slider-row">
-                <view class="drawer-slider-header">
-                  <text class="drawer-slider-label">核采样比例 (Top P)</text>
-                  <view class="drawer-slider-value-wrapper">
-                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.top_p === null }">
-                      {{ chatStore.top_p !== null ? chatStore.top_p.toFixed(2) : '默认 (1.00)' }}
-                    </text>
-                    <text 
-                      v-if="chatStore.top_p !== null" 
-                      class="drawer-slider-reset" 
-                      @tap.stop="chatStore.top_p = null"
-                    >重置</text>
-                  </view>
-                </view>
-                <slider
-                  class="drawer-slider-component"
-                  :value="Math.round((chatStore.top_p ?? 1.0) * 100)"
-                  :min="10" :max="100" :step="5"
-                  activeColor="#1c1c1e"
-                  backgroundColor="rgba(0,0,0,0.07)"
-                  block-color="#ffffff"
-                  block-size="18"
-                  @change="(e: any) => chatStore.top_p = e.detail.value / 100"
-                />
-              </view>
-
-              <!-- Presence Penalty -->
-              <view class="drawer-slider-row">
-                <view class="drawer-slider-header">
-                  <text class="drawer-slider-label">存在惩罚 (Presence Penalty)</text>
-                  <view class="drawer-slider-value-wrapper">
-                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.presence_penalty === null }">
-                      {{ chatStore.presence_penalty !== null ? chatStore.presence_penalty.toFixed(1) : '默认 (0.0)' }}
-                    </text>
-                    <text 
-                      v-if="chatStore.presence_penalty !== null" 
-                      class="drawer-slider-reset" 
-                      @tap.stop="chatStore.presence_penalty = null"
-                    >重置</text>
-                  </view>
-                </view>
-                <slider
-                  class="drawer-slider-component"
-                  :value="Math.round(((chatStore.presence_penalty ?? 0.0) + 2) * 10)"
-                  :min="0" :max="40" :step="1"
-                  activeColor="#1c1c1e"
-                  backgroundColor="rgba(0,0,0,0.07)"
-                  block-color="#ffffff"
-                  block-size="18"
-                  @change="(e: any) => chatStore.presence_penalty = (e.detail.value / 10) - 2"
-                />
-              </view>
-
-              <!-- Frequency Penalty -->
-              <view class="drawer-slider-row">
-                <view class="drawer-slider-header">
-                  <text class="drawer-slider-label">频率惩罚 (Frequency Penalty)</text>
-                  <view class="drawer-slider-value-wrapper">
-                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.frequency_penalty === null }">
-                      {{ chatStore.frequency_penalty !== null ? chatStore.frequency_penalty.toFixed(1) : '默认 (0.0)' }}
-                    </text>
-                    <text 
-                      v-if="chatStore.frequency_penalty !== null" 
-                      class="drawer-slider-reset" 
-                      @tap.stop="chatStore.frequency_penalty = null"
-                    >重置</text>
-                  </view>
-                </view>
-                <slider
-                  class="drawer-slider-component"
-                  :value="Math.round(((chatStore.frequency_penalty ?? 0.0) + 2) * 10)"
-                  :min="0" :max="40" :step="1"
-                  activeColor="#1c1c1e"
-                  backgroundColor="rgba(0,0,0,0.07)"
-                  block-color="#ffffff"
-                  block-size="18"
-                  @change="(e: any) => chatStore.frequency_penalty = (e.detail.value / 10) - 2"
-                />
-              </view>
-
-              <!-- Repetition Penalty -->
-              <view class="drawer-slider-row">
-                <view class="drawer-slider-header">
-                  <text class="drawer-slider-label">重复度惩罚 (Repetition Penalty)</text>
-                  <view class="drawer-slider-value-wrapper">
-                    <text class="drawer-slider-value" :class="{ 'is-default': chatStore.repetition_penalty === null }">
-                      {{ chatStore.repetition_penalty !== null ? chatStore.repetition_penalty.toFixed(2) : '默认 (1.00)' }}
-                    </text>
-                    <text 
-                      v-if="chatStore.repetition_penalty !== null" 
-                      class="drawer-slider-reset" 
-                      @tap.stop="chatStore.repetition_penalty = null"
-                    >重置</text>
-                  </view>
-                </view>
-                <slider
-                  class="drawer-slider-component"
-                  :value="Math.round((chatStore.repetition_penalty ?? 1.0) * 100)"
-                  :min="50" :max="200" :step="5"
-                  activeColor="#1c1c1e"
-                  backgroundColor="rgba(0,0,0,0.07)"
-                  block-color="#ffffff"
-                  block-size="18"
-                  @change="(e: any) => chatStore.repetition_penalty = e.detail.value / 100"
-                />
-              </view>
-            </view>
-          </view>
-
-          <!-- ⑤ 记忆管理手动操作区 -->
-          <view class="panel-section">
-            <text class="section-title">记忆管理</text>
-            <view class="action-btn outline" @tap="forceMemoryExtract">
-              <image class="btn-icon" src="/static/icons/drawer_brain.svg" mode="aspectFit" />
-              <text class="btn-text">手动提取记忆元</text>
-            </view>
-            <view class="action-btn outline" @tap="updateCognition">
-              <image class="btn-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
-              <text class="btn-text">更新微观认知</text>
-            </view>
-          </view>
-
-          <!-- ⑥ 危险操作区域（删除会话） -->
-          <view class="panel-section danger-section">
-            <text class="section-title danger-title">危险操作</text>
-            <view class="action-btn danger-btn" @tap="deleteCurrentSession">
-              <image class="danger-icon" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
-              <text class="danger-btn-text">删除本次会话</text>
-            </view>
-          </view>
-
-        </scroll-view>
-      </view>
-    </view>
+    <ChatDrawer
+      :isOpen="isStatusPanelOpen"
+      :sessionId="currentSessionId"
+      @close="isStatusPanelOpen = false"
+      @delete-session="deleteCurrentSession"
+    />
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
-import { createSession, triggerSummary, triggerCognition, deleteSession } from "@/api/sessions";
-import { ChatBubble } from "@/components/chat";
+import { createSession, deleteSession } from "@/api/sessions";
+import { ChatBubble, ChatDrawer } from "@/components/chat";
 import { getAvatarUrl } from "@/api/characters";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
+import { useChatScroll } from "@/composables/useChatScroll";
 
-// 状态存储
+// 状态存储与 Composable 挂载
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
+const { activeAudioMessageId } = useAudioPlayer();
+const {
+  scrollTop,
+  scrollIntoViewId,
+  scrollWithAnimation,
+  keyboardHeight,
+  isAndroid,
+  scrollToBottom,
+  scrollToBottomThrottled,
+  triggerPhasedScroll,
+  maintainScrollPosition,
+} = useChatScroll();
 
-const showAdvancedParams = ref(false);
-
-// 状态变量
+// 状态变量与视图状态
 const currentSessionId = ref<number | null>(null);
-
-// 界面 UI 状态
 const inputText = ref("");
 const isInputFocused = ref(false);
-// 使用单调递增值，确保每次 scrollTop 变化都被 scroll-view 检测到
-const scrollTop = ref(0);
-const scrollIntoViewId = ref("");
-const scrollWithAnimation = ref(false);
 const isStatusPanelOpen = ref(false);
 const isInitLoading = ref(true);
+const isHistoryLoading = ref(false);
 
-const userNicknameInput = ref(personaStore.userNickname);
-
-watch(() => personaStore.userNickname, (newVal) => {
-  userNicknameInput.value = newVal;
-});
-
-const saveUserNickname = () => {
-  const name = userNicknameInput.value.trim();
-  if (name) {
-    personaStore.updateUserNickname(name);
-  } else {
-    userNicknameInput.value = personaStore.userNickname;
-  }
-};
-
-// 软键盘弹起时，iOS 端需移除底部安全区域的高度占位，防止出现双重空白间距
+// 软键盘高度自适应控制样式
 const inputWrapperStyle = computed(() => {
   if (keyboardHeight.value > 0) {
     return {
-      paddingBottom: '14rpx'
+      paddingBottom: "14rpx",
     };
   }
   return {};
@@ -446,53 +172,11 @@ const inputWrapperStyle = computed(() => {
 const editingMessageId = ref<number | null>(null);
 const editMessageContent = ref("");
 
-// 键盘高度自适应控制，确保 App 软键盘弹起时顶部自定义 Header 不动，仅下方滚动区自适应缩短
-const keyboardHeight = ref(0);
-
-let isAndroid = false;
-// #ifdef APP-PLUS
-isAndroid = uni.getSystemInfoSync().platform === 'android';
-// #endif
-
-const triggerPhasedScroll = () => {
-  scrollToBottom();
-  // 阶段式定时置底：在软键盘弹起的动效（通常约 250ms-350ms）中关键时间节点触发多次重算置底，
-  // 从而让滚动区随着键盘高度的拉升而平滑、无延迟地跟随触底。
-  setTimeout(scrollToBottom, 60);
-  setTimeout(scrollToBottom, 120);
-  setTimeout(scrollToBottom, 200);
-  setTimeout(scrollToBottom, 300);
-  setTimeout(scrollToBottom, 400);
-};
-
-// #ifdef APP-PLUS
-const onKeyboardChange = (res: any) => {
-  // Android 平台由于配置了 adjustResize，WebView 会自动调整大小以适应键盘，无需手动用占位高度推起内容
-  // iOS 平台 WebView 保持原有高度不变，必须通过键盘占位高度来将输入区域推到键盘上方
-  keyboardHeight.value = isAndroid ? 0 : res.keyboardHeight;
-  if (res.keyboardHeight > 0) {
-    triggerPhasedScroll();
-  }
-};
-// #endif
-
-// 监听输入框焦点的获取状态，当聚焦时同步开启阶段式置底动效
+// 监听输入框焦点以触底滚动
 watch(isInputFocused, (focused) => {
   if (focused) {
     triggerPhasedScroll();
   }
-});
-
-onMounted(() => {
-  // #ifdef APP-PLUS
-  uni.onKeyboardHeightChange(onKeyboardChange);
-  // #endif
-});
-
-onUnmounted(() => {
-  // #ifdef APP-PLUS
-  uni.offKeyboardHeightChange(onKeyboardChange);
-  // #endif
 });
 
 onLoad(async (options) => {
@@ -501,7 +185,6 @@ onLoad(async (options) => {
     currentSessionId.value = sId;
     
     isInitLoading.value = true;
-    // 初始进入页面时不带动画滚动，防止多次触发动画导致滚动回弹/抖动
     scrollWithAnimation.value = false;
     
     // 从后端加载该会话的详细信息与聊天历史记录
@@ -510,10 +193,9 @@ onLoad(async (options) => {
       chatStore.loadHistory(sId)
     ]);
     
-    // 延迟 250 毫秒以确保历史消息组件在移动端端侧彻底完成 DOM 挂载和高度计算后再滚动到底端
+    // 延迟以确保组件在端侧 DOM 挂载和计算高度完毕后再置底
     setTimeout(() => {
       scrollToBottom();
-      // 瞬间置底完成后，开启滚动动画，并解除初始化锁定状态
       setTimeout(() => {
         scrollWithAnimation.value = true;
         isInitLoading.value = false;
@@ -533,44 +215,22 @@ const goBack = () => {
   }
 };
 
-const scrollToBottom = async () => {
-  await nextTick();
-  // 在 Uni-app 中，为确保 DOM 元素高度及布局计算已由渲染引擎彻底完成，
-  // 我们延迟 80ms 再设定滚动高度，有效防止滚动高度计算滞后导致未完全触底的问题。
-  // 通过使用 999999 - Math.random() 随机微调值确保每次设定的值都不同，
-  // 从而强力唤醒 Vue 的属性变化监听器去触发底层 DOM 的真实滚动更新，且不引发 `@scroll` 反馈回环。
-  setTimeout(() => {
-    scrollTop.value = 999999 - Math.random();
-  }, 80);
-};
-
-// 引入高频滚动节流锁，防止流式输出时反复重绘导致的卡顿
-let isScrollThrottled = false;
-const scrollToBottomThrottled = () => {
-  if (isScrollThrottled) return;
-  isScrollThrottled = true;
-  setTimeout(() => {
-    scrollToBottom();
-    isScrollThrottled = false;
-  }, 120); // 限制滚动频率为 120ms 一次，既平滑又大幅降低 CPU 负载
-};
-
-// 监听消息数组长度的变化，无论是加载历史记录还是发送/接收新消息，都自动滚动到底部
+// 监听消息长度变化以自动置底
 watch(() => chatStore.messages.length, () => {
-  if (isInitLoading.value) return;
+  if (isInitLoading.value || isHistoryLoading.value) return;
   scrollToBottom();
 });
 
-// 流式输出过程中，采用节流函数跟随滚动，并且禁用滚动动画防止在高速追加字符时动画冲突导致重绘卡顿
+// 流式输出时，使用节流控制置底并临时关闭动画以防卡顿
 watch(() => chatStore.streamingText, () => {
   if (isInitLoading.value) return;
   scrollWithAnimation.value = false;
   scrollToBottomThrottled();
 });
 
-// 对话彻底结束或状态发生改变时，强制无条件滚动到底部以确保最终位置对齐，此时可以启用平滑滚动动画
+// 对话彻底结束或状态变动时置底
 watch(() => chatStore.isLoading, (loading) => {
-  if (isInitLoading.value) return;
+  if (isInitLoading.value || isHistoryLoading.value) return;
   if (!loading) {
     scrollWithAnimation.value = true;
     scrollToBottom();
@@ -581,21 +241,16 @@ const onSend = async () => {
   const text = inputText.value.trim();
   if (!text || chatStore.isLoading || currentSessionId.value === null) return;
 
-  // 立即清空输入框
   inputText.value = "";
-  
-  // 不 await 整个流：sendChatMessage 内部同步添加用户消息和 AI 占位 bubble，
-  // 然后异步开始流式请求。这样我们可以立即滚动到底部显示用户消息。
   chatStore.sendChatMessage(currentSessionId.value, text);
   scrollToBottom();
 };
 
 const onMessageLongPress = (msg: any) => {
   const itemList = ['复制内容', '编辑消息', '创建分支（多宇宙）', '删除此消息'];
-  // 仅在长按的消息是最后一条 AI 回复时，才允许出现“重新生成回复”选项（以保护历史一致性）
   const isLatestAssistant = msg.id === chatStore.lastAssistantMessage?.id;
   if (msg.role === 'assistant' && isLatestAssistant) {
-    itemList.splice(3, 0, '重新生成回复'); // Insert before Delete
+    itemList.splice(3, 0, '重新生成回复');
   }
 
   uni.showActionSheet({
@@ -681,50 +336,6 @@ const saveEdit = async () => {
   }
 };
 
-const forceMemoryExtract = async () => {
-  if (currentSessionId.value === null) return;
-  try {
-    uni.showLoading({ title: '正在提取记忆元...' });
-    const res = await triggerSummary(currentSessionId.value);
-    uni.hideLoading();
-    uni.showToast({ title: res.message || '记忆提取完成', icon: 'success' });
-  } catch (e) {
-    uni.hideLoading();
-    uni.showToast({ title: '记忆提取失败', icon: 'none' });
-    console.error(e);
-  }
-};
-
-const updateCognition = async () => {
-  if (currentSessionId.value === null) return;
-  try {
-    uni.showLoading({ title: '正在更新认知...' });
-    const res = await triggerCognition(currentSessionId.value);
-    await personaStore.loadSessionDetail(currentSessionId.value);
-    uni.hideLoading();
-    uni.showToast({ title: res.message || '认知更新完成', icon: 'success' });
-  } catch (e) {
-    uni.hideLoading();
-    uni.showToast({ title: '认知更新失败', icon: 'none' });
-    console.error(e);
-  }
-};
-
-const onReasoningChange = (e: any) => {
-  chatStore.useReasoning = e.detail.value;
-};
-
-// 好感度 emoji 映射
-const affectionEmoji = computed(() => {
-  const s = personaStore.affectionScore;
-  if (s >= 90) return '💖';
-  if (s >= 70) return '❤️';
-  if (s >= 50) return '😊';
-  if (s >= 30) return '😐';
-  if (s >= 10) return '😕';
-  return '💔';
-});
-
 // 聊天背景图样式
 const backgroundStyle = computed(() => {
   const avatar = personaStore.activeCharacter?.avatar_path;
@@ -764,23 +375,19 @@ const deleteCurrentSession = () => {
 const onLoadMore = async () => {
   if (chatStore.isLoading || chatStore.messages.length === 0) return;
   
-  const oldestMsg = chatStore.messages[0];
-  const oldestClientId = oldestMsg ? oldestMsg.clientId : null;
-  
-  // 临时关闭滚动动画，防止历史记录渲染导致画面乱闪或位置突变
-  scrollWithAnimation.value = false;
-  
-  const hasMore = await chatStore.loadMoreHistory();
-  if (hasMore && oldestClientId) {
-    // 渲染完成后重新强制定位视窗到之前的最上方那条消息，维持视觉稳定性
-    await nextTick();
+  isHistoryLoading.value = true;
+  try {
+    const oldestMsg = chatStore.messages[0];
+    const oldestClientId = oldestMsg ? oldestMsg.clientId : null;
+    
+    const hasMore = await chatStore.loadMoreHistory();
+    if (hasMore && oldestClientId) {
+      await maintainScrollPosition(oldestClientId);
+    }
+  } finally {
     setTimeout(() => {
-      scrollIntoViewId.value = oldestClientId;
-      // 随后延时清空锁，保证用户后续发送新回复时的置底行为正常进行
-      setTimeout(() => {
-        scrollIntoViewId.value = "";
-      }, 100);
-    }, 50);
+      isHistoryLoading.value = false;
+    }, 300);
   }
 };
 </script>
@@ -840,8 +447,8 @@ const onLoadMore = async () => {
   justify-content: space-between;
   padding-left: 36rpx;
   padding-right: 36rpx;
-  background-color: rgba(255, 255, 255, 0.70); /* 更高的透明度，更显轻薄 */
-  backdrop-filter: blur(10px); /* 减小模糊值，使毛玻璃效果看起来更精致通透 */
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   z-index: 50;
 }
@@ -937,8 +544,9 @@ const onLoadMore = async () => {
 .input-area-wrapper {
   position: relative;
   z-index: 10;
-  background-color: #ffffff;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
   padding: 10rpx 36rpx calc(env(safe-area-inset-bottom, 16rpx) + 14rpx) 36rpx;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.01);
 }
@@ -1140,418 +748,7 @@ const onLoadMore = async () => {
   transform: scale(0.97);
 }
 
-/* ===== 状态属性右侧抽屉面板 ===== */
-.status-panel-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(12px);
-  z-index: 100;
-  display: flex;
-  justify-content: flex-end;
-}
 
-.status-panel {
-  width: 82vw;
-  max-width: 600rpx;
-  height: 100%;
-  background-color: #f8f8fa;
-  display: flex;
-  flex-direction: column;
-  animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: -12px 0 48px rgba(0, 0, 0, 0.1);
-}
-
-@keyframes slideInRight {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-
-/* Panel header bar (close button only) */
-.panel-header {
-  padding-top: env(safe-area-inset-top, 40rpx);
-  height: calc(env(safe-area-inset-top, 40rpx) + 80rpx);
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-end;
-  padding-right: 28rpx;
-  padding-bottom: 12rpx;
-  background-color: #f8f8fa;
-}
-
-.close-btn {
-  width: 52rpx;
-  height: 52rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.05);
-  color: #8e8e93;
-  transition: background-color 0.2s;
-}
-
-.close-btn:active {
-  background-color: rgba(0, 0, 0, 0.1);
-}
-
-/* Scroll area */
-.panel-content {
-  flex: 1;
-  height: 0;
-  min-height: 0;
-}
-
-/* ===== ① 角色卡片展示 ===== */
-.char-card {
-  display: flex;
-  align-items: center;
-  gap: 24rpx;
-  padding: 28rpx 32rpx 32rpx 32rpx;
-  background: linear-gradient(135deg, #1c1c1e 0%, #3a3a3c 100%);
-  margin: 0 20rpx 28rpx 20rpx;
-  border-radius: 24rpx;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.char-card-avatar {
-  width: 100rpx;
-  height: 100rpx;
-  border-radius: 50%;
-  border: 2.5px solid rgba(255, 255, 255, 0.25);
-  flex-shrink: 0;
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.char-card-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10rpx;
-}
-
-.char-card-name {
-  font-size: 30rpx;
-  font-weight: 700;
-  color: #ffffff;
-  letter-spacing: -0.3px;
-}
-
-.mood-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8rpx;
-  background-color: rgba(255, 255, 255, 0.12);
-  border-radius: 40rpx;
-  padding: 5rpx 16rpx;
-  align-self: flex-start;
-}
-
-.mood-dot {
-  width: 8rpx;
-  height: 8rpx;
-  border-radius: 50%;
-  background-color: #34c759;
-  flex-shrink: 0;
-}
-
-.mood-text {
-  font-size: 20rpx;
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-}
-
-/* ===== 各设定区块通用 ===== */
-.panel-section {
-  margin: 0 20rpx 24rpx 20rpx;
-  background-color: #ffffff;
-  border-radius: 20rpx;
-  padding: 24rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 16rpx;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
-}
-
-.section-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.section-title {
-  font-size: 20rpx;
-  font-weight: 700;
-  color: #8e8e93;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-}
-
-/* ===== ② 好感度进度条 ===== */
-.affection-value {
-  font-size: 24rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-}
-
-.progress-bg {
-  width: 100%;
-  height: 14rpx;
-  background-color: rgba(0, 0, 0, 0.05);
-  border-radius: 7rpx;
-  overflow: hidden;
-}
-
-.progress-bar-gradient {
-  height: 100%;
-  background: linear-gradient(90deg, #ff6b9d 0%, #ff8c69 60%, #ffd93d 100%);
-  border-radius: 7rpx;
-  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 2px 6px rgba(255, 107, 157, 0.4);
-}
-
-/* ===== ③ 认知信息展示框 ===== */
-.cognition-box {
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 12rpx;
-  padding: 20rpx;
-  min-height: 120rpx;
-}
-
-.cognition-text {
-  font-size: 25rpx;
-  color: #3a3a3c;
-  line-height: 1.65;
-}
-
-/* ===== ④ 自定义开关组件 ===== */
-.setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4rpx 0;
-}
-
-.setting-row-left {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-}
-
-.setting-row-icon {
-  color: #8e8e93;
-}
-
-.setting-row-label {
-  font-size: 27rpx;
-  font-weight: 500;
-  color: #1c1c1e;
-}
-
-.drawer-nickname-input {
-  font-size: 26rpx;
-  color: #1c1c1e;
-  text-align: right;
-  width: 260rpx;
-  height: 64rpx; /* 增加高度使比例协调 */
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 16rpx; /* 更加圆润的外观 */
-  padding: 0 20rpx; /* 左右内边距，去除上下边距实现完美垂直居中 */
-  box-sizing: border-box; /* 包含边框宽度在高度中计算 */
-}
-
-.drawer-nickname-input:focus {
-  background-color: #ffffff;
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-}
-
-.custom-toggle {
-  width: 88rpx;
-  height: 48rpx;
-  border-radius: 24rpx;
-  background-color: rgba(0, 0, 0, 0.1);
-  position: relative;
-  transition: background-color 0.25s ease;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-
-/* ===== Drawer Sliders styles ===== */
-.drawer-sliders-container {
-  display: flex;
-  flex-direction: column;
-  gap: 24rpx;
-  margin-top: 24rpx;
-  padding: 20rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 16rpx;
-}
-
-.drawer-slider-row {
-  display: flex;
-  flex-direction: column;
-  gap: 12rpx;
-}
-
-.drawer-slider-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.drawer-slider-label {
-  font-size: 24rpx;
-  font-weight: 500;
-  color: #3a3a3c;
-}
-
-.drawer-slider-value-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-}
-
-.drawer-slider-value {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.04);
-  padding: 2rpx 10rpx;
-  border-radius: 12rpx;
-}
-
-.drawer-slider-value.is-default {
-  color: #8e8e93;
-  font-weight: 500;
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-.drawer-slider-reset {
-  font-size: 22rpx;
-  font-weight: 500;
-  color: #8e8e93;
-  cursor: pointer;
-  padding: 2rpx 8rpx;
-  background-color: rgba(0,0,0,0.02);
-  border: 1px solid rgba(0,0,0,0.04);
-  border-radius: 8rpx;
-  transition: all 0.2s;
-}
-
-.drawer-slider-reset:active {
-  color: #1c1c1e;
-  background-color: rgba(0,0,0,0.08);
-}
-
-.advanced-chevron {
-  width: 28rpx;
-  height: 28rpx;
-  opacity: 0.6;
-  transition: transform 0.25s ease;
-}
-
-.advanced-chevron.is-active {
-  transform: rotate(180deg);
-}
-
-.cursor-pointer {
-  cursor: pointer;
-}
-
-.drawer-slider-component {
-  margin: 0;
-  width: 100%;
-}
-
-.custom-toggle.is-on {
-  background-color: #1c1c1e;
-}
-
-.toggle-thumb {
-  position: absolute;
-  top: 4rpx;
-  left: 4rpx;
-  width: 40rpx;
-  height: 40rpx;
-  border-radius: 50%;
-  background-color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.custom-toggle.is-on .toggle-thumb {
-  transform: translateX(40rpx);
-}
-
-/* ===== ⑤ 功能操作按钮 ===== */
-.action-btn {
-  height: 80rpx;
-  border-radius: 14rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10rpx;
-  transition: all 0.2s;
-  cursor: pointer;
-}
-
-.action-btn.outline {
-  border: 1px solid rgba(0, 0, 0, 0.07);
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-.action-btn.outline:active {
-  background-color: rgba(0, 0, 0, 0.05);
-  transform: scale(0.985);
-}
-
-.btn-icon {
-  color: #3a3a3c;
-}
-
-.btn-text {
-  font-size: 26rpx;
-  font-weight: 500;
-  color: #3a3a3c;
-}
-
-/* ===== ⑥ 危险操作区域 ===== */
-.danger-section {
-  background-color: rgba(255, 59, 48, 0.04);
-  border: 1px solid rgba(255, 59, 48, 0.1);
-}
-
-.danger-title {
-  color: #ff3b30 !important;
-}
-
-.danger-btn {
-  background-color: rgba(255, 59, 48, 0.06);
-  border: 1px solid rgba(255, 59, 48, 0.15);
-}
-
-.danger-btn:active {
-  background-color: rgba(255, 59, 48, 0.12);
-  transform: scale(0.985);
-}
-
-.danger-icon {
-  color: #ff3b30;
-}
-
-.danger-btn-text {
-  font-size: 26rpx;
-  font-weight: 500;
-  color: #ff3b30;
-}
 
 /* Custom SVG Icon Styles */
 .back-icon {
@@ -1618,14 +815,17 @@ const onLoadMore = async () => {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02) !important;
 }
 
+.is-android .input-area-wrapper {
+  backdrop-filter: none !important;
+  background-color: #ffffff !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
 .is-android .modal-backdrop {
   backdrop-filter: none !important;
   background-color: rgba(0, 0, 0, 0.5) !important;
 }
 
-.is-android .status-panel-backdrop {
-  backdrop-filter: none !important;
-  background-color: rgba(0, 0, 0, 0.55) !important;
-}
+
 </style>
 
