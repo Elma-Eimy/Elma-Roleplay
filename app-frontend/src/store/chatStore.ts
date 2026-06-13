@@ -5,6 +5,7 @@ import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
 import type { ChatResponse } from "@/api/chat";
 import { usePersonaStore } from "./personaStore";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 
 export type MessageStatus = "sending" | "streaming" | "done" | "error";
 
@@ -31,9 +32,6 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 从服务端接收到的最新对话元数据 */
   const lastMeta = ref<Omit<ChatResponse, "reply"> | null>(null);
-
-  /** 当前正在播放语音的消息 ID */
-  const activeAudioMessageId = ref<number | null>(null);
 
   /** 若上一次请求失败，所记录的错误提示信息 */
   const errorMessage = ref<string | null>(null);
@@ -361,6 +359,7 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   async function switchActiveCandidate(messageId: number, targetCandidateId: number) {
+    const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS(); // 切换候选版本时立刻停止当前播放的音频，避免音画不同步
     errorMessage.value = null;
     try {
@@ -396,127 +395,6 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  let innerAudioContext: any = null;
-
-  function initAudioContext() {
-    if (!innerAudioContext) {
-      // #ifdef APP-PLUS || H5 || MP-WEIXIN
-      innerAudioContext = uni.createInnerAudioContext();
-      // #endif
-      if (innerAudioContext) {
-        innerAudioContext.onPlay(() => {
-          console.log("Audio playing...");
-        });
-        innerAudioContext.onEnded(() => {
-          console.log("Audio finished.");
-          activeAudioMessageId.value = null;
-        });
-        innerAudioContext.onError((err: any) => {
-          console.error("Audio error:", err);
-          activeAudioMessageId.value = null;
-          uni.showToast({ title: "语音播放失败", icon: "none" });
-        });
-        innerAudioContext.onStop(() => {
-          console.log("Audio stopped.");
-          activeAudioMessageId.value = null;
-        });
-      }
-    }
-  }
-
-  async function playMessageTTS(messageId: number, content: string) {
-    initAudioContext();
-    if (!innerAudioContext) {
-      uni.showToast({ title: "您的平台不支持音频播放", icon: "none" });
-      return;
-    }
-
-    // 如果当前正在播放的就是这条消息，点击则是停止播放
-    if (activeAudioMessageId.value === messageId) {
-      innerAudioContext.stop();
-      activeAudioMessageId.value = null;
-      return;
-    }
-
-    // 如果正在播放其他消息，先停止
-    if (activeAudioMessageId.value !== null) {
-      innerAudioContext.stop();
-    }
-
-    const msgIdx = messages.value.findIndex((m) => m.id === messageId);
-    if (msgIdx === -1) return;
-
-    const msg = messages.value[msgIdx];
-    let audioUrl = msg.audio_path;
-
-    if (!audioUrl) {
-      uni.showLoading({ title: "正在合成语音..." });
-      try {
-        const { generateTTS } = await import("@/api/chat");
-        const res = await generateTTS(messageId, content);
-        audioUrl = res.audio_url;
-        msg.audio_path = audioUrl;
-        uni.hideLoading();
-      } catch (e: any) {
-        uni.hideLoading();
-        uni.showToast({ title: e.message || "语音合成失败", icon: "none" });
-        return;
-      }
-    }
-
-    if (audioUrl) {
-      const { getBaseUrl, getSavedApiKey } = await import("@/api/config");
-      let fullUrl = audioUrl.startsWith("http") ? audioUrl : `${getBaseUrl()}${audioUrl}`;
-      
-      // 附加 API Key 凭证以支持安全路由参数校验
-      const apiKey = getSavedApiKey();
-      if (apiKey) {
-        fullUrl += `${fullUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(apiKey)}`;
-      }
-      
-      console.log("Playing audio:", fullUrl);
-      activeAudioMessageId.value = messageId;
-
-      // #ifdef APP-PLUS
-      // 移动端 App 下载到本地临时文件播放，解决原生 MediaPlayer 播放网络流可能失败或被拦截的问题
-      uni.downloadFile({
-        url: encodeURI(fullUrl),
-        success: (res) => {
-          if (res.statusCode === 200) {
-            console.log("Audio downloaded successfully:", res.tempFilePath);
-            innerAudioContext.src = res.tempFilePath;
-            innerAudioContext.play();
-          } else {
-            console.error("Audio download status error:", res.statusCode);
-            uni.showToast({ title: "音频下载失败", icon: "none" });
-            activeAudioMessageId.value = null;
-          }
-        },
-        fail: (err) => {
-          console.error("Audio download failed:", err);
-          uni.showToast({ title: "音频下载失败", icon: "none" });
-          activeAudioMessageId.value = null;
-        }
-      });
-      // #endif
-
-      // #ifndef APP-PLUS
-      // H5/小程序等平台直接在线播放
-      innerAudioContext.src = encodeURI(fullUrl);
-      innerAudioContext.play();
-      // #endif
-    } else {
-      uni.showToast({ title: "未获取到有效的语音文件", icon: "none" });
-    }
-  }
-
-  function stopMessageTTS() {
-    if (innerAudioContext && activeAudioMessageId.value !== null) {
-      innerAudioContext.stop();
-      activeAudioMessageId.value = null;
-    }
-  }
-
   async function loadMoreHistory() {
     if (isLoading.value || activeSessionId.value === null) return false;
     if (messages.value.length === 0) return false;
@@ -549,6 +427,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS();
     activeSessionId.value = null;
     messages.value = [];
@@ -562,7 +441,6 @@ export const useChatStore = defineStore("chat", () => {
     presence_penalty.value = null;
     frequency_penalty.value = null;
     repetition_penalty.value = null;
-    activeAudioMessageId.value = null;
   }
 
   return {
@@ -579,7 +457,6 @@ export const useChatStore = defineStore("chat", () => {
     presence_penalty,
     frequency_penalty,
     repetition_penalty,
-    activeAudioMessageId,
     // Getters
     hasMessages,
     isStreaming,
@@ -598,8 +475,6 @@ export const useChatStore = defineStore("chat", () => {
     appendStreamChunk,
     finalizeStream,
     switchActiveCandidate,
-    playMessageTTS,
-    stopMessageTTS,
     loadMoreHistory,
     setError,
     clearError,
