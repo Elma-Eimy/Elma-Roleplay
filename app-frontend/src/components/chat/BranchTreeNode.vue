@@ -27,7 +27,7 @@
           
           <view class="card-meta">
             <view v-if="node.persona?.affection_score !== undefined" class="meta-tag affection">
-              <text class="tag-emoji">💖</text>
+              <image class="affection-heart-icon-node" src="/static/icons/meta_heart.svg" mode="aspectFit" />
               <text class="tag-val">{{ node.persona.affection_score }}</text>
             </view>
             <view v-if="node.persona?.current_mood" class="meta-tag mood">
@@ -273,6 +273,12 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   color: #ff3b30;
   background-color: rgba(255, 59, 48, 0.02);
   border-color: rgba(255, 59, 48, 0.05);
+}
+
+.affection-heart-icon-node {
+  width: 20rpx;
+  height: 20rpx;
+  flex-shrink: 0;
 }
 
 .meta-tag.mood {
