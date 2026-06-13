@@ -19,8 +19,9 @@
             class="portrait-img" 
             :src="getAvatarUrl(character.avatar_path || '') || '/static/default-avatar.png'" 
             mode="aspectFill" 
+            @tap="previewPortrait"
           />
-          <view class="portrait-overlay"></view>
+          <view class="portrait-overlay" @tap="previewPortrait"></view>
           
           <view class="change-portrait-btn" @tap="changePortrait">
             <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
@@ -83,14 +84,16 @@
               :class="{ 'is-active': viewMode === 'tree' }" 
               @tap="viewMode = 'tree'"
             >
-              <text class="toggle-pill-text">🌌 时空分叉树</text>
+              <image class="toggle-pill-icon" src="/static/icons/char_branch.svg" mode="aspectFit" />
+              <text class="toggle-pill-text">时空分叉树</text>
             </view>
             <view 
               class="toggle-pill" 
               :class="{ 'is-active': viewMode === 'list' }" 
               @tap="viewMode = 'list'"
             >
-              <text class="toggle-pill-text">📋 时间线列表</text>
+              <image class="toggle-pill-icon" src="/static/icons/char_list.svg" mode="aspectFit" />
+              <text class="toggle-pill-text">时间线列表</text>
             </view>
           </view>
 
@@ -128,7 +131,10 @@
                   </view>
                   <view class="meta-item affection">
                     <text class="meta-label">好感:</text>
-                    <text class="meta-value score">{{ session.persona?.affection_score || 0 }} 💖</text>
+                    <view class="affection-score-row">
+                      <text class="meta-value score">{{ session.persona?.affection_score || 0 }}</text>
+                      <image class="affection-heart-icon" src="/static/icons/meta_heart.svg" mode="aspectFit" />
+                    </view>
                   </view>
                 </view>
               </view>
@@ -498,6 +504,17 @@ const goToEdit = () => {
   }
 };
 
+const previewPortrait = () => {
+  const avatar = character.value?.avatar_path;
+  if (avatar) {
+    const url = getAvatarUrl(avatar);
+    uni.previewImage({
+      urls: [url],
+      current: url
+    });
+  }
+};
+
 const changePortrait = () => {
   uni.chooseImage({
     count: 1,
@@ -689,7 +706,7 @@ const formatDate = (dateString: string) => {
 .portrait-panel {
   position: relative;
   width: 100%;
-  height: 420rpx;
+  height: 680rpx;
   background-color: #f2f2f7;
   overflow: hidden;
 }
@@ -697,7 +714,16 @@ const formatDate = (dateString: string) => {
 .portrait-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+}
+
+.portrait-img :deep(img) {
+  object-fit: cover !important;
+  object-position: center top !important;
+}
+
+.portrait-img :deep(div) {
+  background-size: cover !important;
+  background-position: center top !important;
 }
 
 .portrait-overlay {
@@ -705,7 +731,7 @@ const formatDate = (dateString: string) => {
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 140rpx;
+  height: 180rpx;
   background: linear-gradient(to top, rgba(250, 250, 250, 1), rgba(250, 250, 250, 0));
 }
 
@@ -1285,6 +1311,30 @@ const formatDate = (dateString: string) => {
 
 .toggle-pill.is-active .toggle-pill-text {
   color: #1c1c1e;
+}
+
+.toggle-pill-icon {
+  width: 28rpx;
+  height: 28rpx;
+  margin-right: 8rpx;
+  filter: opacity(0.4) grayscale(1);
+  transition: all 0.2s ease;
+}
+
+.toggle-pill.is-active .toggle-pill-icon {
+  filter: opacity(0.95) grayscale(0);
+}
+
+.affection-score-row {
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.affection-heart-icon {
+  width: 24rpx;
+  height: 24rpx;
+  flex-shrink: 0;
 }
 
 .tree-view-wrapper {
