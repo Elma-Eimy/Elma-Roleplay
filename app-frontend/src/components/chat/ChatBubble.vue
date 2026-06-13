@@ -1,9 +1,7 @@
 <template>
   <view 
     class="chat-bubble-wrapper" 
-    :class="{ 'is-user': isUser }" 
-    @longpress="handleLongPress"
-    @contextmenu.prevent="handleLongPress"
+    :class="{ 'is-user': isUser }"
   >
     <!-- AI 头像（仅对 AI 显示） -->
     <image 
@@ -23,6 +21,8 @@
         :class="[isUser ? 'user-bubble' : 'ai-bubble']"
         @touchstart="handleTouchStart"
         @touchend="handleTouchEnd"
+        @longpress="handleLongPress"
+        @contextmenu.prevent="handleLongPress"
       >
         
         <!-- AI 的深度思考过程容器 -->
@@ -90,22 +90,23 @@
         <view 
           v-if="message.status === 'done'"
           class="meta-tag tts-btn" 
-          :class="{ 'is-playing': chatStore.activeAudioMessageId === message.id }"
+          :class="{ 'is-playing': activeAudioMessageId === message.id }"
           @tap="playTTS"
         >
-          <view v-if="chatStore.activeAudioMessageId === message.id" class="waveform">
+          <view v-if="activeAudioMessageId === message.id" class="waveform">
             <view class="wave-bar bar-1"></view>
             <view class="wave-bar bar-2"></view>
             <view class="wave-bar bar-3"></view>
           </view>
           <image v-else class="tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
-          <text class="tts-text">{{ chatStore.activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
+          <text class="tts-text">{{ activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
         </view>
         <view v-if="message.emotion_tag" class="meta-tag emotion">
           {{ message.emotion_tag }}
         </view>
         <view v-if="message.affection_change" class="meta-tag affection" :class="{ positive: message.affection_change > 0, negative: message.affection_change < 0 }">
-          {{ message.affection_change > 0 ? '+' : '' }}{{ message.affection_change }} 💖
+          <text>{{ message.affection_change > 0 ? '+' : '' }}{{ message.affection_change }}</text>
+          <image class="affection-heart-icon-bubble" :src="message.affection_change >= 0 ? '/static/icons/meta_heart.svg' : '/static/icons/meta_heart_broken.svg'" mode="aspectFit" />
         </view>
         <view v-if="message.model_used" class="meta-tag model-used">
           {{ message.model_used }}
@@ -120,11 +121,12 @@ import { ref, computed } from "vue";
 import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import MarkdownIt from "markdown-it";
 
 const chatStore = useChatStore();
-
 const personaStore = usePersonaStore();
+const { activeAudioMessageId, playMessageTTS } = useAudioPlayer();
 
 const props = defineProps<{
   message: ChatMessage;
@@ -201,7 +203,7 @@ const switchCandidateVersion = async (direction: number) => {
 
 const playTTS = () => {
   if (props.message.id) {
-    chatStore.playMessageTTS(props.message.id, props.message.content);
+    playMessageTTS(props.message);
   }
 };
 
@@ -311,7 +313,7 @@ const renderedThought = computed(() => {
 .avatar {
   width: 76rpx;
   height: 76rpx;
-  border-radius: 50%;
+  border-radius: 32%;
   background-color: rgba(0, 0, 0, 0.02);
   border: 1px solid rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
@@ -417,6 +419,12 @@ const renderedThought = computed(() => {
   font-weight: 500;
 }
 
+.meta-tag.affection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+}
+
 .meta-tag.affection.positive {
   color: #1c1c1e;
   background-color: #ffffff;
@@ -429,6 +437,12 @@ const renderedThought = computed(() => {
   background-color: rgba(255, 59, 48, 0.05);
   border-color: rgba(255, 59, 48, 0.15);
   font-weight: 600;
+}
+
+.affection-heart-icon-bubble {
+  width: 20rpx;
+  height: 20rpx;
+  flex-shrink: 0;
 }
 
 .meta-tag.model-used {
@@ -588,16 +602,18 @@ const renderedThought = computed(() => {
 
 /* ===== 推理思考容器 ===== */
 .thought-container {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(0, 0, 0, 0.015);
   border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 16rpx;
+  border-left: 3px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12rpx;
   margin-bottom: 20rpx;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s linear;
 }
 
 .thought-container.is-expanded {
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: rgba(0, 0, 0, 0.025);
+  border-left-color: #10b981;
 }
 
 .thought-header {
@@ -619,28 +635,10 @@ const renderedThought = computed(() => {
   height: 10rpx;
   background-color: #8e8e93;
   border-radius: 50%;
-  position: relative;
 }
 
 .is-expanded .brain-spark {
   background-color: #10b981;
-}
-
-.is-expanded .brain-spark::after {
-  content: "";
-  position: absolute;
-  top: -4rpx;
-  left: -4rpx;
-  width: 18rpx;
-  height: 18rpx;
-  border: 1px solid #10b981;
-  border-radius: 50%;
-  animation: pulse 1.6s infinite ease-out;
-}
-
-@keyframes pulse {
-  0% { transform: scale(0.6); opacity: 1; }
-  100% { transform: scale(1.4); opacity: 0; }
 }
 
 .thought-title {

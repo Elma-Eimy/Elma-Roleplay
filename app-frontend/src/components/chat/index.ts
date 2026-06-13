@@ -5,3 +5,4 @@
 
 export { default as ChatBubble } from './ChatBubble.vue';
 export { default as SessionList } from './SessionList.vue';
+export { default as ChatDrawer } from './ChatDrawer.vue';
