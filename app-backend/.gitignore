@@ -26,7 +26,5 @@ data.db-wal
 
 # 9. 其他
 spec_v2.md
-test_api.py
-test_lorebook.py
-test_parse.py
 llm_debug.log
+scratch
