@@ -27,6 +27,7 @@ export interface CharacterSummary {
 export interface CharacterDetail extends CharacterBase {
   id: number;
   created_at: string;
+  lorebooks?: { id: number; name: string }[];
 }
 
 export interface ParsedCharacterData extends CharacterBase {}

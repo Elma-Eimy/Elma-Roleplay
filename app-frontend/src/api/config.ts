@@ -78,6 +78,7 @@ export interface MockDatabase {
   characters: any[];
   sessions: any[];
   messages: Record<number, any[]>; // 会话ID -> 消息数组映射 (sessionId -> Message[])
+  lorebooks?: any[];
 }
 
 function getInitialMockDB(): MockDatabase {
@@ -210,7 +211,7 @@ function getInitialMockDB(): MockDatabase {
     ]
   };
 
-  return { characters, sessions, messages };
+  return { characters, sessions, messages, lorebooks: [] };
 }
 
 /** 从 uni 缓存存储中获取或初始化 Mock 模拟数据库状态 */
