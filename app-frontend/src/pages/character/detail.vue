@@ -71,7 +71,7 @@
             :class="{ 'is-active': activeTab === 'lorebook' }"
             @tap="activeTab = 'lorebook'"
           >
-            <text class="tab-label">专属世界书 ({{ lorebookEntries.length }})</text>
+            <text class="tab-label">专属世界书 ({{ lorebookEntriesCount }})</text>
           </view>
         </view>
 
@@ -150,86 +150,19 @@
         </view>
 
         <!-- Tab 2: 人设细节卡片 -->
-        <view v-if="activeTab === 'profile'" class="profile-details-section">
-          <!-- 角色背景描述卡片 -->
-          <view class="section-card">
-            <text class="section-title">人设背景描述</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body" :nodes="renderedDescription" />
-            </scroll-view>
-          </view>
+        <CharacterProfileTab 
+          v-if="activeTab === 'profile'" 
+          :character="character" 
+        />
 
-          <view class="section-card" v-if="character.scenario">
-            <text class="section-title">所处场景环境</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body" :nodes="renderedScenario" />
-            </scroll-view>
-          </view>
-
-          <view class="section-card" v-if="character.first_mes">
-            <text class="section-title">开场白预设</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body italic" :nodes="renderedFirstMes" />
-            </scroll-view>
-          </view>
-
-          <view class="section-card" v-if="character.mes_example">
-            <text class="section-title">对话句式示例</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body dialogue-example" :nodes="renderedMesExample" />
-            </scroll-view>
-          </view>
-
-          <view class="section-card" v-if="character.creator_notes">
-            <text class="section-title">创作者备忘录</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body" :nodes="renderedCreatorNotes" />
-            </scroll-view>
-          </view>
-
-          <view class="section-card" v-if="character.system_prompt_override">
-            <text class="section-title">系统设定覆盖 (System Prompt Override)</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body code-text" :nodes="renderedSystemPromptOverride" />
-            </scroll-view>
-          </view>
-
-          <view class="section-card" v-if="character.post_history_instructions">
-            <text class="section-title">历史末端注入指令 (Post History Instructions)</text>
-            <scroll-view scroll-y class="section-scroll-container">
-              <rich-text class="section-body code-text" :nodes="renderedPostHistoryInstructions" />
-            </scroll-view>
-          </view>
-        </view>
-
-        <!-- Tab 3: 专属世界书列表 -->
-        <view v-if="activeTab === 'lorebook'" class="lorebook-section">
-          <view class="lore-grid" v-if="lorebookEntries.length > 0">
-            <view 
-              class="lore-card" 
-              v-for="(entry, index) in lorebookEntries" 
-              :key="index"
-            >
-              <view class="lore-card-header">
-                <view class="lore-key-row">
-                  <text class="lore-tag" v-for="key in entry.keys" :key="key">{{ key }}</text>
-                </view>
-                <text class="lore-status-badge" :class="{ 'constant': entry.constant }">
-                  {{ entry.constant ? '常驻' : '条件触发' }}
-                </text>
-              </view>
-              <view class="lore-meta-row">
-                <text class="lore-meta-item">优先级: {{ entry.priority || 100 }}</text>
-                <text class="lore-meta-item" v-if="entry.secondary_keys && entry.secondary_keys.length > 0">
-                  联合过滤: {{ entry.secondary_keys.join(', ') }}
-                </text>
-              </view>
-              <text class="lore-content">{{ entry.content }}</text>
-            </view>
-          </view>
-          <view v-else class="empty-branches">
-            <text class="empty-branches-text">该角色卡尚未配置任何专属世界书条目。</text>
-          </view>
+        <!-- Tab 3: 专属与绑定世界书列表 -->
+        <view v-show="activeTab === 'lorebook'">
+          <CharacterLorebookTab 
+            :character="character" 
+            :characterId="characterId" 
+            @refresh="loadCharacterData"
+            @entries-count="onEntriesCountUpdate"
+          />
         </view>
       </view>
     </scroll-view>
@@ -261,6 +194,7 @@
         </view>
       </view>
     </view>
+
   </view>
 </template>
 
@@ -273,13 +207,8 @@ import { getSessions, deleteSession, updateSessionTitle, createSession, getSessi
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
 import { usePersonaStore } from "@/store/personaStore";
-import MarkdownIt from "markdown-it";
-
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
-});
+import CharacterProfileTab from "@/components/character/CharacterProfileTab.vue";
+import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vue";
 
 const personaStore = usePersonaStore();
 
@@ -294,43 +223,11 @@ const activeParentSessionId = ref<number | null>(null);
 const activeTab = ref<"sessions" | "profile" | "lorebook">("sessions");
 const viewMode = ref<"list" | "tree">("tree");
 
-// 替换 {{char}} / {{user}} 占位符
-const replacePlaceholders = (text: string) => {
-  if (!text) return "";
-  const charName = character.value?.name || "角色";
-  const userName = personaStore.userNickname;
-  return text
-    .replace(/\{\{char\}\}/gi, charName)
-    .replace(/\{\{user\}\}/gi, userName);
-};
+const lorebookEntriesCount = ref(0);
 
-const lorebookEntries = computed(() => {
-  const entries: any[] = [];
-  const charBook = character.value?.extensions?.character_book as any;
-  if (charBook && Array.isArray(charBook.entries)) {
-    charBook.entries.forEach((e: any) => {
-      if (e && e.enabled !== false) {
-        let keys = e.keys;
-        if (!Array.isArray(keys)) {
-          keys = keys ? [keys] : [];
-        }
-        let secondaryKeys = e.secondary_keys;
-        if (!Array.isArray(secondaryKeys)) {
-          secondaryKeys = secondaryKeys ? [secondaryKeys] : [];
-        }
-        
-        entries.push({
-          keys: keys.filter(Boolean),
-          secondary_keys: secondaryKeys.filter(Boolean),
-          content: e.content || "",
-          constant: !!e.constant,
-          priority: e.priority
-        });
-      }
-    });
-  }
-  return entries;
-});
+const onEntriesCountUpdate = (count: number) => {
+  lorebookEntriesCount.value = count;
+};
 
 const getParentSessionTitle = (parentId: number | null) => {
   if (!parentId) return "";
@@ -341,90 +238,6 @@ const getParentSessionTitle = (parentId: number | null) => {
 const personalityTags = computed(() => {
   if (!character.value?.personality) return [];
   return character.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
-});
-
-const renderedDescription = computed(() => {
-  let content = character.value?.description || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-});
-
-const renderedScenario = computed(() => {
-  let content = character.value?.scenario || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-});
-
-const renderedFirstMes = computed(() => {
-  let content = character.value?.first_mes || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-});
-
-const renderedMesExample = computed(() => {
-  let content = character.value?.mes_example || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-});
-
-const renderedCreatorNotes = computed(() => {
-  let content = character.value?.creator_notes || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-});
-
-const renderedSystemPromptOverride = computed(() => {
-  let content = character.value?.system_prompt_override || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render("```\n" + content + "\n```");
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  return html;
-});
-
-const renderedPostHistoryInstructions = computed(() => {
-  let content = character.value?.post_history_instructions || "";
-  if (!content) return "";
-  content = replacePlaceholders(content);
-  let html = md.render("```\n" + content + "\n```");
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  return html;
 });
 
 onLoad((options) => {
@@ -593,16 +406,17 @@ const onSessionLongPress = (session: any) => {
         renamingSessionId.value = session.id;
         newSessionTitle.value = session.title;
       } else if (res.tapIndex === 2) {
+        const charId = characterId.value;
         uni.showModal({
           title: '删除宇宙分支',
           content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
           confirmColor: '#ff3b30',
           cancelColor: '#8e8e93',
           success: async (mRes) => {
-            if (mRes.confirm && characterId.value !== null) {
+            if (mRes.confirm && charId !== null) {
               try {
                 await deleteSession(session.id);
-                await loadCharacterData(characterId.value);
+                await loadCharacterData(charId);
                 uni.showToast({ title: '删除成功', icon: 'success' });
               } catch (e: any) {
                 console.error("Failed to delete branch", e);
@@ -793,77 +607,7 @@ const formatDate = (dateString: string) => {
   border: 1px solid rgba(0, 0, 0, 0.03);
 }
 
-/* ===== 设定描述卡片 ===== */
-.section-card {
-  margin: 0 36rpx 28rpx 36rpx;
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 24rpx;
-  padding: 32rpx;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
-  display: flex;
-  flex-direction: column;
-  gap: 12rpx;
-}
 
-.section-title {
-  font-size: 24rpx;
-  font-weight: 600;
-  color: #8e8e93;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.section-scroll-container {
-  min-height: 80rpx;
-  max-height: 450rpx;
-  width: 100%;
-  box-sizing: border-box;
-  padding-right: 12rpx;
-}
-
-.section-scroll-container ::-webkit-scrollbar {
-  width: 4px;
-}
-
-.section-scroll-container ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 2px;
-}
-
-.section-body {
-  font-size: 28rpx;
-  color: #2c2c2e;
-  line-height: 1.6;
-}
-
-.section-body :deep(.md-p) {
-  margin: 10rpx 0;
-  line-height: 1.6;
-}
-
-.section-body :deep(.md-strong) {
-  font-weight: 600;
-  color: #000000;
-  padding: 0 4rpx;
-}
-
-.section-body :deep(.md-em) {
-  font-style: italic;
-  color: #8e8e93; /* 旁白/动作采用更淡雅的灰色 */
-  padding: 0 4rpx;
-  font-weight: normal;
-}
-
-.section-body :deep(.md-dialogue) {
-  color: #1c1c1e; /* 对话更加突出 */
-  font-weight: 550; /* 略微加粗 */
-}
-
-.section-body.italic {
-  font-style: italic;
-  color: #48484a;
-}
 
 /* ===== 宇宙会话分支列表 ===== */
 .branches-header {
@@ -1190,92 +934,7 @@ const formatDate = (dateString: string) => {
   color: #1c1c1e;
 }
 
-/* ===== 专属世界书 (Lorebook Section) ===== */
-.lorebook-section {
-  padding: 0 36rpx;
-}
 
-.lore-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 20rpx;
-}
-
-.lore-card {
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 24rpx;
-  padding: 28rpx;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
-  display: flex;
-  flex-direction: column;
-  gap: 16rpx;
-}
-
-.lore-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16rpx;
-}
-
-.lore-key-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8rpx;
-  flex: 1;
-}
-
-.lore-tag {
-  font-size: 20rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.02);
-  padding: 4rpx 14rpx;
-  border-radius: 40rpx;
-}
-
-.lore-status-badge {
-  font-size: 18rpx;
-  font-weight: 600;
-  padding: 4rpx 12rpx;
-  border-radius: 8rpx;
-  background-color: rgba(230, 126, 34, 0.08);
-  color: #e67e22;
-  white-space: nowrap;
-}
-
-.lore-status-badge.constant {
-  background-color: rgba(46, 204, 113, 0.08);
-  color: #2ecc71;
-}
-
-.lore-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16rpx;
-}
-
-.lore-meta-item {
-  font-size: 18rpx;
-  font-weight: 500;
-  color: #8e8e93;
-  background-color: rgba(0, 0, 0, 0.01);
-  padding: 2rpx 10rpx;
-  border-radius: 6rpx;
-}
-
-.lore-content {
-  font-size: 24rpx;
-  color: #48484a;
-  line-height: 1.5;
-  background-color: rgba(0, 0, 0, 0.01);
-  padding: 16rpx 20rpx;
-  border-radius: 12rpx;
-  border: 1px solid rgba(0, 0, 0, 0.01);
-  word-break: break-all;
-}
 
 /* ===== 视图模式切换栏 ===== */
 .view-mode-toggle-row {
@@ -1351,20 +1010,4 @@ const formatDate = (dateString: string) => {
   border: 1px solid rgba(0, 122, 255, 0.05);
 }
 
-.section-body :deep(pre) {
-  background-color: #f2f2f7;
-  padding: 16rpx 20rpx;
-  border-radius: 12rpx;
-  font-family: monospace;
-  font-size: 24rpx;
-  color: #1c1c1e;
-  word-break: break-all;
-  white-space: pre-wrap;
-  margin: 10rpx 0;
-}
-
-.section-body.dialogue-example :deep(.md-dialogue) {
-  color: #007aff;
-  font-weight: 600;
-}
 </style>
