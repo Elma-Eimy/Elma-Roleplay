@@ -8,7 +8,7 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, Boolean,
+    Table, Column, Integer, String, Text, Float, Boolean,
     ForeignKey, DateTime, Enum as SAEnum
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -68,6 +68,11 @@ class Character(Base):
         "SessionPersona",
         back_populates="character",
         cascade="all, delete-orphan"
+    )
+    lorebooks = relationship(
+        "Lorebook",
+        secondary="character_lorebooks",
+        back_populates="characters"
     )
 
 
@@ -288,3 +293,43 @@ class ChatMessage(Base):
     # 关联
     session       = relationship("Session",     back_populates="messages")
     memory_chunks = relationship("MemoryChunk", back_populates="source_message")
+
+
+# ──────────────────────────────────────────────
+# 6. 世界书关联与条目表 (Lorebooks)
+# ──────────────────────────────────────────────
+
+# 隐式中间关联表
+character_lorebooks = Table(
+    "character_lorebooks",
+    Base.metadata,
+    Column("character_id", Integer, ForeignKey("characters.id", ondelete="CASCADE"), primary_key=True),
+    Column("lorebook_id", Integer, ForeignKey("lorebooks.id", ondelete="CASCADE"), primary_key=True)
+)
+
+
+class Lorebook(Base):
+    __tablename__ = "lorebooks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+
+    # 局部检索配置覆盖（为 Null 时回退到全局默认配置）
+    scan_depth = Column(Integer, nullable=True)
+    token_budget = Column(Integer, nullable=True)
+    recursive_scanning = Column(Boolean, nullable=True)
+
+    # 世界书条目列表，序列化存储为 JSON 字符串以降低表结构复杂度
+    # 结构: [{"keys": ["k1"], "content": "...", "enabled": true, "constant": false, ...}]
+    entries = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # 关联
+    characters = relationship(
+        "Character",
+        secondary=character_lorebooks,
+        back_populates="lorebooks"
+    )
