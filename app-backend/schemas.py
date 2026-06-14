@@ -75,3 +75,36 @@ class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = None
     speed: Optional[float] = 1.0
+
+
+# ──────────────────────────────────────────────
+# 世界书 (Lorebook) 相关 Schema 定义
+# ──────────────────────────────────────────────
+
+class LorebookEntry(BaseModel):
+    keys: list[str] = []
+    content: str
+    enabled: bool = True
+    constant: bool = False
+    case_sensitive: bool = False
+    selective: bool = False
+    secondary_keys: list[str] = []
+    position: str = "before_char"
+    insertion_order: int = 100
+
+class LorebookCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    scan_depth: Optional[int] = None
+    token_budget: Optional[int] = None
+    recursive_scanning: Optional[bool] = None
+    entries: list[LorebookEntry] = []
+
+class LorebookUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    scan_depth: Optional[int] = None
+    token_budget: Optional[int] = None
+    recursive_scanning: Optional[bool] = None
+    entries: Optional[list[LorebookEntry]] = None
+

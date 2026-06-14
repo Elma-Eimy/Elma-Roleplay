@@ -9,7 +9,7 @@ from core import Base, engine
 from core.config import settings
 from core.auth import verify_api_key
 from core.utils import get_local_ips
-from routers import utils_router, characters_router, sessions_router, chat_router
+from routers import utils_router, characters_router, sessions_router, chat_router, lorebooks_router
 
 # 初始化并建表
 Base.metadata.create_all(bind=engine)
@@ -92,6 +92,7 @@ app.include_router(utils_router, dependencies=[Depends(verify_api_key)])  # 基�
 app.include_router(characters_router, prefix="/characters", tags=["characters"], dependencies=[Depends(verify_api_key)])  # 角色卡模块
 app.include_router(sessions_router, prefix="/sessions", tags=["sessions"], dependencies=[Depends(verify_api_key)])  # 会话管理模块
 app.include_router(chat_router, prefix="/chat", tags=["chat"], dependencies=[Depends(verify_api_key)])  # 对话通信模块
+app.include_router(lorebooks_router, prefix="/lorebooks", tags=["lorebooks"], dependencies=[Depends(verify_api_key)])  # 世界书模块
 
 @app.on_event("startup")
 async def show_startup_banner():
