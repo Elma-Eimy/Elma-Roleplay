@@ -14,7 +14,7 @@
 
           <view class="setting-item">
             <view class="setting-item-left">
-              <text class="item-icon-fallback">🔤</text>
+              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/settings_font.svg" mode="aspectFit" />
               <view class="setting-info">
                 <text class="setting-name">文字大小</text>
                 <text class="setting-desc">调整整个应用内的字体显示大小</text>
@@ -391,6 +391,19 @@
             </view>
           </view>
 
+          <view class="setting-item" @tap="goToLorebooks">
+            <view class="setting-item-left">
+              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/modal_book_gray.svg" mode="aspectFit" />
+              <view class="setting-info">
+                <text class="setting-name">独立世界书库</text>
+                <text class="setting-desc">导入、编辑并管理公共世界书设定集</text>
+              </view>
+            </view>
+            <view class="setting-action">
+              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
+            </view>
+          </view>
+
           <view class="setting-item" @tap="handleResetDatabase">
             <view class="setting-item-left">
               <image class="item-icon danger-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
@@ -616,6 +629,12 @@ const handleResetDatabase = () => {
         }
       }
     }
+  });
+};
+
+const goToLorebooks = () => {
+  uni.navigateTo({
+    url: "/pages/settings/lorebooks/index"
   });
 };
 </script>
