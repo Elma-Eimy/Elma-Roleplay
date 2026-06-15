@@ -62,6 +62,7 @@ export interface CreateSessionParams {
   parent_session_id?: number | null;
   title: string;
   greeting_index?: number;
+  start_message_id?: number | null;
 }
 
 export interface CreateSessionResponse {
@@ -186,8 +187,32 @@ export async function createSession(
         });
       }
     } else {
-      // 衍生分支从新会话层级的空消息开始（父级会话的消息历史将通过递归回溯加载）
+      // 衍生分支：复制触发分支的开头消息
       db.messages[newSessionId] = [];
+      const parentSessionId = params.parent_session_id;
+      if (parentSessionId) {
+        let startMsg = null;
+        if (params.start_message_id) {
+          const parentMsgs = db.messages[parentSessionId] || [];
+          startMsg = parentMsgs.find(m => m.id === params.start_message_id);
+        } else {
+          const parentMsgs = db.messages[parentSessionId] || [];
+          if (parentMsgs.length > 0) {
+            startMsg = parentMsgs[parentMsgs.length - 1];
+          }
+        }
+        if (startMsg) {
+          db.messages[newSessionId].push({
+            id: Date.now() + 3,
+            role: startMsg.role,
+            content: startMsg.content,
+            emotion_tag: startMsg.emotion_tag || "Calm",
+            affection_change: startMsg.affection_change || 0,
+            audio_path: startMsg.audio_path || null,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
     }
 
     setMockDB(db);
