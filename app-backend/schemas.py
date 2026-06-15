@@ -20,6 +20,7 @@ class SessionCreate(BaseModel):
     parent_session_id: Optional[int] = None
     title: str = "New Story"
     greeting_index: Optional[int] = None
+    start_message_id: Optional[int] = None
 
 class SessionTitleUpdate(BaseModel):
     title: str
