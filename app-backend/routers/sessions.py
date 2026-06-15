@@ -160,6 +160,40 @@ def create_session(request: SessionCreate, db: Session = Depends(get_db)):
                 is_active=True,
             )
             db.add(first_message)
+    else:
+        # ── 继承/分支模式 ──
+        # 根据传参或退避逻辑，复制首条触发分支的消息
+        start_message = None
+        if request.start_message_id:
+            start_message = db.query(models.ChatMessage).filter(
+                models.ChatMessage.id == request.start_message_id,
+                models.ChatMessage.session_id == request.parent_session_id
+            ).first()
+        
+        if not start_message:
+            # 退避策略：获取父会话最后一条激活的聊天消息
+            start_message = (
+                db.query(models.ChatMessage)
+                .filter(
+                    models.ChatMessage.session_id == request.parent_session_id,
+                    models.ChatMessage.is_active == True
+                )
+                .order_by(models.ChatMessage.id.desc())
+                .first()
+            )
+
+        if start_message:
+            first_message = models.ChatMessage(
+                session_id=session.id,
+                role=start_message.role,
+                content=start_message.content,
+                emotion_tag=start_message.emotion_tag,
+                affection_change=start_message.affection_change,
+                audio_path=start_message.audio_path,
+                parent_id=None,
+                is_active=True,
+            )
+            db.add(first_message)
 
     db.commit()
     db.refresh(session)

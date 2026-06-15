@@ -111,6 +111,14 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 db=db,
             )
 
+            # 检索知识图谱（Graph RAG）
+            from services.graph_service import retrieve_graph_context
+            graph_knowledge = retrieve_graph_context(
+                persona_id=persona.id,
+                query_text=rag_query,
+                db=db
+            )
+
             # 获取最近对话历史
             recent_records = get_session_history_with_inheritance(
                 session.id, db, settings.APP_CONTEXT_HISTORY_LIMIT
@@ -127,9 +135,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 if r.id != user_msg.id and r.role.value in ("user", "assistant")
             ]
 
-            return session, persona, character, user_msg, memories, recent_history
+            return session, persona, character, user_msg, memories, graph_knowledge, recent_history
 
-        session, persona, character, user_msg, memories, recent_history = await run_in_threadpool(prepare_context)
+        session, persona, character, user_msg, memories, graph_knowledge, recent_history = await run_in_threadpool(prepare_context)
 
         # ── Step 5: 生成 AI 回复 (全异步网络 IO 请求) ──
         response_data = await chat_engine.generate_reply(
@@ -138,6 +146,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             recent_history=recent_history,
             user_message=user_msg.content if request.is_regenerate else request.user_message,
             retrieved_memories=memories,
+            graph_knowledge=graph_knowledge,
             db=db,
             use_reasoning=request.use_reasoning,  # None 则走 config.yaml 默认配置
             user_nickname=request.user_nickname,
@@ -304,6 +313,14 @@ async def chat_stream(
                 db=db,
             )
 
+            # 检索知识图谱（Graph RAG）
+            from services.graph_service import retrieve_graph_context
+            graph_knowledge = retrieve_graph_context(
+                persona_id=persona.id,
+                query_text=rag_query,
+                db=db
+            )
+
             # 获取最近对话历史
             recent_records = get_session_history_with_inheritance(
                 session.id, db, settings.APP_CONTEXT_HISTORY_LIMIT
@@ -320,9 +337,9 @@ async def chat_stream(
                 if r.id != user_msg.id and r.role.value in ("user", "assistant")
             ]
 
-            return session, persona, character, user_msg, memories, recent_history
+            return session, persona, character, user_msg, memories, graph_knowledge, recent_history
 
-        session, persona, character, user_msg, memories, recent_history = await run_in_threadpool(prepare_context)
+        session, persona, character, user_msg, memories, graph_knowledge, recent_history = await run_in_threadpool(prepare_context)
 
         try:
             stream, model = await chat_engine.generate_reply_stream(
@@ -332,6 +349,7 @@ async def chat_stream(
                 # Bug2补丁：再生模式下 request.user_message 是空串，应使用数据库中的实际内容
                 user_message=user_msg.content if request.is_regenerate else request.user_message,
                 retrieved_memories=memories,
+                graph_knowledge=graph_knowledge,
                 db=db,
                 use_reasoning=request.use_reasoning,
                 user_nickname=request.user_nickname,
