@@ -119,6 +119,49 @@
       :sessionId="currentSessionId"
       @close="isStatusPanelOpen = false"
       @delete-session="deleteCurrentSession"
+      @open-branch-tree="openBranchTree"
+    />
+
+    <!-- 平行时空分支树全屏遮罩面板 -->
+    <view v-if="isBranchTreeOpen" class="tree-overlay-backdrop">
+      <view class="tree-overlay-panel">
+        <!-- 导航栏头部 -->
+        <view class="custom-header border-bottom">
+          <view class="header-btn left-btn" @tap="isBranchTreeOpen = false">
+            <image class="back-icon" style="width: 44rpx; height: 44rpx;" src="/static/icons/drawer_close.svg" mode="aspectFit" />
+          </view>
+          <view class="header-center">
+            <text class="character-name">时空分支树</text>
+          </view>
+          <view class="header-btn right-btn" style="opacity: 0; pointer-events: none;">
+            <view style="width: 40rpx; height: 40rpx;"></view>
+          </view>
+        </view>
+
+        <!-- 树渲染区域 -->
+        <scroll-view scroll-y class="tree-scroll-area">
+          <view class="tree-padding">
+            <view v-if="isBranchTreeLoading" class="tree-loading">
+              <text class="loading-text">正在加载平行时空...</text>
+            </view>
+            <BranchTreeView 
+              v-else
+              :sessions="sessionsList" 
+              @tap-node="switchSession"
+              @longpress-node="handleTreeNodeLongpress"
+              @branch-node="handleTreeNodeBranch"
+            />
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <!-- 新建分支故事对话框 -->
+    <NewSessionModal
+      :isOpen="isNewBranchModalOpen"
+      :character="personaStore.activeCharacter"
+      @close="isNewBranchModalOpen = false"
+      @confirm="startNewBranch"
     />
   </view>
 </template>
@@ -128,8 +171,16 @@ import { ref, computed, watch } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
-import { createSession, deleteSession } from "@/api/sessions";
+import { 
+  createSession, 
+  deleteSession, 
+  getSessions, 
+  updateSessionTitle, 
+  getSessionHistory 
+} from "@/api/sessions";
 import { ChatBubble, ChatDrawer } from "@/components/chat";
+import BranchTreeView from "@/components/chat/BranchTreeView.vue";
+import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatScroll } from "@/composables/useChatScroll";
@@ -171,6 +222,155 @@ const inputWrapperStyle = computed(() => {
 // 消息编辑状态
 const editingMessageId = ref<number | null>(null);
 const editMessageContent = ref("");
+
+// 平行宇宙时空树的状态变量
+const isBranchTreeOpen = ref(false);
+const isBranchTreeLoading = ref(false);
+const sessionsList = ref<any[]>([]);
+const isNewBranchModalOpen = ref(false);
+const activeParentSessionId = ref<number | null>(null);
+
+const loadSessionsList = async () => {
+  if (!personaStore.activeCharacter) return;
+  isBranchTreeLoading.value = true;
+  try {
+    const res = await getSessions(personaStore.activeCharacter.id);
+    const sortedSessions = res.sessions;
+    const decorated = await Promise.all(
+      sortedSessions.map(async (s) => {
+        try {
+          const hRes = await getSessionHistory(s.id, 1);
+          if (hRes.messages.length > 0) {
+            const lastMsgObj = hRes.messages[hRes.messages.length - 1];
+            const lastMsg = lastMsgObj.content || "";
+            const cleanMsg = lastMsg ? lastMsg.replace(/\s+/g, ' ').trim() : "";
+            return {
+              ...s,
+              lastMessage: cleanMsg,
+              lastMessageTime: lastMsgObj.created_at || s.updated_at
+            };
+          }
+        } catch (e) {}
+        return { ...s, lastMessage: "", lastMessageTime: s.updated_at };
+      })
+    );
+    // 按最后的消息发送时间降序排序
+    decorated.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
+    sessionsList.value = decorated;
+  } catch (e) {
+    console.error("Failed to load sessions for character", e);
+  } finally {
+    isBranchTreeLoading.value = false;
+  }
+};
+
+const openBranchTree = async () => {
+  isStatusPanelOpen.value = false;
+  isBranchTreeOpen.value = true;
+  await loadSessionsList();
+};
+
+const switchSession = async (session: any) => {
+  isBranchTreeOpen.value = false;
+  currentSessionId.value = session.id;
+  isInitLoading.value = true;
+  scrollWithAnimation.value = false;
+  
+  await Promise.all([
+    personaStore.loadSessionDetail(session.id),
+    chatStore.loadHistory(session.id)
+  ]);
+  
+  setTimeout(() => {
+    scrollToBottom();
+    setTimeout(() => {
+      scrollWithAnimation.value = true;
+    }, 100);
+  }, 100);
+  isInitLoading.value = false;
+};
+
+const handleTreeNodeBranch = (session: any) => {
+  activeParentSessionId.value = session.id;
+  isNewBranchModalOpen.value = true;
+};
+
+const startNewBranch = async (payload: { title: string; greeting_index: number | null }) => {
+  if (!personaStore.activeCharacter) return;
+  try {
+    uni.showLoading({ title: '正在开启故事...' });
+    const res = await createSession({
+      character_id: personaStore.activeCharacter.id,
+      parent_session_id: activeParentSessionId.value,
+      title: payload.title,
+      greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
+    });
+    uni.hideLoading();
+    isNewBranchModalOpen.value = false;
+    // 闪切到新创建的平行宇宙会话
+    await switchSession({ id: res.session_id });
+    uni.showToast({ title: '已跳转至新平行宇宙', icon: 'success' });
+  } catch (e) {
+    uni.hideLoading();
+    uni.showToast({ title: '开启新平行故事失败', icon: 'none' });
+  }
+};
+
+const handleTreeNodeLongpress = (session: any) => {
+  uni.vibrateShort({ success: () => {} });
+  uni.showActionSheet({
+    itemList: ['重命名分支', '删除分支'],
+    success: async (actionRes) => {
+      if (actionRes.tapIndex === 0) {
+        // 重命名
+        uni.showModal({
+          title: '重命名分支',
+          editable: true,
+          placeholderText: '请输入新标题',
+          content: session.title,
+          success: async (modalRes) => {
+            if (modalRes.confirm && modalRes.content?.trim()) {
+              try {
+                await updateSessionTitle(session.id, modalRes.content.trim());
+                await loadSessionsList();
+                uni.showToast({ title: '重命名成功', icon: 'success' });
+              } catch (e) {
+                uni.showToast({ title: '重命名失败', icon: 'none' });
+              }
+            }
+          }
+        });
+      } else if (actionRes.tapIndex === 1) {
+        // 删除
+        uni.showModal({
+          title: '删除宇宙分支',
+          content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
+          confirmColor: '#ff3b30',
+          cancelColor: '#8e8e93',
+          success: async (modalRes) => {
+            if (modalRes.confirm) {
+              try {
+                await deleteSession(session.id);
+                // 如果删除的是当前会话，需要退回到会话列表首页
+                if (session.id === currentSessionId.value) {
+                  uni.showToast({ title: '当前会话已删除', icon: 'none' });
+                  setTimeout(() => {
+                    uni.switchTab({ url: "/pages/index/index" });
+                  }, 1500);
+                } else {
+                  await loadSessionsList();
+                  uni.showToast({ title: '删除成功', icon: 'success' });
+                }
+              } catch (e: any) {
+                uni.showToast({ title: e.message || '删除失败', icon: 'none' });
+              }
+            }
+          }
+        });
+      }
+    }
+  });
+};
 
 // 监听输入框焦点以触底滚动
 watch(isInputFocused, (focused) => {
@@ -276,9 +476,10 @@ const onMessageLongPress = (msg: any) => {
               try {
                 uni.showLoading({ title: '正在创建分支...' });
                 const branchRes = await createSession({
-                   character_id: personaStore.activeCharacter!.id,
-                   parent_session_id: currentSessionId.value,
-                   title: `${personaStore.activeCharacter!.name} (分支故事)`
+                  character_id: personaStore.activeCharacter!.id,
+                  parent_session_id: currentSessionId.value,
+                  title: `${personaStore.activeCharacter!.name} (分支故事)`,
+                  start_message_id: msg.id
                 });
                 uni.hideLoading();
                 uni.showToast({ title: '分支创建成功', icon: 'success' });
@@ -826,6 +1027,65 @@ const onLoadMore = async () => {
   background-color: rgba(0, 0, 0, 0.5) !important;
 }
 
+
+/* ===== 平行时空分支树全屏遮罩面板样式 ===== */
+.tree-overlay-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tree-overlay-panel {
+  width: 100%;
+  height: 100%;
+  background-color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.border-bottom {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.tree-scroll-area {
+  flex: 1;
+  width: 100%;
+  height: 0;
+  background-color: #fafafa;
+}
+
+.tree-padding {
+  padding: 36rpx;
+  padding-bottom: calc(36rpx + env(safe-area-inset-bottom, 24rpx));
+}
+
+.tree-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 80rpx 0;
+}
+
+.loading-text {
+  font-size: 26rpx;
+  color: #8e8e93;
+}
 
 </style>
 
