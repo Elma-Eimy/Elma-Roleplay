@@ -87,38 +87,50 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     db.commit()
 
     # Step 3: 调用 LLM 提纯（升级版 Prompt，要求返回结构化数据）
-    system_prompt = """你是一个专业的"记忆整理员"。你的任务是从下面这段用户与AI角色的对话中，提取出值得长期记住的信息。
+    # Step 3: 调用 LLM 提纯（升级版 Prompt，要求返回结构化数据，包括知识图谱的实体与关系）
+    system_prompt = """你是一个专业的"记忆与知识整理员"。你的任务是从下面这段用户与AI角色的对话中，提取出值得长期记住的信息以及相关的知识图谱（实体与关系）。
 
-请过滤掉无意义的闲聊（如"早安"、"哈哈哈"等），只保留有价值的记忆。
+请过滤掉无意义的闲聊，只保留有价值的内容。
 
-对于每条提取出的记忆，你需要判断：
-1. memory_type：记忆类型，必须是以下四种之一：
-   - "event"：发生了什么事件
-   - "emotion"：角色的情绪体验
-   - "relationship"：与用户关系的变化
-   - "fact"：世界观或客观事实
-2. importance_score：重要性评分，0.0 到 1.0 之间的浮点数
-   - 0.0~0.3：琐碎信息
-   - 0.4~0.6：一般重要
-   - 0.7~1.0：非常重要（关键承诺、重大事件、核心设定）
+你需要提取出三部分内容：
+1. memories：长期记忆片段列表。每个记忆包含：
+   - content：记忆的自然语言描述（例如："用户最喜欢的食物是草莓蛋糕"）
+   - memory_type：必须是 "event" (事件), "emotion" (角色情绪), "relationship" (关系变化), "fact" (客观事实/设定) 之一
+   - importance_score：0.0 到 1.0 之间的重要性评分
+2. entities：对话中出现的重要实体/概念列表。每个实体包含：
+   - name：实体或人名（例如："小红"、"草莓蛋糕"、"东京"）
+   - entity_type：必须是 "person" (人物), "place" (地点), "object" (物品), "event" (事件), "concept" (概念/其它) 之一
+   - description：对该实体的简要描述、状态或喜好（第一人称视角，例如："用户的妹妹，非常喜欢吃草莓蛋糕。"）
+3. relations：实体之间的关系列表。每个关系包含：
+   - source：源实体名称（例如："用户" 或 "小红"）
+   - target：目标实体名称（例如："小红" 或 "草莓蛋糕"）
+   - relation_type：关系词/连接词（必须是简短英文单词或词组，例如："sibling", "likes", "visited", "friend" 等）
+   - description：该关系的第一人称自然语言描述（例如："用户和小红是亲兄妹" 或 "小红非常喜欢草莓蛋糕"）
+   - importance：0.0 到 1.0 之间的重要性评分
 
-你必须以 JSON 数组格式返回，每个元素包含 content、memory_type、importance_score 三个字段。
-例如：
-[
-  {"content": "用户最喜欢的食物是草莓蛋糕", "memory_type": "fact", "importance_score": 0.7},
-  {"content": "角色因为用户的夸奖感到非常开心", "memory_type": "emotion", "importance_score": 0.5},
-  {"content": "用户答应明天带角色去游乐园", "memory_type": "event", "importance_score": 0.8}
-]
+你必须以一个 JSON 对象格式返回，结构如下：
+{
+  "memories": [
+    {"content": "用户最喜欢的食物是草莓蛋糕", "memory_type": "fact", "importance_score": 0.7}
+  ],
+  "entities": [
+    {"name": "小红", "entity_type": "person", "description": "用户的妹妹，非常喜欢吃草莓蛋糕"}
+  ],
+  "relations": [
+    {"source": "用户", "relation_type": "sibling", "target": "小红", "description": "用户和小红是亲兄妹", "importance": 0.8},
+    {"source": "小红", "relation_type": "likes", "target": "草莓蛋糕", "description": "小红非常喜欢草莓蛋糕", "importance": 0.7}
+  ]
+}
 
-如果没有找到任何重要信息，请返回空数组 []。
-不要输出任何 markdown 格式（如 ```json），直接返回纯 JSON 数组。"""
+如果没有提取到任何内容，对应字段返回空数组 []。
+不要输出任何 markdown 格式（如 ```json），直接返回纯 JSON 对象。"""
 
     try:
         response = llm_client.chat.completions.create(
             model=settings.LLM_MEMORY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请提取以下对话中的重要记忆：\n{chat_text}"},
+                {"role": "user", "content": f"请提取以下对话中的重要记忆与图谱三元组：\n{chat_text}"},
             ],
             temperature=settings.LLM_MEMORY_TEMPERATURE,
         )
@@ -134,19 +146,28 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         content = content.strip()
 
         try:
-            extracted_memories = json.loads(content)
+            raw_data = json.loads(content)
         except json.JSONDecodeError as e:
             print(f"[ERROR] LLM 返回的 JSON 格式非法: {content}")
             return 0
 
-        if isinstance(extracted_memories, dict) and "memories" in extracted_memories:
-            extracted_memories = extracted_memories["memories"]
+        # 初始化提取出来的图数据与记忆数据
+        extracted_entities = []
+        extracted_relations = []
+
+        if isinstance(raw_data, dict):
+            extracted_memories = raw_data.get("memories", [])
+            extracted_entities = raw_data.get("entities", [])
+            extracted_relations = raw_data.get("relations", [])
+        else:
+            # 兼容旧版本的纯 array 返回
+            extracted_memories = raw_data
 
         if not isinstance(extracted_memories, list):
             print("[WARN] LLM 未返回列表结构，提纯中止，等待下次重试。")
             return 0 # 不更新 last_summarized_msg_id
 
-        if len(extracted_memories) == 0:
+        if len(extracted_memories) == 0 and len(extracted_entities) == 0:
             # 重新获取 Persona，开启新事务更新进度指针
             persona = db.get(SessionPersona, persona_id)
             if persona:
@@ -193,14 +214,6 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
             "importance_score": mem_score,
         })
 
-    if not parsed_memories:
-        # 所有条目都被过滤掉了，更新指针（不需要重试）
-        persona = db.get(SessionPersona, persona_id)
-        if persona:
-            persona.last_summarized_msg_id = last_msg_id
-            db.commit()
-        return 0
-
     # Step 5: 原子批量写入（全部成功 or 全部回滚）
     chroma_ids_written = []
     max_importance = 0.0
@@ -212,6 +225,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         return 0
 
     try:
+        # 批量写入传统向量记忆片段
         for pm in parsed_memories:
             chunk = add_memory_chunk(
                 persona_id=persona_id,
@@ -227,6 +241,16 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
             chroma_ids_written.append(chunk.chroma_doc_id)
             if pm["importance_score"] > max_importance:
                 max_importance = pm["importance_score"]
+
+        # 批量写入图谱实体与关系
+        if extracted_entities or extracted_relations:
+            from services.graph_service import upsert_graph_data
+            upsert_graph_data(
+                persona_id=persona_id,
+                entities=extracted_entities,
+                relations=extracted_relations,
+                db=db
+            )
 
         # 所有记忆写入成功，更新进度指针
         persona.last_summarized_msg_id = last_msg_id

@@ -468,6 +468,7 @@ async def _build_chat_messages(
     recent_history: list,
     user_message: str,
     retrieved_memories: Optional[list] = None,
+    graph_knowledge: Optional[str] = None,
     db=None,
     user_nickname: str = "用户",
 ) -> list:
@@ -579,6 +580,11 @@ async def _build_chat_messages(
         retrieved_mem = replace_placeholders(retrieved_mem, char_name, user_name)
         dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
 
+    # 4.4.5 召回精确图谱关系 (Graph RAG)
+    if graph_knowledge:
+        graph_knowledge = replace_placeholders(graph_knowledge, char_name, user_name)
+        dynamic_context_blocks.append(f"<factual_relationships>\n{graph_knowledge}\n</factual_relationships>")
+
     # 4.5 拼装增强的 User 消息内容
     enhanced_user_content = ""
     if dynamic_context_blocks:
@@ -606,6 +612,7 @@ async def generate_reply(
     recent_history: list,
     user_message: str,
     retrieved_memories: Optional[list] = None,
+    graph_knowledge: Optional[str] = None,
     db = None,
     use_reasoning: Optional[bool] = None,
     user_nickname: str = "用户",
@@ -626,6 +633,7 @@ async def generate_reply(
         recent_history=recent_history,
         user_message=user_message,
         retrieved_memories=retrieved_memories,
+        graph_knowledge=graph_knowledge,
         db=db,
         user_nickname=user_nickname,
     )
@@ -709,6 +717,7 @@ async def generate_reply_stream(
     recent_history: list,
     user_message: str,
     retrieved_memories: Optional[list] = None,
+    graph_knowledge: Optional[str] = None,
     db = None,
     use_reasoning: Optional[bool] = None,
     user_nickname: str = "用户",
@@ -729,6 +738,7 @@ async def generate_reply_stream(
         recent_history=recent_history,
         user_message=user_message,
         retrieved_memories=retrieved_memories,
+        graph_knowledge=graph_knowledge,
         db=db,
         user_nickname=user_nickname,
     )
