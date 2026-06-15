@@ -261,6 +261,52 @@ class MemoryChunk(Base):
 
 
 # ──────────────────────────────────────────────
+# 4.5 知识图谱表 (Graph RAG)
+# ──────────────────────────────────────────────
+
+class GraphEntity(Base):
+    __tablename__ = "graph_entities"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    persona_id = Column(
+        Integer,
+        ForeignKey("session_personas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    name        = Column(String(100), nullable=False, index=True)
+    entity_type = Column(String(50), nullable=False)  # "person", "place", "object", "event", "concept"
+    description = Column(Text, nullable=True)
+    created_at  = Column(DateTime, default=func.now())
+
+
+class GraphRelation(Base):
+    __tablename__ = "graph_relations"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    persona_id = Column(
+        Integer,
+        ForeignKey("session_personas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    source_id = Column(
+        Integer,
+        ForeignKey("graph_entities.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    target_id = Column(
+        Integer,
+        ForeignKey("graph_entities.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    relation_type = Column(String(50), nullable=False)
+    description   = Column(Text, nullable=True)
+    importance    = Column(Float, default=0.5)
+    created_at    = Column(DateTime, default=func.now())
+
+
+# ──────────────────────────────────────────────
 # 5. 消息表 (ChatMessage)
 #    每条聊天记录，是生成 MemoryChunk 的原材料。
 # ──────────────────────────────────────────────
