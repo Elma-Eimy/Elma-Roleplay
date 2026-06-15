@@ -250,6 +250,15 @@
           </view>
         </view>
 
+        <!-- ④-2 平行时空分支树 -->
+        <view class="panel-section">
+          <text class="section-title">平行宇宙</text>
+          <view class="action-btn outline" @tap="emit('open-branch-tree')">
+            <image class="btn-icon" src="/static/icons/char_branch.svg" mode="aspectFit" />
+            <text class="btn-text">查看分支时空树</text>
+          </view>
+        </view>
+
         <!-- ⑤ 记忆管理手动操作区 -->
         <view class="panel-section">
           <text class="section-title">记忆管理</text>
@@ -292,6 +301,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "delete-session"): void;
+  (e: "open-branch-tree"): void;
 }>();
 
 const chatStore = useChatStore();
