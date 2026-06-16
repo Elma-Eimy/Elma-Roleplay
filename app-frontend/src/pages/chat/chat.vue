@@ -2,6 +2,11 @@
   <view class="page-container" :class="{ 'is-android': isAndroid }">
     <!-- 动态磨砂玻璃背景图层 -->
     <view class="chat-bg" :style="backgroundStyle"></view>
+
+    <!-- App 端流式传输通信桥梁 (仅 APP-PLUS 环境下有效) -->
+    <!-- #ifdef APP-PLUS -->
+    <view :prop="chatStore.activeStreamRequest" :change:prop="stream.onStreamRequestChange" style="display: none;"></view>
+    <!-- #endif -->
     <!-- 自定义导航栏头部 -->
     <view class="custom-header">
       <!-- 返回按钮 -->
@@ -120,6 +125,14 @@
       @close="isStatusPanelOpen = false"
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
+      @open-memory-view="isMemoryPanelOpen = true"
+    />
+
+    <!-- 向量记忆管理弹窗 -->
+    <MemoryManagerModal
+      :isOpen="isMemoryPanelOpen"
+      :sessionId="currentSessionId"
+      @close="isMemoryPanelOpen = false"
     />
 
     <!-- 平行时空分支树全屏遮罩面板 -->
@@ -178,7 +191,7 @@ import {
   updateSessionTitle, 
   getSessionHistory 
 } from "@/api/sessions";
-import { ChatBubble, ChatDrawer } from "@/components/chat";
+import { ChatBubble, ChatDrawer, MemoryManagerModal } from "@/components/chat";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import { getAvatarUrl } from "@/api/characters";
@@ -188,6 +201,7 @@ import { useChatScroll } from "@/composables/useChatScroll";
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
+const stream = null as any; // 声明以供 TS/vue-tsc 识别 template 中的 renderjs module
 const { activeAudioMessageId } = useAudioPlayer();
 const {
   scrollTop,
@@ -206,6 +220,7 @@ const currentSessionId = ref<number | null>(null);
 const inputText = ref("");
 const isInputFocused = ref(false);
 const isStatusPanelOpen = ref(false);
+const isMemoryPanelOpen = ref(false);
 const isInitLoading = ref(true);
 const isHistoryLoading = ref(false);
 
@@ -591,6 +606,190 @@ const onLoadMore = async () => {
     }, 300);
   }
 };
+
+// App-Plus renderjs stream callbacks
+const handleStreamChunk = (data: { placeholderId: string; chunk: string }) => {
+  chatStore.appendStreamChunk(data.placeholderId, data.chunk);
+};
+
+const handleStreamDone = (data: { placeholderId: string; userMessageTempId?: string; meta: any }) => {
+  chatStore.finalizeStream(data.placeholderId, {
+    id: data.meta.assistant_message_id || Date.now(),
+    role: "assistant",
+    emotion_tag: data.meta.emotion_tag,
+    affection_change: data.meta.affection_change,
+    created_at: new Date().toISOString(),
+    model_used: data.meta.model_used,
+    parent_id: data.meta.user_message_id,
+    is_active: true,
+    candidates: data.meta.candidates,
+    active_index: data.meta.active_index,
+  });
+
+  if (data.userMessageTempId) {
+    const userIdx = chatStore.messages.findIndex((m) => m.tempId === data.userMessageTempId);
+    if (userIdx !== -1) {
+      chatStore.messages[userIdx].status = "done";
+      if (data.meta.user_message_id) {
+        chatStore.messages[userIdx].id = data.meta.user_message_id;
+      }
+    }
+  }
+
+  // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
+  personaStore.applyAffectionChange(
+    data.meta.affection_change,
+    data.meta.affection_score,
+    data.meta.emotion_tag
+  );
+
+  chatStore.isLoading = false;
+  chatStore.activeStreamRequest = null;
+};
+
+const handleStreamError = (data: { placeholderId: string; userMessageTempId?: string; error: string }) => {
+  chatStore.messages = chatStore.messages.filter((m) => m.tempId !== data.placeholderId);
+  if (data.userMessageTempId) {
+    const userIdx = chatStore.messages.findIndex((m) => m.tempId === data.userMessageTempId);
+    if (userIdx !== -1) {
+      chatStore.messages[userIdx].status = "error";
+    }
+  }
+  chatStore.setError(data.error || "Failed to get AI response");
+  chatStore.isLoading = false;
+  chatStore.activeStreamRequest = null;
+};
+
+defineExpose({
+  handleStreamChunk,
+  handleStreamDone,
+  handleStreamError,
+});
+</script>
+
+<script module="stream" lang="renderjs">
+export default {
+  data() {
+    return {
+      abortController: null as any
+    };
+  },
+  beforeDestroy() {
+    this.abortActiveStream();
+  },
+  beforeUnmount() {
+    this.abortActiveStream();
+  },
+  methods: {
+    abortActiveStream() {
+      if (this.abortController) {
+        try {
+          this.abortController.abort();
+        } catch (e) {}
+        this.abortController = null;
+      }
+    },
+    onStreamRequestChange(newValue: any, oldValue: any, ownerInstance: any, instance: any) {
+      if (!newValue) {
+        this.abortActiveStream();
+        return;
+      }
+      this.startStream(newValue, ownerInstance);
+    },
+    async startStream(request: any, ownerInstance: any) {
+      this.abortActiveStream();
+      
+      this.abortController = new AbortController();
+      const { signal } = this.abortController;
+      
+      const { baseUrl, apiKey, params, placeholderId, userMessageTempId } = request;
+      
+      try {
+        const response = await fetch(`${baseUrl}/chat/stream`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey
+          },
+          body: JSON.stringify(params),
+          signal: signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server returned status code ${response.status}`);
+        }
+
+        if (!response.body) {
+          throw new Error("ReadableStream is not supported or response body is empty");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          const chunkText = decoder.decode(value, { stream: true });
+          buffer += chunkText;
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.startsWith("data: ")) {
+              const raw = trimmedLine.slice(6).trim();
+              if (raw === "[DONE]") {
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                if (parsed.error !== undefined) {
+                  ownerInstance.callMethod("handleStreamError", {
+                    placeholderId,
+                    userMessageTempId,
+                    error: parsed.error
+                  });
+                } else if (parsed.chunk !== undefined) {
+                  ownerInstance.callMethod("handleStreamChunk", {
+                    placeholderId,
+                    chunk: parsed.chunk
+                  });
+                } else {
+                  ownerInstance.callMethod("handleStreamDone", {
+                    placeholderId,
+                    userMessageTempId,
+                    meta: parsed
+                  });
+                }
+              } catch (e) {
+                // Fallback for non-JSON content
+                ownerInstance.callMethod("handleStreamChunk", {
+                  placeholderId,
+                  chunk: raw
+                });
+              }
+            }
+          }
+        }
+        this.abortController = null;
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          return;
+        }
+        ownerInstance.callMethod("handleStreamError", {
+          placeholderId,
+          userMessageTempId,
+          error: err.message || String(err)
+        });
+      }
+    }
+  }
+}
 </script>
 
 <style scoped>
