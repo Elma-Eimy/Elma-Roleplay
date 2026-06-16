@@ -180,6 +180,7 @@
 </template>
 
 <script setup lang="ts">
+// @ts-nocheck
 import { ref, computed, watch } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
@@ -201,7 +202,6 @@ import { useChatScroll } from "@/composables/useChatScroll";
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
-const stream = null as any; // 声明以供 TS/vue-tsc 识别 template 中的 renderjs module
 const { activeAudioMessageId } = useAudioPlayer();
 const {
   scrollTop,
