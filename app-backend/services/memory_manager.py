@@ -445,6 +445,78 @@ def delete_persona_memories(
     return deleted_count
 
 
+def update_memory_chunk(
+    chunk_id: int,
+    content: str,
+    importance_score: float,
+    db: DBSession
+) -> MemoryChunk:
+    """
+    修改单条记忆（SQLite + ChromaDB 同步更新）。
+    """
+    chunk = db.get(MemoryChunk, chunk_id)
+    if not chunk:
+        raise ValueError("MemoryChunk not found")
+
+    chunk.content = content
+    chunk.importance_score = importance_score
+    db.flush()
+
+    # 同步更新 ChromaDB
+    if chunk.chroma_doc_id:
+        try:
+            character_id = chunk.persona.character_id
+            collection = get_character_collection(character_id)
+            
+            now = chunk.created_at or datetime.now(timezone.utc)
+            metadata = _build_chroma_metadata(
+                persona_id=chunk.persona_id,
+                memory_type=chunk.memory_type,
+                importance_score=importance_score,
+                origin_session_id=chunk.origin_session_id,
+                created_at=now,
+                source_message_id=chunk.source_message_id
+            )
+            
+            collection.update(
+                ids=[chunk.chroma_doc_id],
+                documents=[content],
+                metadatas=[metadata]
+            )
+        except Exception as e:
+            db.rollback()
+            print(f"[ERROR] update_memory_chunk ChromaDB 更新失败: {e}")
+            raise
+
+    db.commit()
+    db.refresh(chunk)
+    return chunk
+
+
+def delete_memory_chunk(
+    chunk_id: int,
+    db: DBSession
+):
+    """
+    删除单条记忆（SQLite + ChromaDB 同步删除）。
+    """
+    chunk = db.get(MemoryChunk, chunk_id)
+    if not chunk:
+        raise ValueError("MemoryChunk not found")
+
+    # 同步删除 ChromaDB
+    if chunk.chroma_doc_id:
+        try:
+            character_id = chunk.persona.character_id
+            collection = get_character_collection(character_id)
+            collection.delete(ids=[chunk.chroma_doc_id])
+        except Exception as e:
+            print(f"[WARN] delete_memory_chunk ChromaDB 删除失败: {e}")
+
+    db.delete(chunk)
+    db.commit()
+
+
 # ──────────────────────────────────────────────
 # 6. 外观接口 (Facade Pattern) 重新导出子服务函数以维持 100% 向后兼容性
 # ──────────────────────────────────────────────
