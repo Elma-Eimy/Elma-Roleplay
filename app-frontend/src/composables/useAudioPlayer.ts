@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { getBaseUrl, getSavedApiKey } from "@/api/config";
+import { generateTTS } from "@/api/chat";
 
 // 全局单例状态，确保整个应用生命周期中只有一个播放实例与播放状态
 const activeAudioMessageId = ref<number | null>(null);
@@ -64,7 +65,6 @@ export function useAudioPlayer() {
     if (!audioUrl) {
       uni.showLoading({ title: "正在合成语音..." });
       try {
-        const { generateTTS } = await import("@/api/chat");
         const res = await generateTTS(messageId, message.content);
         audioUrl = res.audio_url;
         message.audio_path = audioUrl; // 响应式更新消息对象的 audio_path
