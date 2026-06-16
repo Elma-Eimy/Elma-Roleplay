@@ -109,3 +109,18 @@ class LorebookUpdate(BaseModel):
     recursive_scanning: Optional[bool] = None
     entries: Optional[list[LorebookEntry]] = None
 
+
+# ──────────────────────────────────────────────
+# RAG 记忆相关 Schema 定义
+# ──────────────────────────────────────────────
+
+class MemoryCreateRequest(BaseModel):
+    content: str
+    importance_score: Optional[float] = 0.8
+    memory_type: Optional[str] = "fact"
+
+class MemoryUpdateRequest(BaseModel):
+    content: str
+    importance_score: float
+
+
