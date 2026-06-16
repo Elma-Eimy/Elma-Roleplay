@@ -4,7 +4,7 @@ from sqlalchemy.sql import func
 from core.database import get_db
 from core import models
 from core.models import MessageRole
-from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate
+from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
 import services.memory_manager as memory_manager
 from core.config import settings
 from core.locking import cleanup_session_lock
@@ -538,3 +538,128 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
         "affection_score": persona.affection_score if persona else None,
         "current_mood": persona.current_mood if persona else None
     }
+
+
+@router.get("/{session_id}/memories")
+def get_session_memories(
+    session_id: int,
+    q: str = Query(None, description="搜索关键词"),
+    limit: int = Query(20, ge=1, description="获取记忆卡片的条数限制"),
+    offset: int = Query(0, ge=0, description="获取记忆卡片的偏移量"),
+    db: Session = Depends(get_db)
+):
+    """获取指定会话可调用的全部向量记忆（支持分页与检索）"""
+    session = db.get(models.Session, session_id)
+    if not session or not session.persona:
+        raise HTTPException(status_code=404, detail="Session or Persona not found")
+
+    ancestor_ids = memory_manager.get_ancestor_persona_ids(session.persona.id, db)
+    query = db.query(models.MemoryChunk).filter(
+        models.MemoryChunk.persona_id.in_(ancestor_ids)
+    )
+    if q and q.strip():
+        query = query.filter(models.MemoryChunk.content.contains(q.strip()))
+
+    chunks = query.order_by(models.MemoryChunk.created_at.desc()).offset(offset).limit(limit).all()
+
+    return [
+        {
+            "id": c.id,
+            "content": c.content,
+            "memory_type": c.memory_type.value if c.memory_type else "fact",
+            "importance_score": c.importance_score,
+            "is_local": c.persona_id == session.persona.id,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "origin_session_id": c.origin_session_id
+        } for c in chunks
+    ]
+
+
+@router.post("/{session_id}/memories")
+def create_session_memory(session_id: int, request: MemoryCreateRequest, db: Session = Depends(get_db)):
+    """手动在指定会话下添加一条事实记忆（写入 SQLite 和 ChromaDB）"""
+    session = db.get(models.Session, session_id)
+    if not session or not session.persona:
+        raise HTTPException(status_code=404, detail="Session or Persona not found")
+
+    try:
+        m_type = models.MemoryType(request.memory_type)
+    except ValueError:
+        m_type = models.MemoryType.fact
+
+    chunk = memory_manager.add_memory_chunk(
+        persona_id=session.persona.id,
+        character_id=session.persona.character_id,
+        content=request.content,
+        memory_type=m_type,
+        importance_score=request.importance_score or 0.8,
+        origin_session_id=session_id,
+        source_message_id=None,
+        db=db
+    )
+
+    return {
+        "message": "Memory added successfully",
+        "memory": {
+            "id": chunk.id,
+            "content": chunk.content,
+            "memory_type": chunk.memory_type.value,
+            "importance_score": chunk.importance_score,
+            "is_local": True,
+            "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
+            "origin_session_id": chunk.origin_session_id
+        }
+    }
+
+
+@router.put("/{session_id}/memories/{memory_id}")
+def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdateRequest, db: Session = Depends(get_db)):
+    """更新某条属于当前会话的本地记忆（继承的只读记忆不允许在此更新）"""
+    session = db.get(models.Session, session_id)
+    if not session or not session.persona:
+        raise HTTPException(status_code=404, detail="Session or Persona not found")
+
+    chunk = db.get(models.MemoryChunk, memory_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    # 权限检查：只允许更新当前会话关联的本地记忆
+    if chunk.persona_id != session.persona.id:
+        raise HTTPException(status_code=403, detail="Cannot edit inherited memories")
+
+    try:
+        updated_chunk = memory_manager.update_memory_chunk(
+            chunk_id=memory_id,
+            content=request.content,
+            importance_score=request.importance_score,
+            db=db
+        )
+        return {
+            "message": "Memory updated successfully",
+            "memory": {
+                "id": updated_chunk.id,
+                "content": updated_chunk.content,
+                "importance_score": updated_chunk.importance_score
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/{session_id}/memories/{memory_id}")
+def delete_session_memory(session_id: int, memory_id: int, db: Session = Depends(get_db)):
+    """删除属于当前会话的某条本地记忆（继承的只读记忆不允许在此删除）"""
+    session = db.get(models.Session, session_id)
+    if not session or not session.persona:
+        raise HTTPException(status_code=404, detail="Session or Persona not found")
+
+    chunk = db.get(models.MemoryChunk, memory_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    # 权限检查：只允许删除当前会话关联的本地记忆
+    if chunk.persona_id != session.persona.id:
+        raise HTTPException(status_code=403, detail="Cannot delete inherited memories")
+
+    memory_manager.delete_memory_chunk(memory_id, db)
+    return {"message": "Memory deleted successfully", "memory_id": memory_id}
