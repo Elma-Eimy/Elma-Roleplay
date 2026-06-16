@@ -1,736 +1,466 @@
-import { request, USE_MOCK, getMockDB, setMockDB } from "./config";
+import { request, getBaseUrl, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
 
 // ===================== 类型定义 =====================
 
-export interface PersonaSummary {
-  id: number;
+export interface ChatRequest {
+  session_id: number;
+  user_message: string;
+  use_reasoning?: boolean;
+  is_regenerate?: boolean;
+  user_nickname?: string;
+  temperature?: number;
+  top_p?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  repetition_penalty?: number;
+}
+
+export interface ChatResponse {
+  reply: string;
+  emotion_tag: string;
+  affection_change: number;
   affection_score: number;
-  current_mood: string;
-}
-
-export interface PersonaDetail {
-  id: number;
-  character_id: number;
-  affection_score: number;
-  cognition_state: string;
-  current_mood: string;
-  current_scenario_override: string | null;
-}
-
-export interface CharacterRef {
-  id: number;
-  name: string;
-  avatar_path: string;
-}
-
-export interface SessionSummary {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona: PersonaSummary;
-}
-
-export interface SessionDetail {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona: PersonaDetail;
-  character: CharacterRef;
-}
-
-export interface Message {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  emotion_tag: string | null;
-  affection_change: number | null;
-  created_at: string;
   model_used?: string;
-  parent_id?: number | null;
-  is_active?: boolean;
-  candidates?: Message[];
+  user_message_id?: number;
+  assistant_message_id?: number;
+  candidates?: any[];
   active_index?: number;
-  audio_path?: string | null;
-}
-
-export interface MemoryChunk {
-  id: number;
-  content: string;
-  memory_type: string;
-  importance_score: number;
-  is_local: boolean;
-  created_at: string | null;
-  origin_session_id?: number | null;
-}
-
-export interface CreateSessionParams {
-  character_id: number;
-  parent_session_id?: number | null;
-  title: string;
-  greeting_index?: number;
-  start_message_id?: number | null;
-}
-
-export interface CreateSessionResponse {
-  message: string;
-  session_id: number;
-  persona_id: number;
-  character_id: number;
-  inherited: boolean;
-  title: string;
-}
-
-export interface GetSessionsResponse {
-  character_id: number;
-  sessions: SessionSummary[];
-}
-
-export interface GetHistoryResponse {
-  session_id: number;
-  messages: Message[];
-}
-
-export interface UpdateTitleResponse {
-  message: string;
-  session_id: number;
-  title: string;
-}
-
-export interface DeleteSessionResponse {
-  message: string;
-  deleted_session_id: number;
-  relinked_children: number;
-  memories_deleted: number;
-}
-
-export interface TriggerSummaryResponse {
-  message: string;
-  session_id: number;
-  extracted_count: number;
-}
-
-export interface TriggerCognitionResponse {
-  message: string;
-  session_id: number;
-  cognition_state: string;
-}
-
-export interface UpdateMessageResponse {
-  message: string;
-  message_id: number;
-  content: string;
-}
-
-export interface DeleteMessageResponse {
-  message: string;
-  message_id: number;
 }
 
 // ===================== API 接口函数 =====================
 
 /**
- * 创建新会话（全新会话或继承自父会话的分支会话）。
- * POST /sessions/create
+ * 提交用户消息并接收 AI 角色的回复。
+ * POST /chat
+ *
+ * @param params - session_id 和 user_message
+ * @returns 包含 reply、emotion_tag、好感度变化/总分的 ChatResponse
  */
-export async function createSession(
-  params: CreateSessionParams
-): Promise<CreateSessionResponse> {
+export async function sendMessage(params: ChatRequest): Promise<ChatResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
-    const parentSession = params.parent_session_id 
-      ? db.sessions.find((s) => s.id === params.parent_session_id) 
-      : null;
+    if (!params.is_regenerate) {
+      const userMsg = {
+        id: Date.now(),
+        role: "user" as const,
+        content: params.user_message,
+        emotion_tag: null,
+        affection_change: null,
+        created_at: new Date().toISOString(),
+      };
       
-    const char = db.characters.find((c) => c.id === params.character_id);
-    const newSessionId = Date.now();
-    const personaId = Date.now() + 1;
-
-    const mockPersona: PersonaDetail = {
-      id: personaId,
-      character_id: params.character_id,
-      affection_score: parentSession ? parentSession.persona.affection_score : 10,
-      cognition_state: parentSession 
-        ? parentSession.persona.cognition_state 
-        : "Initial acquaintance. Character is ready to chat.",
-      current_mood: parentSession ? parentSession.persona.current_mood : "Calm",
-      current_scenario_override: parentSession ? parentSession.persona.current_scenario_override : null,
-    };
-
-    const newSession: SessionDetail = {
-      id: newSessionId,
-      title: params.title || (parentSession ? `${parentSession.title} (Branch)` : "New Story"),
-      parent_session_id: params.parent_session_id || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      persona: mockPersona,
-      character: {
-        id: params.character_id,
-        name: char ? char.name : "Unknown Character",
-        avatar_path: char ? char.avatar_path || "" : "",
-      },
-    };
-
-    db.sessions.push(newSession);
-
-    // 如果是全新的首个会话（无父级会话），插入角色的第一条问候消息。
-    if (!params.parent_session_id) {
-      db.messages[newSessionId] = [];
-      let firstContent = char ? char.first_mes : "";
-      if (params.greeting_index !== undefined && char && char.extensions?.alternate_greetings) {
-        const alt = char.extensions.alternate_greetings as string[];
-        if (params.greeting_index >= 0 && params.greeting_index < alt.length) {
-          firstContent = alt[params.greeting_index];
-        }
+      if (!db.messages[params.session_id]) {
+        db.messages[params.session_id] = [];
       }
-      if (firstContent) {
-        db.messages[newSessionId].push({
-          id: Date.now() + 2,
-          role: "assistant",
-          content: firstContent,
-          emotion_tag: "Calm",
-          affection_change: 0,
-          created_at: new Date().toISOString(),
-        });
-      }
-    } else {
-      // 衍生分支：复制触发分支的开头消息
-      db.messages[newSessionId] = [];
-      const parentSessionId = params.parent_session_id;
-      if (parentSessionId) {
-        let startMsg = null;
-        if (params.start_message_id) {
-          const parentMsgs = db.messages[parentSessionId] || [];
-          startMsg = parentMsgs.find(m => m.id === params.start_message_id);
-        } else {
-          const parentMsgs = db.messages[parentSessionId] || [];
-          if (parentMsgs.length > 0) {
-            startMsg = parentMsgs[parentMsgs.length - 1];
-          }
-        }
-        if (startMsg) {
-          db.messages[newSessionId].push({
-            id: Date.now() + 3,
-            role: startMsg.role,
-            content: startMsg.content,
-            emotion_tag: startMsg.emotion_tag || "Calm",
-            affection_change: startMsg.affection_change || 0,
-            audio_path: startMsg.audio_path || null,
-            created_at: new Date().toISOString(),
-          });
-        }
-      }
+      db.messages[params.session_id].push(userMsg);
     }
 
+    const session = db.sessions.find((s) => s.id === params.session_id);
+    const char = db.characters.find((c) => c.id === (session ? session.character_id : 1));
+    const characterName = char ? char.name : "AI";
+
+    const reply = `I received your message: "${params.user_message}". This is a mock response from ${characterName}.`;
+    const emotion_tag = "Calm";
+    const affection_change = 1;
+
+    if (session) {
+      session.persona.affection_score = Math.min(100, Math.max(0, session.persona.affection_score + affection_change));
+      session.persona.current_mood = emotion_tag;
+      session.updated_at = new Date().toISOString();
+    }
+
+    const aiMsg = {
+      id: Date.now() + 1,
+      role: "assistant" as const,
+      content: reply,
+      emotion_tag,
+      affection_change,
+      created_at: new Date().toISOString(),
+    };
+    db.messages[params.session_id].push(aiMsg);
+    
     setMockDB(db);
+
     return {
-      message: "Session created successfully (Mock)",
-      session_id: newSessionId,
-      persona_id: personaId,
-      character_id: params.character_id,
-      inherited: !!params.parent_session_id,
-      title: newSession.title,
+      reply,
+      emotion_tag,
+      affection_change,
+      affection_score: session ? session.persona.affection_score : 11,
     };
   }
 
-  return request<CreateSessionResponse>("/sessions/create", {
+  return request<ChatResponse>("/chat", {
     method: "POST",
     body: JSON.stringify(params),
   });
 }
 
+// ===================== SSE 流式传输（未来后端支持 / 当前客户端模拟） =====================
+
 /**
- * 列出指定角色的所有会话。
- * GET /sessions?character_id={characterId}
+ * /chat 的 SSE 流式版本 — 用于未来的后端流式传输支持。
+ * 将使用 EventSource / fetch 异步读取 ReadableStream 来流式获取来自服务端的 Token。
+ *
+ * @param params - session_id 和 user_message
+ * @param onChunk - 接收到每个流式文本分块时的回调函数
+ * @param onDone - 流式传输结束并带有最终元数据时的回调函数
+ * @param onError - 发生错误时的回调函数
  */
-export async function getSessions(characterId: number): Promise<GetSessionsResponse> {
+export async function sendMessageStream(
+  params: ChatRequest,
+  onChunk: (text: string) => void,
+  onDone: (meta: Omit<ChatResponse, "reply">) => void,
+  onError: (err: Error) => void
+): Promise<void> {
   if (USE_MOCK) {
-    const db = getMockDB();
-    const filtered = db.sessions.filter((s) => s.character_id === characterId);
-    return {
-      character_id: characterId,
-      sessions: filtered.map((s) => ({
-        id: s.id,
-        title: s.title,
-        parent_session_id: s.parent_session_id,
-        created_at: s.created_at,
-        updated_at: s.updated_at,
-        persona: {
-          id: s.persona.id,
-          affection_score: s.persona.affection_score,
-          current_mood: s.persona.current_mood,
-        },
-      })),
-    };
+    try {
+      const db = getMockDB();
+      if (!params.is_regenerate) {
+        const userMsg = {
+          id: Date.now(),
+          role: "user" as const,
+          content: params.user_message,
+          emotion_tag: null,
+          affection_change: null,
+          created_at: new Date().toISOString(),
+        };
+        
+        if (!db.messages[params.session_id]) {
+          db.messages[params.session_id] = [];
+        }
+        db.messages[params.session_id].push(userMsg);
+      }
+
+      const session = db.sessions.find((s) => s.id === params.session_id);
+      const char = db.characters.find((c) => c.id === (session ? session.character_id : 1));
+      const characterName = char ? char.name : "AI";
+
+      // 动态选择回复内容以模拟多样性
+      let responseText = "";
+      if (params.user_message.toLowerCase().includes("hello") || params.user_message.toLowerCase().includes("hi")) {
+        responseText = `Hi there! I'm ${characterName}. *Smiles warmly.* How is your day going?`;
+      } else if (params.user_message.toLowerCase().includes("code") || params.user_message.toLowerCase().includes("python")) {
+        responseText = `Sure! I can help you with coding. Here is a simple Python example:\n\n\`\`\`python\ndef greet():\n    print("Hello from ${characterName}!")\n\ngreet()\n\`\`\`\nLet me know what you want to build!`;
+      } else {
+        responseText = `Interesting choice of words. *Nods thoughtfully.* "${params.user_message}" makes me reflect on our conversation. Let's delve deeper into this.`;
+      }
+
+      // 使用定时器模拟流式文本输出
+      let index = 0;
+      const interval = setInterval(() => {
+        if (index < responseText.length) {
+          onChunk(responseText[index]);
+          index++;
+        } else {
+          clearInterval(interval);
+
+          const affection_change = 1;
+          const emotion_tag = "Happy";
+          
+          const dbFinal = getMockDB();
+          const sessionFinal = dbFinal.sessions.find((s) => s.id === params.session_id);
+          
+          if (sessionFinal) {
+            sessionFinal.persona.affection_score = Math.min(100, Math.max(0, sessionFinal.persona.affection_score + affection_change));
+            sessionFinal.persona.current_mood = emotion_tag;
+            sessionFinal.updated_at = new Date().toISOString();
+          }
+
+          const aiMsg = {
+            id: Date.now() + 1,
+            role: "assistant" as const,
+            content: responseText,
+            emotion_tag,
+            affection_change,
+            created_at: new Date().toISOString(),
+          };
+          
+          if (!dbFinal.messages[params.session_id]) {
+            dbFinal.messages[params.session_id] = [];
+          }
+          dbFinal.messages[params.session_id].push(aiMsg);
+          setMockDB(dbFinal);
+
+          const candidates_list = [];
+          if (params.is_regenerate) {
+            candidates_list.push({
+              id: aiMsg.id - 1000,
+              content: "这是先前的候选回复 (Mock)...",
+              emotion_tag: "Calm",
+              affection_change: 0,
+              created_at: new Date(Date.now() - 60000).toISOString()
+            });
+          }
+          candidates_list.push({
+            id: aiMsg.id,
+            content: aiMsg.content,
+            emotion_tag: aiMsg.emotion_tag,
+            affection_change: aiMsg.affection_change,
+            created_at: aiMsg.created_at
+          });
+
+          onDone({
+            emotion_tag,
+            affection_change,
+            affection_score: sessionFinal ? sessionFinal.persona.affection_score : 11,
+            model_used: params.use_reasoning ? "mock-reasoning-model (Mock)" : "mock-standard-model (Mock)",
+            candidates: candidates_list,
+            active_index: candidates_list.length - 1,
+            user_message_id: Date.now() - 1,
+            assistant_message_id: aiMsg.id
+          });
+        }
+      }, 30);
+    } catch (e) {
+      onError(e instanceof Error ? e : new Error(String(e)));
+    }
+    return;
   }
 
-  return request<GetSessionsResponse>(`/sessions?character_id=${characterId}`);
-}
-
-/**
- * 获取指定会话的详细信息（包含人设状态数据）。
- * GET /sessions/{session_id}
- */
-export async function getSession(sessionId: number): Promise<SessionDetail> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+  // Helper function to decode UTF-8 bytes to string cross-platform
+  const decodeUtf8 = (uint8: Uint8Array): string => {
+    if (typeof TextDecoder !== "undefined") {
+      return new TextDecoder("utf-8").decode(uint8);
     }
-    return session;
-  }
-
-  return request<SessionDetail>(`/sessions/${sessionId}`);
-}
-
-/**
- * 获取感知继承关系的、按时间先后排序的会话聊天历史记录。
- * GET /sessions/{session_id}/history?limit={limit}
- */
-export async function getSessionHistory(
-  sessionId: number,
-  limit = 50,
-  beforeId?: number
-): Promise<GetHistoryResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    // 开启分支故事（子会话）时，不再合并父会话的历史消息，只读取本会话产生的聊天记录
-    let msgs = db.messages[sessionId] || [];
-    if (beforeId !== undefined) {
-      msgs = msgs.filter((m) => m.id < beforeId);
+    try {
+      return decodeURIComponent(escape(String.fromCharCode.apply(null, Array.from(uint8))));
+    } catch (e) {
+      let str = "";
+      for (let i = 0; i < uint8.length; i++) {
+        str += String.fromCharCode(uint8[i]);
+      }
+      return str;
     }
-    return {
-      session_id: sessionId,
-      messages: msgs.slice(-limit),
-    };
-  }
+  };
 
-  const url = beforeId !== undefined
-    ? `/sessions/${sessionId}/history?limit=${limit}&before_id=${beforeId}`
-    : `/sessions/${sessionId}/history?limit=${limit}`;
-
-  return request<GetHistoryResponse>(url);
-}
-
-/**
- * 重命名会话的标题。
- * PUT /sessions/{session_id}/title
- */
-export async function updateSessionTitle(
-  sessionId: number,
-  title: string
-): Promise<UpdateTitleResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-    session.title = title;
-    session.updated_at = new Date().toISOString();
-    setMockDB(db);
-    return {
-      message: "Session title updated successfully (Mock)",
-      session_id: sessionId,
-      title: title,
-    };
-  }
-
-  return request<UpdateTitleResponse>(`/sessions/${sessionId}/title`, {
-    method: "PUT",
-    body: JSON.stringify({ title }),
-  });
-}
-
-/**
- * 删除会话并安全地重联其子分支会话。
- * DELETE /sessions/{session_id} -> 改为 POST /sessions/{session_id}/delete 避开移动端及网关 DELETE 限制
- */
-export async function deleteSession(
-  sessionId: number
-): Promise<DeleteSessionResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const targetSession = db.sessions.find((s) => s.id === sessionId);
-    if (!targetSession) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    const parentId = targetSession.parent_session_id;
-
-    // 将指向该会话的所有子分支会话重新链接到该会话的父级会话
-    let relinkedCount = 0;
-    db.sessions.forEach((s) => {
-      if (s.parent_session_id === sessionId) {
-        s.parent_session_id = parentId;
-        relinkedCount++;
+  // #ifdef APP-PLUS
+  try {
+    let hasFailedOrAborted = false;
+    const requestTask = uni.request({
+      url: `${getBaseUrl()}/chat/stream`,
+      method: "POST",
+      header: getHeaders({ "Content-Type": "application/json" }),
+      data: params,
+      enableChunkTransfer: true,
+      success: (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          if (!hasFailedOrAborted) {
+            hasFailedOrAborted = true;
+            onError(new Error(`服务器响应失败，状态码 ${res.statusCode}`));
+          }
+        }
+      },
+      fail: (err) => {
+        if (hasFailedOrAborted) return;
+        hasFailedOrAborted = true;
+        triggerFallback();
       }
     });
 
-    db.sessions = db.sessions.filter((s) => s.id !== sessionId);
-    const messagesCount = db.messages[sessionId]?.length || 0;
-    delete db.messages[sessionId];
-
-    setMockDB(db);
-    return {
-      message: "Session deleted successfully (Mock)",
-      deleted_session_id: sessionId,
-      relinked_children: relinkedCount,
-      memories_deleted: messagesCount,
-    };
-  }
-
-  return request<DeleteSessionResponse>(`/sessions/${sessionId}/delete`, {
-    method: "POST",
-  });
-}
-
-/**
- * 手动触发新消息的记忆提纯（记忆元提取）。
- * POST /sessions/{session_id}/trigger_summary
- */
-export async function triggerSummary(
-  sessionId: number
-): Promise<TriggerSummaryResponse> {
-  if (USE_MOCK) {
-    return {
-      message: "记忆提纯流程已完成 (Mock)",
-      session_id: sessionId,
-      extracted_count: 2,
-    };
-  }
-
-  return request<TriggerSummaryResponse>(
-    `/sessions/${sessionId}/trigger_summary`,
-    { method: "POST" }
-  );
-}
-
-/**
- * 手动触发更新角色微观认知状态。
- * POST /sessions/{session_id}/trigger_cognition
- */
-export async function triggerCognition(
-  sessionId: number
-): Promise<TriggerCognitionResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    const charName = session?.character.name || "AI";
-    const newCognition = `The character ${charName} feels a deeper bond with the user. Current scenario remains active.`;
-    
-    if (session) {
-      session.persona.cognition_state = newCognition;
-      setMockDB(db);
-    }
-
-    return {
-      message: "认知更新已完成 (Mock)",
-      session_id: sessionId,
-      cognition_state: newCognition,
-    };
-  }
-
-  return request<TriggerCognitionResponse>(
-    `/sessions/${sessionId}/trigger_cognition`,
-    { method: "POST" }
-  );
-}
-
-/**
- * 修改单条消息的内容。
- * PUT /sessions/messages/{message_id}
- */
-export async function updateMessage(
-  messageId: number,
-  content: string
-): Promise<UpdateMessageResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let updated = false;
-
-    // 在所有会话的消息中进行检索
-    for (const sid in db.messages) {
-      const msgs = db.messages[sid];
-      const m = msgs.find((msg) => msg.id === messageId);
-      if (m) {
-        m.content = content;
-        updated = true;
-        break;
-      }
-    }
-
-    if (!updated) {
-      throw new Error(`Message ${messageId} not found`);
-    }
-
-    setMockDB(db);
-    return {
-      message: "Message updated successfully (Mock)",
-      message_id: messageId,
-      content,
-    };
-  }
-
-  return request<UpdateMessageResponse>(`/sessions/messages/${messageId}`, {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-/**
- * 删除单条消息（回滚/撤销对话状态）。
- * DELETE /sessions/messages/{message_id} -> 改为 POST /sessions/messages/{message_id}/delete 避开移动端及网关限制
- */
-export async function deleteMessage(
-  messageId: number
-): Promise<DeleteMessageResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let deleted = false;
-
-    for (const sid in db.messages) {
-      const msgs = db.messages[sid];
-      const idx = msgs.findIndex((msg) => msg.id === messageId);
-      if (idx !== -1) {
-        msgs.splice(idx, 1);
-        deleted = true;
-        break;
-      }
-    }
-
-    if (!deleted) {
-      throw new Error(`Message ${messageId} not found`);
-    }
-
-    setMockDB(db);
-    return {
-      message: "Message deleted successfully (Mock)",
-      message_id: messageId,
-    };
-  }
-
-  return request<DeleteMessageResponse>(`/sessions/messages/${messageId}/delete`, {
-    method: "POST",
-  });
-}
-
-export interface SwitchCandidateResponse {
-  message: string;
-  message_id: number;
-  is_active: boolean;
-  affection_score: number | null;
-  current_mood: string | null;
-}
-
-/**
- * 切换激活的 AI 回复候选版本。
- * POST /chat/switch_candidate
- */
-export async function switchCandidate(
-  messageId: number
-): Promise<SwitchCandidateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let msg: any = null;
-    let sid: string = "";
-    for (const key in db.messages) {
-      const found = db.messages[key].find((m) => m.id === messageId);
-      if (found) {
-        msg = found;
-        sid = key;
-        break;
-      }
-    }
-    if (msg) {
-      const msgs = (db.messages as any)[sid] as any[];
-      if (msgs) {
-        msgs.forEach((m: any) => {
-          if (m.role === "assistant" && m.parent_id === msg.parent_id) {
-            m.is_active = (m.id === messageId);
+    const triggerFallback = () => {
+      uni.request({
+        url: `${getBaseUrl()}/chat`,
+        method: "POST",
+        header: getHeaders({ "Content-Type": "application/json" }),
+        data: params,
+        success: (fallbackRes: any) => {
+          if (fallbackRes.statusCode >= 200 && fallbackRes.statusCode < 300) {
+            onChunk(fallbackRes.data.reply);
+            onDone({
+              emotion_tag: fallbackRes.data.emotion_tag,
+              affection_change: fallbackRes.data.affection_change,
+              affection_score: fallbackRes.data.affection_score,
+              model_used: fallbackRes.data.model_used,
+              user_message_id: fallbackRes.data.user_message_id,
+              assistant_message_id: fallbackRes.data.assistant_message_id,
+              candidates: fallbackRes.data.candidates,
+              active_index: fallbackRes.data.active_index
+            });
+          } else {
+            onError(new Error("网络请求失败"));
           }
-        });
+        },
+        fail: (fallbackErr) => {
+          onError(new Error(fallbackErr.errMsg || "网络请求失败"));
+        }
+      });
+    };
+
+    if (requestTask && typeof (requestTask as any).onChunkReceived === "function") {
+      let buffer = "";
+      (requestTask as any).onChunkReceived((res: any) => {
+        try {
+          if (!res || !res.data) return;
+          
+          let chunkText = "";
+          if (res.data instanceof ArrayBuffer) {
+            const uint8 = new Uint8Array(res.data);
+            chunkText = decodeUtf8(uint8);
+          } else if (typeof res.data === "string") {
+            chunkText = res.data;
+          } else {
+            chunkText = String(res.data);
+          }
+
+          buffer += chunkText;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const raw = line.slice(6).trim();
+              if (raw === "[DONE]") {
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                if (parsed.chunk) {
+                  onChunk(parsed.chunk);
+                } else {
+                  onDone(parsed as Omit<ChatResponse, "reply">);
+                }
+              } catch {
+                onChunk(raw);
+              }
+            }
+          }
+        } catch (innerErr) {
+          console.error("Error parsing chunks:", innerErr);
+        }
+      });
+    } else {
+      hasFailedOrAborted = true;
+      try { requestTask.abort(); } catch (_) {}
+      triggerFallback();
+    }
+  } catch (err) {
+    onError(err instanceof Error ? err : new Error(String(err)));
+  }
+  // #endif
+
+  // #ifndef APP-PLUS
+  try {
+    const response = await fetch(`${getBaseUrl()}/chat/stream`, {
+      method: "POST",
+      headers: getHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      throw new Error(`SSE connection failed: ${response.status}`);
+    }
+
+    if (!response.body || typeof response.body.getReader !== "function") {
+      // Fallback: Read the entire response as text if streaming body is unsupported (e.g. mobile WebViews or polyfills)
+      const text = await response.text();
+      const lines = text.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") {
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.chunk) {
+              onChunk(parsed.chunk);
+            } else {
+              onDone(parsed as Omit<ChatResponse, "reply">);
+            }
+          } catch {
+            onChunk(raw);
+          }
+        }
       }
-      setMockDB(db);
+      return;
     }
+
+    const reader = response.body.getReader();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        if (buffer.trim()) {
+          const lines = buffer.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const raw = line.slice(6).trim();
+              if (raw === "[DONE]") {
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                if (parsed.chunk) {
+                  onChunk(parsed.chunk);
+                } else {
+                  onDone(parsed as Omit<ChatResponse, "reply">);
+                }
+              } catch {
+                onChunk(raw);
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      const chunkText = decodeUtf8(value);
+      buffer += chunkText;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") {
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.chunk) {
+              onChunk(parsed.chunk);
+            } else {
+              onDone(parsed as Omit<ChatResponse, "reply">);
+            }
+          } catch {
+            onChunk(raw);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    onError(err instanceof Error ? err : new Error(String(err)));
+  }
+  // #endif
+}
+
+/**
+ * 封装前端触发文本转语音 (TTS) 的 API。
+ * POST /utils/tts
+ */
+export interface TTSResponse {
+  audio_url: string;
+}
+
+export async function generateTTS(
+  messageId: number,
+  text: string,
+  voice?: string,
+  speed?: number
+): Promise<TTSResponse> {
+  if (USE_MOCK) {
     return {
-      message: "Candidate switched successfully (Mock)",
+      audio_url: ""
+    };
+  }
+  return request<TTSResponse>("/utils/tts", {
+    method: "POST",
+    body: JSON.stringify({
       message_id: messageId,
-      is_active: true,
-      affection_score: 50,
-      current_mood: msg?.emotion_tag || "Calm",
-    };
-  }
-
-  return request<SwitchCandidateResponse>("/chat/switch_candidate", {
-    method: "POST",
-    body: JSON.stringify({ message_id: messageId }),
-  });
-}
-
-export interface MemoryCreateResponse {
-  message: string;
-  memory: MemoryChunk;
-}
-
-export interface MemoryUpdateResponse {
-  message: string;
-  memory: {
-    id: number;
-    content: string;
-    importance_score: number;
-  };
-}
-
-export interface MemoryDeleteResponse {
-  message: string;
-  memory_id: number;
-}
-
-/**
- * 获取会话对应的向量记忆列表。
- * GET /sessions/{session_id}/memories
- */
-export async function getSessionMemories(
-  sessionId: number,
-  limit: number = 20,
-  offset: number = 0,
-  q: string = ""
-): Promise<MemoryChunk[]> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    let list = db.memories[sessionId] || [];
-    if (q && q.trim()) {
-      const term = q.trim().toLowerCase();
-      list = list.filter((m: any) => m.content.toLowerCase().includes(term));
-    }
-    return list.slice(offset, offset + limit);
-  }
-
-  const queryParam = q && q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "";
-  return request<MemoryChunk[]>(`/sessions/${sessionId}/memories?limit=${limit}&offset=${offset}${queryParam}`, {
-    method: "GET",
-  });
-}
-
-/**
- * 手动创建向量记忆。
- * POST /sessions/{session_id}/memories
- */
-export async function createSessionMemory(
-  sessionId: number,
-  content: string,
-  importanceScore: number = 0.8
-): Promise<MemoryCreateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    if (!db.memories[sessionId]) {
-      db.memories[sessionId] = [];
-    }
-    const newMemory: MemoryChunk = {
-      id: Date.now(),
-      content,
-      memory_type: "fact",
-      importance_score: importanceScore,
-      is_local: true,
-      created_at: new Date().toISOString(),
-      origin_session_id: sessionId,
-    };
-    db.memories[sessionId].unshift(newMemory);
-    setMockDB(db);
-    return {
-      message: "Memory added successfully (Mock)",
-      memory: newMemory,
-    };
-  }
-
-  return request<MemoryCreateResponse>(`/sessions/${sessionId}/memories`, {
-    method: "POST",
-    body: JSON.stringify({
-      content,
-      importance_score: importanceScore,
-      memory_type: "fact",
-    }),
-  });
-}
-
-/**
- * 更新向量记忆。
- * PUT /sessions/{session_id}/memories/{memory_id}
- */
-export async function updateSessionMemory(
-  sessionId: number,
-  memoryId: number,
-  content: string,
-  importanceScore: number
-): Promise<MemoryUpdateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    const list = db.memories[sessionId] || [];
-    const item = list.find((m: any) => m.id === memoryId);
-    if (item) {
-      item.content = content;
-      item.importance_score = importanceScore;
-      setMockDB(db);
-    }
-    return {
-      message: "Memory updated successfully (Mock)",
-      memory: {
-        id: memoryId,
-        content,
-        importance_score: importanceScore,
-      },
-    };
-  }
-
-  return request<MemoryUpdateResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      content,
-      importance_score: importanceScore,
-    }),
-  });
-}
-
-/**
- * 删除向量记忆。
- * DELETE /sessions/{session_id}/memories/{memory_id}
- */
-export async function deleteSessionMemory(
-  sessionId: number,
-  memoryId: number
-): Promise<MemoryDeleteResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    const list = db.memories[sessionId] || [];
-    const idx = list.findIndex((m: any) => m.id === memoryId);
-    if (idx !== -1) {
-      list.splice(idx, 1);
-      setMockDB(db);
-    }
-    return {
-      message: "Memory deleted successfully (Mock)",
-      memory_id: memoryId,
-    };
-  }
-
-  return request<MemoryDeleteResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
-    method: "DELETE",
+      text,
+      voice,
+      speed
+    })
   });
 }
