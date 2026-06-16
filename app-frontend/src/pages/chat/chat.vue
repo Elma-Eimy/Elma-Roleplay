@@ -669,17 +669,17 @@ defineExpose({
 
 <script module="stream" lang="renderjs">
 // @ts-ignore
-let abortController = null;
+var abortController = null;
 
 export default {
-  beforeDestroy() {
+  beforeDestroy: function() {
     this.abortActiveStream();
   },
-  beforeUnmount() {
+  beforeUnmount: function() {
     this.abortActiveStream();
   },
   methods: {
-    abortActiveStream() {
+    abortActiveStream: function() {
       // @ts-ignore
       if (abortController) {
         try {
@@ -691,7 +691,7 @@ export default {
       }
     },
     // @ts-ignore
-    onStreamRequestChange(newValue, oldValue, ownerInstance, instance) {
+    onStreamRequestChange: function(newValue, oldValue, ownerInstance, instance) {
       if (!newValue) {
         this.abortActiveStream();
         return;
@@ -699,102 +699,118 @@ export default {
       this.startStream(newValue, ownerInstance);
     },
     // @ts-ignore
-    async startStream(request, ownerInstance) {
+    startStream: function(request, ownerInstance) {
       this.abortActiveStream();
       
       // @ts-ignore
       abortController = new AbortController();
       // @ts-ignore
-      const { signal } = abortController;
+      var signal = abortController.signal;
       
-      const { baseUrl, apiKey, params, placeholderId, userMessageTempId } = request;
+      var baseUrl = request.baseUrl;
+      var apiKey = request.apiKey;
+      var params = request.params;
+      var placeholderId = request.placeholderId;
+      var userMessageTempId = request.userMessageTempId;
       
-      try {
-        const response = await fetch(`${baseUrl}/chat/stream`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey
-          },
-          body: JSON.stringify(params),
-          signal: signal
-        });
-
+      fetch(baseUrl + "/chat/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey
+        },
+        body: JSON.stringify(params),
+        signal: signal
+      })
+      .then(function(response) {
         if (!response.ok) {
-          throw new Error(`Server returned status code ${response.status}`);
+          throw new Error("Server returned status code " + response.status);
         }
-
         if (!response.body) {
           throw new Error("ReadableStream is not supported or response body is empty");
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buffer = "";
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder("utf-8");
+        var buffer = "";
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
+        function read() {
+          reader.read().then(function(result) {
+            if (result.done) {
+              // @ts-ignore
+              abortController = null;
+              return;
+            }
 
-          const chunkText = decoder.decode(value, { stream: true });
-          buffer += chunkText;
+            var chunkText = decoder.decode(result.value, { stream: true });
+            buffer += chunkText;
 
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
+            var lines = buffer.split("\n");
+            buffer = lines.pop() || "";
 
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) continue;
-            
-            if (trimmedLine.startsWith("data: ")) {
-              const raw = trimmedLine.slice(6).trim();
-              if (raw === "[DONE]") {
-                continue;
-              }
-              try {
-                const parsed = JSON.parse(raw);
-                if (parsed.error !== undefined) {
-                  ownerInstance.callMethod("handleStreamError", {
-                    placeholderId,
-                    userMessageTempId,
-                    error: parsed.error
-                  });
-                } else if (parsed.chunk !== undefined) {
+            for (var i = 0; i < lines.length; i++) {
+              var line = lines[i];
+              var trimmedLine = line.trim();
+              if (!trimmedLine) continue;
+
+              if (trimmedLine.indexOf("data: ") === 0) {
+                var raw = trimmedLine.slice(6).trim();
+                if (raw === "[DONE]") {
+                  continue;
+                }
+                try {
+                  var parsed = JSON.parse(raw);
+                  if (parsed.error !== undefined) {
+                    ownerInstance.callMethod("handleStreamError", {
+                      placeholderId: placeholderId,
+                      userMessageTempId: userMessageTempId,
+                      error: parsed.error
+                    });
+                  } else if (parsed.chunk !== undefined) {
+                    ownerInstance.callMethod("handleStreamChunk", {
+                      placeholderId: placeholderId,
+                      chunk: parsed.chunk
+                    });
+                  } else {
+                    ownerInstance.callMethod("handleStreamDone", {
+                      placeholderId: placeholderId,
+                      userMessageTempId: userMessageTempId,
+                      meta: parsed
+                    });
+                  }
+                } catch (e) {
                   ownerInstance.callMethod("handleStreamChunk", {
-                    placeholderId,
-                    chunk: parsed.chunk
-                  });
-                } else {
-                  ownerInstance.callMethod("handleStreamDone", {
-                    placeholderId,
-                    userMessageTempId,
-                    meta: parsed
+                    placeholderId: placeholderId,
+                    chunk: raw
                   });
                 }
-              } catch (e) {
-                // Fallback for non-JSON content
-                ownerInstance.callMethod("handleStreamChunk", {
-                  placeholderId,
-                  chunk: raw
-                });
               }
             }
-          }
+            read(); // Recursively read next chunk
+          })
+          .catch(function(err) {
+            if (err.name === 'AbortError') {
+              return;
+            }
+            ownerInstance.callMethod("handleStreamError", {
+              placeholderId: placeholderId,
+              userMessageTempId: userMessageTempId,
+              error: err.message || String(err)
+            });
+          });
         }
-        // @ts-ignore
-        abortController = null;
-      } catch (err) {
-        // @ts-ignore
+        read();
+      })
+      .catch(function(err) {
         if (err.name === 'AbortError') {
           return;
         }
         ownerInstance.callMethod("handleStreamError", {
-          placeholderId,
-          userMessageTempId,
-          // @ts-ignore
+          placeholderId: placeholderId,
+          userMessageTempId: userMessageTempId,
           error: err.message || String(err)
         });
-      }
+      });
     }
   }
 }
