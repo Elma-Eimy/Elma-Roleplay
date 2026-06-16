@@ -262,6 +262,10 @@
         <!-- ⑤ 记忆管理手动操作区 -->
         <view class="panel-section">
           <text class="section-title">记忆管理</text>
+          <view class="action-btn outline" @tap="emit('open-memory-view')">
+            <image class="btn-icon" src="/static/icons/settings_database.svg" mode="aspectFit" />
+            <text class="btn-text">查看向量记忆库</text>
+          </view>
           <view class="action-btn outline" @tap="forceMemoryExtract">
             <image class="btn-icon" src="/static/icons/drawer_brain.svg" mode="aspectFit" />
             <text class="btn-text">手动提取记忆元</text>
@@ -302,6 +306,7 @@ const emit = defineEmits<{
   (e: "close"): void;
   (e: "delete-session"): void;
   (e: "open-branch-tree"): void;
+  (e: "open-memory-view"): void;
 }>();
 
 const chatStore = useChatStore();
