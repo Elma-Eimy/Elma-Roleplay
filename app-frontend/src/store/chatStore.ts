@@ -3,7 +3,8 @@ import { ref, computed } from "vue";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
-import type { ChatResponse } from "@/api/chat";
+import type { ChatResponse, ChatRequest } from "@/api/chat";
+import { getBaseUrl, getSavedApiKey } from "@/api/config";
 import { usePersonaStore } from "./personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 
@@ -35,6 +36,16 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 若上一次请求失败，所记录的错误提示信息 */
   const errorMessage = ref<string | null>(null);
+
+  /** 当前活跃的 App 端流式请求（用于 renderjs 通信） */
+  const activeStreamRequest = ref<{
+    placeholderId: string;
+    userMessageTempId?: string;
+    params: ChatRequest;
+    baseUrl: string;
+    apiKey: string;
+    timestamp: number;
+  } | null>(null);
 
   /** 是否对聊天回复启用深度思考推理模型 */
   const useReasoning = ref(false);
@@ -156,20 +167,33 @@ export const useChatStore = defineStore("chat", () => {
     // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
     const streamPlaceholderId = addStreamingPlaceholder();
 
+    const requestParams: ChatRequest = { 
+      session_id: sessionId, 
+      user_message: lastUserMsg.content,
+      use_reasoning: useReasoning.value,
+      is_regenerate: true,
+      user_nickname: personaStore.userNickname,
+      temperature: temperature.value ?? undefined,
+      top_p: top_p.value ?? undefined,
+      presence_penalty: presence_penalty.value ?? undefined,
+      frequency_penalty: frequency_penalty.value ?? undefined,
+      repetition_penalty: repetition_penalty.value ?? undefined,
+    };
+
+    // #ifdef APP-PLUS
+    activeStreamRequest.value = {
+      placeholderId: streamPlaceholderId,
+      params: requestParams,
+      baseUrl: getBaseUrl(),
+      apiKey: getSavedApiKey(),
+      timestamp: Date.now()
+    };
+    // #endif
+
+    // #ifndef APP-PLUS
     try {
       await sendMessageStream(
-        { 
-          session_id: sessionId, 
-          user_message: lastUserMsg.content,
-          use_reasoning: useReasoning.value,
-          is_regenerate: true,
-          user_nickname: personaStore.userNickname,
-          temperature: temperature.value ?? undefined,
-          top_p: top_p.value ?? undefined,
-          presence_penalty: presence_penalty.value ?? undefined,
-          frequency_penalty: frequency_penalty.value ?? undefined,
-          repetition_penalty: repetition_penalty.value ?? undefined,
-        },
+        requestParams,
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
@@ -201,11 +225,14 @@ export const useChatStore = defineStore("chat", () => {
           // 发生异常时回滚占位消息并设置错误状态
           messages.value = messages.value.filter((m) => m.tempId !== streamPlaceholderId);
           setError(err.message || "Failed to regenerate AI response");
+          isLoading.value = false;
         }
       );
     } catch (e: any) {
       setError(e.message || "An unexpected error occurred");
+      isLoading.value = false;
     }
+    // #endif
   }
 
   /** 发送一条新消息并处理流式返回的分块数据 */
@@ -220,19 +247,33 @@ export const useChatStore = defineStore("chat", () => {
     const tempId = addOptimisticUserMessage(text);
     const streamPlaceholderId = addStreamingPlaceholder();
 
+    const requestParams: ChatRequest = { 
+      session_id: sessionId, 
+      user_message: text,
+      use_reasoning: useReasoning.value,
+      user_nickname: personaStore.userNickname,
+      temperature: temperature.value ?? undefined,
+      top_p: top_p.value ?? undefined,
+      presence_penalty: presence_penalty.value ?? undefined,
+      frequency_penalty: frequency_penalty.value ?? undefined,
+      repetition_penalty: repetition_penalty.value ?? undefined,
+    };
+
+    // #ifdef APP-PLUS
+    activeStreamRequest.value = {
+      placeholderId: streamPlaceholderId,
+      userMessageTempId: tempId,
+      params: requestParams,
+      baseUrl: getBaseUrl(),
+      apiKey: getSavedApiKey(),
+      timestamp: Date.now()
+    };
+    // #endif
+
+    // #ifndef APP-PLUS
     try {
       await sendMessageStream(
-        { 
-          session_id: sessionId, 
-          user_message: text,
-          use_reasoning: useReasoning.value,
-          user_nickname: personaStore.userNickname,
-          temperature: temperature.value ?? undefined,
-          top_p: top_p.value ?? undefined,
-          presence_penalty: presence_penalty.value ?? undefined,
-          frequency_penalty: frequency_penalty.value ?? undefined,
-          repetition_penalty: repetition_penalty.value ?? undefined,
-        },
+        requestParams,
         (chunk) => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
@@ -277,11 +318,14 @@ export const useChatStore = defineStore("chat", () => {
             messages.value[userIdx].status = "error";
           }
           setError(err.message || "Failed to get AI response");
+          isLoading.value = false;
         }
       );
     } catch (e: any) {
       setError(e.message || "An unexpected error occurred");
+      isLoading.value = false;
     }
+    // #endif
   }
 
   /** 乐观更新：在服务器确认前立即向列表添加用户发送的消息 */
@@ -441,6 +485,7 @@ export const useChatStore = defineStore("chat", () => {
     presence_penalty.value = null;
     frequency_penalty.value = null;
     repetition_penalty.value = null;
+    activeStreamRequest.value = null;
   }
 
   return {
@@ -457,6 +502,7 @@ export const useChatStore = defineStore("chat", () => {
     presence_penalty,
     frequency_penalty,
     repetition_penalty,
+    activeStreamRequest,
     // Getters
     hasMessages,
     isStreaming,
