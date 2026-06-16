@@ -58,6 +58,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 raise HTTPException(status_code=404, detail="Character not found")
 
             # 保存/获取用户消息
+            old_reply = None
             if request.is_regenerate:
                 user_msg = (
                     db.query(models.ChatMessage)
@@ -72,7 +73,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 if not user_msg:
                     raise HTTPException(status_code=400, detail="No user message found to regenerate")
 
-                # Swipe 候选支持：不删除旧回复，而是将其设为 inactive 并回退其好感度
+                # Swipe 候选支持：此时仅获取引用，不改变其状态与提交，避免生成失败时丢失历史
                 old_reply = (
                     db.query(models.ChatMessage)
                     .filter(
@@ -83,12 +84,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                     )
                     .first()
                 )
-                if old_reply:
-                    old_reply.is_active = False
-                    if persona and old_reply.affection_change is not None:
-                        persona.affection_score -= old_reply.affection_change
-                        persona.affection_score = max(0, persona.affection_score)
-                    db.commit()
             else:
                 user_msg = models.ChatMessage(
                     session_id=session.id,
@@ -132,12 +127,14 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                     "affection_change": getattr(r, "affection_change", 0)
                 }
                 for r in recent_records
-                if r.id != user_msg.id and r.role.value in ("user", "assistant")
+                if r.id != user_msg.id 
+                and (not old_reply or r.id != old_reply.id)
+                and r.role.value in ("user", "assistant")
             ]
 
-            return session, persona, character, user_msg, memories, graph_knowledge, recent_history
+            return session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply
 
-        session, persona, character, user_msg, memories, graph_knowledge, recent_history = await run_in_threadpool(prepare_context)
+        session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply = await run_in_threadpool(prepare_context)
 
         # ── Step 5: 生成 AI 回复 (全异步网络 IO 请求) ──
         response_data = await chat_engine.generate_reply(
@@ -165,6 +162,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         # ── Step 6: 保存 AI 回复与更新状态 (跑在线程池中) ──
         def save_response_data():
             p = db.get(models.SessionPersona, persona.id)
+            
+            # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
+            if request.is_regenerate and old_reply:
+                db_old_reply = db.get(models.ChatMessage, old_reply.id)
+                if db_old_reply:
+                    db_old_reply.is_active = False
+                    if db_old_reply.affection_change is not None:
+                        p.affection_score -= db_old_reply.affection_change
+
             ai_msg = models.ChatMessage(
                 session_id=request.session_id,
                 role=MessageRole.assistant,
@@ -176,6 +182,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             )
             db.add(ai_msg)
             p.affection_score += affection_change
+            p.affection_score = max(0, min(100, p.affection_score)) # 规范好感度范围在 0-100
             p.current_mood = emotion_tag
             session_obj = db.get(models.Session, request.session_id)
             if session_obj:
@@ -260,6 +267,7 @@ async def chat_stream(
                 raise HTTPException(status_code=404, detail="Character not found")
 
             # 保存/获取用户消息
+            old_reply = None
             if request.is_regenerate:
                 user_msg = (
                     db.query(models.ChatMessage)
@@ -274,7 +282,7 @@ async def chat_stream(
                 if not user_msg:
                     raise HTTPException(status_code=400, detail="No user message found to regenerate")
 
-                # Swipe 候选支持：不删除旧回复，而是将其设为 inactive 并回退其好感度
+                # Swipe 候选支持：此时仅获取引用，不改变其状态与提交，避免生成失败时丢失历史
                 old_reply = (
                     db.query(models.ChatMessage)
                     .filter(
@@ -285,12 +293,6 @@ async def chat_stream(
                     )
                     .first()
                 )
-                if old_reply:
-                    old_reply.is_active = False
-                    if persona and old_reply.affection_change is not None:
-                        persona.affection_score -= old_reply.affection_change
-                        persona.affection_score = max(0, persona.affection_score)
-                    db.commit()
             else:
                 user_msg = models.ChatMessage(
                     session_id=session.id,
@@ -334,12 +336,14 @@ async def chat_stream(
                     "affection_change": getattr(r, "affection_change", 0)
                 }
                 for r in recent_records
-                if r.id != user_msg.id and r.role.value in ("user", "assistant")
+                if r.id != user_msg.id 
+                and (not old_reply or r.id != old_reply.id)
+                and r.role.value in ("user", "assistant")
             ]
 
-            return session, persona, character, user_msg, memories, graph_knowledge, recent_history
+            return session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply
 
-        session, persona, character, user_msg, memories, graph_knowledge, recent_history = await run_in_threadpool(prepare_context)
+        session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply = await run_in_threadpool(prepare_context)
 
         try:
             stream, model = await chat_engine.generate_reply_stream(
@@ -447,6 +451,15 @@ async def chat_stream(
                 # 保存 AI 回复与更新状态 (跑在线程池中)
                 def save_stream_response():
                     p = db.get(models.SessionPersona, persona.id)
+                    
+                    # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
+                    if request.is_regenerate and old_reply:
+                        db_old_reply = db.get(models.ChatMessage, old_reply.id)
+                        if db_old_reply:
+                            db_old_reply.is_active = False
+                            if db_old_reply.affection_change is not None:
+                                p.affection_score -= db_old_reply.affection_change
+
                     ai_msg = models.ChatMessage(
                         session_id=session_id,
                         role=MessageRole.assistant,
@@ -458,6 +471,7 @@ async def chat_stream(
                     )
                     db.add(ai_msg)
                     p.affection_score += affection_change
+                    p.affection_score = max(0, min(100, p.affection_score)) # 规范好感度范围在 0-100
                     p.current_mood = emotion_tag
                     session_obj = db.get(models.Session, session_id)
                     if session_obj:
