@@ -668,12 +668,10 @@ defineExpose({
 </script>
 
 <script module="stream" lang="renderjs">
+// @ts-ignore
+let abortController = null;
+
 export default {
-  data() {
-    return {
-      abortController: null as any
-    };
-  },
   beforeDestroy() {
     this.abortActiveStream();
   },
@@ -682,25 +680,32 @@ export default {
   },
   methods: {
     abortActiveStream() {
-      if (this.abortController) {
+      // @ts-ignore
+      if (abortController) {
         try {
-          this.abortController.abort();
+          // @ts-ignore
+          abortController.abort();
         } catch (e) {}
-        this.abortController = null;
+        // @ts-ignore
+        abortController = null;
       }
     },
-    onStreamRequestChange(newValue: any, oldValue: any, ownerInstance: any, instance: any) {
+    // @ts-ignore
+    onStreamRequestChange(newValue, oldValue, ownerInstance, instance) {
       if (!newValue) {
         this.abortActiveStream();
         return;
       }
       this.startStream(newValue, ownerInstance);
     },
-    async startStream(request: any, ownerInstance: any) {
+    // @ts-ignore
+    async startStream(request, ownerInstance) {
       this.abortActiveStream();
       
-      this.abortController = new AbortController();
-      const { signal } = this.abortController;
+      // @ts-ignore
+      abortController = new AbortController();
+      // @ts-ignore
+      const { signal } = abortController;
       
       const { baseUrl, apiKey, params, placeholderId, userMessageTempId } = request;
       
@@ -776,14 +781,17 @@ export default {
             }
           }
         }
-        this.abortController = null;
-      } catch (err: any) {
+        // @ts-ignore
+        abortController = null;
+      } catch (err) {
+        // @ts-ignore
         if (err.name === 'AbortError') {
           return;
         }
         ownerInstance.callMethod("handleStreamError", {
           placeholderId,
           userMessageTempId,
+          // @ts-ignore
           error: err.message || String(err)
         });
       }
