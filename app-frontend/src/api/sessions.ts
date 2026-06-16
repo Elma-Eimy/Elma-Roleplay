@@ -57,6 +57,16 @@ export interface Message {
   audio_path?: string | null;
 }
 
+export interface MemoryChunk {
+  id: number;
+  content: string;
+  memory_type: string;
+  importance_score: number;
+  is_local: boolean;
+  created_at: string | null;
+  origin_session_id?: number | null;
+}
+
 export interface CreateSessionParams {
   character_id: number;
   parent_session_id?: number | null;
@@ -559,5 +569,168 @@ export async function switchCandidate(
   return request<SwitchCandidateResponse>("/chat/switch_candidate", {
     method: "POST",
     body: JSON.stringify({ message_id: messageId }),
+  });
+}
+
+export interface MemoryCreateResponse {
+  message: string;
+  memory: MemoryChunk;
+}
+
+export interface MemoryUpdateResponse {
+  message: string;
+  memory: {
+    id: number;
+    content: string;
+    importance_score: number;
+  };
+}
+
+export interface MemoryDeleteResponse {
+  message: string;
+  memory_id: number;
+}
+
+/**
+ * 获取会话对应的向量记忆列表。
+ * GET /sessions/{session_id}/memories
+ */
+export async function getSessionMemories(
+  sessionId: number,
+  limit: number = 20,
+  offset: number = 0,
+  q: string = ""
+): Promise<MemoryChunk[]> {
+  if (USE_MOCK) {
+    const db = getMockDB() as any;
+    if (!db.memories) {
+      db.memories = {};
+    }
+    let list = db.memories[sessionId] || [];
+    if (q && q.trim()) {
+      const term = q.trim().toLowerCase();
+      list = list.filter((m: any) => m.content.toLowerCase().includes(term));
+    }
+    return list.slice(offset, offset + limit);
+  }
+
+  const queryParam = q && q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "";
+  return request<MemoryChunk[]>(`/sessions/${sessionId}/memories?limit=${limit}&offset=${offset}${queryParam}`, {
+    method: "GET",
+  });
+}
+
+/**
+ * 手动创建向量记忆。
+ * POST /sessions/{session_id}/memories
+ */
+export async function createSessionMemory(
+  sessionId: number,
+  content: string,
+  importanceScore: number = 0.8
+): Promise<MemoryCreateResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB() as any;
+    if (!db.memories) {
+      db.memories = {};
+    }
+    if (!db.memories[sessionId]) {
+      db.memories[sessionId] = [];
+    }
+    const newMemory: MemoryChunk = {
+      id: Date.now(),
+      content,
+      memory_type: "fact",
+      importance_score: importanceScore,
+      is_local: true,
+      created_at: new Date().toISOString(),
+      origin_session_id: sessionId,
+    };
+    db.memories[sessionId].unshift(newMemory);
+    setMockDB(db);
+    return {
+      message: "Memory added successfully (Mock)",
+      memory: newMemory,
+    };
+  }
+
+  return request<MemoryCreateResponse>(`/sessions/${sessionId}/memories`, {
+    method: "POST",
+    body: JSON.stringify({
+      content,
+      importance_score: importanceScore,
+      memory_type: "fact",
+    }),
+  });
+}
+
+/**
+ * 更新向量记忆。
+ * PUT /sessions/{session_id}/memories/{memory_id}
+ */
+export async function updateSessionMemory(
+  sessionId: number,
+  memoryId: number,
+  content: string,
+  importanceScore: number
+): Promise<MemoryUpdateResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB() as any;
+    if (!db.memories) {
+      db.memories = {};
+    }
+    const list = db.memories[sessionId] || [];
+    const item = list.find((m: any) => m.id === memoryId);
+    if (item) {
+      item.content = content;
+      item.importance_score = importanceScore;
+      setMockDB(db);
+    }
+    return {
+      message: "Memory updated successfully (Mock)",
+      memory: {
+        id: memoryId,
+        content,
+        importance_score: importanceScore,
+      },
+    };
+  }
+
+  return request<MemoryUpdateResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      content,
+      importance_score: importanceScore,
+    }),
+  });
+}
+
+/**
+ * 删除向量记忆。
+ * DELETE /sessions/{session_id}/memories/{memory_id}
+ */
+export async function deleteSessionMemory(
+  sessionId: number,
+  memoryId: number
+): Promise<MemoryDeleteResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB() as any;
+    if (!db.memories) {
+      db.memories = {};
+    }
+    const list = db.memories[sessionId] || [];
+    const idx = list.findIndex((m: any) => m.id === memoryId);
+    if (idx !== -1) {
+      list.splice(idx, 1);
+      setMockDB(db);
+    }
+    return {
+      message: "Memory deleted successfully (Mock)",
+      memory_id: memoryId,
+    };
+  }
+
+  return request<MemoryDeleteResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
+    method: "DELETE",
   });
 }
