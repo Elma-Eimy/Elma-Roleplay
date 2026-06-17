@@ -25,9 +25,9 @@ app = FastAPI(
 # 配置 CORS 跨域中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.SECURITY_CORS_ORIGINS,
+    allow_origin_regex=".*",  # 配合 allow_credentials 动态反射允许 file://, null, http://localhost 等各种混合 Origin 跨域
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
