@@ -656,6 +656,7 @@ const handleStreamError = (data: { placeholderId: string; userMessageTempId?: st
     }
   }
   chatStore.setError(data.error || "Failed to get AI response");
+  uni.showToast({ title: data.error || "获取回复失败", icon: "none" });
   chatStore.isLoading = false;
   chatStore.activeStreamRequest = null;
 };
