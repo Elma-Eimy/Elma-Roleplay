@@ -526,7 +526,15 @@ async def chat_stream(
                 # ── 流式传输结束或遭遇断连异常，释放异步锁 ──
                 lock.release()
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            }
+        )
 
     except Exception as e:
         lock.release()
