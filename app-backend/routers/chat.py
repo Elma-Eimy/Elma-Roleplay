@@ -425,11 +425,24 @@ async def chat_stream(
                         # reply_closed=True 表示 </reply> 已出现（XML 模式已完成），静默忽略后续内容
                         # reply_closed=False 表示真正的兜底直出模式，继续分发原始 delta
                         if not reply_closed:
-                            reply_text += delta
-                            yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
+                            if last_sent_index < len(accumulated_text):
+                                chunk_to_send = accumulated_text[last_sent_index:]
+                                reply_text += chunk_to_send
+                                yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
+                                last_sent_index = len(accumulated_text)
+                            else:
+                                reply_text += delta
+                                yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
+                                last_sent_index = len(accumulated_text)
 
-                # ── 流式读取结束，如果仍处于 reply_mode（漏掉了 </reply>），冲刷发送剩余字符 ──
+                # ── 流式读取结束，冲刷发送剩余字符 ──
                 if in_reply_mode:
+                    if len(accumulated_text) > last_sent_index:
+                        chunk_to_send = accumulated_text[last_sent_index:]
+                        reply_text += chunk_to_send
+                        yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
+                elif not reply_closed and not in_reply_mode:
+                    # 如果从未进入过 reply_mode 且未关闭（兜底模式或短回复），确保冲刷发送所有剩余文本
                     if len(accumulated_text) > last_sent_index:
                         chunk_to_send = accumulated_text[last_sent_index:]
                         reply_text += chunk_to_send
