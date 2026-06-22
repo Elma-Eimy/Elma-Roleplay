@@ -663,3 +663,115 @@ def delete_session_memory(session_id: int, memory_id: int, db: Session = Depends
 
     memory_manager.delete_memory_chunk(memory_id, db)
     return {"message": "Memory deleted successfully", "memory_id": memory_id}
+
+
+@router.get("/{session_id}/compile_prompt")
+async def compile_session_prompt(
+    session_id: int,
+    user_nickname: str = "用户",
+    db: Session = Depends(get_db)
+):
+    """
+    预览/编译当前会话的最近一次大模型 Prompt 组装。
+    包含：系统提示词 + 历史上下文 + 召回记忆/世界书知识 + 最后一轮输入（若有）。
+    """
+    import services.chat_engine as chat_engine
+
+    session = db.get(models.Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    persona = session.persona
+    if not persona:
+        raise HTTPException(status_code=404, detail="Session has no persona")
+        
+    character = persona.character
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    # 1. 查找最后一条用户消息
+    last_user_msg = (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.session_id == session_id,
+            models.ChatMessage.role == models.MessageRole.user,
+            models.ChatMessage.is_active == True
+        )
+        .order_by(models.ChatMessage.id.desc())
+        .first()
+    )
+
+    if not last_user_msg:
+        # 如果没有用户消息，只有系统开场白，直接组装 System Prompt 和首条消息
+        system_prompt = chat_engine.compile_system_prompt(character, persona, user_nickname)
+        first_assistant_msg = (
+            db.query(models.ChatMessage)
+            .filter(
+                models.ChatMessage.session_id == session_id,
+                models.ChatMessage.role == models.MessageRole.assistant,
+                models.ChatMessage.is_active == True
+            )
+            .order_by(models.ChatMessage.id.asc())
+            .first()
+        )
+        messages = [{"role": "system", "content": system_prompt}]
+        if first_assistant_msg:
+            emo = first_assistant_msg.emotion_tag or "平静"
+            change = first_assistant_msg.affection_change or 0
+            formatted_xml = f"<reply>{first_assistant_msg.content}</reply>\n<status emotion=\"{emo}\" affection_change=\"{int(change)}\"/>"
+            messages.append({"role": "assistant", "content": formatted_xml})
+        return {"messages": messages}
+
+    # 2. 获取该用户消息之*前*的历史记录
+    recent_records = (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.session_id == session_id,
+            models.ChatMessage.is_active == True,
+            models.ChatMessage.id < last_user_msg.id
+        )
+        .order_by(models.ChatMessage.id.desc())
+        .limit(settings.APP_CONTEXT_HISTORY_LIMIT)
+        .all()
+    )
+    recent_records.reverse()
+
+    recent_history = [
+        {
+            "role": r.role.value,
+            "content": r.content,
+            "emotion_tag": getattr(r, "emotion_tag", "平静"),
+            "affection_change": getattr(r, "affection_change", 0)
+        }
+        for r in recent_records
+        if r.role.value in ("user", "assistant")
+    ]
+
+    # 3. 运行 RAG 与世界书召回
+    memories = memory_manager.retrieve_memories(
+        persona_id=persona.id,
+        character_id=character.id,
+        query=last_user_msg.content,
+        db=db
+    )
+
+    from services.graph_service import retrieve_graph_context
+    graph_knowledge = retrieve_graph_context(
+        persona_id=persona.id,
+        query_text=last_user_msg.content,
+        db=db
+    )
+
+    # 4. 调用 chat_engine 的私有方法组装完整 messages 列表
+    messages = await chat_engine._build_chat_messages(
+        character=character,
+        persona=persona,
+        recent_history=recent_history,
+        user_message=last_user_msg.content,
+        retrieved_memories=memories,
+        graph_knowledge=graph_knowledge,
+        db=db,
+        user_nickname=user_nickname
+    )
+
+    return {"messages": messages}
