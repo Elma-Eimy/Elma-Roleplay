@@ -276,6 +276,15 @@
           </view>
         </view>
 
+        <!-- 调试工具区域 -->
+        <view class="panel-section">
+          <text class="section-title">系统调试</text>
+          <view class="action-btn outline" @tap="emit('open-prompt-preview')">
+            <image class="btn-icon" src="/static/icons/chat_sparkle.svg" mode="aspectFit" />
+            <text class="btn-text">查看当前 Prompt 组装</text>
+          </view>
+        </view>
+
         <!-- ⑥ 危险操作区域（删除会话） -->
         <view class="panel-section danger-section">
           <text class="section-title danger-title">危险操作</text>
@@ -307,6 +316,7 @@ const emit = defineEmits<{
   (e: "delete-session"): void;
   (e: "open-branch-tree"): void;
   (e: "open-memory-view"): void;
+  (e: "open-prompt-preview"): void;
 }>();
 
 const chatStore = useChatStore();

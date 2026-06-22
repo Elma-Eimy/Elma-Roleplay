@@ -1,5 +1,6 @@
 <template>
   <view 
+    v-if="message"
     class="chat-bubble-wrapper" 
     :class="{ 'is-user': isUser }"
   >
@@ -21,8 +22,8 @@
         :class="[isUser ? 'user-bubble' : 'ai-bubble']"
         @touchstart="handleTouchStart"
         @touchend="handleTouchEnd"
-        @longpress="handleLongPress"
-        @contextmenu.prevent="handleLongPress"
+        @longpress.stop="handleLongPress"
+        @contextmenu.prevent.stop="handleLongPress"
       >
         
         <!-- AI 的深度思考过程容器 -->
@@ -136,14 +137,14 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "longpress", message: ChatMessage): void;
+  (e: "longpress-message", message: ChatMessage): void;
 }>();
 
 const handleLongPress = (e?: Event) => {
   // 阻止 H5 平台上浏览器原生的右键菜单
   if (e) e.preventDefault?.();
   // 仅允许在发送完成或发送失败的消息上执行操作
-  if (props.message.status !== 'sending' && props.message.status !== 'streaming') {
+  if (props.message?.status !== 'sending' && props.message?.status !== 'streaming') {
     // vibrateShort（短震动）仅在原生 App 平台可用，H5 平台下直接忽略该调用
     try {
       uni.vibrateShort({
@@ -152,7 +153,7 @@ const handleLongPress = (e?: Event) => {
         }
       });
     } catch (_) {}
-    emit("longpress", props.message);
+    emit("longpress-message", props.message);
   }
 };
 
@@ -161,13 +162,13 @@ const touchStartX = ref(0);
 const touchStartY = ref(0);
 
 const handleTouchStart = (e: TouchEvent) => {
-  if (isUser.value || !props.message.candidates || props.message.candidates.length <= 1) return;
+  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   touchStartX.value = e.touches[0].clientX;
   touchStartY.value = e.touches[0].clientY;
 };
 
 const handleTouchEnd = (e: TouchEvent) => {
-  if (isUser.value || !props.message.candidates || props.message.candidates.length <= 1) return;
+  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   const deltaX = e.changedTouches[0].clientX - touchStartX.value;
   const deltaY = e.changedTouches[0].clientY - touchStartY.value;
   
@@ -181,7 +182,7 @@ const handleTouchEnd = (e: TouchEvent) => {
 };
 
 const switchCandidateVersion = async (direction: number) => {
-  if (chatStore.isLoading || !props.message.candidates || props.message.status === 'streaming') return;
+  if (chatStore.isLoading || !props.message?.candidates || props.message.status === 'streaming') return;
   const len = props.message.candidates.length;
   const currentIdx = props.message.active_index ?? 0;
   let targetIdx = currentIdx + direction;
@@ -202,17 +203,29 @@ const switchCandidateVersion = async (direction: number) => {
 };
 
 const playTTS = () => {
-  if (props.message.id) {
+  if (props.message?.id) {
     playMessageTTS(props.message);
   }
 };
 
-const isUser = computed(() => props.message.role === "user");
+const isUser = computed(() => {
+  try {
+    return props.message?.role === "user";
+  } catch (err) {
+    console.error("[ChatBubble] isUser error:", err);
+    return false;
+  }
+});
 
 const defaultAvatar = "/static/default-avatar.png";
 
 const hasMeta = computed(() => {
-  return props.message.emotion_tag || props.message.affection_change || props.message.model_used;
+  try {
+    return !!(props.message?.emotion_tag || props.message?.affection_change || props.message?.model_used);
+  } catch (err) {
+    console.error("[ChatBubble] hasMeta error:", err);
+    return false;
+  }
 });
 
 const md = new MarkdownIt({
@@ -226,60 +239,106 @@ const isThoughtExpanded = ref(false);
 
 // 替换 {{char}} / {{user}} 占位符
 const replacePlaceholders = (text: string) => {
-  if (!text) return "";
-  const charName = props.characterName || "角色";
-  const userName = personaStore.userNickname;
-  return text
-    .replace(/\{\{char\}\}/gi, charName)
-    .replace(/\{\{user\}\}/gi, userName);
+  try {
+    if (!text) return "";
+    const str = String(text);
+    const charName = props.characterName || "角色";
+    const userName = personaStore.userNickname || "用户";
+    return str
+      .replace(/\{\{char\}\}/gi, charName)
+      .replace(/\{\{user\}\}/gi, userName);
+  } catch (err) {
+    console.error("[ChatBubble] replacePlaceholders error:", err, "text:", text);
+    return String(text || "");
+  }
 };
 
 const parsedContent = computed(() => {
-  let content = props.message.content || "";
-  content = replacePlaceholders(content);
-  
-  if (isUser.value) {
-    return { thought: "", reply: content };
-  }
-  
-  // 用于提取 <thought>...</thought> 推理内容的正则表达式
-  const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
-  const match = content.match(thoughtRegex);
-  
-  if (match) {
-    const thought = match[1].trim();
-    const reply = content.replace(thoughtRegex, "").trim();
+  try {
+    let content = props.message?.content;
+    if (content === null || content === undefined) {
+      content = "";
+    } else {
+      content = String(content);
+    }
+    
+    // 1. 过滤掉 <status ...> 自定义标签，防止 rich-text 渲染自定义 XML 标签导致原生端崩溃
+    content = content.replace(/<status[^>]*\/?>/gi, "");
+    
+    content = replacePlaceholders(content);
+    
+    if (isUser.value) {
+      return { thought: "", reply: content };
+    }
+    
+    // 2. 提取 <thought>...</thought> 推理内容的正则表达式
+    const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
+    const match = content.match(thoughtRegex);
+    
+    let thought = "";
+    let reply = content;
+    
+    if (match) {
+      thought = match[1].trim();
+      reply = content.replace(thoughtRegex, "").trim();
+    }
+    
+    // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
+    thought = thought.replace(/<\/?thought[^>]*>/gi, "");
+    reply = reply.replace(/<\/?thought[^>]*>/gi, "");
+    
     return { thought, reply };
+  } catch (err) {
+    console.error("[ChatBubble] parsedContent error:", err, "message:", props.message);
+    const fallback = String(props.message?.content || "")
+      .replace(/<status[^>]*\/?>/gi, "")
+      .replace(/<\/?thought[^>]*>/gi, "");
+    return { thought: "", reply: fallback };
   }
-  
-  return { thought: "", reply: content };
 });
 
-const hasThought = computed(() => !!parsedContent.value.thought);
+const hasThought = computed(() => {
+  try {
+    return !!parsedContent.value.thought;
+  } catch (err) {
+    console.error("[ChatBubble] hasThought error:", err);
+    return false;
+  }
+});
 
 const renderedMarkdown = computed(() => {
-  const replyContent = parsedContent.value.reply;
-  if (isUser.value || !replyContent) return "";
-  let html = md.render(replyContent);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
+  try {
+    const replyContent = parsedContent.value.reply;
+    if (isUser.value || !replyContent) return "";
+    let html = md.render(String(replyContent));
+    html = html.replace(/<p>/g, '<p class="md-p">');
+    html = html.replace(/<em>/g, '<em class="md-em">');
+    html = html.replace(/<strong>/g, '<strong class="md-strong">');
+    // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
+    html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+    html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+    return html;
+  } catch (err) {
+    console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
+    return String(props.message?.content || "");
+  }
 });
 
 const renderedThought = computed(() => {
-  const thoughtContent = parsedContent.value.thought;
-  if (!thoughtContent) return "";
-  let html = md.render(thoughtContent);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
+  try {
+    const thoughtContent = parsedContent.value.thought;
+    if (!thoughtContent) return "";
+    let html = md.render(String(thoughtContent));
+    html = html.replace(/<p>/g, '<p class="md-p">');
+    html = html.replace(/<em>/g, '<em class="md-em">');
+    html = html.replace(/<strong>/g, '<strong class="md-strong">');
+    html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+    html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+    return html;
+  } catch (err) {
+    console.error("[ChatBubble] renderedThought error:", err, "message:", props.message);
+    return "";
+  }
 });
 </script>
 
@@ -351,17 +410,24 @@ const renderedThought = computed(() => {
 
 /* ===== AI 气泡（高级白） ===== */
 .ai-bubble {
-  background-color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: #1c1c1e;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-top-left-radius: 4rpx;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 /* ===== 用户气泡（高级黑） ===== */
 .user-bubble {
-  background-color: #1c1c1e;
+  background-color: rgba(28, 28, 30, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-top-right-radius: 4rpx;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 /* ===== 文本渲染样式 ===== */
