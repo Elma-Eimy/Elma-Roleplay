@@ -128,6 +128,8 @@ export interface UpdateMessageResponse {
 export interface DeleteMessageResponse {
   message: string;
   message_id: number;
+  affection_score?: number | null;
+  current_mood?: string | null;
 }
 
 // ===================== API 接口函数 =====================
@@ -733,4 +735,24 @@ export async function deleteSessionMemory(
   return request<MemoryDeleteResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
     method: "DELETE",
   });
+}
+
+/**
+ * 获取当前会话最近编译组装好的提示词。
+ * GET /sessions/{session_id}/compile_prompt
+ */
+export async function getCompiledPrompt(
+  sessionId: number
+): Promise<{ messages: { role: string; content: string }[] }> {
+  if (USE_MOCK) {
+    return {
+      messages: [
+        { role: "system", content: "【系统提示词（编译预设）】\n你扮演Cyber Hacker...\n\n【重要：输出格式要求】\n<reply>回复内容</reply>\n<status emotion=\"开心\" affection_change=\"0\"/>" },
+        { role: "assistant", content: "<reply>你好，我是赛博黑客。找我有什么事？</reply>\n<status emotion=\"平静\" affection_change=\"0\"/>" },
+        { role: "user", content: "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n<current_scenario>\n赛博朋克霓虹城市酒吧。\n</current_scenario>\n\n【当前用户的最新消息：】\n你好，请帮我分析一下这个系统漏洞。" }
+      ]
+    };
+  }
+
+  return request<{ messages: { role: string; content: string }[] }>(`/sessions/${sessionId}/compile_prompt`);
 }
