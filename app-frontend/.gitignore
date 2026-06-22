@@ -20,5 +20,6 @@ dist
 *.sln
 *.sw?
 .npm-cache
+.hbuilderx
 
 unpackage
