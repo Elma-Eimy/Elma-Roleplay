@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
@@ -39,6 +39,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 当前活跃的 App 端流式请求（用于 renderjs 通信） */
   const activeStreamRequest = ref<{
+    requestId: string;
     placeholderId: string;
     userMessageTempId?: string;
     params: ChatRequest;
@@ -48,7 +49,12 @@ export const useChatStore = defineStore("chat", () => {
   } | null>(null);
 
   /** 是否对聊天回复启用深度思考推理模型 */
-  const useReasoning = ref(false);
+  const useReasoning = ref(uni.getStorageSync("elma_use_reasoning") === true);
+
+  // 深度思考模式选择改变时自动写入缓存
+  watch(useReasoning, (newVal) => {
+    uni.setStorageSync("elma_use_reasoning", newVal);
+  });
 
   /** 自定义采样参数值 */
   const temperature = ref<number | null>(null);
@@ -78,6 +84,7 @@ export const useChatStore = defineStore("chat", () => {
     errorMessage.value = null;
     lastMeta.value = null;
     isLoading.value = true;
+    activeStreamRequest.value = null;
     
     // 加载会话历史时重置当前自定义参数，以保证使用后端新会话的默认值
     temperature.value = null;
@@ -137,8 +144,61 @@ export const useChatStore = defineStore("chat", () => {
   /** 在后端删除单条消息并同步从本地移除 */
   async function deleteMessageById(id: number) {
     try {
-      await apiDeleteMessage(id);
+      const res = await apiDeleteMessage(id);
+      
+      // 1. 查找此消息在本地列表中对应的气泡对象
+      const idx = messages.value.findIndex((m) => m.id === id);
+      if (idx !== -1) {
+        const msg = messages.value[idx];
+        
+        // 2. 如果是 assistant 消息，且存在其他候选回复
+        if (msg.role === "assistant" && msg.candidates && msg.candidates.length > 1) {
+          // 过滤掉当前被删的候选
+          msg.candidates = msg.candidates.filter((c) => c.id !== id);
+          
+          // 选择 ID 最大的剩下的候选作为替补（与后端 sibling = id.desc().first() 规则保持一致）
+          const sortedCandidates = [...msg.candidates].sort((a, b) => b.id - a.id);
+          const sibling = sortedCandidates[0];
+          
+          if (sibling) {
+            // 更新当前气泡的数据为新的替补候选
+            msg.id = sibling.id;
+            msg.content = sibling.content;
+            msg.emotion_tag = sibling.emotion_tag;
+            msg.affection_change = sibling.affection_change;
+            msg.audio_path = sibling.audio_path || null;
+            msg.clientId = `msg-${sibling.id}`; // 保持 clientId 一致
+            
+            // 重新计算活动 index
+            const activeIdx = msg.candidates.findIndex((c) => c.id === sibling.id);
+            msg.active_index = activeIdx !== -1 ? activeIdx : 0;
+            
+            // 更新 Persona 的好感度
+            const personaStore = usePersonaStore();
+            if (res.affection_score !== null && res.affection_score !== undefined) {
+              personaStore.applyAffectionChange(
+                0,
+                res.affection_score,
+                res.current_mood || undefined
+              );
+            }
+            return;
+          }
+        }
+      }
+      
+      // 3. 常规删除：如果没有候选替补，或者该消息不是 assistant 消息，则直接移除整个气泡
       messages.value = messages.value.filter((m) => m.id !== id);
+      
+      // 同时应用好感度与心情变更到 Persona Store
+      const personaStore = usePersonaStore();
+      if (res.affection_score !== null && res.affection_score !== undefined) {
+        personaStore.applyAffectionChange(
+          0,
+          res.affection_score,
+          res.current_mood || undefined
+        );
+      }
     } catch (e: any) {
       console.error("Failed to delete message", e);
     }
@@ -181,7 +241,9 @@ export const useChatStore = defineStore("chat", () => {
     };
 
     // #ifdef APP-PLUS
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     activeStreamRequest.value = {
+      requestId,
       placeholderId: streamPlaceholderId,
       params: requestParams,
       baseUrl: getBaseUrl(),
@@ -260,7 +322,9 @@ export const useChatStore = defineStore("chat", () => {
     };
 
     // #ifdef APP-PLUS
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     activeStreamRequest.value = {
+      requestId,
       placeholderId: streamPlaceholderId,
       userMessageTempId: tempId,
       params: requestParams,
@@ -479,7 +543,6 @@ export const useChatStore = defineStore("chat", () => {
     streamingText.value = "";
     lastMeta.value = null;
     errorMessage.value = null;
-    useReasoning.value = false;
     temperature.value = null;
     top_p.value = null;
     presence_penalty.value = null;
