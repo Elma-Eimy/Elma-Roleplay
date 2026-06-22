@@ -6,8 +6,13 @@
         <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
       </view>
       <text class="title">角色设定</text>
-      <view class="header-btn edit-btn" @tap="goToEdit">
-        <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+      <view class="header-right">
+        <view class="header-btn sync-btn" @tap="quickUpdateFromCard">
+          <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+        </view>
+        <view class="header-btn edit-btn" @tap="goToEdit">
+          <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+        </view>
       </view>
     </view>
 
@@ -184,24 +189,19 @@
     />
 
     <!-- 重命名会话分支模态框 -->
-    <view v-if="renamingSessionId !== null" class="rename-modal-backdrop">
-      <view class="rename-modal">
-        <text class="modal-title">重命名分支</text>
-        <input class="rename-input" v-model="newSessionTitle" placeholder="请输入新分支名称..." :focus="true" />
-        <view class="modal-actions">
-          <view class="modal-btn cancel" @tap="cancelRename">取消</view>
-          <view class="modal-btn save" @tap="saveRename">保存</view>
-        </view>
-      </view>
-    </view>
-
+    <RenameSessionModal
+      :isOpen="renamingSessionId !== null"
+      :title="newSessionTitle"
+      @close="cancelRename"
+      @save="saveRename"
+    />
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
-import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl } from "@/api/characters";
+import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl, parseCharacter } from "@/api/characters";
 import type { CharacterDetail } from "@/api/characters";
 import { getSessions, deleteSession, updateSessionTitle, createSession, getSessionHistory } from "@/api/sessions";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
@@ -209,6 +209,9 @@ import BranchTreeView from "@/components/chat/BranchTreeView.vue";
 import { usePersonaStore } from "@/store/personaStore";
 import CharacterProfileTab from "@/components/character/CharacterProfileTab.vue";
 import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vue";
+
+// 引入重命名分支子组件
+import RenameSessionModal from "@/components/common/RenameSessionModal.vue";
 
 const personaStore = usePersonaStore();
 
@@ -315,6 +318,88 @@ const goToEdit = () => {
       url: `/pages/character/create?id=${characterId.value}`
     });
   }
+};
+
+const runQuickUpdate = async (tempFilePath: string, isPng: boolean) => {
+  if (characterId.value === null || !character.value) return;
+  uni.showLoading({ title: '正在解析角色卡...' });
+  try {
+    const parseRes = await parseCharacter(tempFilePath);
+    
+    let avatarPath = character.value.avatar_path || "";
+    // 如果是 PNG 格式角色卡，自动上传并更新头像
+    if (isPng) {
+      uni.showLoading({ title: '正在上传头像...' });
+      try {
+        const uploadRes = await uploadAvatar(tempFilePath);
+        avatarPath = uploadRes.avatar_path;
+      } catch (uploadErr) {
+        console.error("Auto avatar upload failed", uploadErr);
+      }
+    } else if (parseRes.data.avatar_path) {
+      avatarPath = parseRes.data.avatar_path;
+    }
+
+    const updatedData = {
+      ...character.value,
+      ...parseRes.data,
+      avatar_path: avatarPath
+    };
+
+    uni.showLoading({ title: '正在更新角色信息...' });
+    await updateCharacter(characterId.value, updatedData);
+    await personaStore.loadCharacters();
+    await loadCharacterData(characterId.value);
+    
+    uni.showToast({ title: '更新角色信息成功', icon: 'success' });
+  } catch (e) {
+    console.error("Quick update failed", e);
+    uni.showToast({ title: '更新失败，请检查格式', icon: 'none' });
+  } finally {
+    uni.hideLoading();
+  }
+};
+
+const quickUpdateFromCard = () => {
+  if (characterId.value === null || !character.value) return;
+  
+  uni.showModal({
+    title: "快捷更新",
+    content: "导入新角色卡将直接覆盖该角色的当前设定（不会影响聊天记录和好感度）。是否继续？",
+    success: (modalRes) => {
+      if (!modalRes.confirm) return;
+
+      // #ifdef APP-PLUS
+      uni.chooseImage({
+        count: 1,
+        sizeType: ['original'],
+        sourceType: ['album'],
+        success: (res) => {
+          runQuickUpdate(res.tempFilePaths[0], true);
+        },
+        fail: (err) => {
+          console.log("选择图片取消或失败", err);
+        }
+      });
+      // #endif
+
+      // #ifndef APP-PLUS
+      uni.chooseFile({
+        count: 1,
+        type: "all",
+        extension: [".png", ".json"],
+        success: (res) => {
+          const path = res.tempFilePaths[0];
+          const isPng = path.toLowerCase().endsWith('.png');
+          runQuickUpdate(path, isPng);
+        },
+        fail: (err) => {
+          console.log("选择文件取消或失败", err);
+        }
+      });
+      // #endif
+    }
+  });
 };
 
 const previewPortrait = () => {
@@ -435,10 +520,10 @@ const cancelRename = () => {
   newSessionTitle.value = "";
 };
 
-const saveRename = async () => {
-  if (renamingSessionId.value !== null && newSessionTitle.value.trim() !== "") {
+const saveRename = async (newTitle: string) => {
+  if (renamingSessionId.value !== null && newTitle.trim() !== "") {
     try {
-      await updateSessionTitle(renamingSessionId.value, newSessionTitle.value.trim());
+      await updateSessionTitle(renamingSessionId.value, newTitle.trim());
       cancelRename();
       if (characterId.value !== null) {
         await loadCharacterData(characterId.value);
@@ -462,552 +547,4 @@ const formatDate = (dateString: string) => {
 };
 </script>
 
-<style scoped>
-.detail-container {
-  display: flex;
-  flex-direction: column;
-  width: 100vw;
-  height: 100%;
-  background-color: #fafafa;
-}
-
-/* ===== 头部样式 ===== */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: env(safe-area-inset-top, 40rpx);
-  height: calc(env(safe-area-inset-top, 40rpx) + 110rpx);
-  padding-left: 36rpx;
-  padding-right: 36rpx;
-  background-color: #ffffff;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  z-index: 50;
-}
-
-.back-btn, .header-btn {
-  width: 60rpx;
-  height: 60rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-.back-btn:active, .header-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
-}
-
-.title {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-}
-
-/* ===== 内容滚动区域 ===== */
-.scroll-content {
-  flex: 1;
-  height: 0;
-  min-height: 0;
-}
-
-.scroll-inner {
-  padding-bottom: 220rpx;
-}
-
-/* ===== 角色立绘面板 ===== */
-.portrait-panel {
-  position: relative;
-  width: 100%;
-  height: 680rpx;
-  background-color: #f2f2f7;
-  overflow: hidden;
-}
-
-.portrait-img {
-  width: 100%;
-  height: 100%;
-}
-
-.portrait-img :deep(img) {
-  object-fit: cover !important;
-  object-position: center top !important;
-}
-
-.portrait-img :deep(div) {
-  background-size: cover !important;
-  background-position: center top !important;
-}
-
-.portrait-overlay {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 180rpx;
-  background: linear-gradient(to top, rgba(250, 250, 250, 1), rgba(250, 250, 250, 0));
-}
-
-.change-portrait-btn {
-  position: absolute;
-  bottom: 30rpx;
-  right: 36rpx;
-  display: flex;
-  align-items: center;
-  gap: 8rpx;
-  padding: 14rpx 28rpx;
-  background-color: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(10px);
-  border-radius: 30rpx;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-  transition: all 0.2s;
-}
-
-.change-portrait-btn:active {
-  transform: scale(0.95);
-  background-color: #ffffff;
-}
-
-.change-portrait-text {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-}
-
-/* ===== 角色头部基本设定 ===== */
-.char-header-section {
-  padding: 0 36rpx 28rpx 36rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 16rpx;
-}
-
-.char-name {
-  font-size: 44rpx;
-  font-weight: 700;
-  color: #1c1c1e;
-  letter-spacing: -0.5px;
-}
-
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12rpx;
-}
-
-.personality-tag {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #8e8e93;
-  background-color: rgba(0, 0, 0, 0.03);
-  padding: 6rpx 20rpx;
-  border-radius: 40rpx;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-}
-
-
-
-/* ===== 宇宙会话分支列表 ===== */
-.branches-header {
-  padding: 24rpx 36rpx 16rpx 48rpx;
-}
-
-.branches-title {
-  font-size: 26rpx;
-  font-weight: 600;
-  color: #8e8e93;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.branches-list {
-  padding: 0 36rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 20rpx;
-}
-
-.branch-card {
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 24rpx;
-  padding: 28rpx 28rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 16rpx;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.branch-card:active {
-  transform: scale(0.98);
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-}
-
-.branch-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12rpx;
-}
-
-.branch-name {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.branch-title-area {
-  display: flex;
-  flex-direction: column;
-  gap: 4rpx;
-  flex: 1;
-  min-width: 0;
-}
-
-.branch-parent-tag {
-  font-size: 24rpx;
-  color: #8e8e93;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: inline-flex;
-  align-items: center;
-}
-
-.branch-meta {
-  display: flex;
-  gap: 12rpx;
-  flex-shrink: 0;
-}
-
-.meta-item {
-  display: flex;
-  gap: 4rpx;
-  font-size: 24rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  padding: 6rpx 16rpx;
-  border-radius: 40rpx;
-}
-
-.meta-label {
-  color: #8e8e93;
-}
-
-.meta-value {
-  color: #1c1c1e;
-  font-weight: 600;
-}
-
-.meta-value.score {
-  color: #1c1c1e;
-}
-
-.branch-preview {
-  font-size: 28rpx;
-  color: #8e8e93;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.4;
-}
-
-.branch-date {
-  font-size: 24rpx;
-  color: #c7c7cc;
-  text-align: right;
-  font-weight: 500;
-}
-
-.empty-branches {
-  padding: 64rpx 0;
-  display: flex;
-  justify-content: center;
-  text-align: center;
-}
-
-.empty-branches-text {
-  font-size: 26rpx;
-  color: #8e8e93;
-  line-height: 1.5;
-}
-
-/* ===== 底部操作栏 ===== */
-.footer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  padding: 24rpx 36rpx calc(env(safe-area-inset-bottom, 24rpx) + 24rpx);
-  background-color: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  z-index: 60;
-}
-
-.action-btn {
-  height: 88rpx;
-  background-color: #1c1c1e;
-  border-radius: 44rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12rpx;
-  transition: all 0.25s ease;
-}
-
-.action-btn:active {
-  background-color: #000000;
-  transform: scale(0.975);
-}
-
-.action-btn-text {
-  color: #ffffff;
-  font-size: 28rpx;
-  font-weight: 600;
-}
-
-/* ===== 重命名模态框 ===== */
-.rename-modal-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s ease;
-}
-
-.rename-modal {
-  width: 580rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
-  padding: 44rpx 36rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 28rpx;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.modal-title {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  text-align: center;
-}
-
-.rename-input {
-  width: 100%;
-  height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 14rpx;
-  padding: 0 20rpx;
-  font-size: 28rpx;
-  color: #1c1c1e;
-  box-sizing: border-box;
-}
-
-.rename-input:focus {
-  border-color: #1c1c1e;
-  background-color: #ffffff;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.modal-btn {
-  flex: 1;
-  height: 80rpx;
-  border-radius: 40rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26rpx;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.modal-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.03);
-  color: #48484a;
-}
-
-.modal-btn.cancel:active {
-  background-color: rgba(0, 0, 0, 0.06);
-}
-
-.modal-btn.save {
-  background-color: #1c1c1e;
-  color: #ffffff;
-}
-
-.modal-btn.save:active {
-  background-color: #000000;
-  transform: scale(0.97);
-}
-
-/* Custom SVG Icon Styles */
-.back-icon {
-  width: 44rpx;
-  height: 44rpx;
-}
-.edit-icon {
-  width: 36rpx;
-  height: 36rpx;
-}
-.change-portrait-icon {
-  width: 32rpx;
-  height: 32rpx;
-}
-.action-icon {
-  width: 40rpx;
-  height: 40rpx;
-}
-
-/* Fallback Unicode Icon Styles */
-.back-icon-fallback {
-  display: none;
-}
-.edit-icon-fallback {
-  display: none;
-}
-.change-portrait-icon-fallback {
-  display: none;
-}
-.action-icon-fallback {
-  display: none;
-}
-
-/* ===== 页签导航 (Tabs Nav) ===== */
-.tabs-nav {
-  display: flex;
-  margin: 0 36rpx 28rpx 36rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  border-radius: 20rpx;
-  padding: 6rpx;
-}
-
-.tab-item {
-  flex: 1;
-  padding: 16rpx 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 16rpx;
-  transition: all 0.2s ease;
-}
-
-.tab-item.is-active {
-  background-color: #ffffff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-}
-
-.tab-label {
-  font-size: 24rpx;
-  font-weight: 600;
-  color: #8e8e93;
-  transition: color 0.2s ease;
-}
-
-.tab-item.is-active .tab-label {
-  color: #1c1c1e;
-}
-
-
-
-/* ===== 视图模式切换栏 ===== */
-.view-mode-toggle-row {
-  display: flex;
-  margin: 0 36rpx 28rpx 36rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  border-radius: 16rpx;
-  padding: 4rpx;
-}
-
-.toggle-pill {
-  flex: 1;
-  padding: 12rpx 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12rpx;
-  transition: all 0.2s ease;
-}
-
-.toggle-pill.is-active {
-  background-color: #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.toggle-pill-text {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #8e8e93;
-  transition: color 0.2s ease;
-}
-
-.toggle-pill.is-active .toggle-pill-text {
-  color: #1c1c1e;
-}
-
-.toggle-pill-icon {
-  width: 28rpx;
-  height: 28rpx;
-  margin-right: 8rpx;
-  filter: opacity(0.4) grayscale(1);
-  transition: all 0.2s ease;
-}
-
-.toggle-pill.is-active .toggle-pill-icon {
-  filter: opacity(0.95) grayscale(0);
-}
-
-.affection-score-row {
-  display: flex;
-  align-items: center;
-  gap: 4rpx;
-}
-
-.affection-heart-icon {
-  width: 24rpx;
-  height: 24rpx;
-  flex-shrink: 0;
-}
-
-.tree-view-wrapper {
-  padding: 0 36rpx;
-}
-
-.character-tag {
-  font-size: 22rpx;
-  font-weight: 600;
-  color: #007aff;
-  background-color: rgba(0, 122, 255, 0.05);
-  padding: 6rpx 20rpx;
-  border-radius: 40rpx;
-  border: 1px solid rgba(0, 122, 255, 0.05);
-}
-
-</style>
+<style scoped src="./detail.css"></style>
