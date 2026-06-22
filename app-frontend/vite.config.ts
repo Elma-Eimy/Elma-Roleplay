@@ -16,5 +16,9 @@ export default defineConfig(async () => {
         "@": resolve(new URL("./src", import.meta.url).pathname),
       },
     },
+    // 生产环境打包时自动剔除 console.log 和 debugger 以优化运行性能
+    esbuild: {
+      drop: (process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : []) as ('console' | 'debugger')[],
+    },
   };
 });
