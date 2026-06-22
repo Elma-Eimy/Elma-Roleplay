@@ -1,0 +1,213 @@
+.page-container {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100%;
+  background-color: #fafafa;
+}
+
+/* ===== Custom Nav Bar ===== */
+.nav-bar {
+  padding-top: env(safe-area-inset-top, 40rpx);
+  height: calc(env(safe-area-inset-top, 40rpx) + 110rpx);
+  padding-left: 36rpx;
+  padding-right: 36rpx;
+  display: flex;
+  align-items: center;
+  background-color: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  z-index: 50;
+}
+
+.nav-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+  letter-spacing: -0.5px;
+}
+
+/* ===== Settings List ===== */
+.settings-scroll {
+  flex: 1;
+  height: 0;
+  min-height: 0;
+}
+
+.settings-list {
+  padding: 36rpx 36rpx 180rpx 36rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 40rpx;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+}
+
+.group-title {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #8e8e93;
+  padding-left: 12rpx;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.group-desc {
+  font-size: 22rpx;
+  color: #8e8e93;
+  padding-left: 12rpx;
+  line-height: 1.5;
+  margin-top: -6rpx;
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 24rpx;
+  padding: 28rpx 24rpx;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
+  transition: all 0.2s ease;
+}
+
+.setting-item:active {
+  background-color: rgba(0, 0, 0, 0.01);
+}
+
+.setting-item-left {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  flex: 1;
+  min-width: 0;
+}
+
+.item-icon {
+  color: #8e8e93;
+  flex-shrink: 0;
+}
+
+.danger-icon {
+  color: #ff3b30;
+}
+
+.danger-text {
+  color: #ff3b30 !important;
+}
+
+.setting-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-name {
+  font-size: 28rpx;
+  font-weight: 500;
+  color: #1c1c1e;
+}
+
+.setting-desc {
+  font-size: 22rpx;
+  color: #8e8e93;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setting-action {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.chevron {
+  color: #c7c7cc;
+}
+
+/* ===== Stepper ===== */
+.stepper {
+  display: flex;
+  align-items: center;
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 40rpx;
+  padding: 4rpx;
+  flex-shrink: 0;
+}
+
+.step-btn {
+  width: 52rpx;
+  height: 52rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background-color: #ffffff;
+  font-size: 28rpx;
+  font-weight: 500;
+  color: #1c1c1e;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.step-btn:active {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.step-value {
+  min-width: 70rpx;
+  text-align: center;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+}
+
+/* ===== Status Tag & Version ===== */
+.status-tag {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #ff9500;
+  background-color: rgba(255, 149, 0, 0.1);
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+}
+
+.status-tag.is-mock {
+  color: #34c759;
+  background-color: rgba(52, 199, 89, 0.1);
+}
+
+.version-text {
+  font-size: 26rpx;
+  font-weight: 500;
+  color: #8e8e93;
+}
+
+/* Custom SVG Icon Styles */
+.item-icon {
+  width: 40rpx;
+  height: 40rpx;
+  flex-shrink: 0;
+}
+.chevron {
+  width: 32rpx;
+  height: 32rpx;
+  flex-shrink: 0;
+}
+
+/* Fallback Unicode Icon Styles */
+.item-icon-fallback {
+  font-size: 34rpx;
+  line-height: 1;
+  width: 40rpx;
+  text-align: center;
+}
+.chevron-fallback {
+  display: none;
+}
