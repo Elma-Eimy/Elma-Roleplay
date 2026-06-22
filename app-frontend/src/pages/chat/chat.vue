@@ -1,11 +1,12 @@
 <template>
   <view class="page-container" :class="{ 'is-android': isAndroid }">
-    <!-- 动态磨砂玻璃背景图层 -->
+    <!-- 动态角色立绘背景图层（高清晰度且完整展现） -->
     <view class="chat-bg" :style="backgroundStyle"></view>
 
     <!-- App 端流式传输通信桥梁 (仅 APP-PLUS 环境下有效) -->
     <!-- #ifdef APP-PLUS -->
-    <view :prop="chatStore.activeStreamRequest" :change:prop="stream.onStreamRequestChange" style="display: none;"></view>
+    <view :propVal="localStreamRequest" :change:propVal="stream.onStreamRequestChange" class="renderjs-bridge"></view>
+    <view id="hidden-stream-bridge" style="display: none;" @bridge-msg="onBridgeMessage"></view>
     <!-- #endif -->
     <!-- 自定义导航栏头部 -->
     <view class="custom-header">
@@ -46,7 +47,7 @@
           :message="msg"
           :avatarUrl="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
           :characterName="personaStore.characterName"
-          @longpress="onMessageLongPress"
+          @longpress-message="onMessageLongPress"
         />
 
         <!-- 会话故事空状态 -->
@@ -126,6 +127,7 @@
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
       @open-memory-view="isMemoryPanelOpen = true"
+      @open-prompt-preview="openPromptPreview"
     />
 
     <!-- 向量记忆管理弹窗 -->
@@ -176,13 +178,36 @@
       @close="isNewBranchModalOpen = false"
       @confirm="startNewBranch"
     />
+
+    <!-- 提示词预览弹窗 -->
+    <view v-if="isPromptPreviewOpen" class="modal-backdrop" @tap="isPromptPreviewOpen = false">
+      <view class="prompt-preview-modal" @tap.stop>
+        <view class="modal-header">
+          <text class="modal-title">当前 Prompt 组装预览</text>
+          <view class="modal-close-btn" @tap="isPromptPreviewOpen = false">×</view>
+        </view>
+        <scroll-view scroll-y class="prompt-preview-scroll">
+          <view class="prompt-preview-content">
+            <view 
+              class="prompt-msg-card" 
+              v-for="(msg, idx) in compiledPromptMessages" 
+              :key="idx"
+              :class="'role-' + msg.role"
+            >
+              <view class="prompt-msg-role-tag">{{ msg.role.toUpperCase() }}</view>
+              <text class="prompt-msg-text" :selectable="true" :user-select="true">{{ msg.content }}</text>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup lang="ts">
 // @ts-nocheck
 import { ref, computed, watch } from "vue";
-import { onLoad } from "@dcloudio/uni-app";
+import { onLoad, onUnload } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { 
@@ -190,7 +215,8 @@ import {
   deleteSession, 
   getSessions, 
   updateSessionTitle, 
-  getSessionHistory 
+  getSessionHistory,
+  getCompiledPrompt
 } from "@/api/sessions";
 import { ChatBubble, ChatDrawer, MemoryManagerModal } from "@/components/chat";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
@@ -245,6 +271,26 @@ const sessionsList = ref<any[]>([]);
 const isNewBranchModalOpen = ref(false);
 const activeParentSessionId = ref<number | null>(null);
 
+// 提示词预览状态
+const isPromptPreviewOpen = ref(false);
+const compiledPromptMessages = ref<{ role: string; content: string }[]>([]);
+
+const openPromptPreview = async () => {
+  isStatusPanelOpen.value = false;
+  if (currentSessionId.value === null) return;
+  try {
+    uni.showLoading({ title: "正在组装提示词..." });
+    const res = await getCompiledPrompt(currentSessionId.value);
+    compiledPromptMessages.value = res.messages;
+    isPromptPreviewOpen.value = true;
+  } catch (e) {
+    console.error("Failed to load compiled prompt", e);
+    uni.showToast({ title: "获取提示词失败", icon: "none" });
+  } finally {
+    uni.hideLoading();
+  }
+};
+
 const loadSessionsList = async () => {
   if (!personaStore.activeCharacter) return;
   isBranchTreeLoading.value = true;
@@ -291,10 +337,14 @@ const switchSession = async (session: any) => {
   isInitLoading.value = true;
   scrollWithAnimation.value = false;
   
-  await Promise.all([
-    personaStore.loadSessionDetail(session.id),
-    chatStore.loadHistory(session.id)
-  ]);
+  try {
+    await Promise.all([
+      personaStore.loadSessionDetail(session.id),
+      chatStore.loadHistory(session.id)
+    ]);
+  } catch (err) {
+    console.error("[chat.vue] switchSession Promise.all failed with error:", err);
+  }
   
   setTimeout(() => {
     scrollToBottom();
@@ -402,11 +452,14 @@ onLoad(async (options) => {
     isInitLoading.value = true;
     scrollWithAnimation.value = false;
     
-    // 从后端加载该会话的详细信息与聊天历史记录
-    await Promise.all([
-      personaStore.loadSessionDetail(sId),
-      chatStore.loadHistory(sId)
-    ]);
+    try {
+      await Promise.all([
+        personaStore.loadSessionDetail(sId),
+        chatStore.loadHistory(sId)
+      ]);
+    } catch (err) {
+      console.error("[chat.vue] Promise.all failed with error:", err);
+    }
     
     // 延迟以确保组件在端侧 DOM 挂载和计算高度完毕后再置底
     setTimeout(() => {
@@ -416,7 +469,16 @@ onLoad(async (options) => {
         isInitLoading.value = false;
       }, 100);
     }, 250);
+  } else {
+    console.warn("[chat.vue] onLoad triggered but options.sessionId is missing or empty!");
   }
+});
+
+onUnload(() => {
+  console.log("[chat.vue] onUnload page - resetting chatStore");
+  chatStore.$reset();
+  localStreamRequest.value = null;
+  currentStreamRequestId.value = null;
 });
 
 const goBack = () => {
@@ -443,6 +505,15 @@ watch(() => chatStore.streamingText, () => {
   scrollToBottomThrottled();
 });
 
+// 监听 Pinia Store 中的 App 端流信号，同步到组件本地变量以触发 renderjs 视图层执行
+const localStreamRequest = ref<any>(null);
+const currentStreamRequestId = ref<string | null>(null);
+watch(() => chatStore.activeStreamRequest, (newVal) => {
+  // 采用深拷贝强制更新引用，确保 value 发生引用级变化以触发 renderjs 视图层 :change:propVal 监听器
+  localStreamRequest.value = newVal ? JSON.parse(JSON.stringify(newVal)) : null;
+  currentStreamRequestId.value = newVal ? newVal.requestId : null;
+}, { deep: true, immediate: true });
+
 // 对话彻底结束或状态变动时置底
 watch(() => chatStore.isLoading, (loading) => {
   if (isInitLoading.value || isHistoryLoading.value) return;
@@ -462,6 +533,9 @@ const onSend = async () => {
 };
 
 const onMessageLongPress = (msg: any) => {
+  // 防御性检查：确保是有效的消息对象，忽略可能由冒泡触发的原生 Event 对象
+  if (!msg || typeof msg !== 'object' || !msg.id || 'target' in msg) return;
+
   const itemList = ['复制内容', '编辑消息', '创建分支（多宇宙）', '删除此消息'];
   const isLatestAssistant = msg.id === chatStore.lastAssistantMessage?.id;
   if (msg.role === 'assistant' && isLatestAssistant) {
@@ -558,9 +632,11 @@ const backgroundStyle = computed(() => {
   if (!avatar) return {};
   const url = getAvatarUrl(avatar);
   return {
-    backgroundImage: `url(${url})`
+    backgroundImage: `url('${url}')`
   };
 });
+
+
 
 // 删除当前会话
 const deleteCurrentSession = () => {
@@ -600,6 +676,8 @@ const onLoadMore = async () => {
     if (hasMore && oldestClientId) {
       await maintainScrollPosition(oldestClientId);
     }
+  } catch (err) {
+    console.error("[chat.vue] onLoadMore failed with exception:", err);
   } finally {
     setTimeout(() => {
       isHistoryLoading.value = false;
@@ -607,70 +685,119 @@ const onLoadMore = async () => {
   }
 };
 
-// App-Plus renderjs stream callbacks
-const handleStreamChunk = (data: { placeholderId: string; chunk: string }) => {
-  chatStore.appendStreamChunk(data.placeholderId, data.chunk);
-};
-
-const handleStreamDone = (data: { placeholderId: string; userMessageTempId?: string; meta: any }) => {
-  chatStore.finalizeStream(data.placeholderId, {
-    id: data.meta.assistant_message_id || Date.now(),
-    role: "assistant",
-    emotion_tag: data.meta.emotion_tag,
-    affection_change: data.meta.affection_change,
-    created_at: new Date().toISOString(),
-    model_used: data.meta.model_used,
-    parent_id: data.meta.user_message_id,
-    is_active: true,
-    candidates: data.meta.candidates,
-    active_index: data.meta.active_index,
-  });
-
-  if (data.userMessageTempId) {
-    const userIdx = chatStore.messages.findIndex((m) => m.tempId === data.userMessageTempId);
-    if (userIdx !== -1) {
-      chatStore.messages[userIdx].status = "done";
-      if (data.meta.user_message_id) {
-        chatStore.messages[userIdx].id = data.meta.user_message_id;
+// App-Plus renderjs stream callbacks using native DOM Event Bridge
+const onBridgeMessage = (e: any) => {
+  try {
+    const payload = e.detail;
+    if (!payload) return;
+    console.log("[Vue Logic] onBridgeMessage received type:", payload.type);
+    
+    // 如果是流相关的消息类型，安全拦截校验 requestId，防止跨页面/孤儿请求导致的状态冲突与卡死
+    if (payload.type === "chunk" || payload.type === "done" || payload.type === "error") {
+      if (payload.requestId !== currentStreamRequestId.value) {
+        console.warn(`[Vue Logic] Discarding orphaned stream event of type: ${payload.type}. Request ID mismatch.`);
+        return;
       }
     }
-  }
+    
+    if (payload.type === "chunk") {
+      chatStore.appendStreamChunk(payload.placeholderId, payload.chunk);
+    } else if (payload.type === "done") {
+      // 提取后端入库的完整 Ground-Truth 文本以防止字符缺失，并对 meta 加以防护，防止 undefined 属性解构异常
+      const meta = payload.meta || {};
+      const candidates = meta.candidates || [];
+      const activeIndex = meta.active_index ?? (candidates.length - 1);
+      const finalContent = candidates[activeIndex]?.content;
 
-  // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
-  personaStore.applyAffectionChange(
-    data.meta.affection_change,
-    data.meta.affection_score,
-    data.meta.emotion_tag
-  );
+      chatStore.finalizeStream(payload.placeholderId, {
+        id: meta.assistant_message_id || Date.now(),
+        role: "assistant",
+        ...(finalContent ? { content: finalContent } : {}),
+        emotion_tag: meta.emotion_tag,
+        affection_change: meta.affection_change,
+        created_at: new Date().toISOString(),
+        model_used: meta.model_used,
+        parent_id: meta.user_message_id,
+        is_active: true,
+        candidates: meta.candidates,
+        active_index: meta.active_index,
+      });
 
-  chatStore.isLoading = false;
-  chatStore.activeStreamRequest = null;
-};
+      if (payload.userMessageTempId) {
+        const userIdx = chatStore.messages.findIndex((m) => m.tempId === payload.userMessageTempId);
+        if (userIdx !== -1) {
+          chatStore.messages[userIdx].status = "done";
+          if (meta.user_message_id) {
+            chatStore.messages[userIdx].id = meta.user_message_id;
+          }
+        }
+      }
 
-const handleStreamError = (data: { placeholderId: string; userMessageTempId?: string; error: string }) => {
-  chatStore.messages = chatStore.messages.filter((m) => m.tempId !== data.placeholderId);
-  if (data.userMessageTempId) {
-    const userIdx = chatStore.messages.findIndex((m) => m.tempId === data.userMessageTempId);
-    if (userIdx !== -1) {
-      chatStore.messages[userIdx].status = "error";
+      // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
+      personaStore.applyAffectionChange(
+        meta.affection_change,
+        meta.affection_score,
+        meta.emotion_tag
+      );
+
+      chatStore.isLoading = false;
+      chatStore.activeStreamRequest = null;
+    } else if (payload.type === "error") {
+      chatStore.messages = chatStore.messages.filter((m) => m.tempId !== payload.placeholderId);
+      if (payload.userMessageTempId) {
+        const userIdx = chatStore.messages.findIndex((m) => m.tempId === payload.userMessageTempId);
+        if (userIdx !== -1) {
+          chatStore.messages[userIdx].status = "error";
+        }
+      }
+      chatStore.setError(payload.error || "Failed to get AI response");
+      uni.showToast({ title: payload.error || "获取回复失败", icon: "none" });
+      chatStore.isLoading = false;
+      chatStore.activeStreamRequest = null;
+    } else if (payload.type === "log") {
+      if (payload.level === "error") {
+        console.error(`[WebView Log][error]`, payload.message);
+      } else if (payload.level === "warn") {
+        console.warn(`[WebView Log][warn]`, payload.message);
+      } else {
+        console.log(`[WebView Log][info]`, payload.message);
+      }
     }
+  } catch (err) {
+    console.error("[Vue Logic] onBridgeMessage parse error:", err);
   }
-  chatStore.setError(data.error || "Failed to get AI response");
-  uni.showToast({ title: data.error || "获取回复失败", icon: "none" });
-  chatStore.isLoading = false;
-  chatStore.activeStreamRequest = null;
 };
-
-defineExpose({
-  handleStreamChunk,
-  handleStreamDone,
-  handleStreamError,
-});
 </script>
 
 <script module="stream" lang="renderjs">
 // @ts-ignore
-var abortController = null;
+var activeXhr = null;
+
+function sendToLogic(type, payload) {
+  var bridgeEl = document.getElementById("hidden-stream-bridge");
+  if (bridgeEl) {
+    var data = { type: type };
+    for (var key in payload) {
+      data[key] = payload[key];
+    }
+    
+    var evt;
+    if (typeof CustomEvent === "function") {
+      evt = new CustomEvent("bridge-msg", {
+        detail: data,
+        bubbles: true,
+        cancelable: true
+      });
+    } else {
+      evt = document.createEvent("CustomEvent");
+      evt.initCustomEvent("bridge-msg", true, true, data);
+    }
+    
+    bridgeEl.dispatchEvent(evt);
+  } else {
+    console.error("[renderjs] hidden-stream-bridge element not found!");
+  }
+}
 
 export default {
   beforeDestroy: function() {
@@ -682,17 +809,21 @@ export default {
   methods: {
     abortActiveStream: function() {
       // @ts-ignore
-      if (abortController) {
+      if (activeXhr) {
         try {
           // @ts-ignore
-          abortController.abort();
+          activeXhr.abort();
         } catch (e) {}
         // @ts-ignore
-        abortController = null;
+        activeXhr = null;
       }
     },
     // @ts-ignore
     onStreamRequestChange: function(newValue, oldValue, ownerInstance, instance) {
+      var logMsg = "[renderjs] onStreamRequestChange triggered. newValue: " + JSON.stringify(newValue);
+      console.log(logMsg);
+      sendToLogic("log", { level: "info", message: logMsg });
+
       if (!newValue) {
         this.abortActiveStream();
         return;
@@ -701,117 +832,157 @@ export default {
     },
     // @ts-ignore
     startStream: function(request, ownerInstance) {
-      this.abortActiveStream();
-      
-      // @ts-ignore
-      abortController = new AbortController();
-      // @ts-ignore
-      var signal = abortController.signal;
-      
-      var baseUrl = request.baseUrl;
-      var apiKey = request.apiKey;
-      var params = request.params;
-      var placeholderId = request.placeholderId;
-      var userMessageTempId = request.userMessageTempId;
-      
-      fetch(baseUrl + "/chat/stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey
-        },
-        body: JSON.stringify(params),
-        signal: signal
-      })
-      .then(function(response) {
-        if (!response.ok) {
-          throw new Error("Server returned status code " + response.status);
-        }
-        if (!response.body) {
-          throw new Error("ReadableStream is not supported or response body is empty");
-        }
+      try {
+        var logMsg = "[renderjs] startStream entered. placeholder: " + request.placeholderId;
+        console.log(logMsg);
+        sendToLogic("log", { level: "info", message: logMsg });
 
-        var reader = response.body.getReader();
-        var decoder = new TextDecoder("utf-8");
+        this.abortActiveStream();
+        
+        var requestId = request.requestId;
+        var baseUrl = request.baseUrl;
+        var apiKey = request.apiKey;
+        var params = request.params;
+        var placeholderId = request.placeholderId;
+        var userMessageTempId = request.userMessageTempId;
+        
+        // 包装 sendToLogic 函数，自动将 requestId 注入到 payload 中，实现跨页面安全隔离与防卡死
+        function sendToLogicWithReq(type, payload) {
+          var payloadData = payload || {};
+          payloadData.requestId = requestId;
+          sendToLogic(type, payloadData);
+        }
+        
+        var fetchUrl = baseUrl + "/chat/stream";
+        var logUrlMsg = "[renderjs] XHR url: " + fetchUrl;
+        console.log(logUrlMsg);
+        sendToLogic("log", { level: "info", message: logUrlMsg });
+        
+        var xhr = new XMLHttpRequest();
+        // @ts-ignore
+        activeXhr = xhr;
+        
+        xhr.open("POST", fetchUrl, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        if (apiKey) {
+          xhr.setRequestHeader("X-API-Key", apiKey);
+        }
+        
+        var lastSeenIndex = 0;
         var buffer = "";
-
-        function read() {
-          reader.read().then(function(result) {
-            if (result.done) {
-              // @ts-ignore
-              abortController = null;
-              return;
-            }
-
-            var chunkText = decoder.decode(result.value, { stream: true });
-            buffer += chunkText;
-
-            var lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (var i = 0; i < lines.length; i++) {
-              var line = lines[i];
-              var trimmedLine = line.trim();
-              if (!trimmedLine) continue;
-
-              if (trimmedLine.indexOf("data: ") === 0) {
-                var raw = trimmedLine.slice(6).trim();
-                if (raw === "[DONE]") {
-                  continue;
-                }
-                try {
-                  var parsed = JSON.parse(raw);
-                  if (parsed.error !== undefined) {
-                    ownerInstance.callMethod("handleStreamError", {
-                      placeholderId: placeholderId,
-                      userMessageTempId: userMessageTempId,
-                      error: parsed.error
-                    });
-                  } else if (parsed.chunk !== undefined) {
-                    ownerInstance.callMethod("handleStreamChunk", {
-                      placeholderId: placeholderId,
-                      chunk: parsed.chunk
-                    });
-                  } else {
-                    ownerInstance.callMethod("handleStreamDone", {
-                      placeholderId: placeholderId,
-                      userMessageTempId: userMessageTempId,
-                      meta: parsed
-                    });
-                  }
-                } catch (e) {
-                  ownerInstance.callMethod("handleStreamChunk", {
+        
+        function handleChunk(chunkText) {
+          buffer += chunkText;
+          var lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            var trimmedLine = line.trim();
+            if (!trimmedLine) continue;
+            
+            if (trimmedLine.indexOf("data: ") === 0) {
+              var raw = trimmedLine.slice(6).trim();
+              if (raw === "[DONE]") {
+                continue;
+              }
+              try {
+                var parsed = JSON.parse(raw);
+                if (parsed.error !== undefined) {
+                  var logErrorMsg = "[renderjs] stream error chunk parsed: " + parsed.error;
+                  console.log(logErrorMsg);
+                  sendToLogic("log", { level: "warn", message: logErrorMsg });
+                  
+                  sendToLogicWithReq("error", {
                     placeholderId: placeholderId,
-                    chunk: raw
+                    userMessageTempId: userMessageTempId,
+                    error: parsed.error
+                  });
+                } else if (parsed.chunk !== undefined) {
+                  sendToLogicWithReq("chunk", {
+                    placeholderId: placeholderId,
+                    chunk: parsed.chunk
+                  });
+                } else {
+                  var logMetaMsg = "[renderjs] stream metadata done chunk: " + JSON.stringify(parsed);
+                  console.log(logMetaMsg);
+                  sendToLogic("log", { level: "info", message: logMetaMsg });
+                  
+                  sendToLogicWithReq("done", {
+                    placeholderId: placeholderId,
+                    userMessageTempId: userMessageTempId,
+                    meta: parsed
                   });
                 }
+              } catch (e) {
+                sendToLogicWithReq("chunk", {
+                  placeholderId: placeholderId,
+                  chunk: raw
+                });
               }
             }
-            read(); // Recursively read next chunk
-          })
-          .catch(function(err) {
-            if (err.name === 'AbortError') {
-              return;
+          }
+        }
+        
+        xhr.onprogress = function() {
+          try {
+            var responseText = xhr.responseText;
+            var newData = responseText.substring(lastSeenIndex);
+            lastSeenIndex = responseText.length;
+            if (newData) {
+              handleChunk(newData);
             }
-            ownerInstance.callMethod("handleStreamError", {
-              placeholderId: placeholderId,
-              userMessageTempId: userMessageTempId,
-              error: err.message || String(err)
-            });
+          } catch (e) {
+            console.error("[renderjs] onprogress error", e);
+          }
+        };
+        
+        xhr.onload = function() {
+          try {
+            var responseText = xhr.responseText;
+            var newData = responseText.substring(lastSeenIndex);
+            if (newData) {
+              handleChunk(newData);
+            }
+            if (buffer.trim()) {
+              handleChunk("\n");
+            }
+            // @ts-ignore
+            activeXhr = null;
+          } catch (e) {}
+        };
+        
+        xhr.onerror = function(err) {
+          var logErrorMsg = "[renderjs] XHR error caught";
+          console.error(logErrorMsg);
+          sendToLogic("log", { level: "error", message: logErrorMsg });
+          
+          sendToLogicWithReq("error", {
+            placeholderId: placeholderId,
+            userMessageTempId: userMessageTempId,
+            error: "网络连接失败或服务器响应异常"
           });
-        }
-        read();
-      })
-      .catch(function(err) {
-        if (err.name === 'AbortError') {
-          return;
-        }
-        ownerInstance.callMethod("handleStreamError", {
-          placeholderId: placeholderId,
-          userMessageTempId: userMessageTempId,
-          error: err.message || String(err)
+          // @ts-ignore
+          activeXhr = null;
+        };
+        
+        xhr.send(JSON.stringify(params));
+        
+      } catch (globalErr) {
+        var logGlobalErrorMsg = "[renderjs] startStream global error caught: " + (globalErr.message || String(globalErr));
+        console.error(logGlobalErrorMsg);
+        sendToLogic("log", { level: "error", message: logGlobalErrorMsg });
+
+        // 避免在 catch 中调用 try 作用域内的 sendToLogicWithReq 导致 ReferenceError，直接使用 sendToLogic 并拼接参数
+        sendToLogic("error", {
+          requestId: request ? request.requestId : undefined,
+          placeholderId: request ? request.placeholderId : undefined,
+          userMessageTempId: request ? request.userMessageTempId : undefined,
+          error: globalErr.message || String(globalErr)
         });
-      });
+        // @ts-ignore
+        activeXhr = null;
+      }
     }
   }
 }
@@ -830,7 +1001,7 @@ export default {
   overflow: hidden;
 }
 
-/* 动态角色立绘背景图层 */
+/* 动态角色立绘背景图层（无滤镜干扰，高浓度展现） */
 .chat-bg {
   position: absolute;
   top: 0;
@@ -839,8 +1010,7 @@ export default {
   height: 100%;
   background-size: cover;
   background-position: center;
-  opacity: 0.16; /* 提高不透明度，使角色立绘轮廓清晰可见 */
-  filter: grayscale(8%) contrast(98%); /* 轻微黑白化与对比度调整，使其优雅融入背景 */
+  opacity: 0.9; /* 完整曝光，高饱和度立绘展现 */
   pointer-events: none;
   z-index: 0;
 }
@@ -862,6 +1032,7 @@ export default {
   );
   pointer-events: none;
 }
+
 
 /* ===== 自定义导航栏头部 ===== */
 .custom-header {
@@ -1309,6 +1480,128 @@ export default {
 .loading-text {
   font-size: 26rpx;
   color: #8e8e93;
+}
+
+.renderjs-bridge {
+  position: absolute;
+  left: -9999rpx;
+  top: -9999rpx;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ===== 提示词预览弹窗 ===== */
+.prompt-preview-modal {
+  width: 90vw;
+  max-width: 680rpx;
+  height: 80vh;
+  background-color: #ffffff;
+  border-radius: 28rpx;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15);
+  animation: modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32rpx 36rpx;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.modal-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+}
+
+.modal-close-btn {
+  font-size: 40rpx;
+  color: #8e8e93;
+  cursor: pointer;
+  padding: 0 10rpx;
+  line-height: 1;
+}
+
+.modal-close-btn:active {
+  color: #1c1c1e;
+}
+
+.prompt-preview-scroll {
+  flex: 1;
+  height: 0;
+  min-height: 0;
+}
+
+.prompt-preview-content {
+  padding: 36rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 28rpx;
+}
+
+.prompt-msg-card {
+  border-radius: 16rpx;
+  padding: 20rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.prompt-msg-card.role-system {
+  background-color: rgba(0, 122, 255, 0.03);
+  border-color: rgba(0, 122, 255, 0.1);
+}
+
+.prompt-msg-card.role-user {
+  background-color: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.05);
+}
+
+.prompt-msg-card.role-assistant {
+  background-color: rgba(52, 199, 89, 0.03);
+  border-color: rgba(52, 199, 89, 0.1);
+}
+
+.prompt-msg-role-tag {
+  font-size: 20rpx;
+  font-weight: 700;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  align-self: flex-start;
+}
+
+.role-system .prompt-msg-role-tag {
+  background-color: #007aff;
+  color: #ffffff;
+}
+
+.role-user .prompt-msg-role-tag {
+  background-color: #1c1c1e;
+  color: #ffffff;
+}
+
+.role-assistant .prompt-msg-role-tag {
+  background-color: #34c759;
+  color: #ffffff;
+}
+
+.prompt-msg-text {
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: #3a3a3c;
+  word-break: break-all;
 }
 
 </style>
