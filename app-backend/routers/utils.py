@@ -14,8 +14,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 头像上传允许的文件类型与大小限制
 ALLOWED_AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-
+MAX_AVATAR_SIZE_BYTES = settings.SECURITY_MAX_CARD_SIZE_MB * 1024 * 1024
 @router.get("/")
 def read_root():
     return {"status": "Core Engine is running"}
