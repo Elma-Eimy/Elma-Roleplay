@@ -1,5 +1,9 @@
 import re
+import json
 from typing import Optional
+from core.config import settings
+import core.models as models
+from services.lorebook_engine import process_lorebook
 
 def replace_placeholders(text: str, char_name: str, user_name: str) -> str:
     """
@@ -137,3 +141,224 @@ def compile_system_prompt(character, persona, user_nickname: str = "用户") -> 
     system_prompt = replace_placeholders(system_prompt, char_name, user_name)
 
     return system_prompt
+
+
+def build_system_prompt(
+    character,
+    persona,
+    retrieved_memories: Optional[list] = None,
+    recent_history: Optional[list] = None,
+    user_message: Optional[str] = None,
+    user_nickname: str = "用户"
+) -> dict:
+    """
+    静态 System Prompt 组装与编译。返回已编译静态部分，并提取动态变量供 User Message 拼接。
+    """
+    char_name = character.name or "AI"
+    user_name = user_nickname or "用户"
+
+    system_prompt = compile_system_prompt(character, persona, user_nickname)
+
+    # ── 动态变量处理 ──
+    
+    # 世界书 (Lorebook) 匹配
+    lorebook_result = {"before_char": [], "after_char": []}
+    if recent_history is not None or user_message is not None:
+        # 在传递给世界书扫描前，先解析历史记录和用户消息中的占位符
+        resolved_history = None
+        if recent_history is not None:
+            resolved_history = [
+                {**msg, "content": replace_placeholders(msg["content"], char_name, user_name)}
+                for msg in recent_history
+            ]
+        resolved_user_message = replace_placeholders(user_message, char_name, user_name) if user_message is not None else None
+
+        try:
+            lorebook_result = process_lorebook(
+                character=character,
+                recent_history=resolved_history,
+                user_message=resolved_user_message
+            )
+        except Exception as e:
+            print(f"[WARN] build_system_prompt: 处理世界书匹配失败: {e}")
+
+    # 检索到的记忆 (RAG)
+    retrieved_memories_text = None
+    if retrieved_memories:
+        memory_lines = []
+        for mem in retrieved_memories:
+            content = mem.get("content", "") if isinstance(mem, dict) else str(mem)
+            mem_type = mem.get("memory_type", "") if isinstance(mem, dict) else ""
+            
+            # 解析时间标签
+            time_label = ""
+            if isinstance(mem, dict) and "turns_passed" in mem:
+                turns_passed = mem["turns_passed"]
+                for tier in settings.APP_RP_TIME_TIERS:
+                    if turns_passed <= tier.get("max_turns", 9999999):
+                        time_label = tier.get("label", "")
+                        break
+                if not time_label:
+                    time_label = "很久以前"
+            
+            if content:
+                time_prefix = f"[{time_label}] " if time_label else ""
+                type_prefix = f"[{mem_type}] " if mem_type else ""
+                memory_lines.append(f"- {time_prefix}{type_prefix}{content}")
+
+        if memory_lines:
+            retrieved_memories_text = "\n".join(memory_lines)
+
+    # 场景定义
+    scenario = None
+    if persona and persona.current_scenario_override:
+        scenario = persona.current_scenario_override
+    elif character.scenario:
+        scenario = character.scenario
+
+    return {
+        "system_prompt": system_prompt, # 纯静态部分，极度缓存友好
+        "lorebook_result": lorebook_result, # 动态世界书结果
+        "retrieved_memories_text": retrieved_memories_text, # 动态召回记忆
+        "scenario": scenario, # 动态场景
+        "cognition_state": persona.cognition_state if persona else None, # 动态认知
+        "affection_score": persona.affection_score if persona else None, # 动态好感
+        "current_mood": persona.current_mood if persona else None, # 动态心情
+    }
+
+
+async def _build_chat_messages(
+    character,
+    persona,
+    recent_history: list,
+    user_message: str,
+    retrieved_memories: Optional[list] = None,
+    graph_knowledge: Optional[str] = None,
+    db=None,
+    user_nickname: str = "用户",
+) -> list:
+    """
+    组装 LLM 所需的完整 messages 列表（system + history + 动态上下文）。
+    """
+    char_name = character.name or "AI"
+    user_name = user_nickname or "用户"
+
+    # Step 1: 组装缓存友好型静态 System Prompt 并抽取动态要素
+    prompt_result = build_system_prompt(
+        character=character,
+        persona=persona,
+        retrieved_memories=retrieved_memories,
+        recent_history=recent_history,
+        user_message=user_message,
+        user_nickname=user_nickname,
+    )
+
+    # Step 2: 动态示例继承（子会话拉取父会话最后 4 条作为 Few-shot 伪历史）
+    if persona and persona.parent_persona_id and db is not None:
+        from fastapi.concurrency import run_in_threadpool
+
+        def fetch_parent_history():
+            parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
+            if parent_persona:
+                return db.query(models.ChatMessage).filter(
+                    models.ChatMessage.session_id == parent_persona.session_id,
+                    models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
+                ).order_by(models.ChatMessage.id.desc()).limit(4).all()
+            return []
+
+        parent_msgs = await run_in_threadpool(fetch_parent_history)
+        if parent_msgs:
+            parent_msgs.reverse()
+            parent_history_formatted = [
+                {
+                    "role": msg.role.value,
+                    "content": msg.content,
+                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
+                    "affection_change": getattr(msg, "affection_change", 0)
+                }
+                for msg in parent_msgs
+            ]
+            recent_history = parent_history_formatted + recent_history
+
+    # Step 3: 构建 messages 列表（首位为单条静态 system prompt）
+    messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
+
+    # 历史消息：assistant 消息统一包装为 XML 格式保持上下文一致性
+    for msg in recent_history:
+        if msg["role"] == "assistant":
+            content_str = replace_placeholders(msg["content"], char_name, user_name)
+            emo = msg.get("emotion_tag") or "平静"
+            change = msg.get("affection_change") or 0
+            fallback_xml = f"<reply>{content_str}</reply>\n<status emotion=\"{emo}\" affection_change=\"{int(change)}\"/>"
+            messages.append({"role": "assistant", "content": fallback_xml})
+        else:
+            content_str = replace_placeholders(msg["content"], char_name, user_name)
+            messages.append({"role": msg["role"], "content": content_str})
+
+    # Step 4: 动态上下文包装，统一挂载到最后一轮 User 消息中
+    dynamic_context_blocks = []
+
+    # 4.1 场景与认知状态
+    scenario = prompt_result.get("scenario")
+    if scenario:
+        scenario = replace_placeholders(scenario, char_name, user_name)
+        dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
+
+    cognition = prompt_result.get("cognition_state")
+    if cognition:
+        cognition = replace_placeholders(cognition, char_name, user_name)
+        dynamic_context_blocks.append(f"<cognition_state>\n{cognition}\n</cognition_state>")
+
+    # 4.2 心情与好感度
+    status_parts = []
+    aff_score = prompt_result.get("affection_score")
+    if aff_score is not None:
+        status_parts.append(f"对用户好感度: {aff_score}")
+    mood = prompt_result.get("current_mood")
+    if mood:
+        status_parts.append(f"当前心情: {mood}")
+    if status_parts:
+        dynamic_context_blocks.append("<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
+
+    # 4.3 世界书 (Lorebook) 知识
+    lorebook_res = prompt_result.get("lorebook_result", {"before_char": [], "after_char": []})
+    lore_contents = []
+    for e in (lorebook_res.get("before_char", []) + lorebook_res.get("after_char", [])):
+        content = e.get("content", "").strip()
+        if content:
+            content = replace_placeholders(content, char_name, user_name)
+            lore_contents.append(content)
+    if lore_contents:
+        dynamic_context_blocks.append("<lorebook_knowledge>\n" + "\n\n".join(lore_contents) + "\n</lorebook_knowledge>")
+
+    # 4.4 召回长期记忆 (RAG)
+    retrieved_mem = prompt_result.get("retrieved_memories_text")
+    if retrieved_mem:
+        retrieved_mem = replace_placeholders(retrieved_mem, char_name, user_name)
+        dynamic_context_blocks.append(f"<recalled_memories>\n{retrieved_mem}\n</recalled_memories>")
+
+    # 4.4.5 召回精确图谱关系 (Graph RAG)
+    if graph_knowledge:
+        graph_knowledge = replace_placeholders(graph_knowledge, char_name, user_name)
+        dynamic_context_blocks.append(f"<factual_relationships>\n{graph_knowledge}\n</factual_relationships>")
+
+    # 4.5 拼装增强的 User 消息内容
+    enhanced_user_content = ""
+    if dynamic_context_blocks:
+        enhanced_user_content += "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n"
+        enhanced_user_content += "\n\n".join(dynamic_context_blocks) + "\n\n"
+    
+    resolved_user_message = replace_placeholders(user_message, char_name, user_name)
+    enhanced_user_content += f"【当前用户的最新消息：】\n{resolved_user_message}"
+
+    messages.append({"role": "user", "content": enhanced_user_content})
+
+    # Step 5: 调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
+    if db is not None:
+        try:
+            from fastapi.concurrency import run_in_threadpool
+            await run_in_threadpool(db.commit)
+        except Exception as e:
+            print(f"[WARN] prompt_compiler._build_chat_messages: 释放 SQLite 锁失败: {e}")
+
+    return messages

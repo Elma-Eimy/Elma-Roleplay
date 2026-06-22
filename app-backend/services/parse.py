@@ -242,3 +242,57 @@ def _extract_v2_data(raw_data: dict) -> dict:
         "alternate_greetings": alt_greetings,
         "extensions": extensions
     }
+
+
+def extract_xml_block(text: str) -> dict:
+    """
+    使用正则表达式，从文本中提取 <reply>...</reply> 以及 <status emotion="..." affection_change="..."/>
+    使用不区分大小写且容忍空格的正则表达式，以防模型输出 <Reply>、</reply  > 等格式。
+    """
+    if not text:
+        return {"reply": "", "emotion_tag": "平静", "affection_change": 0}
+    
+    text = text.strip()
+    
+    # 提取 <reply>...</reply>（不区分大小写，容忍空格）
+    reply_match = re.search(r'<\s*reply\s*>(.*?)</\s*reply\s*>', text, re.DOTALL | re.IGNORECASE)
+    if reply_match:
+        reply = reply_match.group(1).strip()
+    else:
+        # 兼容性兜底：若无标签或格式破坏，过滤掉 status 标签并把整段作为 reply
+        clean_text = re.sub(r'<\s*status\s+.*?>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        # 清理可能残留的闭合标签
+        clean_text = re.sub(r'</\s*reply\s*>', '', clean_text, flags=re.IGNORECASE)
+        reply = clean_text.strip()
+
+    # 提取 <status emotion="..." affection_change="..." />
+    # 使用 ["\'] 以完美兼容双引号与单引号包裹的 XML 属性，且不区分大小写
+    status_match = re.search(r'<\s*status\s+emotion=["\']([^"\']*)["\']\s+affection_change=["\']([^"\']*)["\']\s*/?>', text, re.IGNORECASE)
+    if not status_match:
+        # 兼容属性顺序颠倒的情况
+        status_match = re.search(r'<\s*status\s+affection_change=["\']([^"\']*)["\']\s+emotion=["\']([^"\']*)["\']\s*/?>', text, re.IGNORECASE)
+        if status_match:
+            try:
+                affection_change = int(status_match.group(1) or 0)
+            except ValueError:
+                affection_change = 0
+            emotion_tag = status_match.group(2) or "平静"
+        else:
+            emotion_tag = "平静"
+            affection_change = 0
+    else:
+        emotion_tag = status_match.group(1) or "平静"
+        try:
+            affection_change = int(status_match.group(2) or 0)
+        except ValueError:
+            affection_change = 0
+
+    return {
+        "reply": reply,
+        "emotion_tag": emotion_tag,
+        "affection_change": affection_change
+    }
+
+# 兼容性别名
+_extract_xml_block = extract_xml_block
+
