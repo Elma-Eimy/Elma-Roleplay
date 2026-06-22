@@ -9,7 +9,7 @@
       <view class="placeholder-btn"></view>
     </view>
 
-    <scroll-view scroll-y class="form-scroll">
+    <scroll-view scroll-y class="form-scroll" v-if="isDataLoaded">
       <view class="form-content">
         
         <!-- 导入人设卡区域 -->
@@ -38,12 +38,12 @@
 
         <view class="form-group">
           <text class="label">人设背景描述 *</text>
-          <textarea class="textarea" v-model="form.description" placeholder="详细输入角色的背景设定、身份以及性格特征..." :maxlength="1000"></textarea>
+          <textarea class="textarea" auto-height v-model="form.description" placeholder="详细输入角色的背景设定、身份以及性格特征..." :maxlength="1000"></textarea>
         </view>
 
         <view class="form-group">
           <text class="label">开场白 / 第一句话 *</text>
-          <textarea class="textarea-small" v-model="form.first_mes" placeholder="当新对话开启时，角色主动对你说的第一句话..." :maxlength="1000"></textarea>
+          <textarea class="textarea-small" auto-height v-model="form.first_mes" placeholder="当新对话开启时，角色主动对你说的第一句话..." :maxlength="1000"></textarea>
         </view>
 
         <!-- 高级人设设置开关 -->
@@ -65,28 +65,28 @@
 
           <view class="form-group">
             <text class="label">对话所处场景</text>
-            <textarea class="textarea-small" v-model="form.scenario" placeholder="场景上下文，例如：一间昏暗潮湿的地下酒吧里。"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.scenario" placeholder="场景上下文，例如：一间昏暗潮湿的地下酒吧里。"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">对话句式示例</text>
-            <textarea class="textarea" v-model="form.mes_example" placeholder="展示角色对话的例句以强化风格约束。"></textarea>
+            <textarea class="textarea" auto-height v-model="form.mes_example" placeholder="展示角色对话的例句以强化风格约束。"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">创作者备忘录</text>
-            <textarea class="textarea-small" v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息（支持多行输入）..."></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息（支持多行输入）..."></textarea>
           </view>
           
           <view class="form-group">
             <text class="label">系统设定覆盖 (Override)</text>
-            <textarea class="textarea-small" v-model="form.system_prompt_override" placeholder="覆盖全局默认系统预设提示词（高级功能）"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.system_prompt_override" placeholder="覆盖全局默认系统预设提示词（高级功能）"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">历史末端注入指令</text>
             <text class="label-hint">在每轮对话历史末尾追加的额外指令（会在 AI 生成前作为最后上下文注入）</text>
-            <textarea class="textarea-small" v-model="form.post_history_instructions" placeholder="例如：请始终用第一人称回复，且不超过200字。"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.post_history_instructions" placeholder="例如：请始终用第一人称回复，且不超过200字。"></textarea>
           </view>
 
           <view class="form-group">
@@ -115,7 +115,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
-import { uploadAvatar, parseCharacter, createCharacter, updateCharacter, getAvatarUrl } from "@/api/characters";
+import { uploadAvatar, parseCharacter, createCharacter, updateCharacter, getAvatarUrl, getCharacter } from "@/api/characters";
 import type { CharacterBase } from "@/api/characters";
 import { createSession } from "@/api/sessions";
 import { usePersonaStore } from "@/store/personaStore";
@@ -124,6 +124,7 @@ const showAdvanced = ref(false);
 const avatarPreview = ref<string>("");
 const isEditMode = ref(false);
 const editingCharId = ref<number | null>(null);
+const isDataLoaded = ref(true);
 
 const form = ref<CharacterBase>({
   name: "",
@@ -144,15 +145,56 @@ const isFormValid = computed(() => {
          form.value.first_mes?.trim() !== "";
 });
 
-onLoad((options) => {
+onLoad(async (options) => {
   if (options && options.id) {
     const id = parseInt(options.id, 10);
-    const char = personaStore.getCharacterById(id);
-    if (char) {
-      isEditMode.value = true;
-      editingCharId.value = id;
-      form.value = { ...char };
-      avatarPreview.value = char.avatar_path || "";
+    isEditMode.value = true;
+    editingCharId.value = id;
+    isDataLoaded.value = false;
+
+    // 优先采用本地缓存的极简信息，以达到秒开渲染（防白屏闪烁）
+    const quickChar = personaStore.getCharacterById(id);
+    if (quickChar) {
+      form.value.name = quickChar.name || "";
+      avatarPreview.value = quickChar.avatar_path || "";
+    }
+
+    try {
+      uni.showLoading({ title: '正在获取角色设定...' });
+      const fullChar = await getCharacter(id);
+      form.value = {
+        name: fullChar.name || "",
+        description: fullChar.description || "",
+        first_mes: fullChar.first_mes || "",
+        personality: fullChar.personality || "",
+        scenario: fullChar.scenario || "",
+        mes_example: fullChar.mes_example || "",
+        creator_notes: fullChar.creator_notes || "",
+        system_prompt_override: fullChar.system_prompt_override || "",
+        post_history_instructions: fullChar.post_history_instructions || "",
+        tags: fullChar.tags || [],
+        extensions: fullChar.extensions || {},
+      };
+      avatarPreview.value = fullChar.avatar_path || "";
+
+      // 存在任何高级设置时，自动展开高级折叠区域
+      if (
+        fullChar.personality ||
+        fullChar.scenario ||
+        fullChar.mes_example ||
+        fullChar.creator_notes ||
+        fullChar.system_prompt_override ||
+        fullChar.post_history_instructions ||
+        (fullChar.tags && fullChar.tags.length > 0)
+      ) {
+        showAdvanced.value = true;
+      }
+    } catch (e) {
+      console.error("Failed to load full character details", e);
+      uni.showToast({ title: '获取详细设定失败', icon: 'none' });
+    } finally {
+      isDataLoaded.value = true;
+      uni.hideLoading();
     }
   }
 });
@@ -484,13 +526,17 @@ const saveCharacter = async () => {
 }
 
 .textarea {
-  height: 220rpx;
+  min-height: 220rpx;
   width: 100%;
+  line-height: 1.5;
+  overflow-y: hidden;
 }
 
 .textarea-small {
-  height: 130rpx;
+  min-height: 130rpx;
   width: 100%;
+  line-height: 1.5;
+  overflow-y: hidden;
 }
 
 /* ===== 高级设置切换 ===== */
