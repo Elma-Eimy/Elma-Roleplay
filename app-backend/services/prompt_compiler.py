@@ -107,6 +107,14 @@ def compile_system_prompt(character, persona, user_nickname: str = "用户") -> 
 
     # 2. 核心人设编译
     if character.system_prompt_override:
+        # 智能检测：如果自定义预设中没有显式包含任何设定相关的占位符，自动在最前面拼接上原设描述，防止设定丢失
+        has_original = re.search(r'\{\{\s*original\s*\}\}', character.system_prompt_override, re.IGNORECASE) is not None
+        has_description = re.search(r'\{\{\s*description\s*\}\}', character.system_prompt_override, re.IGNORECASE) is not None
+        has_personality = re.search(r'\{\{\s*personality\s*\}\}', character.system_prompt_override, re.IGNORECASE) is not None
+        
+        if not (has_original or has_description or has_personality) and original_prompt:
+            sections.append(original_prompt)
+
         compiled_override = compile_prompt_templates(
             character.system_prompt_override, character, original_prompt
         )
