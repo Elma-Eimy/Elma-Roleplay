@@ -136,6 +136,15 @@ def _html_to_markdown(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
 
+    # Protect placeholders like <char>, <user>, <character>, <player>, <bot> from being stripped as HTML tags
+    placeholder_pattern = re.compile(r'<\s*(/?)\s*(char|character|user|player|bot)\s*>', re.IGNORECASE)
+    placeholders_map = {}
+    def protect(match):
+        key = f"__PLACEHOLDER_{len(placeholders_map)}__"
+        placeholders_map[key] = match.group(0)
+        return key
+    text = placeholder_pattern.sub(protect, text)
+
     # 1. 标题标签处理 (h1-h6 -> # 到 ######)
     text = re.sub(r'<h1\b[^>]*>', '\n# ', text, flags=re.IGNORECASE)
     text = re.sub(r'<h2\b[^>]*>', '\n## ', text, flags=re.IGNORECASE)
@@ -170,6 +179,10 @@ def _html_to_markdown(text: str) -> str:
 
     # 7. 反转义 HTML 实体符号 (如 &quot; -> ", &amp; -> &)
     cleaned = html.unescape(cleaned)
+
+    # Restore protected placeholders
+    for key, original in placeholders_map.items():
+        cleaned = cleaned.replace(key, original)
 
     # 8. 规范化连续的空行，避免过多的冗余空行
     lines = [line.strip() for line in cleaned.split('\n')]
