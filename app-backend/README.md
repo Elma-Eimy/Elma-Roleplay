@@ -49,7 +49,7 @@
 
 - **人声情感与拟真事件支持**：接入云端 MIMO-v2.5-tts API，原生支持“开心、悲伤、愤怒、温柔、悄悄话、唱歌”等 6 种情感配音，以及“（叹气）、（笑声）、（哭声）、（咳嗽）、[inhale]（深呼吸/吸气）”等拟真声音事件。
 - **智能文本前处理（双预处理器）**：
-  - **至臻 LLM 预处理器**：使用非推理快速模型（如 `deepseek-v4-flash`）对角色发言进行预处理，**100% 剥离**非发音的物理动作、心理活动、场景叙述和对话前缀（如“她微微一笑说道：”），仅提取并保留实际发音的台词。
+  - **LLM 预处理器**：使用非推理快速模型（如 `deepseek-v4-flash`）对角色发言进行预处理，**100% 剥离**非发音的物理动作、心理活动、场景叙述和对话前缀（如“她微微一笑说道：”），仅提取并保留实际发音的台词。
   - **声音标记保护机制**：在过滤前对声效标记进行占位符暂存保护，过滤完毕后还原，确保合成的声音富有人声细节而不“机械读动作”。
   - **正则规则预处理器**：在 LLM API 故障时提供自动回退，确保系统高可用。
 - **自愈式 LRU 缓存系统**：
@@ -279,6 +279,23 @@ tts:
 | POST | `/sessions/{id}/trigger_cognition` | 手动触发认知状态更新 |
 | PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
 | DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
+| GET | `/sessions/{session_id}/memories` | 获取当前会话的可用向量记忆列表（含继承，支持检索与分页） |
+| POST | `/sessions/{session_id}/memories` | 手动写入当前会话的专属向量记忆 |
+| PUT | `/sessions/{session_id}/memories/{memory_id}` | 修改当前会话的本地专属向量记忆（继承只读） |
+| DELETE | `/sessions/{session_id}/memories/{memory_id}` | 删除当前会话的本地专属向量记忆（继承只读） |
+| GET | `/sessions/{session_id}/compile_prompt` | 调试端点：预览/编译最近一次大模型 Prompt 组装 |
+
+### 世界书管理 `/lorebooks`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/lorebooks/import` | 导入并解析 SillyTavern 格式的世界书 JSON 文件 |
+| GET | `/lorebooks` | 查询系统中所有独立世界书列表 |
+| GET | `/lorebooks/{lorebook_id}` | 获取单个世界书详情（包含所有条目） |
+| PUT | `/lorebooks/{lorebook_id}` | 编辑更新世界书属性和条目 |
+| DELETE / POST | `/lorebooks/{lorebook_id}` 或 `/lorebooks/{lorebook_id}/delete` | 删除指定世界书及其所有绑定关系 (POST 用于避让) |
+| POST | `/lorebooks/characters/{character_id}/bind/{lorebook_id}` | 将指定世界书绑定到角色卡上 |
+| POST | `/lorebooks/characters/{character_id}/unbind/{lorebook_id}` | 将指定世界书与角色卡解绑 |
 
 ### 对话核心 `/chat`
 
@@ -311,8 +328,9 @@ app-backend/
 │
 ├── routers/
 │   ├── chat.py              # /chat 与 /chat/stream 及 /chat/switch_candidate
-│   ├── sessions.py          # /sessions 端点（分页历史、消息管理等）
+│   ├── sessions.py          # /sessions 端点（分页历史、消息/记忆管理、调试等）
 │   ├── characters.py        # /characters 端点
+│   ├── lorebooks.py         # /lorebooks 端点（导入、详情、编辑、绑定等）
 │   └── utils.py             # /upload/avatar 与 /utils/tts 端点
 │
 ├── services/
