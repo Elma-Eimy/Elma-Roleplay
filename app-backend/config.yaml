@@ -14,7 +14,7 @@ llm:
   presence_penalty: 0.0
   frequency_penalty: 0.0
   repetition_penalty: 1.0
-  reasoning_effort: null
+  reasoning_effort: high
 app:
   context_history_limit: 15
   retrieval_top_k: 3
@@ -29,7 +29,7 @@ app:
   chroma_db_path: data/chroma_data
   upload_avatar_dir: ./assets/avatars
   cors_origins:
-  - '*'
+    - "*"
   max_card_size_mb: 10
   history_fetch_default: 50
   history_fetch_max: 500
@@ -37,6 +37,10 @@ app:
   cognition_max_words: 200
   retrieval_half_life_turns: 50
   retrieval_candidate_multiplier: 3
+  dedup_write_threshold: 0.15
+  dedup_retrieve_text_threshold: 0.70
+  graph_min_importance: 0.5
+  graph_max_relations: 12
 
 tts:
   enabled: true
