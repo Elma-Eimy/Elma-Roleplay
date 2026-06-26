@@ -2,9 +2,11 @@
 知识图谱 RAG 服务 — 负责 SQLite 知识图谱实体的提取写入、匹配与检索
 """
 
-from sqlalchemy.orm import Session
-from core.models import GraphEntity, GraphRelation
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import and_
+from core.models import GraphEntity, GraphRelation, SessionPersona
 from services.memory_manager import get_ancestor_persona_ids
+from core.config import settings
 
 def upsert_graph_data(
     persona_id: int,
@@ -38,19 +40,52 @@ def upsert_graph_data(
         if db_ent:
             # 存在则合并更新描述和类型
             if desc:
-                db_ent.description = desc
+                # 增量合并描述，避免直接覆盖
+                if db_ent.description and db_ent.description != desc and desc not in db_ent.description:
+                    db_ent.description = f"{db_ent.description}；{desc}"
+                else:
+                    db_ent.description = desc
             db_ent.entity_type = ent_type
         else:
-            # 不存在则新建
-            db_ent = GraphEntity(
-                persona_id=persona_id,
-                name=name,
-                entity_type=ent_type,
-                description=desc
-            )
+            # 本地不存在：检查是否有祖先链同名实体（实现写时复制 COW）
+            ancestor_ids = get_ancestor_persona_ids(persona_id, db)
+            ancestor_ent = None
+            if len(ancestor_ids) > 1:
+                # 取全部候选后在 Python 侧按 ancestor_ids 下标排序，
+                # 下标越小表示越靠近当前 Persona（直系父 > 祖父 > …），
+                # 不依赖 persona_id 数值（多分叉场景下数值大小与层级无关）
+                ancestor_candidates = db.query(GraphEntity).filter(
+                    GraphEntity.persona_id.in_(ancestor_ids[1:]),
+                    GraphEntity.name == name
+                ).all()
+                if ancestor_candidates:
+                    ancestor_ent = min(
+                        ancestor_candidates,
+                        key=lambda e: ancestor_ids.index(e.persona_id)
+                    )
+
+            if ancestor_ent:
+                # 触发写时复制：合并描述
+                merged_desc = ancestor_ent.description
+                if desc and desc != merged_desc and desc not in merged_desc:
+                    merged_desc = f"{merged_desc}；{desc}"
+
+                db_ent = GraphEntity(
+                    persona_id=persona_id,
+                    name=name,
+                    entity_type=ent_type,
+                    description=merged_desc
+                )
+            else:
+                db_ent = GraphEntity(
+                    persona_id=persona_id,
+                    name=name,
+                    entity_type=ent_type,
+                    description=desc
+                )
             db.add(db_ent)
             db.flush()  # 刷入内存以获取自增主键 ID
-            
+
         entity_name_to_id[name] = db_ent.id
 
     # 2. 补齐关系中提到但未在 entities 列表中声明的实体
@@ -59,7 +94,7 @@ def upsert_graph_data(
         tgt = rel.get("target", "").strip()
         for name in (src, tgt):
             if name and name not in entity_name_to_id:
-                # 检查数据库中是否存在
+                # 检查数据库中是否存在（当前 persona）
                 db_ent = db.query(GraphEntity).filter(
                     GraphEntity.persona_id == persona_id,
                     GraphEntity.name == name
@@ -67,13 +102,36 @@ def upsert_graph_data(
                 if db_ent:
                     entity_name_to_id[name] = db_ent.id
                 else:
-                    # 创建兜底默认实体
-                    db_ent = GraphEntity(
-                        persona_id=persona_id,
-                        name=name,
-                        entity_type="concept",
-                        description=f"关于 {name} 的概念或事物。"
-                    )
+                    # 检查是否有祖先链同名实体（实现写时复制 COW）
+                    ancestor_ids = get_ancestor_persona_ids(persona_id, db)
+                    ancestor_ent = None
+                    if len(ancestor_ids) > 1:
+                        ancestor_candidates = db.query(GraphEntity).filter(
+                            GraphEntity.persona_id.in_(ancestor_ids[1:]),
+                            GraphEntity.name == name
+                        ).all()
+                        if ancestor_candidates:
+                            ancestor_ent = min(
+                                ancestor_candidates,
+                                key=lambda e: ancestor_ids.index(e.persona_id)
+                            )
+
+                    if ancestor_ent:
+                        # 触发写时复制
+                        db_ent = GraphEntity(
+                            persona_id=persona_id,
+                            name=name,
+                            entity_type=ancestor_ent.entity_type,
+                            description=ancestor_ent.description
+                        )
+                    else:
+                        # 创建兜底默认实体
+                        db_ent = GraphEntity(
+                            persona_id=persona_id,
+                            name=name,
+                            entity_type="concept",
+                            description=f"关于 {name} 的概念或事物。"
+                        )
                     db.add(db_ent)
                     db.flush()
                     entity_name_to_id[name] = db_ent.id
@@ -84,7 +142,7 @@ def upsert_graph_data(
         tgt = rel.get("target", "").strip()
         if not src or not tgt:
             continue
-            
+
         rel_type = rel.get("relation_type", "related").strip()
         desc = rel.get("description", "").strip()
         importance = rel.get("importance", 0.5)
@@ -93,12 +151,12 @@ def upsert_graph_data(
             importance = max(0.0, min(1.0, importance))
         except (ValueError, TypeError):
             importance = 0.5
-            
+
         src_id = entity_name_to_id.get(src)
         tgt_id = entity_name_to_id.get(tgt)
         if not src_id or not tgt_id:
             continue
-            
+
         # 查重当前 Persona 下这两个实体间是否存在同种类型的关系
         db_rel = db.query(GraphRelation).filter(
             GraphRelation.persona_id == persona_id,
@@ -106,20 +164,65 @@ def upsert_graph_data(
             GraphRelation.target_id == tgt_id,
             GraphRelation.relation_type == rel_type
         ).first()
-        
+
         if db_rel:
             if desc:
-                db_rel.description = desc
-            db_rel.importance = importance
+                # 增量合并描述，避免直接覆盖
+                if db_rel.description and db_rel.description != desc and desc not in db_rel.description:
+                    db_rel.description = f"{db_rel.description}；{desc}"
+                else:
+                    db_rel.description = desc
+            # 融合重要性分值
+            db_rel.importance = min(1.0, max(db_rel.importance or 0.5, importance) + (1.0 - max(db_rel.importance or 0.5, importance)) * 0.1)
         else:
-            db_rel = GraphRelation(
-                persona_id=persona_id,
-                source_id=src_id,
-                target_id=tgt_id,
-                relation_type=rel_type,
-                description=desc,
-                importance=importance
-            )
+            # 检查是否有祖先链同种关系（写时复制 COW）
+            ancestor_ids = get_ancestor_persona_ids(persona_id, db)
+            ancestor_rel = None
+            if len(ancestor_ids) > 1:
+                EntSrc = aliased(GraphEntity)
+                EntTgt = aliased(GraphEntity)
+                # 取全部候选后在 Python 侧按 ancestor_ids 下标排序（同实体 COW 逻辑一致）
+                ancestor_rel_candidates = db.query(GraphRelation).join(
+                    EntSrc, GraphRelation.source_id == EntSrc.id
+                ).join(
+                    EntTgt, GraphRelation.target_id == EntTgt.id
+                ).filter(
+                    GraphRelation.persona_id.in_(ancestor_ids[1:]),
+                    EntSrc.name == src,
+                    EntTgt.name == tgt,
+                    GraphRelation.relation_type == rel_type
+                ).all()
+                if ancestor_rel_candidates:
+                    ancestor_rel = min(
+                        ancestor_rel_candidates,
+                        key=lambda r: ancestor_ids.index(r.persona_id)
+                    )
+
+            if ancestor_rel:
+                # 触发写时复制：合并描述和重要性分值
+                merged_desc = ancestor_rel.description
+                if desc and desc != merged_desc and desc not in merged_desc:
+                    merged_desc = f"{merged_desc}；{desc}"
+
+                merged_imp = min(1.0, max(ancestor_rel.importance or 0.5, importance) + (1.0 - max(ancestor_rel.importance or 0.5, importance)) * 0.1)
+
+                db_rel = GraphRelation(
+                    persona_id=persona_id,
+                    source_id=src_id,
+                    target_id=tgt_id,
+                    relation_type=rel_type,
+                    description=merged_desc,
+                    importance=merged_imp
+                )
+            else:
+                db_rel = GraphRelation(
+                    persona_id=persona_id,
+                    source_id=src_id,
+                    target_id=tgt_id,
+                    relation_type=rel_type,
+                    description=desc,
+                    importance=importance
+                )
             db.add(db_rel)
 
     # 提示：不在此处调用 db.commit()，由上游调用方事务统一提交，保证数据库原子性。
@@ -160,29 +263,58 @@ def retrieve_graph_context(
     if not matched_entity_ids:
         return ""
         
-    # 4. 读出所有的图谱关系
+    # 4. 读出所有的图谱关系 (应用最低重要性过滤，剔除不重要关系)
     all_relations = db.query(GraphRelation).filter(
-        GraphRelation.persona_id.in_(ancestor_ids)
+        GraphRelation.persona_id.in_(ancestor_ids),
+        GraphRelation.importance >= settings.APP_GRAPH_MIN_IMPORTANCE
     ).all()
     
-    # 5. 组装 1-hop 关系与 1-hop 邻居实体 IDs
-    matched_relations = []
-    first_hop_entity_ids = set(matched_entity_ids)
+    # 获取当前 AI 角色本名，用于枢纽节点去极化过滤
+    persona = db.get(SessionPersona, persona_id)
+    char_name = persona.character.name if persona and persona.character else ""
     
+    hub_names = {"user"}
+    if char_name:
+        hub_names.add(char_name.lower())
+        
+    entity_id_to_name = {ent.id: ent.name.lower() for ent in entities}
+    
+    # 5. 组装 1-hop 关系与 1-hop 邻居实体 IDs (枢纽节点防暴涨过滤)
+    matched_relations_1hop = []
+    first_hop_entity_ids = set()
+    relation_hop_level = {}  # rel.id -> level
+    
+    # 初始化非枢纽匹配实体
+    for eid in matched_entity_ids:
+        ename_lower = entity_id_to_name.get(eid, "")
+        if ename_lower not in hub_names:
+            first_hop_entity_ids.add(eid)
+            
     for rel in all_relations:
         if rel.source_id in matched_entity_ids or rel.target_id in matched_entity_ids:
-            matched_relations.append(rel)
-            first_hop_entity_ids.add(rel.source_id)
-            first_hop_entity_ids.add(rel.target_id)
+            matched_relations_1hop.append(rel)
+            relation_hop_level[rel.id] = 1
             
-    # 6. 二度遍历 (2-hop)：拉取这组邻居实体内部存在的其它关系
-    added_relation_ids = {r.id for r in matched_relations}
+            # 若源/目标实体不是 Hub 节点（User/Character），则允许其做 2-hop 桥梁
+            src_name_lower = entity_id_to_name.get(rel.source_id, "")
+            if src_name_lower not in hub_names:
+                first_hop_entity_ids.add(rel.source_id)
+                
+            tgt_name_lower = entity_id_to_name.get(rel.target_id, "")
+            if tgt_name_lower not in hub_names:
+                first_hop_entity_ids.add(rel.target_id)
+            
+    # 6. 二度遍历 (2-hop)：拉取非枢纽邻居实体内部存在的其它关系
+    matched_relations_2hop = []
+    added_relation_ids = {r.id for r in matched_relations_1hop}
     for rel in all_relations:
         if rel.id not in added_relation_ids:
             if rel.source_id in first_hop_entity_ids and rel.target_id in first_hop_entity_ids:
-                matched_relations.append(rel)
+                matched_relations_2hop.append(rel)
+                relation_hop_level[rel.id] = 2
                 added_relation_ids.add(rel.id)
                 
+    matched_relations = matched_relations_1hop + matched_relations_2hop
     if not matched_relations:
         return ""
         
@@ -201,12 +333,26 @@ def retrieve_graph_context(
             if ent.description:
                 entity_desc_lines.append(f"- {ent.name}: {ent.description}")
                 
-    # 7.2 格式化关系描述列表（按权重由高到低排序）
+    # 7.2 格式化关系描述列表
+    # 排序规则：
+    #   1. 优先展示 1-hop 关系，其次是 2-hop 关系
+    #   2. ancestor_ids 下标越小表示越靠近当前 Session（子 > 父 > 祖）
+    #   3. 重要性分值高者优先
     relation_lines = []
     seen_relation_triples = set()
-    matched_relations.sort(key=lambda r: (r.importance or 0.5), reverse=True)
+    matched_relations.sort(
+        key=lambda r: (
+            relation_hop_level.get(r.id, 2),
+            ancestor_ids.index(r.persona_id) if r.persona_id in ancestor_ids else 999,
+            -(r.importance or 0.5)
+        )
+    )
     
     for rel in matched_relations:
+        # 应用检索上限截断
+        if len(relation_lines) >= settings.APP_GRAPH_MAX_RELATIONS:
+            break
+            
         src_name = entity_map.get(rel.source_id)
         tgt_name = entity_map.get(rel.target_id)
         if not src_name or not tgt_name:

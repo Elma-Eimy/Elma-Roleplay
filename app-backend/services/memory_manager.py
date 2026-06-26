@@ -16,6 +16,7 @@ ChromaDB 架构：
 import json
 import time
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core import models
@@ -325,12 +326,20 @@ def retrieve_memories(
     docs = results["documents"][0]
     metas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(docs)
     dists = results["distances"][0] if results.get("distances") else [0.0] * len(docs)
+    ids = results["ids"][0] if results.get("ids") else [""] * len(docs)
 
-    for doc, meta, dist in zip(docs, metas, dists):
+    for doc, meta, dist, cid in zip(docs, metas, dists, ids):
         # 叠加向量相似度距离阈值过滤，防止召回无关的多余内容
         if dist > settings.APP_RETRIEVAL_MAX_DISTANCE:
             continue
             
+        chunk_id = None
+        if cid.startswith("mem_"):
+            try:
+                chunk_id = int(cid[4:])
+            except ValueError:
+                pass
+
         sim_score = max(0.0, 1.0 - (dist / settings.APP_RETRIEVAL_MAX_DISTANCE))
         imp_score = float(meta.get("importance_score", 0.5))
         
@@ -368,6 +377,8 @@ def retrieve_memories(
             final_score *= (decay_base ** generation_distance)
 
         raw_memories.append({
+            "id": chunk_id,
+            "chroma_doc_id": cid,
             "content": doc,
             "memory_type": meta.get("memory_type", ""),
             "importance_score": imp_score,
@@ -380,10 +391,22 @@ def retrieve_memories(
             "final_score": final_score,
         })
 
-    # 按 final_score 降序排序并截断 top_k
+    # 按 final_score 降序排序
     raw_memories.sort(key=lambda x: x["final_score"], reverse=True)
-    memories = raw_memories[:top_k]
 
+    # 语义去重 (Deduplication) - 采用基于 SequenceMatcher 的轻量级文本去重以消除继承链 COW 重复记录
+    deduped_memories = []
+    for rm in raw_memories:
+        is_duplicate = False
+        for dm in deduped_memories:
+            ratio = SequenceMatcher(None, rm["content"], dm["content"]).ratio()
+            if ratio >= settings.APP_DEDUP_RETRIEVE_TEXT_THRESHOLD:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            deduped_memories.append(rm)
+
+    memories = deduped_memories[:top_k]
     return memories
 
 
@@ -449,10 +472,22 @@ def update_memory_chunk(
     chunk_id: int,
     content: str,
     importance_score: float,
-    db: DBSession
+    db: DBSession,
+    auto_commit: bool = True
 ) -> MemoryChunk:
     """
     修改单条记忆（SQLite + ChromaDB 同步更新）。
+
+    auto_commit=True（默认，单条写入场景）：
+      SQLite flush → ChromaDB update → db.commit()，全部在本函数内完成。
+      任何一步失败均 rollback，保持两侧一致。
+
+    auto_commit=False（批量事务场景）：
+      只做 SQLite flush，不立即写 ChromaDB，消除"ChromaDB 已落盘但
+      SQLite commit 尚未成功"的不一致窗口。
+      函数在 chunk 上挂载 _pending_chroma_update 闭包属性，调用方必须在
+      db.commit() 成功后立即调用该闭包以完成 ChromaDB 侧的更新；若
+      db.commit() 失败则丢弃该闭包即可，ChromaDB 无任何修改，天然一致。
     """
     chunk = db.get(MemoryChunk, chunk_id)
     if not chunk:
@@ -462,35 +497,75 @@ def update_memory_chunk(
     chunk.importance_score = importance_score
     db.flush()
 
-    # 同步更新 ChromaDB
-    if chunk.chroma_doc_id:
+    if auto_commit:
+        # ── 即时模式：SQLite flush 成功后立刻写 ChromaDB，再 commit ──
+        if chunk.chroma_doc_id:
+            try:
+                character_id = chunk.persona.character_id
+                collection = get_character_collection(character_id)
+                now = chunk.created_at or datetime.now(timezone.utc)
+                metadata = _build_chroma_metadata(
+                    persona_id=chunk.persona_id,
+                    memory_type=chunk.memory_type,
+                    importance_score=importance_score,
+                    origin_session_id=chunk.origin_session_id,
+                    created_at=now,
+                    source_message_id=chunk.source_message_id
+                )
+                collection.update(
+                    ids=[chunk.chroma_doc_id],
+                    documents=[content],
+                    metadatas=[metadata]
+                )
+            except Exception as e:
+                db.rollback()
+                print(f"[ERROR] update_memory_chunk ChromaDB 更新失败: {e}")
+                raise
+
         try:
-            character_id = chunk.persona.character_id
+            db.commit()
+            db.refresh(chunk)
+        except Exception as e:
+            db.rollback()
+            print(f"[ERROR] update_memory_chunk db.commit() 失败: {e}")
+            raise
+
+        return chunk
+
+    else:
+        # ── 延迟模式：只改 SQLite ORM，ChromaDB 写入交由调用方在 commit 后执行 ──
+        # 提前快照所有需要的字段值（flush 后属性仍可读；commit 后会 expire，
+        # 所以必须在此处捕获，不能在 commit 后依赖 ORM 对象属性）
+        chroma_doc_id = chunk.chroma_doc_id
+        character_id = chunk.persona.character_id
+        now = chunk.created_at or datetime.now(timezone.utc)
+        snap_persona_id = chunk.persona_id
+        snap_memory_type = chunk.memory_type
+        snap_origin_session_id = chunk.origin_session_id
+        snap_source_message_id = chunk.source_message_id
+
+        def _flush_to_chroma():
+            """在 db.commit() 成功后由调用方调用，将变更同步写入 ChromaDB。"""
+            if not chroma_doc_id:
+                return
             collection = get_character_collection(character_id)
-            
-            now = chunk.created_at or datetime.now(timezone.utc)
             metadata = _build_chroma_metadata(
-                persona_id=chunk.persona_id,
-                memory_type=chunk.memory_type,
+                persona_id=snap_persona_id,
+                memory_type=snap_memory_type,
                 importance_score=importance_score,
-                origin_session_id=chunk.origin_session_id,
+                origin_session_id=snap_origin_session_id,
                 created_at=now,
-                source_message_id=chunk.source_message_id
+                source_message_id=snap_source_message_id
             )
-            
             collection.update(
-                ids=[chunk.chroma_doc_id],
+                ids=[chroma_doc_id],
                 documents=[content],
                 metadatas=[metadata]
             )
-        except Exception as e:
-            db.rollback()
-            print(f"[ERROR] update_memory_chunk ChromaDB 更新失败: {e}")
-            raise
 
-    db.commit()
-    db.refresh(chunk)
-    return chunk
+        # 将闭包挂载到 chunk，方便调用方通过对象引用统一追踪
+        chunk._pending_chroma_update = _flush_to_chroma
+        return chunk
 
 
 def delete_memory_chunk(
