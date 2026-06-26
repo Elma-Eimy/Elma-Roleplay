@@ -91,6 +91,10 @@ class Settings:
         self.APP_HISTORY_FETCH_MAX = int(app_config.get("history_fetch_max", 500))
         self.APP_RETRIEVAL_MAX_DISTANCE = float(app_config.get("retrieval_max_distance", 1.2))
         self.APP_COGNITION_MAX_WORDS = int(app_config.get("cognition_max_words", 200))
+        self.APP_DEDUP_WRITE_THRESHOLD = float(app_config.get("dedup_write_threshold", 0.15))
+        self.APP_DEDUP_RETRIEVE_TEXT_THRESHOLD = float(app_config.get("dedup_retrieve_text_threshold", 0.70))
+        self.APP_GRAPH_MIN_IMPORTANCE = float(app_config.get("graph_min_importance", 0.5))
+        self.APP_GRAPH_MAX_RELATIONS = int(app_config.get("graph_max_relations", 12))
         
         # 混合打分与时间衰减高级配置
         self.APP_RETRIEVAL_WEIGHT_SIMILARITY = float(app_config.get("retrieval_weight_similarity", 0.6))
@@ -145,7 +149,11 @@ class Settings:
             "presence_penalty": float,
             "frequency_penalty": float,
             "repetition_penalty": float,
-            "reasoning_effort": str
+            "reasoning_effort": str,
+            "dedup_write_threshold": float,
+            "dedup_retrieve_text_threshold": float,
+            "graph_min_importance": float,
+            "graph_max_relations": int
         }
 
         # 2. 遍历更新字段，进行类型验证并更新内存属性与 config 字典
@@ -219,6 +227,22 @@ class Settings:
             elif field == "retrieval_max_distance":
                 self.APP_RETRIEVAL_MAX_DISTANCE = converted_val
                 self.config.setdefault("app", {})["retrieval_max_distance"] = converted_val
+                app_updated = True
+            elif field == "dedup_write_threshold":
+                self.APP_DEDUP_WRITE_THRESHOLD = converted_val
+                self.config.setdefault("app", {})["dedup_write_threshold"] = converted_val
+                app_updated = True
+            elif field == "dedup_retrieve_text_threshold":
+                self.APP_DEDUP_RETRIEVE_TEXT_THRESHOLD = converted_val
+                self.config.setdefault("app", {})["dedup_retrieve_text_threshold"] = converted_val
+                app_updated = True
+            elif field == "graph_min_importance":
+                self.APP_GRAPH_MIN_IMPORTANCE = converted_val
+                self.config.setdefault("app", {})["graph_min_importance"] = converted_val
+                app_updated = True
+            elif field == "graph_max_relations":
+                self.APP_GRAPH_MAX_RELATIONS = converted_val
+                self.config.setdefault("app", {})["graph_max_relations"] = converted_val
                 app_updated = True
             elif field == "lorebook_scan_depth":
                 self.APP_LOREBOOK_SCAN_DEPTH = converted_val
