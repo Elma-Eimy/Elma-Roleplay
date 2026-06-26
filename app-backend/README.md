@@ -206,6 +206,10 @@ app:
   retrieval_half_life_turns: 50                # 时间衰减半衰期（轮次）
   retrieval_candidate_multiplier: 3            # 粗排候选数 = top_k × multiplier
   retrieval_ancestor_weight: 0.8               # 父代记忆的权重衰减系数
+  dedup_write_threshold: 0.15                  # 写时去重向量距离门槛（小于此值触发 LLM 合并）
+  dedup_retrieve_text_threshold: 0.70          # 检索侧去重文本相似度比例门槛（SequenceMatcher）
+  graph_min_importance: 0.5                    # 图谱检索关系过滤最低重要性
+  graph_max_relations: 12                      # 图谱检索单次最大装填关系数量
 
   # 存储路径
   sqlite_db_path: data/data.db
@@ -235,7 +239,8 @@ tts:
 `temperature` · `max_tokens` · `reasoning_mode` · `context_history_limit` ·  
 `retrieval_top_k` · `retrieval_min_importance` · `retrieval_max_distance` ·  
 `lorebook_scan_depth` · `lorebook_token_budget` · `lorebook_max_recursive_passes` ·  
-`cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier`
+`cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier` ·  
+`dedup_write_threshold` · `dedup_retrieve_text_threshold` · `graph_min_importance` · `graph_max_relations`
 
 ---
 
