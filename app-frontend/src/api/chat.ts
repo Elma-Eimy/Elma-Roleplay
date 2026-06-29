@@ -110,7 +110,8 @@ export async function sendMessageStream(
   params: ChatRequest,
   onChunk: (text: string) => void,
   onDone: (meta: Omit<ChatResponse, "reply">) => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onReasoningChunk?: (text: string) => void
 ): Promise<void> {
   if (USE_MOCK) {
     try {
@@ -316,6 +317,10 @@ export async function sendMessageStream(
                 const parsed = JSON.parse(raw);
                 if (parsed.chunk) {
                   onChunk(parsed.chunk);
+                } else if (parsed.reasoning_chunk) {
+                  if (onReasoningChunk) {
+                    onReasoningChunk(parsed.reasoning_chunk);
+                  }
                 } else {
                   onDone(parsed as Omit<ChatResponse, "reply">);
                 }
@@ -364,6 +369,10 @@ export async function sendMessageStream(
             const parsed = JSON.parse(raw);
             if (parsed.chunk) {
               onChunk(parsed.chunk);
+            } else if (parsed.reasoning_chunk) {
+              if (onReasoningChunk) {
+                onReasoningChunk(parsed.reasoning_chunk);
+              }
             } else {
               onDone(parsed as Omit<ChatResponse, "reply">);
             }
@@ -393,6 +402,10 @@ export async function sendMessageStream(
                 const parsed = JSON.parse(raw);
                 if (parsed.chunk) {
                   onChunk(parsed.chunk);
+                } else if (parsed.reasoning_chunk) {
+                  if (onReasoningChunk) {
+                    onReasoningChunk(parsed.reasoning_chunk);
+                  }
                 } else {
                   onDone(parsed as Omit<ChatResponse, "reply">);
                 }
@@ -420,6 +433,10 @@ export async function sendMessageStream(
             const parsed = JSON.parse(raw);
             if (parsed.chunk) {
               onChunk(parsed.chunk);
+            } else if (parsed.reasoning_chunk) {
+              if (onReasoningChunk) {
+                onReasoningChunk(parsed.reasoning_chunk);
+              }
             } else {
               onDone(parsed as Omit<ChatResponse, "reply">);
             }

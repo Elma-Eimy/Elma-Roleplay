@@ -46,6 +46,7 @@ export interface Message {
   id: number;
   role: "user" | "assistant";
   content: string;
+  reasoning_content?: string | null;
   emotion_tag: string | null;
   affection_change: number | null;
   created_at: string;
