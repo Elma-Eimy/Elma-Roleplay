@@ -40,31 +40,32 @@ def get_db():
         db.close()
 
 def run_migrations(db_engine):
-    from sqlalchemy import inspect, text
-    inspector = inspect(db_engine)
-    if 'chat_messages' not in inspector.get_table_names():
-        return
-    columns = [col['name'] for col in inspector.get_columns('chat_messages')]
+    from sqlalchemy import inspect
+    from alembic.config import Config
+    from alembic import command
     
-    with db_engine.begin() as conn:
-        if 'parent_id' not in columns:
-            try:
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN parent_id INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE"))
-                print("[MIGRATION] Successfully added parent_id to chat_messages.")
-            except Exception as e:
-                print(f"[MIGRATION] Error adding parent_id: {e}")
-        if 'is_active' not in columns:
-            try:
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
-                print("[MIGRATION] Successfully added is_active to chat_messages.")
-            except Exception as e:
-                print(f"[MIGRATION] Error adding is_active: {e}")
-        if 'audio_path' not in columns:
-            try:
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN audio_path VARCHAR(255) NULL"))
-                print("[MIGRATION] Successfully added audio_path to chat_messages.")
-            except Exception as e:
-                print(f"[MIGRATION] Error adding audio_path: {e}")
+    inspector = inspect(db_engine)
+    tables = inspector.get_table_names()
+    
+    alembic_cfg = Config("alembic.ini")
+    
+    # 如果已存在 chat_messages 但没有 alembic_version，说明是已存在的旧版数据库，对其执行 baseline stamp
+    if "chat_messages" in tables and "alembic_version" not in tables:
+        try:
+            print("[MIGRATION] Existing database detected. Stamping with baseline revision e8c3a2d02d0f...")
+            command.stamp(alembic_cfg, "e8c3a2d02d0f")
+            print("[MIGRATION] Baseline stamping completed successfully.")
+        except Exception as e:
+            print(f"[WARN] Failed to stamp baseline revision: {e}")
+            
+    # 自动应用所有新迁移升级
+    try:
+        print("[MIGRATION] Running database upgrades...")
+        command.upgrade(alembic_cfg, "head")
+        print("[MIGRATION] Database upgrades completed successfully.")
+    except Exception as e:
+        print(f"[ERROR] Database upgrade failed: {e}")
+        raise e
 
 try:
     run_migrations(engine)

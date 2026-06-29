@@ -324,6 +324,7 @@ class ChatMessage(Base):
 
     role    = Column(SAEnum(MessageRole), nullable=False)
     content = Column(Text, nullable=False)
+    reasoning_content = Column(Text, nullable=True)  # AI 深度思考的过程文本
 
     # 消息级微状态（溯源用，不参与 RAG）
     emotion_tag      = Column(String(50),  nullable=True)  # 发出本条消息时角色的情绪标签
