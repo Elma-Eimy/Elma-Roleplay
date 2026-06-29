@@ -158,6 +158,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         reply_text = response_data.get("reply", "")
         emotion_tag = response_data.get("emotion_tag", "平静")
         affection_change = int(response_data.get("affection_change", 0))
+        reasoning_content = response_data.get("reasoning_content", "")
 
         # ── Step 6: 保存 AI 回复与更新状态 (跑在线程池中) ──
         def save_response_data():
@@ -175,6 +176,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 session_id=request.session_id,
                 role=MessageRole.assistant,
                 content=reply_text,
+                reasoning_content=reasoning_content,
                 emotion_tag=emotion_tag,
                 affection_change=affection_change,
                 parent_id=user_msg.id,
@@ -203,6 +205,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                     "id": c.id,
                     "role": c.role.value,
                     "content": c.content,
+                    "reasoning_content": c.reasoning_content,
                     "emotion_tag": c.emotion_tag,
                     "affection_change": c.affection_change,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -370,6 +373,7 @@ async def chat_stream(
         async def event_generator():
             accumulated_text = ""
             reply_text = ""
+            reasoning_text = ""
             
             in_reply_mode = False
             fallback_mode = False
@@ -381,6 +385,13 @@ async def chat_stream(
             try:
                 async for chunk in stream:
                     delta = chunk.choices[0].delta.content or ""
+                    reasoning_delta = getattr(chunk.choices[0].delta, "reasoning_content", None) or ""
+                    
+                    if reasoning_delta:
+                        reasoning_text += reasoning_delta
+                        yield f"data: {json.dumps({'reasoning_chunk': reasoning_delta}, ensure_ascii=False)}\n\n"
+                        continue
+
                     if not delta:
                         continue
                     accumulated_text += delta
@@ -477,6 +488,7 @@ async def chat_stream(
                         session_id=session_id,
                         role=MessageRole.assistant,
                         content=reply_text,
+                        reasoning_content=reasoning_text,
                         emotion_tag=emotion_tag,
                         affection_change=affection_change,
                         parent_id=user_msg.id,
@@ -505,6 +517,7 @@ async def chat_stream(
                             "id": c.id,
                             "role": c.role.value,
                             "content": c.content,
+                            "reasoning_content": c.reasoning_content,
                             "emotion_tag": c.emotion_tag,
                             "affection_change": c.affection_change,
                             "created_at": c.created_at.isoformat() if c.created_at else None,

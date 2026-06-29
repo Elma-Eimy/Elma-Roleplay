@@ -293,6 +293,7 @@ def get_session_history(
             "id": m.id,
             "role": m.role.value,
             "content": m.content,
+            "reasoning_content": m.reasoning_content,
             "emotion_tag": m.emotion_tag,
             "affection_change": m.affection_change,
             "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -316,6 +317,7 @@ def get_session_history(
                 {
                     "id": c.id,
                     "content": c.content,
+                    "reasoning_content": c.reasoning_content,
                     "emotion_tag": c.emotion_tag,
                     "affection_change": c.affection_change,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
