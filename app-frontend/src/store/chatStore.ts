@@ -7,6 +7,7 @@ import type { ChatResponse, ChatRequest } from "@/api/chat";
 import { getBaseUrl, getSavedApiKey } from "@/api/config";
 import { usePersonaStore } from "./personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
+import { useChatSettingsStore } from "./chatSettingsStore";
 
 export type MessageStatus = "sending" | "streaming" | "done" | "error";
 
@@ -48,20 +49,7 @@ export const useChatStore = defineStore("chat", () => {
     timestamp: number;
   } | null>(null);
 
-  /** 是否对聊天回复启用深度思考推理模型 */
-  const useReasoning = ref(uni.getStorageSync("elma_use_reasoning") === true);
 
-  // 深度思考模式选择改变时自动写入缓存
-  watch(useReasoning, (newVal) => {
-    uni.setStorageSync("elma_use_reasoning", newVal);
-  });
-
-  /** 自定义采样参数值 */
-  const temperature = ref<number | null>(null);
-  const top_p = ref<number | null>(null);
-  const presence_penalty = ref<number | null>(null);
-  const frequency_penalty = ref<number | null>(null);
-  const repetition_penalty = ref<number | null>(null);
 
   // ===== 计算属性 (Getters) =====
 
@@ -87,11 +75,8 @@ export const useChatStore = defineStore("chat", () => {
     activeStreamRequest.value = null;
     
     // 加载会话历史时重置当前自定义参数，以保证使用后端新会话的默认值
-    temperature.value = null;
-    top_p.value = null;
-    presence_penalty.value = null;
-    frequency_penalty.value = null;
-    repetition_penalty.value = null;
+    const settingsStore = useChatSettingsStore();
+    settingsStore.clearParameters();
 
     try {
       const res = await getSessionHistory(sessionId);
@@ -227,17 +212,18 @@ export const useChatStore = defineStore("chat", () => {
     // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
     const streamPlaceholderId = addStreamingPlaceholder();
 
+    const settingsStore = useChatSettingsStore();
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: lastUserMsg.content,
-      use_reasoning: useReasoning.value,
+      use_reasoning: settingsStore.useReasoning,
       is_regenerate: true,
       user_nickname: personaStore.userNickname,
-      temperature: temperature.value ?? undefined,
-      top_p: top_p.value ?? undefined,
-      presence_penalty: presence_penalty.value ?? undefined,
-      frequency_penalty: frequency_penalty.value ?? undefined,
-      repetition_penalty: repetition_penalty.value ?? undefined,
+      temperature: settingsStore.temperature ?? undefined,
+      top_p: settingsStore.top_p ?? undefined,
+      presence_penalty: settingsStore.presence_penalty ?? undefined,
+      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
+      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
     };
 
     // #ifdef APP-PLUS
@@ -261,6 +247,10 @@ export const useChatStore = defineStore("chat", () => {
         },
         (meta) => {
           const finalId = (meta as any).assistant_message_id || Date.now();
+          const candidates = (meta as any).candidates || [];
+          const activeIndex = (meta as any).active_index ?? (candidates.length - 1);
+          const finalReasoning = candidates[activeIndex]?.reasoning_content || "";
+          
           finalizeStream(streamPlaceholderId, {
             id: finalId,
             role: "assistant",
@@ -272,6 +262,7 @@ export const useChatStore = defineStore("chat", () => {
             is_active: true,
             candidates: (meta as any).candidates,
             active_index: (meta as any).active_index,
+            reasoning_content: finalReasoning || undefined,
           });
           
           // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
@@ -288,6 +279,9 @@ export const useChatStore = defineStore("chat", () => {
           messages.value = messages.value.filter((m) => m.tempId !== streamPlaceholderId);
           setError(err.message || "Failed to regenerate AI response");
           isLoading.value = false;
+        },
+        (rChunk) => {
+          appendStreamReasoningChunk(streamPlaceholderId, rChunk);
         }
       );
     } catch (e: any) {
@@ -309,16 +303,17 @@ export const useChatStore = defineStore("chat", () => {
     const tempId = addOptimisticUserMessage(text);
     const streamPlaceholderId = addStreamingPlaceholder();
 
+    const settingsStore = useChatSettingsStore();
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: text,
-      use_reasoning: useReasoning.value,
+      use_reasoning: settingsStore.useReasoning,
       user_nickname: personaStore.userNickname,
-      temperature: temperature.value ?? undefined,
-      top_p: top_p.value ?? undefined,
-      presence_penalty: presence_penalty.value ?? undefined,
-      frequency_penalty: frequency_penalty.value ?? undefined,
-      repetition_penalty: repetition_penalty.value ?? undefined,
+      temperature: settingsStore.temperature ?? undefined,
+      top_p: settingsStore.top_p ?? undefined,
+      presence_penalty: settingsStore.presence_penalty ?? undefined,
+      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
+      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
     };
 
     // #ifdef APP-PLUS
@@ -343,6 +338,10 @@ export const useChatStore = defineStore("chat", () => {
         },
         (meta) => {
           const finalId = (meta as any).assistant_message_id || Date.now();
+          const candidates = (meta as any).candidates || [];
+          const activeIndex = (meta as any).active_index ?? (candidates.length - 1);
+          const finalReasoning = candidates[activeIndex]?.reasoning_content || "";
+
           finalizeStream(streamPlaceholderId, {
             id: finalId,
             role: "assistant",
@@ -354,6 +353,7 @@ export const useChatStore = defineStore("chat", () => {
             is_active: true,
             candidates: (meta as any).candidates,
             active_index: (meta as any).active_index,
+            reasoning_content: finalReasoning || undefined,
           });
           
           // 用服务器确认的数据替换用户消息的临时 ID/tempId 并归档
@@ -383,6 +383,9 @@ export const useChatStore = defineStore("chat", () => {
           }
           setError(err.message || "Failed to get AI response");
           isLoading.value = false;
+        },
+        (rChunk) => {
+          appendStreamReasoningChunk(streamPlaceholderId, rChunk);
         }
       );
     } catch (e: any) {
@@ -419,6 +422,7 @@ export const useChatStore = defineStore("chat", () => {
       clientId,
       role: "assistant",
       content: "",
+      reasoning_content: "",
       emotion_tag: null,
       affection_change: null,
       created_at: new Date().toISOString(),
@@ -435,6 +439,17 @@ export const useChatStore = defineStore("chat", () => {
     if (msg) {
       msg.content += chunk;
       streamingText.value += chunk;
+    }
+  }
+
+  /** 向流式传输中的占位消息追加思考过程文本分块 */
+  function appendStreamReasoningChunk(tempId: string, chunk: string) {
+    const msg = messages.value.find((m) => m.tempId === tempId);
+    if (msg) {
+      if (msg.reasoning_content === undefined || msg.reasoning_content === null) {
+        msg.reasoning_content = "";
+      }
+      msg.reasoning_content += chunk;
     }
   }
 
@@ -543,11 +558,10 @@ export const useChatStore = defineStore("chat", () => {
     streamingText.value = "";
     lastMeta.value = null;
     errorMessage.value = null;
-    temperature.value = null;
-    top_p.value = null;
-    presence_penalty.value = null;
-    frequency_penalty.value = null;
-    repetition_penalty.value = null;
+
+    const settingsStore = useChatSettingsStore();
+    settingsStore.$reset();
+
     activeStreamRequest.value = null;
   }
 
@@ -559,12 +573,6 @@ export const useChatStore = defineStore("chat", () => {
     streamingText,
     lastMeta,
     errorMessage,
-    useReasoning,
-    temperature,
-    top_p,
-    presence_penalty,
-    frequency_penalty,
-    repetition_penalty,
     activeStreamRequest,
     // Getters
     hasMessages,
@@ -582,6 +590,7 @@ export const useChatStore = defineStore("chat", () => {
     addOptimisticUserMessage,
     addStreamingPlaceholder,
     appendStreamChunk,
+    appendStreamReasoningChunk,
     finalizeStream,
     switchActiveCandidate,
     loadMoreHistory,
