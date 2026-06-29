@@ -136,6 +136,7 @@ async def generate_reply(
         response = await llm_client_async.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content
+        reasoning_content = getattr(response.choices[0].message, "reasoning_content", None) or ""
 
         # 使用高容错方法提取并解析 XML
         result = _extract_xml_block(content)
@@ -145,6 +146,7 @@ async def generate_reply(
             "emotion_tag": result["emotion_tag"],
             "affection_change": result["affection_change"],
             "model_used": model,
+            "reasoning_content": reasoning_content,
         }
 
     except Exception as e:
