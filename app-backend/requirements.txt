@@ -7,3 +7,4 @@ openai==2.36.0
 python-dotenv==1.2.2
 PyYAML==6.0.3
 python-multipart==0.0.29
+alembic==1.13.1
