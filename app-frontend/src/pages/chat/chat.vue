@@ -63,15 +63,15 @@
       <view class="reasoning-toggle-row">
         <view 
           class="reasoning-toggle-btn" 
-          :class="{ 'is-reasoning': chatStore.useReasoning }"
-          @tap="chatStore.useReasoning = !chatStore.useReasoning"
+          :class="{ 'is-reasoning': chatSettingsStore.useReasoning }"
+          @tap="chatSettingsStore.useReasoning = !chatSettingsStore.useReasoning"
         >
           <image 
             class="reasoning-icon" 
-            :src="chatStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
+            :src="chatSettingsStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
             mode="aspectFit" 
           />
-          <text class="reasoning-label">{{ chatStore.useReasoning ? '深度思考' : '普通模式' }}</text>
+          <text class="reasoning-label">{{ chatSettingsStore.useReasoning ? '深度思考' : '普通模式' }}</text>
         </view>
       </view>
       <view class="input-area" :class="{ 'is-focused': isInputFocused }">
@@ -171,6 +171,7 @@ import { ref, computed, watch } from "vue";
 import { onLoad, onUnload } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { 
   createSession, 
   deleteSession, 
@@ -188,6 +189,7 @@ import { useChatScroll } from "@/composables/useChatScroll";
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
+const chatSettingsStore = useChatSettingsStore();
 const { activeAudioMessageId } = useAudioPlayer();
 const {
   scrollTop,
@@ -653,7 +655,7 @@ const onBridgeMessage = (e: any) => {
     console.log("[Vue Logic] onBridgeMessage received type:", payload.type);
     
     // 如果是流相关的消息类型，安全拦截校验 requestId，防止跨页面/孤儿请求导致的状态冲突与卡死
-    if (payload.type === "chunk" || payload.type === "done" || payload.type === "error") {
+    if (payload.type === "chunk" || payload.type === "reasoning_chunk" || payload.type === "done" || payload.type === "error") {
       if (payload.requestId !== currentStreamRequestId.value) {
         console.warn(`[Vue Logic] Discarding orphaned stream event of type: ${payload.type}. Request ID mismatch.`);
         return;
@@ -662,6 +664,8 @@ const onBridgeMessage = (e: any) => {
     
     if (payload.type === "chunk") {
       chatStore.appendStreamChunk(payload.placeholderId, payload.chunk);
+    } else if (payload.type === "reasoning_chunk") {
+      chatStore.appendStreamReasoningChunk(payload.placeholderId, payload.reasoning_chunk);
     } else if (payload.type === "done") {
       // 提取后端入库的完整 Ground-Truth 文本以防止字符缺失，并对 meta 加以防护，防止 undefined 属性解构异常
       const meta = payload.meta || {};
@@ -857,6 +861,11 @@ export default {
                     placeholderId: placeholderId,
                     userMessageTempId: userMessageTempId,
                     error: parsed.error
+                  });
+                } else if (parsed.reasoning_chunk !== undefined) {
+                  sendToLogicWithReq("reasoning_chunk", {
+                    placeholderId: placeholderId,
+                    reasoning_chunk: parsed.reasoning_chunk
                   });
                 } else if (parsed.chunk !== undefined) {
                   sendToLogicWithReq("chunk", {
