@@ -80,15 +80,15 @@
             <view class="setting-row-left">
               <image 
                 class="setting-row-icon" 
-                :src="chatStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
+                :src="chatSettingsStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
                 mode="aspectFit" 
               />
               <text class="setting-row-label">深度思考模式</text>
             </view>
             <view
               class="custom-toggle"
-              :class="{ 'is-on': chatStore.useReasoning }"
-              @tap="chatStore.useReasoning = !chatStore.useReasoning"
+              :class="{ 'is-on': chatSettingsStore.useReasoning }"
+              @tap="chatSettingsStore.useReasoning = !chatSettingsStore.useReasoning"
             >
               <view class="toggle-thumb"></view>
             </view>
@@ -118,25 +118,25 @@
               <view class="drawer-slider-header">
                 <text class="drawer-slider-label">创意温度 (Temperature)</text>
                 <view class="drawer-slider-value-wrapper">
-                  <text class="drawer-slider-value" :class="{ 'is-default': chatStore.temperature === null }">
-                    {{ chatStore.temperature !== null ? chatStore.temperature.toFixed(1) : '默认 (1.0)' }}
+                  <text class="drawer-slider-value" :class="{ 'is-default': chatSettingsStore.temperature === null }">
+                    {{ chatSettingsStore.temperature !== null ? chatSettingsStore.temperature.toFixed(1) : '默认 (1.0)' }}
                   </text>
                   <text 
-                    v-if="chatStore.temperature !== null" 
+                    v-if="chatSettingsStore.temperature !== null" 
                     class="drawer-slider-reset" 
-                    @tap.stop="chatStore.temperature = null"
+                    @tap.stop="chatSettingsStore.temperature = null"
                   >重置</text>
                 </view>
               </view>
               <slider
                 class="drawer-slider-component"
-                :value="Math.round((chatStore.temperature ?? 1.0) * 10)"
+                :value="Math.round((chatSettingsStore.temperature ?? 1.0) * 10)"
                 :min="1" :max="20" :step="1"
                 activeColor="#1c1c1e"
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="18"
-                @change="(e: any) => chatStore.temperature = e.detail.value / 10"
+                @change="(e: any) => chatSettingsStore.temperature = e.detail.value / 10"
               />
             </view>
 
@@ -145,25 +145,25 @@
               <view class="drawer-slider-header">
                 <text class="drawer-slider-label">核采样比例 (Top P)</text>
                 <view class="drawer-slider-value-wrapper">
-                  <text class="drawer-slider-value" :class="{ 'is-default': chatStore.top_p === null }">
-                    {{ chatStore.top_p !== null ? chatStore.top_p.toFixed(2) : '默认 (1.00)' }}
+                  <text class="drawer-slider-value" :class="{ 'is-default': chatSettingsStore.top_p === null }">
+                    {{ chatSettingsStore.top_p !== null ? chatSettingsStore.top_p.toFixed(2) : '默认 (1.00)' }}
                   </text>
                   <text 
-                    v-if="chatStore.top_p !== null" 
+                    v-if="chatSettingsStore.top_p !== null" 
                     class="drawer-slider-reset" 
-                    @tap.stop="chatStore.top_p = null"
+                    @tap.stop="chatSettingsStore.top_p = null"
                   >重置</text>
                 </view>
               </view>
               <slider
                 class="drawer-slider-component"
-                :value="Math.round((chatStore.top_p ?? 1.0) * 100)"
+                :value="Math.round((chatSettingsStore.top_p ?? 1.0) * 100)"
                 :min="10" :max="100" :step="5"
                 activeColor="#1c1c1e"
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="18"
-                @change="(e: any) => chatStore.top_p = e.detail.value / 100"
+                @change="(e: any) => chatSettingsStore.top_p = e.detail.value / 100"
               />
             </view>
 
@@ -172,25 +172,25 @@
               <view class="drawer-slider-header">
                 <text class="drawer-slider-label">存在惩罚 (Presence Penalty)</text>
                 <view class="drawer-slider-value-wrapper">
-                  <text class="drawer-slider-value" :class="{ 'is-default': chatStore.presence_penalty === null }">
-                    {{ chatStore.presence_penalty !== null ? chatStore.presence_penalty.toFixed(1) : '默认 (0.0)' }}
+                  <text class="drawer-slider-value" :class="{ 'is-default': chatSettingsStore.presence_penalty === null }">
+                    {{ chatSettingsStore.presence_penalty !== null ? chatSettingsStore.presence_penalty.toFixed(1) : '默认 (0.0)' }}
                   </text>
                   <text 
-                    v-if="chatStore.presence_penalty !== null" 
+                    v-if="chatSettingsStore.presence_penalty !== null" 
                     class="drawer-slider-reset" 
-                    @tap.stop="chatStore.presence_penalty = null"
+                    @tap.stop="chatSettingsStore.presence_penalty = null"
                   >重置</text>
                 </view>
               </view>
               <slider
                 class="drawer-slider-component"
-                :value="Math.round(((chatStore.presence_penalty ?? 0.0) + 2) * 10)"
+                :value="Math.round(((chatSettingsStore.presence_penalty ?? 0.0) + 2) * 10)"
                 :min="0" :max="40" :step="1"
                 activeColor="#1c1c1e"
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="18"
-                @change="(e: any) => chatStore.presence_penalty = (e.detail.value / 10) - 2"
+                @change="(e: any) => chatSettingsStore.presence_penalty = (e.detail.value / 10) - 2"
               />
             </view>
 
@@ -199,25 +199,25 @@
               <view class="drawer-slider-header">
                 <text class="drawer-slider-label">频率惩罚 (Frequency Penalty)</text>
                 <view class="drawer-slider-value-wrapper">
-                  <text class="drawer-slider-value" :class="{ 'is-default': chatStore.frequency_penalty === null }">
-                    {{ chatStore.frequency_penalty !== null ? chatStore.frequency_penalty.toFixed(1) : '默认 (0.0)' }}
+                  <text class="drawer-slider-value" :class="{ 'is-default': chatSettingsStore.frequency_penalty === null }">
+                    {{ chatSettingsStore.frequency_penalty !== null ? chatSettingsStore.frequency_penalty.toFixed(1) : '默认 (0.0)' }}
                   </text>
                   <text 
-                    v-if="chatStore.frequency_penalty !== null" 
+                    v-if="chatSettingsStore.frequency_penalty !== null" 
                     class="drawer-slider-reset" 
-                    @tap.stop="chatStore.frequency_penalty = null"
+                    @tap.stop="chatSettingsStore.frequency_penalty = null"
                   >重置</text>
                 </view>
               </view>
               <slider
                 class="drawer-slider-component"
-                :value="Math.round(((chatStore.frequency_penalty ?? 0.0) + 2) * 10)"
+                :value="Math.round(((chatSettingsStore.frequency_penalty ?? 0.0) + 2) * 10)"
                 :min="0" :max="40" :step="1"
                 activeColor="#1c1c1e"
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="18"
-                @change="(e: any) => chatStore.frequency_penalty = (e.detail.value / 10) - 2"
+                @change="(e: any) => chatSettingsStore.frequency_penalty = (e.detail.value / 10) - 2"
               />
             </view>
 
@@ -226,25 +226,25 @@
               <view class="drawer-slider-header">
                 <text class="drawer-slider-label">重复度惩罚 (Repetition Penalty)</text>
                 <view class="drawer-slider-value-wrapper">
-                  <text class="drawer-slider-value" :class="{ 'is-default': chatStore.repetition_penalty === null }">
-                    {{ chatStore.repetition_penalty !== null ? chatStore.repetition_penalty.toFixed(2) : '默认 (1.00)' }}
+                  <text class="drawer-slider-value" :class="{ 'is-default': chatSettingsStore.repetition_penalty === null }">
+                    {{ chatSettingsStore.repetition_penalty !== null ? chatSettingsStore.repetition_penalty.toFixed(2) : '默认 (1.00)' }}
                   </text>
                   <text 
-                    v-if="chatStore.repetition_penalty !== null" 
+                    v-if="chatSettingsStore.repetition_penalty !== null" 
                     class="drawer-slider-reset" 
-                    @tap.stop="chatStore.repetition_penalty = null"
+                    @tap.stop="chatSettingsStore.repetition_penalty = null"
                   >重置</text>
                 </view>
               </view>
               <slider
                 class="drawer-slider-component"
-                :value="Math.round((chatStore.repetition_penalty ?? 1.0) * 100)"
+                :value="Math.round((chatSettingsStore.repetition_penalty ?? 1.0) * 100)"
                 :min="50" :max="200" :step="5"
                 activeColor="#1c1c1e"
                 backgroundColor="rgba(0,0,0,0.07)"
                 block-color="#ffffff"
                 block-size="18"
-                @change="(e: any) => chatStore.repetition_penalty = e.detail.value / 100"
+                @change="(e: any) => chatSettingsStore.repetition_penalty = e.detail.value / 100"
               />
             </view>
           </view>
@@ -303,6 +303,7 @@
 import { ref, computed, watch } from "vue";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
 
@@ -321,6 +322,7 @@ const emit = defineEmits<{
 
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
+const chatSettingsStore = useChatSettingsStore();
 
 const showAdvancedParams = ref(false);
 const userNicknameInput = ref(personaStore.userNickname);

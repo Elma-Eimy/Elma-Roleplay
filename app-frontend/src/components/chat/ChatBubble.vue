@@ -31,7 +31,7 @@
           <view class="thought-header" @tap="isThoughtExpanded = !isThoughtExpanded">
             <view class="thought-header-left">
               <view class="brain-spark"></view>
-              <text class="thought-title">{{ isThoughtExpanded ? '深度思考过程' : 'AI 已完成思考 (点击展开)' }}</text>
+              <text class="thought-title">{{ thoughtTitle }}</text>
             </view>
             <view class="thought-arrow" :class="{ 'is-up': isThoughtExpanded }">▾</view>
           </view>
@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
@@ -271,17 +271,24 @@ const parsedContent = computed(() => {
       return { thought: "", reply: content };
     }
     
-    // 2. 提取 <thought>...</thought> 推理内容的正则表达式
-    const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
-    const match = content.match(thoughtRegex);
-    
-    let thought = "";
+    // 优先采用独立的 reasoning_content 字段（API 标准格式）
+    let thought = props.message?.reasoning_content ? String(props.message.reasoning_content) : "";
     let reply = content;
     
-    if (match) {
-      thought = match[1].trim();
-      reply = content.replace(thoughtRegex, "").trim();
+    // 如果独立的 reasoning_content 为空，再尝试 fallback 从 content 中解析 <thought> 标签
+    if (!thought) {
+      const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
+      const match = content.match(thoughtRegex);
+      if (match) {
+        thought = match[1].trim();
+        reply = content.replace(thoughtRegex, "").trim();
+      }
+    } else {
+      // 如果是用独立的 reasoning_content，仍要清理 content 中残留的 <thought> 标签
+      reply = reply.replace(/<\/?thought[^>]*>/gi, "");
     }
+    
+    thought = replacePlaceholders(thought);
     
     // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
     thought = thought.replace(/<\/?thought[^>]*>/gi, "");
@@ -340,6 +347,22 @@ const renderedThought = computed(() => {
     return "";
   }
 });
+
+const thoughtTitle = computed(() => {
+  if (props.message?.status === "streaming") {
+    if (!props.message.content) {
+      return "AI 正在思考中...";
+    }
+  }
+  return isThoughtExpanded.value ? "深度思考过程" : "AI 已完成思考 (点击展开)";
+});
+
+// 监听流式思考过程流入，在流式输出思考期间自动展开思考区
+watch(() => props.message?.reasoning_content, (newVal) => {
+  if (props.message?.status === "streaming" && newVal) {
+    isThoughtExpanded.value = true;
+  }
+}, { immediate: true });
 </script>
 
 <style scoped>
