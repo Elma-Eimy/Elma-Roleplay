@@ -18,11 +18,14 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
 
         model_name = getattr(self, "model_name", "") or settings.LLM_EMBEDDING_MODEL
         is_vision = "vision" in model_name.lower()
+        base_url = (self.api_base or settings.EMBEDDING_BASE_URL).rstrip("/")
+        
+        # 检测是否为火山引擎的 Multimodal 专属 API（例如火山引擎的 Embedding Base URL 包含 volcengine 或 volces）
+        is_volcengine_multimodal = is_vision and ("volcengine" in base_url.lower() or "volces" in base_url.lower())
 
-        if is_vision:
+        if is_volcengine_multimodal:
             try:
                 # Multimodal API endpoint: /api/v3/embeddings/multimodal
-                base_url = (self.api_base or settings.EMBEDDING_BASE_URL).rstrip("/")
                 url = f"{base_url}/embeddings/multimodal"
                 
                 headers = {

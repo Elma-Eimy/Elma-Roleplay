@@ -58,10 +58,10 @@
   - **LRU 清理**：由后台线程监控缓存文件总数，超限时自动清理较旧的音频。
 - **音频托管**：挂载 `/audio` 静态服务，前端可通过 URL 播放，规避跨端组件兼容性问题。
 
-### 4. 数据库自动迁移升级
+### 4. 数据库自动迁移升级与 Alembic 机制
 
-- **启动期自适应升级**：系统启动导入 `core/database.py` 时，会自动利用 `inspect` 工具扫描现有的 SQLite 数据库。
-- **动态 Alter Column**：检测到旧数据库缺少 `audio_path`、`parent_id` 或 `is_active` 字段时，会自动运行 SQL 指令进行升级（如 `ALTER TABLE chat_messages ADD COLUMN audio_path VARCHAR(255) NULL`），避免由于数据库结构变更导致的异常。
+- **启动期自适应升级**：系统启动导入 `core/database.py` 时，会自动使用 Alembic 扫描并自动应用所有新迁移升级（通过 `command.upgrade` 直达 `head` 版本）。
+- **Baseline 自动对齐**：若检测到已存在 `chat_messages` 但没有 `alembic_version`，系统会自动执行 baseline revision 的 stamp 标记，以确保向后兼容与升级的平滑。
 
 ### 5. 游标滚动分页历史消息 API
 

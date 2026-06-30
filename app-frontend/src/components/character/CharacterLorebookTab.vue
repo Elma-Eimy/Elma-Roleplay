@@ -33,6 +33,7 @@
           class="lore-card" 
           v-for="(entry, index) in lorebookEntries" 
           :key="index"
+          @tap="toggleEntry(index)"
         >
           <view class="lore-card-header">
             <view class="lore-key-row">
@@ -49,7 +50,15 @@
               联合过滤: {{ entry.secondary_keys.join(', ') }}
             </text>
           </view>
-          <text class="lore-content">{{ entry.content }}</text>
+          <view class="lore-content" :class="{ 'is-collapsed': !expandedEntries[index] && entry.content && entry.content.length > 80 }">
+            {{ entry.content }}
+          </view>
+          <view class="lore-expand-toggle-row" v-if="entry.content && entry.content.length > 80">
+            <text class="lore-expand-toggle">
+              {{ expandedEntries[index] ? '点击收起条目' : '点击展开全部...' }}
+            </text>
+            <view class="lore-expand-arrow" :class="{ 'is-expanded': expandedEntries[index] }"></view>
+          </view>
         </view>
       </view>
       <view v-else class="empty-branches">
@@ -100,6 +109,12 @@ const props = defineProps<{
   character: CharacterDetail;
   characterId: number | null;
 }>();
+
+const expandedEntries = ref<Record<number, boolean>>({});
+
+const toggleEntry = (index: number) => {
+  expandedEntries.value[index] = !expandedEntries.value[index];
+};
 
 const emit = defineEmits<{
   (e: "refresh", id: number): void;
@@ -335,14 +350,65 @@ const normalizeEntry = (e: any) => {
 }
 
 .lore-content {
+  display: block !important;
+  box-sizing: border-box !important;
   font-size: 24rpx;
   color: #48484a;
-  line-height: 1.5;
-  background-color: rgba(0, 0, 0, 0.01);
-  padding: 16rpx 20rpx;
-  border-radius: 12rpx;
-  border: 1px solid rgba(0, 0, 0, 0.01);
+  line-height: 1.6;
+  background-color: rgba(0, 0, 0, 0.02) !important;
+  padding: 20rpx 24rpx !important;
+  border-radius: 16rpx !important;
+  border: 1px solid rgba(0, 0, 0, 0.03) !important;
   word-break: break-all;
+  white-space: pre-wrap !important;
+  transition: all 0.2s ease;
+}
+
+.lore-content.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lore-expand-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  margin-top: 4rpx;
+}
+
+.lore-expand-toggle {
+  font-size: 20rpx;
+  color: #007aff;
+  font-weight: 600;
+  text-align: center;
+}
+
+.lore-expand-arrow {
+  width: 14rpx;
+  height: 14rpx;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.lore-expand-arrow::after {
+  content: "";
+  width: 8rpx;
+  height: 8rpx;
+  border-right: 2rpx solid #007aff;
+  border-bottom: 2rpx solid #007aff;
+  transform: rotate(45deg);
+}
+
+.lore-expand-arrow.is-expanded {
+  transform: rotate(225deg);
+  margin-top: 4rpx;
 }
 
 /* ===== 关联世界书栏目 ===== */

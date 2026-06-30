@@ -380,3 +380,30 @@ class Lorebook(Base):
         secondary=character_lorebooks,
         back_populates="lorebooks"
     )
+
+
+# ──────────────────────────────────────────────
+# 7. 事务型发件箱任务表 (OutboxJobs)
+#    用于确保 SQLite 事务提交与异构存储（ChromaDB/文件系统）变更的最终一致性
+# ──────────────────────────────────────────────
+
+class OutboxJobStatus(str, enum.Enum):
+    pending    = "pending"
+    processing = "processing"
+    completed  = "completed"
+    failed     = "failed"
+
+
+class OutboxJob(Base):
+    __tablename__ = "outbox_jobs"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    task_type    = Column(String(50), nullable=False) # e.g., "delete_vector", "delete_audio"
+    payload      = Column(Text, nullable=False)       # JSON 序列化的数据负载
+    status       = Column(SAEnum(OutboxJobStatus), default=OutboxJobStatus.pending, index=True, nullable=False)
+    attempts     = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=5, nullable=False)
+    last_error   = Column(Text, nullable=True)
+    created_at   = Column(DateTime, default=func.now())
+    run_after    = Column(DateTime, default=func.now(), index=True, nullable=False) # 用于指数退避调度
+

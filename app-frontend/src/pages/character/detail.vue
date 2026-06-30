@@ -20,12 +20,21 @@
       <view class="scroll-inner">
         <!-- 角色立绘面板 -->
         <view class="portrait-panel">
+          <!-- 模糊氛围背景 -->
           <image 
-            class="portrait-img" 
+            class="portrait-blur-bg" 
             :src="getAvatarUrl(character.avatar_path || '') || '/static/default-avatar.png'" 
-            mode="aspectFill" 
-            @tap="previewPortrait"
+            mode="aspectFill"
           />
+          <!-- 前景高清立绘卡 -->
+          <view class="portrait-card-wrapper">
+            <image 
+              class="portrait-img" 
+              :src="getAvatarUrl(character.avatar_path || '') || '/static/default-avatar.png'" 
+              mode="aspectFill" 
+              @tap="previewPortrait"
+            />
+          </view>
           <view class="portrait-overlay" @tap="previewPortrait"></view>
           
           <view class="change-portrait-btn" @tap="changePortrait">
@@ -116,6 +125,7 @@
           <view v-else-if="viewMode === 'list' && sessions.length > 0" class="branches-list">
             <view 
               class="branch-card" 
+              :class="getAffectionClass(session.persona?.affection_score)"
               v-for="session in sessions" 
               :key="session.id"
               @tap="resumeSession(session)"
@@ -242,6 +252,13 @@ const personalityTags = computed(() => {
   if (!character.value?.personality) return [];
   return character.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
 });
+
+const getAffectionClass = (score: number | undefined | null) => {
+  if (score === undefined || score === null) return "";
+  if (score >= 80) return "affection-high";
+  if (score <= 30) return "affection-low";
+  return "";
+};
 
 onLoad((options) => {
   if (options && options.id) {

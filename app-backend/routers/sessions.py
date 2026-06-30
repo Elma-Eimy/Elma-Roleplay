@@ -8,6 +8,7 @@ from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCrea
 import services.memory_manager as memory_manager
 from core.config import settings
 from core.locking import cleanup_session_lock
+import json
 
 router = APIRouter()
 
@@ -527,8 +528,37 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
             ).order_by(models.ChatMessage.id.desc()).first()
             persona.last_cognition_update_msg_id = prev_msg.id if prev_msg else None
 
-    # 2. 物理删除消息记录
+    # 2. 收集音频文件路径以便异步清理
+    audio_paths = []
+    if message.audio_path:
+        audio_paths.append(message.audio_path)
+    if message.role == MessageRole.user:
+        # 收集将被级联删除的所有子消息的音频路径
+        children = db.query(models.ChatMessage).filter(
+            models.ChatMessage.parent_id == message_id
+        ).all()
+        for child in children:
+            if child.audio_path:
+                audio_paths.append(child.audio_path)
+
+    # 3. 物理删除消息记录
     db.delete(message)
+
+    # 4. 写入发件箱语音文件清理任务
+    if audio_paths:
+        try:
+            payload = {
+                "file_paths": audio_paths
+            }
+            job = models.OutboxJob(
+                task_type="delete_audio",
+                payload=json.dumps(payload)
+            )
+            db.add(job)
+            print(f"[INFO] Outbox: 已入库消息关联的 {len(audio_paths)} 个语音文件删除任务")
+        except Exception as e:
+            print(f"[WARN] delete_message 写入发件箱任务失败: {e}")
+
     session = db.get(models.Session, session_id)
     if session:
         session.updated_at = func.now()

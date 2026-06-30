@@ -9,6 +9,7 @@ def test_parse_json_card(file_path:str):
     try:
         character_data = parse_character_card(file_path)
         print("Parsed Character Data (JSON):")
+        print(character_data)
     except Exception as e:
         print(f"Error parsing JSON card: {e}")
 

@@ -420,44 +420,41 @@ def delete_persona_memories(
     db: DBSession
 ) -> int:
     """
-    删除某个 Persona 的全部记忆（ChromaDB + SQLite）。
+    删除某个 Persona 的全部记忆（ChromaDB + SQLite），使用最终一致性异步发件箱任务。
 
     ⚠️ 此函数应在删除 Session 之前调用，确保 ChromaDB 数据一致性。
 
     调用顺序：
-      1. delete_persona_memories(persona.id, persona.character_id, db)  ← 清理
+      1. delete_persona_memories(persona.id, persona.character_id, db)  ← 清理并入库异步任务
       2. db.delete(session)                                             ← CASCADE
-      3. db.commit()
+      3. db.commit()                                                    ← 原子提交（包括发件箱任务）
 
-    返回被删除的记忆条数。
+    返回入库待删除的记忆条数。
     """
-    deleted_count = 0
+    # 查询 SQLite 获取所有要删除的 chroma_doc_id
+    chunks = db.query(MemoryChunk).filter(
+        MemoryChunk.persona_id == persona_id
+    ).all()
+    doc_ids = [c.chroma_doc_id for c in chunks if c.chroma_doc_id]
+    deleted_count = len(doc_ids)
 
-    # Step 1: 清理 ChromaDB
-    try:
-        collection = get_character_collection(character_id)
-        # 先统计要删除的数量
-        existing = collection.get(
-            where={"persona_id": persona_id},
-            include=[],
-        )
-        deleted_count = len(existing["ids"]) if existing and existing.get("ids") else 0
-
-        if deleted_count > 0:
-            collection.delete(
-                where={"persona_id": persona_id}
+    # 写入发件箱任务
+    if doc_ids:
+        try:
+            payload = {
+                "character_id": character_id,
+                "doc_ids": doc_ids
+            }
+            job = models.OutboxJob(
+                task_type="delete_vector",
+                payload=json.dumps(payload)
             )
-            print(f"[INFO] ChromaDB: 已删除 persona_id={persona_id} 的 {deleted_count} 条记忆")
-    except Exception as e:
-        print(f"==========================================")
-        print(f"[ERROR] delete_persona_memories: ChromaDB 清理失败")
-        print(f"[ERROR] persona_id={persona_id}, character_id={character_id}")
-        print(f"[ERROR] 错误类型: {type(e).__name__}")
-        print(f"[ERROR] 错误详情: {e}")
-        print(f"==========================================")
-        # 不抛出异常，允许后续 SQLite CASCADE 继续执行
+            db.add(job)
+            print(f"[INFO] Outbox: 已入库 persona_id={persona_id} 的 {deleted_count} 条记忆删除任务")
+        except Exception as e:
+            print(f"[ERROR] delete_persona_memories 写入发件箱任务失败: {e}")
 
-    # Step 2: 清理 SQLite（补充保障，即使 CASCADE 会处理）
+    # 清理 SQLite（补充保障，即使 CASCADE 会处理）
     try:
         db.query(MemoryChunk).filter(
             MemoryChunk.persona_id == persona_id
@@ -466,6 +463,7 @@ def delete_persona_memories(
         print(f"[WARN] delete_persona_memories: SQLite 清理异常（CASCADE 可能已处理）: {e}")
 
     return deleted_count
+
 
 
 def update_memory_chunk(
@@ -573,23 +571,32 @@ def delete_memory_chunk(
     db: DBSession
 ):
     """
-    删除单条记忆（SQLite + ChromaDB 同步删除）。
+    删除单条记忆（SQLite + ChromaDB 最终一致性异步删除）。
     """
     chunk = db.get(MemoryChunk, chunk_id)
     if not chunk:
         raise ValueError("MemoryChunk not found")
 
-    # 同步删除 ChromaDB
+    # 异步删除 ChromaDB
     if chunk.chroma_doc_id:
         try:
             character_id = chunk.persona.character_id
-            collection = get_character_collection(character_id)
-            collection.delete(ids=[chunk.chroma_doc_id])
+            payload = {
+                "character_id": character_id,
+                "doc_ids": [chunk.chroma_doc_id]
+            }
+            job = models.OutboxJob(
+                task_type="delete_vector",
+                payload=json.dumps(payload)
+            )
+            db.add(job)
+            print(f"[INFO] Outbox: 已入库 chunk_id={chunk_id} 的 1 条记忆删除任务")
         except Exception as e:
-            print(f"[WARN] delete_memory_chunk ChromaDB 删除失败: {e}")
+            print(f"[WARN] delete_memory_chunk 写入发件箱任务失败: {e}")
 
     db.delete(chunk)
     db.commit()
+
 
 
 # ──────────────────────────────────────────────

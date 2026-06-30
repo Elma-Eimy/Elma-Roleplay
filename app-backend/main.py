@@ -96,6 +96,11 @@ app.include_router(lorebooks_router, prefix="/lorebooks", tags=["lorebooks"], de
 
 @app.on_event("startup")
 async def show_startup_banner():
+    # 启动发件箱后台异步任务处理器
+    import asyncio
+    from services.outbox_worker import run_outbox_worker
+    asyncio.create_task(run_outbox_worker())
+
     local_ips = get_local_ips()
     
     def banner_print(msg=""):
@@ -117,5 +122,13 @@ async def show_startup_banner():
     else:
         banner_print("      [!] 未检测到活跃的局域网 IP，请检查您的网线/无线连接。")
     banner_print("=" * 80 + "\n")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    import services.outbox_worker as outbox_worker
+    outbox_worker.is_worker_running = False
+    print("[SHUTDOWN] Stopping background outbox worker...")
+
 
 

@@ -38,12 +38,12 @@
 
         <view class="form-group">
           <text class="label">人设背景描述 *</text>
-          <textarea class="textarea" auto-height v-model="form.description" placeholder="详细输入角色的背景设定、身份以及性格特征..." :maxlength="1000"></textarea>
+          <textarea class="textarea" auto-height v-model="form.description" placeholder="详细输入角色的背景设定、身份以及性格特征..." :maxlength="-1"></textarea>
         </view>
 
         <view class="form-group">
           <text class="label">开场白 / 第一句话 *</text>
-          <textarea class="textarea-small" auto-height v-model="form.first_mes" placeholder="当新对话开启时，角色主动对你说的第一句话..." :maxlength="1000"></textarea>
+          <textarea class="textarea-small" auto-height v-model="form.first_mes" placeholder="当新对话开启时，角色主动对你说的第一句话..." :maxlength="-1"></textarea>
         </view>
 
         <!-- 高级人设设置开关 -->
@@ -65,28 +65,28 @@
 
           <view class="form-group">
             <text class="label">对话所处场景</text>
-            <textarea class="textarea-small" auto-height v-model="form.scenario" placeholder="场景上下文，例如：一间昏暗潮湿的地下酒吧里。"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.scenario" placeholder="场景上下文，例如：一间昏暗潮湿的地下酒吧里。" :maxlength="-1"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">对话句式示例</text>
-            <textarea class="textarea" auto-height v-model="form.mes_example" placeholder="展示角色对话的例句以强化风格约束。"></textarea>
+            <textarea class="textarea" auto-height v-model="form.mes_example" placeholder="展示角色对话的例句以强化风格约束。" :maxlength="-1"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">创作者备忘录</text>
-            <textarea class="textarea-small" auto-height v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息（支持多行输入）..."></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.creator_notes" placeholder="对该角色卡片的创作者说明信息（支持多行输入）..." :maxlength="-1"></textarea>
           </view>
           
           <view class="form-group">
             <text class="label">系统设定覆盖 (Override)</text>
-            <textarea class="textarea-small" auto-height v-model="form.system_prompt_override" placeholder="覆盖全局默认系统预设提示词（高级功能）"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.system_prompt_override" placeholder="覆盖全局默认系统预设提示词（高级功能）" :maxlength="-1"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">历史末端注入指令</text>
             <text class="label-hint">在每轮对话历史末尾追加的额外指令（会在 AI 生成前作为最后上下文注入）</text>
-            <textarea class="textarea-small" auto-height v-model="form.post_history_instructions" placeholder="例如：请始终用第一人称回复，且不超过200字。"></textarea>
+            <textarea class="textarea-small" auto-height v-model="form.post_history_instructions" placeholder="例如：请始终用第一人称回复，且不超过200字。" :maxlength="-1"></textarea>
           </view>
 
           <view class="form-group">
