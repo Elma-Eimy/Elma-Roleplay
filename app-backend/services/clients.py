@@ -49,7 +49,8 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                     method="POST"
                 )
                 
-                with urllib.request.urlopen(req, timeout=15.0) as response:
+                # 设置 30 秒的合理超时时间
+                with urllib.request.urlopen(req, timeout=30.0) as response:
                     res_data = json.loads(response.read().decode("utf-8"))
                     
                 if not isinstance(res_data, dict):
@@ -97,6 +98,14 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
         else:
             # Standard Text API endpoint
             try:
+                # 动态拦截并预初始化基础 OpenAI 客户端，配置超时时间（30.0s）
+                if not hasattr(self, "_client"):
+                    import openai
+                    self._client = openai.OpenAI(
+                        api_key=self.api_key or settings.EMBEDDING_API_KEY,
+                        base_url=self.api_base or settings.EMBEDDING_BASE_URL,
+                        timeout=30.0  # 稍微长一点的合理超时时间
+                    )
                 embeddings = super().__call__(input)
                 if embeddings and len(embeddings) > 0:
                     self.__class__._cached_dim = len(embeddings[0])
@@ -127,19 +136,28 @@ openai_ef = RobustOpenAIEmbeddingFunction(
     model_name=settings.LLM_EMBEDDING_MODEL
 )
 
-# LLM 对话客户端 (同步)
-llm_client = OpenAI(
-    api_key=settings.CHAT_API_KEY,
-    base_url=settings.CHAT_BASE_URL,
-    timeout=settings.LLM_TIMEOUT
-)
+# ── 大模型适配提供商兼容性代理 ──
+# 作用：保持系统其他辅助模块（如 cognition_service、tts_service）的历史导入接口兼容
+from services.llm_provider import get_llm_provider
 
-# LLM 对话客户端 (异步)
-llm_client_async = AsyncOpenAI(
-    api_key=settings.CHAT_API_KEY,
-    base_url=settings.CHAT_BASE_URL,
-    timeout=settings.LLM_TIMEOUT
-)
+class CompatibilitySyncLLMClient:
+    @property
+    def chat(self):
+        provider = get_llm_provider()
+        if hasattr(provider, "sync_client"):
+            return provider.sync_client.chat
+        raise AttributeError("The active LLM provider does not expose a standard sync client.")
+
+class CompatibilityAsyncLLMClient:
+    @property
+    def chat(self):
+        provider = get_llm_provider()
+        if hasattr(provider, "async_client"):
+            return provider.async_client.chat
+        raise AttributeError("The active LLM provider does not expose a standard async client.")
+
+llm_client = CompatibilitySyncLLMClient()
+llm_client_async = CompatibilityAsyncLLMClient()
 
 # LLM_MODEL 保留为全局默认值
 LLM_MODEL = settings.ACTIVE_CHAT_MODEL

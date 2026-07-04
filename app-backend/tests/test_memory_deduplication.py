@@ -9,7 +9,7 @@ Scenarios:
 
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,8 +29,10 @@ def test_merge_memories_llm_fallback():
     print("\n[Test 1] merge_memories_via_llm LLM-failure fallback")
     old = "User likes strawberry cake."
     new = "User likes strawberry cake, especially with hot milk."
-    with patch("services.cognition_service.llm_client") as mock_client:
-        mock_client.chat.completions.create.side_effect = ConnectionError("mock")
+    with patch("services.cognition_service.get_llm_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.generate.side_effect = ConnectionError("mock")
+        mock_get_provider.return_value = mock_provider
         result = merge_memories_via_llm(old, new)
     assert result == new, f"Fallback failed: expected new_content, got {result!r}"
     print(f"   [PASS] fallback OK -> {result!r}")
@@ -43,6 +45,12 @@ def test_multi_level_fork_cow():
     char = Character(name="MultiLevelTest", description="t", personality="t", first_mes="hi")
     db.add(char); db.commit(); db.refresh(char)
     char_id = char.id
+
+    try:
+        from services.clients import chroma_client
+        chroma_client.delete_collection(name=f"character_{char_id}")
+    except Exception:
+        pass
 
     gp_sess = p_sess = c_sess = None
     gp_persona = p_persona = c_persona = None
@@ -106,6 +114,12 @@ def run_integration_test():
                      personality="test", first_mes="hi")
     db.add(char); db.commit(); db.refresh(char)
     char_id = char.id
+
+    try:
+        from services.clients import chroma_client
+        chroma_client.delete_collection(name=f"character_{char_id}")
+    except Exception:
+        pass
 
     parent_sess = child_sess = None
     parent_persona = child_persona = None

@@ -6,7 +6,7 @@ import json
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core.models import SessionPersona, ChatMessage, MemoryType, MemoryChunk
-from services.chat_engine import llm_client
+from services.llm_provider import get_llm_provider
 from core.config import settings
 
 
@@ -53,7 +53,8 @@ def merge_memories_via_llm(old_content: str, new_content: str) -> str:
     )
 
     try:
-        response = llm_client.chat.completions.create(
+        provider = get_llm_provider()
+        response = provider.generate(
             model=settings.LLM_MEMORY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -186,7 +187,8 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 不要输出任何 markdown 格式（如 ```json），直接返回纯 JSON 对象。"""
 
     try:
-        response = llm_client.chat.completions.create(
+        provider = get_llm_provider()
+        response = provider.generate(
             model=settings.LLM_MEMORY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -545,7 +547,8 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
     db.commit()
 
     try:
-        response = llm_client.chat.completions.create(
+        provider = get_llm_provider()
+        response = provider.generate(
             model=settings.LLM_MEMORY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},

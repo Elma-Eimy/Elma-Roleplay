@@ -1,3 +1,14 @@
+"""
+聊天接口路由 (Chat Endpoints Router)
+
+负责接收并响应前端的对话请求（包括非流式与流式 SSE 接口）。
+本路由层遵循解耦架构：
+1. 仅负责 HTTP 请求接收、输入校验、锁调度（以防止会话内请求并发冲突）以及 SSE 数据分块组装推送。
+2. 将数据读取、RAG 混合检索、图谱检索与 Prompt 上下文装配职责全部委托给
+   [context_assembler.py](file:///app-backend/services/context_assembler.py)。
+3. 将最终模型推理与超参解析职责委托给 [chat_engine.py](file:///app-backend/services/chat_engine.py)。
+"""
+
 import json
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -12,25 +23,17 @@ from schemas import ChatRequest, SwitchCandidateRequest
 from core.config import settings
 import services.chat_engine as chat_engine
 import services.memory_manager as memory_manager
+import services.context_assembler as context_assembler
 import re
-from routers.sessions import get_session_history_with_inheritance
 from core.locking import get_session_lock
 
 router = APIRouter()
+
 
 @router.post("")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     基于 Session 的对话端点。
-
-    流程：
-      1. Session → Persona → Character
-      2. 保存用户消息
-      3. 检索相关记忆（RAG）
-      4. 获取最近对话历史
-      5. 生成 AI 回复
-      6. 保存 AI 回复 + 更新 Persona 状态
-      7. 自动检查是否触发记忆提纯 / 认知更新
     """
     # ── 获取会话异步锁，30 秒内未获得则返回 429 ──
     lock = get_session_lock(request.session_id)
@@ -43,181 +46,78 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         )
 
     try:
-        # ── Step 1-4: 获取 Context (数据库读取与 RAG 检索跑在线程池中) ──
-        def prepare_context():
-            session = db.get(models.Session, request.session_id)
-            if not session:
-                raise HTTPException(status_code=404, detail="Session not found")
-
-            persona = session.persona
-            if not persona:
-                raise HTTPException(status_code=404, detail="Session has no persona")
-
-            character = persona.character
-            if not character:
-                raise HTTPException(status_code=404, detail="Character not found")
-
-            # 保存/获取用户消息
-            old_reply = None
-            if request.is_regenerate:
-                user_msg = (
-                    db.query(models.ChatMessage)
-                    .filter(
-                        models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.user,
-                        models.ChatMessage.is_active == True
-                    )
-                    .order_by(models.ChatMessage.id.desc())
-                    .first()
-                )
-                if not user_msg:
-                    raise HTTPException(status_code=400, detail="No user message found to regenerate")
-
-                # Swipe 候选支持：此时仅获取引用，不改变其状态与提交，避免生成失败时丢失历史
-                old_reply = (
-                    db.query(models.ChatMessage)
-                    .filter(
-                        models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.assistant,
-                        models.ChatMessage.parent_id == user_msg.id,
-                        models.ChatMessage.is_active == True
-                    )
-                    .first()
-                )
-            else:
-                user_msg = models.ChatMessage(
-                    session_id=session.id,
-                    role=MessageRole.user,
-                    content=request.user_message,
-                    is_active=True
-                )
-                db.add(user_msg)
-                db.commit()
-                db.refresh(user_msg)
-
-            # Bug2修复：再生模式用数据库中的用户消息内容做 RAG 查询，避免前端传空串
-            rag_query = user_msg.content if request.is_regenerate else request.user_message
-
-            # 检索相关记忆（RAG）
-            memories = memory_manager.retrieve_memories(
-                persona_id=persona.id,
-                character_id=character.id,
-                query=rag_query,
-                db=db,
-            )
-
-            # 检索知识图谱（Graph RAG）
-            from services.graph_service import retrieve_graph_context
-            graph_knowledge = retrieve_graph_context(
-                persona_id=persona.id,
-                query_text=rag_query,
-                db=db
-            )
-
-            # 获取最近对话历史
-            recent_records = get_session_history_with_inheritance(
-                session.id, db, settings.APP_CONTEXT_HISTORY_LIMIT
-            )
-
-            recent_history = [
-                {
-                    "role": r.role.value,
-                    "content": r.content,
-                    "emotion_tag": getattr(r, "emotion_tag", "平静"),
-                    "affection_change": getattr(r, "affection_change", 0)
-                }
-                for r in recent_records
-                if r.id != user_msg.id 
-                and (not old_reply or r.id != old_reply.id)
-                and r.role.value in ("user", "assistant")
-            ]
-
-            return session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply
-
-        session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply = await run_in_threadpool(prepare_context)
-
-        # ── Step 5: 生成 AI 回复 (全异步网络 IO 请求) ──
-        response_data = await chat_engine.generate_reply(
-            character=character,
-            persona=persona,
-            recent_history=recent_history,
-            user_message=user_msg.content if request.is_regenerate else request.user_message,
-            retrieved_memories=memories,
-            graph_knowledge=graph_knowledge,
-            db=db,
-            use_reasoning=request.use_reasoning,  # None 则走 config.yaml 默认配置
-            user_nickname=request.user_nickname,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            presence_penalty=request.presence_penalty,
-            frequency_penalty=request.frequency_penalty,
-            repetition_penalty=request.repetition_penalty,
-            reasoning_effort=request.reasoning_effort,
-        )
-
-        reply_text = response_data.get("reply", "")
-        emotion_tag = response_data.get("emotion_tag", "平静")
-        affection_change = int(response_data.get("affection_change", 0))
-        reasoning_content = response_data.get("reasoning_content", "")
-
-        # ── Step 6: 保存 AI 回复与更新状态 (跑在线程池中) ──
-        def save_response_data():
-            p = db.get(models.SessionPersona, persona.id)
-            
-            # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
-            if request.is_regenerate and old_reply:
-                db_old_reply = db.get(models.ChatMessage, old_reply.id)
-                if db_old_reply:
-                    db_old_reply.is_active = False
-                    if db_old_reply.affection_change is not None:
-                        p.affection_score -= db_old_reply.affection_change
-
-            ai_msg = models.ChatMessage(
+        # ── Step 1: 在线程池中准备实体上下文与保存用户新消息 ──
+        def run_prepare():
+            return context_assembler.prepare_chat_context(
                 session_id=request.session_id,
-                role=MessageRole.assistant,
-                content=reply_text,
-                reasoning_content=reasoning_content,
-                emotion_tag=emotion_tag,
-                affection_change=affection_change,
-                parent_id=user_msg.id,
-                is_active=True
+                db=db,
+                user_message=None if request.is_regenerate else request.user_message,
+                is_regenerate=request.is_regenerate
             )
-            db.add(ai_msg)
-            p.affection_score += affection_change
-            p.affection_score = max(0, min(100, p.affection_score)) # 规范好感度范围在 0-100
-            p.current_mood = emotion_tag
-            session_obj = db.get(models.Session, request.session_id)
-            if session_obj:
-                session_obj.updated_at = func.now()
-            db.commit()
-            db.refresh(ai_msg)
-            db.refresh(p)
-            
-            # 查询候选列表
-            candidates = db.query(models.ChatMessage).filter(
-                models.ChatMessage.session_id == request.session_id,
-                models.ChatMessage.role == MessageRole.assistant,
-                models.ChatMessage.parent_id == user_msg.id
-            ).order_by(models.ChatMessage.id).all()
-            
-            candidates_list = [
-                {
-                    "id": c.id,
-                    "role": c.role.value,
-                    "content": c.content,
-                    "reasoning_content": c.reasoning_content,
-                    "emotion_tag": c.emotion_tag,
-                    "affection_change": c.affection_change,
-                    "created_at": c.created_at.isoformat() if c.created_at else None,
-                    "audio_path": c.audio_path,
-                }
-                for c in candidates
-            ]
-            return ai_msg.id, p.affection_score, candidates_list
+        session, persona, character, user_msg, old_reply = await run_in_threadpool(run_prepare)
 
-        ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(save_response_data)
+        try:
+            # ── Step 2: 统一调用装配器进行 RAG、图谱检索并拼装消息列表 ──
+            messages = await context_assembler.assemble_prompt_context(
+                session_id=session.id,
+                character=character,
+                persona=persona,
+                user_msg=user_msg,
+                old_reply=old_reply,
+                db=db,
+                user_nickname=request.user_nickname
+            )
 
-        # ── Step 7: 自动触发检查（使用 BackgroundTasks，后台异步执行，不阻塞当前响应） ──
+            # ── Step 3: 调用模型生成引擎获取回复 ──
+            response_data = await chat_engine.generate_reply(
+                character=character,
+                messages=messages,
+                use_reasoning=request.use_reasoning,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                presence_penalty=request.presence_penalty,
+                frequency_penalty=request.frequency_penalty,
+                repetition_penalty=request.repetition_penalty,
+                reasoning_effort=request.reasoning_effort,
+            )
+
+            reply_text = response_data.get("reply", "")
+            emotion_tag = response_data.get("emotion_tag", "平静")
+            affection_change = int(response_data.get("affection_change", 0))
+            reasoning_content = response_data.get("reasoning_content", "")
+
+            # ── Step 4: 保存 AI 回复与更新状态 ──
+            import services.session_service as session_service
+
+            def run_save():
+                return session_service.save_chat_response(
+                    session_id=request.session_id,
+                    persona_id=persona.id,
+                    user_msg_id=user_msg.id,
+                    reply_text=reply_text,
+                    reasoning_content=reasoning_content,
+                    emotion_tag=emotion_tag,
+                    affection_change=affection_change,
+                    is_regenerate=request.is_regenerate,
+                    old_reply_id=old_reply.id if old_reply else None,
+                    db=db
+                )
+
+            ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(run_save)
+        except Exception as e:
+            if not request.is_regenerate:
+                def run_cleanup():
+                    try:
+                        db_msg = db.get(models.ChatMessage, user_msg.id)
+                        if db_msg:
+                            db.delete(db_msg)
+                            db.commit()
+                    except Exception as cleanup_err:
+                        print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
+                await run_in_threadpool(run_cleanup)
+            raise e
+
+        # ── Step 5: 后台触发提纯检查 ──
         background_tasks.add_task(run_auto_trigger_checks, request.session_id, persona.id)
 
         return {
@@ -225,7 +125,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             "emotion_tag": emotion_tag,
             "affection_change": affection_change,
             "affection_score": final_affection_score,
-            "model_used": response_data.get("model_used"),  # 方便前端展示当前对话使用的模型
+            "model_used": response_data.get("model_used"),
             "user_message_id": user_msg.id,
             "assistant_message_id": ai_msg_id,
             "candidates": candidates_list,
@@ -233,6 +133,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         }
     finally:
         lock.release()
+
 
 @router.post("/stream")
 async def chat_stream(
@@ -244,7 +145,6 @@ async def chat_stream(
     基于 Session 的流式对话端点。
     """
     session_id = request.session_id
-    # ── 获取会话异步锁，30 秒内未获得则返回 429 ──
     lock = get_session_lock(session_id)
     try:
         await asyncio.wait_for(lock.acquire(), timeout=30.0)
@@ -255,120 +155,55 @@ async def chat_stream(
         )
 
     try:
-        # ── Step 1-4: 获取 Context (数据库读取与 RAG 检索跑在线程池中) ──
-        def prepare_context():
-            session = db.get(models.Session, session_id)
-            if not session:
-                raise HTTPException(status_code=404, detail="Session not found")
-
-            persona = session.persona
-            if not persona:
-                raise HTTPException(status_code=404, detail="Session has no persona")
-
-            character = persona.character
-            if not character:
-                raise HTTPException(status_code=404, detail="Character not found")
-
-            # 保存/获取用户消息
-            old_reply = None
-            if request.is_regenerate:
-                user_msg = (
-                    db.query(models.ChatMessage)
-                    .filter(
-                        models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.user,
-                        models.ChatMessage.is_active == True
-                    )
-                    .order_by(models.ChatMessage.id.desc())
-                    .first()
-                )
-                if not user_msg:
-                    raise HTTPException(status_code=400, detail="No user message found to regenerate")
-
-                # Swipe 候选支持：此时仅获取引用，不改变其状态与提交，避免生成失败时丢失历史
-                old_reply = (
-                    db.query(models.ChatMessage)
-                    .filter(
-                        models.ChatMessage.session_id == session.id,
-                        models.ChatMessage.role == MessageRole.assistant,
-                        models.ChatMessage.parent_id == user_msg.id,
-                        models.ChatMessage.is_active == True
-                    )
-                    .first()
-                )
-            else:
-                user_msg = models.ChatMessage(
-                    session_id=session.id,
-                    role=MessageRole.user,
-                    content=request.user_message,
-                    is_active=True
-                )
-                db.add(user_msg)
-                db.commit()
-                db.refresh(user_msg)
-
-            # Bug2修复：再生模式用数据库中的用户消息内容做 RAG 查询，避免前端传空串
-            rag_query = user_msg.content if request.is_regenerate else request.user_message
-
-            # 检索相关记忆（RAG）
-            memories = memory_manager.retrieve_memories(
-                persona_id=persona.id,
-                character_id=character.id,
-                query=rag_query,
+        # ── Step 1: 准备实体上下文 ──
+        def run_prepare():
+            return context_assembler.prepare_chat_context(
+                session_id=session_id,
                 db=db,
+                user_message=None if request.is_regenerate else request.user_message,
+                is_regenerate=request.is_regenerate
             )
-
-            # 检索知识图谱（Graph RAG）
-            from services.graph_service import retrieve_graph_context
-            graph_knowledge = retrieve_graph_context(
-                persona_id=persona.id,
-                query_text=rag_query,
-                db=db
-            )
-
-            # 获取最近对话历史
-            recent_records = get_session_history_with_inheritance(
-                session.id, db, settings.APP_CONTEXT_HISTORY_LIMIT
-            )
-
-            recent_history = [
-                {
-                    "role": r.role.value,
-                    "content": r.content,
-                    "emotion_tag": getattr(r, "emotion_tag", "平静"),
-                    "affection_change": getattr(r, "affection_change", 0)
-                }
-                for r in recent_records
-                if r.id != user_msg.id 
-                and (not old_reply or r.id != old_reply.id)
-                and r.role.value in ("user", "assistant")
-            ]
-
-            return session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply
-
-        session, persona, character, user_msg, memories, graph_knowledge, recent_history, old_reply = await run_in_threadpool(prepare_context)
+        session, persona, character, user_msg, old_reply = await run_in_threadpool(run_prepare)
 
         try:
-            stream, model = await chat_engine.generate_reply_stream(
+            # ── Step 2: 统一调用装配器进行 RAG、图谱检索并拼装消息列表 ──
+            messages = await context_assembler.assemble_prompt_context(
+                session_id=session.id,
                 character=character,
                 persona=persona,
-                recent_history=recent_history,
-                # Bug2补丁：再生模式下 request.user_message 是空串，应使用数据库中的实际内容
-                user_message=user_msg.content if request.is_regenerate else request.user_message,
-                retrieved_memories=memories,
-                graph_knowledge=graph_knowledge,
+                user_msg=user_msg,
+                old_reply=old_reply,
                 db=db,
-                use_reasoning=request.use_reasoning,
-                user_nickname=request.user_nickname,
-                temperature=request.temperature,
-                top_p=request.top_p,
-                presence_penalty=request.presence_penalty,
-                frequency_penalty=request.frequency_penalty,
-                repetition_penalty=request.repetition_penalty,
-                reasoning_effort=request.reasoning_effort,
+                user_nickname=request.user_nickname
             )
+
+            # ── Step 3: 调用模型生成引擎获取流 ──
+            try:
+                stream, model = await chat_engine.generate_reply_stream(
+                    character=character,
+                    messages=messages,
+                    use_reasoning=request.use_reasoning,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    presence_penalty=request.presence_penalty,
+                    frequency_penalty=request.frequency_penalty,
+                    repetition_penalty=request.repetition_penalty,
+                    reasoning_effort=request.reasoning_effort,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")
+            if not request.is_regenerate:
+                def run_cleanup():
+                    try:
+                        db_msg = db.get(models.ChatMessage, user_msg.id)
+                        if db_msg:
+                            db.delete(db_msg)
+                            db.commit()
+                    except Exception as cleanup_err:
+                        print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
+                await run_in_threadpool(run_cleanup)
+            raise e
 
         async def event_generator():
             accumulated_text = ""
@@ -377,8 +212,6 @@ async def chat_stream(
             
             in_reply_mode = False
             fallback_mode = False
-            # Bug7修复：用独立布尔值记录 </reply> 已出现，避免在 fallback_mode 分支中对
-            # accumulated_text 做 O(n²) 的全文 regex 扫描
             reply_closed = False
             last_sent_index = 0
             
@@ -396,34 +229,28 @@ async def chat_stream(
                         continue
                     accumulated_text += delta
                     
-                    # 检测当前解析模式（不区分大小写，容忍空格）
                     if not in_reply_mode and not fallback_mode:
-                        # 1. 发现 <reply> 标签，进入标准 XML 提取模式
                         match_open = re.search(r'<\s*reply\s*>', accumulated_text, re.IGNORECASE)
                         if match_open:
                             in_reply_mode = True
                             last_sent_index = match_open.end()
-                        # 2. 如果前 40 字符均没有发现 <reply>，触发兜底直出模式
                         elif len(accumulated_text.strip()) >= 40:
                             fallback_mode = True
                             last_sent_index = 0
                     
-                    # 模式 1：标准 XML 标签内容提取
                     if in_reply_mode:
                         match_close = re.search(r'</\s*reply\s*>', accumulated_text, re.IGNORECASE)
                         if match_close:
                             close_idx = match_close.start()
-                            # 提取结束，发送到 </reply> 之前的文本分块
                             chunk_to_send = accumulated_text[last_sent_index:close_idx]
                             if chunk_to_send:
                                 reply_text += chunk_to_send
                                 yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
                             in_reply_mode = False
-                            fallback_mode = True  # 标记已完成，忽略后续的 status 标签文本流出
-                            reply_closed = True   # 记录 </reply> 已出现，后续 fallback 分支直接跳过
+                            fallback_mode = True
+                            reply_closed = True
                             last_sent_index = len(accumulated_text)
                         else:
-                            # 暂未检测到 </reply>，保留最后 12 字符的滑动延迟窗，防止 </reply 局部或大小写字符泄露
                             safe_len = len(accumulated_text) - 12
                             if safe_len > last_sent_index:
                                 chunk_to_send = accumulated_text[last_sent_index:safe_len]
@@ -431,10 +258,7 @@ async def chat_stream(
                                 yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
                                 last_sent_index = safe_len
                                 
-                    # 模式 2：兜底直出或静默忽略后续标签阶段
                     elif fallback_mode:
-                        # reply_closed=True 表示 </reply> 已出现（XML 模式已完成），静默忽略后续内容
-                        # reply_closed=False 表示真正的兜底直出模式，继续分发原始 delta
                         if not reply_closed:
                             if last_sent_index < len(accumulated_text):
                                 chunk_to_send = accumulated_text[last_sent_index:]
@@ -446,21 +270,18 @@ async def chat_stream(
                                 yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
                                 last_sent_index = len(accumulated_text)
 
-                # ── 流式读取结束，冲刷发送剩余字符 ──
                 if in_reply_mode:
                     if len(accumulated_text) > last_sent_index:
                         chunk_to_send = accumulated_text[last_sent_index:]
                         reply_text += chunk_to_send
                         yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
                 elif not reply_closed and not in_reply_mode:
-                    # 如果从未进入过 reply_mode 且未关闭（兜底模式或短回复），确保冲刷发送所有剩余文本
                     if len(accumulated_text) > last_sent_index:
                         chunk_to_send = accumulated_text[last_sent_index:]
                         reply_text += chunk_to_send
                         yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
 
-                # ── 提取最终元数据 ──
-                from services.chat_engine import _extract_xml_block
+                from services.parse import _extract_xml_block
                 
                 result = _extract_xml_block(accumulated_text)
                 emotion_tag = result["emotion_tag"]
@@ -472,67 +293,27 @@ async def chat_stream(
                 if not reply_text.strip():
                     reply_text = "（大模型未生成有效回复）"
 
-                # 保存 AI 回复与更新状态 (跑在线程池中)
-                def save_stream_response():
-                    p = db.get(models.SessionPersona, persona.id)
-                    
-                    # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
-                    if request.is_regenerate and old_reply:
-                        db_old_reply = db.get(models.ChatMessage, old_reply.id)
-                        if db_old_reply:
-                            db_old_reply.is_active = False
-                            if db_old_reply.affection_change is not None:
-                                p.affection_score -= db_old_reply.affection_change
+                # 保存 AI 回复与更新状态
+                import services.session_service as session_service
 
-                    ai_msg = models.ChatMessage(
+                def run_save():
+                    return session_service.save_chat_response(
                         session_id=session_id,
-                        role=MessageRole.assistant,
-                        content=reply_text,
+                        persona_id=persona.id,
+                        user_msg_id=user_msg.id,
+                        reply_text=reply_text,
                         reasoning_content=reasoning_text,
                         emotion_tag=emotion_tag,
                         affection_change=affection_change,
-                        parent_id=user_msg.id,
-                        is_active=True
+                        is_regenerate=request.is_regenerate,
+                        old_reply_id=old_reply.id if old_reply else None,
+                        db=db
                     )
-                    db.add(ai_msg)
-                    p.affection_score += affection_change
-                    p.affection_score = max(0, min(100, p.affection_score)) # 规范好感度范围在 0-100
-                    p.current_mood = emotion_tag
-                    session_obj = db.get(models.Session, session_id)
-                    if session_obj:
-                        session_obj.updated_at = func.now()
-                    db.commit()
-                    db.refresh(ai_msg)
-                    db.refresh(p)
 
-                    # 查询候选列表
-                    candidates = db.query(models.ChatMessage).filter(
-                        models.ChatMessage.session_id == session_id,
-                        models.ChatMessage.role == MessageRole.assistant,
-                        models.ChatMessage.parent_id == user_msg.id
-                    ).order_by(models.ChatMessage.id).all()
-                    
-                    candidates_list = [
-                        {
-                            "id": c.id,
-                            "role": c.role.value,
-                            "content": c.content,
-                            "reasoning_content": c.reasoning_content,
-                            "emotion_tag": c.emotion_tag,
-                            "affection_change": c.affection_change,
-                            "created_at": c.created_at.isoformat() if c.created_at else None,
-                            "audio_path": c.audio_path,
-                        }
-                        for c in candidates
-                    ]
-                    return ai_msg.id, p.affection_score, candidates_list
-
-                ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(save_stream_response)
+                ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(run_save)
  
-                # 触发后台机制检查
                 background_tasks.add_task(run_auto_trigger_checks, session_id, persona.id)
  
-                # 发送最后一条元数据
                 meta_payload = {
                     "emotion_tag": emotion_tag,
                     "affection_change": affection_change,
@@ -547,9 +328,18 @@ async def chat_stream(
 
             except Exception as generator_err:
                 print(f"[ERROR] 发生流生成错误: {generator_err}")
+                if not request.is_regenerate:
+                    def run_cleanup():
+                        try:
+                            db_msg = db.get(models.ChatMessage, user_msg.id)
+                            if db_msg:
+                                db.delete(db_msg)
+                                db.commit()
+                        except Exception as cleanup_err:
+                            print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
+                    await run_in_threadpool(run_cleanup)
                 yield f"data: {json.dumps({'error': str(generator_err)}, ensure_ascii=False)}\n\n"
             finally:
-                # ── 流式传输结束或遭遇断连异常，释放异步锁 ──
                 lock.release()
 
         return StreamingResponse(
@@ -566,14 +356,14 @@ async def chat_stream(
         lock.release()
         raise e
 
+
 def run_auto_trigger_checks(session_id: int, persona_id: int):
     """
     后台任务：自动检查并执行记忆提纯和认知更新。
-    使用独立的数据库会话，避免与主请求线程的 Session 冲突或在主请求结束后 Session 关闭。
+    使用独立的数据库会话，避免与主请求线程的 Session 冲突。
     """
     db = SessionLocal()
     try:
-        # 检查记忆提纯
         unsummarized = memory_manager.get_unsummarized_count(session_id, db)
         if unsummarized >= settings.APP_MEMORY_EXTRACT_LIMIT:
             count = memory_manager.summarize_and_store_memory(session_id, db)
@@ -581,7 +371,6 @@ def run_auto_trigger_checks(session_id: int, persona_id: int):
     except Exception as e:
         print(f"[WARN] 自动记忆提纯失败: {e}")
 
-    # 检查认知更新
     try:
         cognition_unseen = memory_manager.get_cognition_unseen_count(
             persona_id, session_id, db
@@ -612,12 +401,10 @@ async def switch_candidate(request: SwitchCandidateRequest, db: Session = Depend
         
     session_id = msg.session_id
     
-    # 查找该会话关联的 SessionPersona 实体以执行状态回退与重新应用
     persona = db.query(models.SessionPersona).filter(
         models.SessionPersona.session_id == session_id
     ).first()
     
-    # 查找当前该 turn 下已激活的回复
     old_active = db.query(models.ChatMessage).filter(
         models.ChatMessage.session_id == session_id,
         models.ChatMessage.role == MessageRole.assistant,
@@ -625,17 +412,14 @@ async def switch_candidate(request: SwitchCandidateRequest, db: Session = Depend
         models.ChatMessage.is_active == True
     ).first()
     
-    # 将此 turn 的所有候选回复全部设为 is_active = False
     db.query(models.ChatMessage).filter(
         models.ChatMessage.session_id == session_id,
         models.ChatMessage.role == MessageRole.assistant,
         models.ChatMessage.parent_id == msg.parent_id
     ).update({"is_active": False})
     
-    # 将新选择的回复设为 is_active = True
     msg.is_active = True
     
-    # 更新好感度及心情
     if persona:
         if old_active and old_active.affection_change is not None:
             persona.affection_score -= old_active.affection_change
@@ -644,7 +428,6 @@ async def switch_candidate(request: SwitchCandidateRequest, db: Session = Depend
         persona.affection_score = max(0, min(100, persona.affection_score))
         persona.current_mood = msg.emotion_tag or "平静"
         
-    # Touch session updated_at
     session_obj = db.get(models.Session, session_id)
     if session_obj:
         session_obj.updated_at = func.now()

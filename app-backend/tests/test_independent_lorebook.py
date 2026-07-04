@@ -9,7 +9,7 @@ from core.database import SessionLocal, engine
 from core import Base
 from core import models
 from services.parse_lorebook import parse_sillytavern_lorebook
-from services.chat_engine import process_lorebook
+from services.lorebook_engine import process_lorebook
 
 def run_tests():
     print("==================================================")

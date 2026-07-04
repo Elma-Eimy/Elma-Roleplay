@@ -1,107 +1,63 @@
-# ==========================================
-# 大语言模型 (LLM) 引擎配置
-# ==========================================
 llm:
-  # 深度思考/推理模式下使用的主力模型 (如 deepseek-reasoner 或 deepseek-v4-pro)
   chat_model: deepseek-v4-pro
-  # 普通模式下使用的标准聊天模型 (如 deepseek-chat 或 deepseek-v4-flash)
   non_reasoning_chat_model: deepseek-v4-flash
-  # 后台记忆提取、认知摘要提炼时使用的辅助模型 (通常选用较快、成本较低的模型)
   memory_model: deepseek-v4-flash
-  # 记忆向量化 (Embedding) 所使用的模型
   embedding_model: doubao-embedding-vision-251215
-  # 大语言模型聊天 API 的基础 URL
   chat_base_url: https://api.deepseek.com/v1
-  # 向量化 (Embedding) API 的基础 URL (火山引擎 Ark 或 OpenAI 兼容接口)
   embedding_base_url: https://ark.cn-beijing.volces.com/api/v3
-  # 常规聊天对话的随机性 (Temperature)，值越高回复越有创意，越低越稳定
   temperature: 0.7
-  # 后台记忆提纯与提取时的随机性 (通常设置较低以保证格式输出精确稳定)
   memory_temperature: 0.3
-  # 单次生成最大 Token/字符限制
   max_tokens: 4096
-  # 全局默认是否启用深度思考 (Reasoning) 模式
   reasoning_mode: false
-  # 网络请求超时时间 (秒)
   timeout: 60
-  # 核采样 (Top-P) 阈值，控制大模型词汇采样范围
   top_p: 1.0
-  # 存在惩罚度 (Presence Penalty)，防止模型重复话题，> 0 会鼓励模型引入新概念
   presence_penalty: 0.0
-  # 频率惩罚度 (Frequency Penalty)，抑制模型高频重复词汇，> 0 会鼓励模型词汇多样化
   frequency_penalty: 0.0
-  # 重复惩罚度 (Repetition Penalty)，防止生成相同句子/短语 (1.0 代表不惩罚)
   repetition_penalty: 1.0
-  # 深度思考模型的思考深度/努力程度 (可选: 'low', 'medium', 'high')
   reasoning_effort: high
-
-# ==========================================
-# 应用运行与 RAG / 记忆机制配置
-# ==========================================
 app:
-  # 每次向大模型发送请求时，携带的最近对话历史轮数限制 (1 轮包含用户和 AI 各一次发言)
   context_history_limit: 15
-  # 记忆检索 (RAG) 时，单次查询最相关的记忆片段数量上限
   retrieval_top_k: 3
-  # 触发记忆提纯时，后台进行分析处理的最近聊天消息轮数
   memory_extract_history_limit: 20
-  # 被成功检索激活的记忆，其向量余弦相似度重要性分数的最低阈值 (分值越高匹配越严格)
   retrieval_min_importance: 0.3
-  # 动态认知更新间隔：当未处理消息达到此数量时，自动运行认知更新服务 (Persona 动态认知重塑)
   cognition_update_interval: 30
-  # 单条记忆重要性分数达到多少时，才有资格触发/参与认知更新 (Cognition Update)
   cognition_importance_threshold: 0.8
-  # 世界书 (Lorebook) 扫描聊天上下文的历史深度轮数
   lorebook_scan_depth: 5
-  # 世界书单次检索与拼装时，允许消耗的最大字符数预算限制
   lorebook_token_budget: 3000
-  # 世界书支持递归匹配时，最大循环嵌套次数
   lorebook_max_recursive_passes: 3
-  # SQLite 数据库的本地存放相对路径/绝对路径
   sqlite_db_path: data/data.db
-  # Chroma 向量数据库 (ChromaDB) 数据的本地存放路径
   chroma_db_path: data/chroma_data
-  # 角色人设立绘及头像上传保存目录
   upload_avatar_dir: ./assets/avatars
-  # 允许跨域资源共享 (CORS) 的来源域名列表
   cors_origins:
-    - "*"
-  # 导入角色卡 (PNG / JSON) 允许的最大文件大小 (MB)
+  - '*'
   max_card_size_mb: 10
-  # 前端拉取聊天历史记录时的单页默认拉取条数
   history_fetch_default: 50
-  # 前端拉取聊天历史记录时允许的最大限制条数
   history_fetch_max: 500
-  # 记忆片段检索时的最大距离限制 (距离越小，代表向量匹配越逼近)
   retrieval_max_distance: 1.2
-  # 动态认知总结的最大字数限制
   cognition_max_words: 200
-  # 检索衰减半衰期 (Turn-based half life)：使老旧记忆权重随会话轮数增加而逐渐降低的半衰期设定
   retrieval_half_life_turns: 50
-  # 记忆去重与排序时的候选集倍增系数
   retrieval_candidate_multiplier: 3
-  # 记忆写入时的余弦相似度去重阈值 (低于此值的新老记忆会被认为重复，不进行重复写入)
   dedup_write_threshold: 0.15
-  # 记忆检索时的语义相关度去重阈值 (过滤内容高度重复的相似记忆段)
-  dedup_retrieve_text_threshold: 0.70
-  # 知识图谱检索 (Graph RAG) 时，实体 and 关联关系被激活的最小重要性分数
+  dedup_retrieve_text_threshold: 0.7
   graph_min_importance: 0.5
-  # 图检索单次注入上下文的最大关联线 (Relations) 数量上限
   graph_max_relations: 12
-
-# ==========================================
-# 文本转语音 (TTS) 播报配置
-# ==========================================
+  retrieval_weight_similarity: 0.6
+  retrieval_weight_importance: 0.2
+  retrieval_weight_time: 0.2
+  retrieval_ancestor_weight: 0.8
+  rp_time_tiers:
+  - max_turns: 30
+    label: 刚刚
+  - max_turns: 100
+    label: 近期
+  - max_turns: 300
+    label: 一段时间前
+  - max_turns: 9999999
+    label: 很久以前
 tts:
-  # 是否开启聊天气泡的语音朗读功能
   enabled: true
-  # 语音合成 TTS 接口的基准 URL
-  base_url: "https://api.xiaomimimo.com/v1"
-  # 语音合成所选用的引擎模型
-  model: "mimo-v2.5-tts"
-  # 默认的系统发音人/音色名称
-  default_voice: "冰糖"
-  # 缓存合成语音音频文件 (*.mp3 等) 的本地存放目录
-  cache_dir: "data/audio_cache"
-  # 允许音频文件缓存的最大数量 (超出将根据 FIFO/时间自动清理)
+  base_url: https://api.xiaomimimo.com/v1
+  model: mimo-v2.5-tts
+  default_voice: 冰糖
+  cache_dir: data/audio_cache
   max_cache_files: 500

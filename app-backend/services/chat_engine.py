@@ -1,47 +1,21 @@
 """
-对话引擎 — 负责调度模型、合并参数并调用大模型 API。
-已重构解耦，各具体子职责分别划分至 clients.py, prompt_compiler.py, parse.py, llm_logger.py。
+对话执行引擎 (Chat Generation Engine)
+
+负责根据具体的模型类型与传入的 Prompt 消息体（messages），
+解析并合并会话超参（如 temperature, repetition_penalty, reasoning_effort 等），
+调度全局大模型提供商（LLM Provider）获取流式或非流式生成回复，并对返回结果进行结构化解析。
+
+本模块已经过重构解耦：
+1. 不再承担数据库读取、RAG 检索及 Prompt 编译组装的底层逻辑，改为接收已编译装配好的 messages 列表。
+2. 保持对周边辅助模块导入依赖的平滑兼容重导出。
 """
 
 import json
 from typing import Optional
 
 from core.config import settings
-
-# ── 基础设施导入与重导出 ──
-from services.clients import (
-    chroma_client,
-    openai_ef,
-    llm_client,
-    llm_client_async,
-    LLM_MODEL,
-    RobustOpenAIEmbeddingFunction
-)
-
-# ── Prompt 编译模块导入与重导出 ──
-from services.prompt_compiler import (
-    compile_system_prompt,
-    replace_placeholders,
-    build_system_prompt,
-    _build_chat_messages
-)
-
-# ── 解析器导入与重导出 ──
-from services.parse import extract_xml_block, _extract_xml_block
-
-# ── 世界书引擎重导出 ──
-from services.lorebook_engine import process_lorebook
-
-# ── 日志记录器导入与重导出 ──
-from services.llm_logger import (
-    log_llm_non_stream,
-    log_llm_stream_wrapper,
-    log_llm_stream_wrapper_async,
-    # 兼容性私有别名
-    log_llm_non_stream as _log_llm_non_stream,
-    log_llm_stream_wrapper as _log_llm_stream_wrapper,
-    log_llm_stream_wrapper_async as _log_llm_stream_wrapper_async
-)
+from services.parse import _extract_xml_block
+from services.llm_logger import log_llm_stream_wrapper_async
 
 
 def _resolve_model(use_reasoning: Optional[bool]) -> str:
@@ -57,14 +31,8 @@ def _resolve_model(use_reasoning: Optional[bool]) -> str:
 
 async def generate_reply(
     character,
-    persona,
-    recent_history: list,
-    user_message: str,
-    retrieved_memories: Optional[list] = None,
-    graph_knowledge: Optional[str] = None,
-    db = None,
+    messages: list,
     use_reasoning: Optional[bool] = None,
-    user_nickname: str = "用户",
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     presence_penalty: Optional[float] = None,
@@ -73,23 +41,13 @@ async def generate_reply(
     reasoning_effort: Optional[str] = None,
 ) -> dict:
     """
-    基于 Character + SessionPersona + 对话历史 + 检索记忆，生成结构化 JSON 回复。
+    接收已编译装配完毕的 messages 列表与角色设定，调度大模型同步获取回复。
     """
     model = _resolve_model(use_reasoning)
-    messages = await _build_chat_messages(
-        character=character,
-        persona=persona,
-        recent_history=recent_history,
-        user_message=user_message,
-        retrieved_memories=retrieved_memories,
-        graph_knowledge=graph_knowledge,
-        db=db,
-        user_nickname=user_nickname,
-    )
 
     # 1. 解析角色专属配置
     ext = {}
-    if character.extensions:
+    if character and character.extensions:
         try:
             ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
         except Exception:
@@ -133,7 +91,11 @@ async def generate_reply(
         kwargs["extra_body"] = extra_body
 
     try:
-        response = await llm_client_async.chat.completions.create(**kwargs)
+        from services.llm_provider import get_llm_provider
+        provider = get_llm_provider()
+        kwargs.pop("model", None)
+        kwargs.pop("messages", None)
+        response = await provider.generate_async(model=model, messages=messages, **kwargs)
 
         content = response.choices[0].message.content
         reasoning_content = getattr(response.choices[0].message, "reasoning_content", None) or ""
@@ -164,14 +126,8 @@ async def generate_reply(
 
 async def generate_reply_stream(
     character,
-    persona,
-    recent_history: list,
-    user_message: str,
-    retrieved_memories: Optional[list] = None,
-    graph_knowledge: Optional[str] = None,
-    db = None,
+    messages: list,
     use_reasoning: Optional[bool] = None,
-    user_nickname: str = "用户",
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     presence_penalty: Optional[float] = None,
@@ -180,23 +136,13 @@ async def generate_reply_stream(
     reasoning_effort: Optional[str] = None,
 ):
     """
-    基于 Character + SessionPersona + 对话历史 + 检索记忆，流式调用大模型获取回复。
+    接收已编译装配完毕的 messages 列表与角色设定，调度大模型异步获取流式回复。
     """
     model = _resolve_model(use_reasoning)
-    messages = await _build_chat_messages(
-        character=character,
-        persona=persona,
-        recent_history=recent_history,
-        user_message=user_message,
-        retrieved_memories=retrieved_memories,
-        graph_knowledge=graph_knowledge,
-        db=db,
-        user_nickname=user_nickname,
-    )
 
     # 1. 解析角色专属配置
     ext = {}
-    if character.extensions:
+    if character and character.extensions:
         try:
             ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
         except Exception:
@@ -241,7 +187,11 @@ async def generate_reply_stream(
         kwargs["extra_body"] = extra_body
 
     try:
-        response = await llm_client_async.chat.completions.create(**kwargs)
+        from services.llm_provider import get_llm_provider
+        provider = get_llm_provider()
+        kwargs.pop("model", None)
+        kwargs.pop("messages", None)
+        response = await provider.generate_stream_async(model=model, messages=messages, **kwargs)
         # 包装并记录流输出
         logged_stream = log_llm_stream_wrapper_async(response, model, messages)
         return logged_stream, model

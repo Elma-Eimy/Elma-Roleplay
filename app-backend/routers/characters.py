@@ -215,7 +215,7 @@ def delete_character(character_id: int, db: Session = Depends(get_db)):
 
     # 2. 清除该角色在 ChromaDB 中的向量集合
     #    注意：所有关联 Persona 的记忆均存放在同一个角色 collection 中 (character_{character_id})
-    from services.chat_engine import chroma_client
+    from services.clients import chroma_client
     collection_deleted = False
     collection_name = f"character_{character_id}"
     try:

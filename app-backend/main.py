@@ -94,12 +94,17 @@ app.include_router(sessions_router, prefix="/sessions", tags=["sessions"], depen
 app.include_router(chat_router, prefix="/chat", tags=["chat"], dependencies=[Depends(verify_api_key)])  # 对话通信模块
 app.include_router(lorebooks_router, prefix="/lorebooks", tags=["lorebooks"], dependencies=[Depends(verify_api_key)])  # 世界书模块
 
+# 声明一个全局集合以维持对后台任务的强引用，防止被 Python 的垃圾回收（GC）误杀
+_BACKGROUND_TASKS = set()
+
 @app.on_event("startup")
 async def show_startup_banner():
     # 启动发件箱后台异步任务处理器
     import asyncio
     from services.outbox_worker import run_outbox_worker
-    asyncio.create_task(run_outbox_worker())
+    task = asyncio.create_task(run_outbox_worker())
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     local_ips = get_local_ips()
     

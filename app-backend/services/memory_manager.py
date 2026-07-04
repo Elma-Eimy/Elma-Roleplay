@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core import models
 from core.models import MemoryChunk, SessionPersona, ChatMessage, MemoryType, Session
-from services.chat_engine import llm_client, LLM_MODEL, chroma_client, openai_ef
+from services.clients import LLM_MODEL, chroma_client, openai_ef
 from core.config import settings
 
 

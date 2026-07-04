@@ -115,6 +115,16 @@
 - **混合增强 RAG**：在对话检索时，结合向量数据库（ChromaDB）语义匹配与图谱实体关系召回，辅助传统向量检索在长路径关联与推理上的表现。
 - **异常容错与回滚**：若大模型输出非法格式，自动捕获重试；写入异常时触发 SQLite 事务回滚与向量清理，保持数据一致性。
 
+### 13. 对话回合事务原子性 (Dialogue State Atomicity)
+
+- **故障自动回滚**：为了避免 SQLite 的写锁定，用户消息先提交入库再触发大模型调用。若之后的 Prompt 装配、大模型 API 调用、SSE 流式解析或回复结果保存发生任何异常，系统会自动在后台触发消息回滚，物理删除该条未作答的用户消息，确保数据库状态的一致性，防止历史对话中留有未回复的用户残留消息。
+- **流式对话自愈**：在 `/chat/stream` 生成期间出现异常或前端中断时，该机制同样生效，能同步清理残余状态并释放会话级异步锁。
+
+### 14. 统一大模型适配器层 (Unified LLM Provider)
+
+- **完全解耦解包**：将核心服务（如 `cognition_service` 与 `tts_service`）的第三方 SDK（如直接调用 OpenAI 库）全部解耦，移入适配器层。
+- **动态统一调用**：所有对话生成、记忆提炼、情感风格分析均通过 `services/llm_provider.py` 的 `generate` 与 `generate_async` 进行统一封装和动态转发，方便轻松替换底层模型供应商。
+
 ---
 
 ## 快速开始
@@ -331,46 +341,91 @@ app-backend/
 │   ├── locking.py           # 会话级 asyncio.Lock 管理
 │   └── utils.py             # 工具函数（获取本机 IP 等）
 │
-├── routers/
+├── routers/                 # 路由层 (轻量级，仅负责 HTTP 路径定义、参数校验与异常封装，具体业务委托给 services)
 │   ├── chat.py              # /chat 与 /chat/stream 及 /chat/switch_candidate
 │   ├── sessions.py          # /sessions 端点（分页历史、消息/记忆管理、调试等）
 │   ├── characters.py        # /characters 端点
 │   ├── lorebooks.py         # /lorebooks 端点（导入、详情、编辑、绑定等）
 │   └── utils.py             # /upload/avatar 与 /utils/tts 端点
 │
-├── services/
-│   ├── chat_engine.py       # LLM 调用、Prompt 组装、流式封装
+├── services/                # 业务服务层 (高内聚核心业务逻辑，脱离 HTTP 协议)
+│   ├── chat_engine.py       # LLM 执行引擎 (专注于大模型请求参数合并与响应结构化解析)
+│   ├── context_assembler.py # 对话上下文装配服务 (统一装配 RAG 检索、知识图谱与对话历史，拼装 Prompt)
+│   ├── llm_provider.py      # 大模型服务适配器 (抽象适配层，解耦具体大模型厂商 API SDK)
 │   ├── tts_service.py       # TTS 前处理（动作过滤、声效保留）、云端合成、LRU 音频缓存
 │   ├── memory_manager.py    # RAG 检索、记忆存储、外观层入口
 │   ├── cognition_service.py # 记忆提纯、认知更新
 │   ├── lorebook_engine.py   # 世界书关键词匹配与注入
 │   ├── ahocorasick.py       # Aho-Corasick 自动机实现
-│   ├── session_service.py   # 会话删除与继承链重连
+│   ├── session_service.py   # 会话生命周期、分支拷贝、消息删除状态回滚业务服务
 │   └── parse.py             # SillyTavern 角色卡解析
 │
 ├── schemas.py               # Pydantic 请求/响应模型
+├── alembic.ini              # Alembic 数据库迁移配置文件
+├── alembic/                 # Alembic 数据库迁移版本控制目录
+│
+├── tests/                   # 系统单元测试与集成测试套件目录
+│   ├── test_config.py       # 动态配置参数加载单元测试
+│   ├── test_delete_candidate.py # 消息候选版本删除好感度回滚单元测试
+│   ├── test_independent_lorebook.py # 独立世界书绑定与扫描单元测试
+│   ├── test_lorebook.py     # 世界书引擎匹配与预算裁剪单元测试
+│   ├── test_memory_deduplication.py # 继承链去重新增与写时复制 (COW) 单元测试
+│   ├── test_branching_start_message.py # 剧情线分叉首条消息克隆绑定测试
+│   ├── test_graph_rag.py    # 知识图谱 Graph RAG 增强检索测试
+│   ├── test_outbox.py       # 发件箱模式任务消费与退避重试单元测试
+│   ├── test_parse.py        # SillyTavern V1/V2 角色卡解析与清洗单元测试
+│   ├── test_tts_api.py      # TTS 预处理过滤及云端合成测试
+│   ├── test_closed_loop_memory.py # 记忆提纯与 RAG 闭环流程测试
+│   └── test_api.py          # 路由树与会话剧情重连集成测试
+│
 └── data/
-    ├── data.db              # SQLite 数据库文件
+    ├── data.db              # SQLite 关系型数据库文件 (WAL 模式)
     ├── chroma_data/         # ChromaDB 向量文件夹
-    └── audio_cache/         # 合成音频缓存目录（.wav）
+    └── audio_cache/         # 合成音频文件本地缓存目录 (.wav)
 ```
 
 ---
 
 ## 测试
 
+所有单元测试和集成测试均存放于 `tests/` 目录下，在运行测试前请确保已激活虚拟环境。
+
 ```bash
-# 语音合成接口（TTS 预处理、动作过滤与声效保留）单元测试
-python test_tts_api.py
+# 1. 动态配置参数加载单元测试
+python tests/test_config.py
 
-# 世界书独立触发单元测试
-python test_lorebook.py
+# 2. 消息候选版本删除与好感度回滚单元测试
+python tests/test_delete_candidate.py
 
-# 记忆提纯与 RAG 闭环集成测试
-python test_closed_loop_memory.py
+# 3. 独立世界书绑定与匹配注入单元测试
+python tests/test_independent_lorebook.py
 
-# 会话树重连与 API 路由测试
-python test_api.py
+# 4. 世界书引擎检索与条件触发单元测试
+python tests/test_lorebook.py
+
+# 5. 记忆合并去重与写时复制 (COW) 继承单元测试
+python tests/test_memory_deduplication.py
+
+# 6. 分叉剧情线分支起始消息复制与自动绑定测试
+python tests/test_branching_start_message.py
+
+# 7. 知识图谱 Graph RAG 双向检索增强集成测试
+python tests/test_graph_rag.py
+
+# 8. 发件箱异步任务重试与退避调度测试
+python tests/test_outbox.py
+
+# 9. SillyTavern 角色卡解析与清洗单元测试
+python tests/test_parse.py
+
+# 10. 语音合成预处理（动作过滤、声效保留）单元测试
+python tests/test_tts_api.py
+
+# 11. 记忆提纯与 RAG 闭环集成测试
+python tests/test_closed_loop_memory.py
+
+# 12. 会话剧情线重连、继承与 API 路由测试
+python tests/test_api.py
 ```
 
 ---

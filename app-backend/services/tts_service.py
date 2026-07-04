@@ -120,7 +120,7 @@ class TTSService:
         if not text or not text.strip():
             return ""
 
-        from services.chat_engine import llm_client_async
+        from services.llm_provider import get_llm_provider
         from core.config import settings
 
         target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
@@ -169,7 +169,8 @@ class TTSService:
 
         try:
             model = settings.CHAT_MODEL_NON_REASONING
-            response = await llm_client_async.chat.completions.create(
+            provider = get_llm_provider()
+            response = await provider.generate_async(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -229,7 +230,7 @@ class TTSService:
         if not text or not text.strip():
             return ""
 
-        from services.chat_engine import llm_client
+        from services.llm_provider import get_llm_provider
         from core.config import settings
 
         target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
@@ -278,7 +279,8 @@ class TTSService:
 
         try:
             model = settings.CHAT_MODEL_NON_REASONING
-            response = llm_client.chat.completions.create(
+            provider = get_llm_provider()
+            response = provider.generate(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
