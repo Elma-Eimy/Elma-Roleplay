@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from typing import Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
@@ -107,9 +108,24 @@ def create_character(character_data: CharacterCreate, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail=f"Failed to create character: {str(e)}")
 
 @router.get("")
-def list_characters(db: Session = Depends(get_db)):
-    """获取所有可用角色的简要列表"""
-    characters = db.query(models.Character).all()
+def list_characters(
+    limit: Optional[int] = Query(None, description="限制返回数量"),
+    offset: Optional[int] = Query(None, description="偏移量"),
+    db: Session = Depends(get_db)
+):
+    """获取所有可用角色的简要列表 (支持分页与大字段延迟拉取)"""
+    query = db.query(
+        models.Character.id,
+        models.Character.name,
+        models.Character.avatar_path,
+        models.Character.description
+    )
+    if offset is not None:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+        
+    characters = query.all()
     result = []
     for char in characters:
         result.append({

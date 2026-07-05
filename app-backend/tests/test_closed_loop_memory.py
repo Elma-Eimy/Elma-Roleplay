@@ -2,42 +2,44 @@
 闭环记忆提纯与 RAG 检索测试脚本
 """
 
-import urllib.request
-import urllib.error
-import json
 import os
 import sys
+from fastapi.testclient import TestClient
 
-# 将当前目录的父目录加入 path，方便导入
+# Ensure root directory is in sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from main import app
 from core.database import SessionLocal
 from core.models import MemoryChunk, SessionPersona, Session
 from services.memory_manager import get_character_collection, retrieve_memories
 
-BASE_URL = "http://127.0.0.1:8000"
-API_KEY = "ILOVEYOU1234567890"  # 对应 settings 中的开发 api key，若未开启 key 则直接传值
+API_KEY = "ILOVEYOU1234567890"
+client = TestClient(app, raise_server_exceptions=False)
 
 
 def make_request(endpoint, method="GET", payload=None):
-    url = f"{BASE_URL}{endpoint}"
     headers = {
-        'Content-Type': 'application/json',
         'X-API-Key': API_KEY
     }
-
-    data = None
-    if payload:
-        data = json.dumps(payload).encode('utf-8')
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req) as response:
-            return response.status, json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode('utf-8')
-    except urllib.error.URLError as e:
-        return None, str(e.reason)
+        if method == "GET":
+            response = client.get(endpoint, headers=headers)
+        elif method == "POST":
+            response = client.post(endpoint, json=payload, headers=headers)
+        elif method == "PUT":
+            response = client.put(endpoint, json=payload, headers=headers)
+        elif method == "DELETE":
+            response = client.delete(endpoint, headers=headers)
+        else:
+            return None, f"Unsupported method: {method}"
+            
+        try:
+            return response.status_code, response.json()
+        except Exception:
+            return response.status_code, response.text
+    except Exception as e:
+        return None, str(e)
 
 
 def run_closed_loop_test():

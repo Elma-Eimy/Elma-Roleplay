@@ -152,8 +152,7 @@ async def assemble_prompt_context(
             "affection_change": getattr(r, "affection_change", 0)
         }
         for r in recent_records
-        if r.id != user_msg.id 
-        and (not old_reply or r.id != old_reply.id)
+        if r.id < user_msg.id 
         and r.role.value in ("user", "assistant")
     ]
 

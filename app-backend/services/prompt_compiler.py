@@ -270,7 +270,8 @@ async def _build_chat_messages(
             if parent_persona:
                 return db.query(models.ChatMessage).filter(
                     models.ChatMessage.session_id == parent_persona.session_id,
-                    models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant])
+                    models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant]),
+                    models.ChatMessage.is_active == True
                 ).order_by(models.ChatMessage.id.desc()).limit(4).all()
             return []
 

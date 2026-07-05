@@ -11,6 +11,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from core.database import get_db
@@ -49,16 +50,24 @@ def create_session(request: SessionCreate, db: Session = Depends(get_db)):
 @router.get("")
 def list_sessions(
     character_id: int = Query(..., description="筛选指定角色的会话"),
+    limit: Optional[int] = Query(None, description="限制返回数量"),
+    offset: Optional[int] = Query(None, description="偏移量"),
     db: Session = Depends(get_db),
 ):
-    """获取某个角色的所有会话列表"""
-    sessions = (
+    """获取某个角色的所有会话列表 (支持分页)"""
+    query = (
         db.query(models.Session)
         .join(models.SessionPersona)
         .filter(models.SessionPersona.character_id == character_id)
         .order_by(models.Session.updated_at.desc())
-        .all()
     )
+    
+    if offset is not None:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+        
+    sessions = query.all()
 
     result = []
     for s in sessions:

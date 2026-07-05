@@ -7,32 +7,40 @@ API 流程测试脚本 — 覆盖完整的 Session 对话流程
 用法：先启动 uvicorn main:app，然后运行 python test_api.py
 """
 
-import urllib.request
-import urllib.error
-import json
+import os
+import sys
+from fastapi.testclient import TestClient
 
-BASE_URL = "http://127.0.0.1:8000"
+# Ensure root directory is in sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from main import app
+
+client = TestClient(app, raise_server_exceptions=False)
 
 
 def make_request(endpoint, method="GET", payload=None):
-    url = f"{BASE_URL}{endpoint}"
     headers = {
-        'Content-Type': 'application/json',
         'X-API-Key': 'ILOVEYOU1234567890'
     }
-
-    data = None
-    if payload:
-        data = json.dumps(payload).encode('utf-8')
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req) as response:
-            return response.status, json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode('utf-8')
-    except urllib.error.URLError as e:
-        return None, str(e.reason)
+        if method == "GET":
+            response = client.get(endpoint, headers=headers)
+        elif method == "POST":
+            response = client.post(endpoint, json=payload, headers=headers)
+        elif method == "PUT":
+            response = client.put(endpoint, json=payload, headers=headers)
+        elif method == "DELETE":
+            response = client.delete(endpoint, headers=headers)
+        else:
+            return None, f"Unsupported method: {method}"
+            
+        try:
+            return response.status_code, response.json()
+        except Exception:
+            return response.status_code, response.text
+    except Exception as e:
+        return None, str(e)
 
 
 def run_tests():
@@ -172,7 +180,21 @@ def run_tests():
             print(f"     [{s['id']}] {s['title']}{parent}")
     else:
         print(f"  ❌ 失败 ({status}): {response}")
+    # ── 10.5 验证会话分页与角色分页 (分页新功能测试) ──
+    print(f"\n[测试 10.5] 测试会话与角色分页")
+    status, response = make_request("/characters?limit=1", "GET")
+    if status == 200:
+        chars = response.get("characters", [])
+        print(f"  ✅ 成功拉取1个角色 (Limit=1), 实际拉取数量: {len(chars)}")
+    else:
+        print(f"  ❌ 角色分页测试失败 ({status}): {response}")
 
+    status, response = make_request(f"/sessions?character_id={char_id}&limit=1", "GET")
+    if status == 200:
+        sessions = response.get("sessions", [])
+        print(f"  ✅ 成功拉取1个会话 (Limit=1), 实际拉取数量: {len(sessions)}")
+    else:
+        print(f"  ❌ 会话分页测试失败 ({status}): {response}")
     # ── 11. 安全删除父会话（测试继承链重连） ──
     print(f"\n[测试 11] 安全删除父会话 (DELETE /sessions/{session_id})")
     status, response = make_request(f"/sessions/{session_id}", "DELETE")
