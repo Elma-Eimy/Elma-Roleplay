@@ -67,7 +67,7 @@
 
           <view class="modal-form-item">
             <text class="label">设定内容 (Content) *</text>
-            <textarea class="textarea-modal" v-model="modalForm.content" placeholder="输入关键字命中后注入上下文的具体设定描述..." />
+            <textarea class="textarea-modal" v-model="modalForm.content" placeholder="输入关键字命中后注入上下文的具体设定描述..." :maxlength="-1" />
           </view>
 
           <view class="modal-form-item">

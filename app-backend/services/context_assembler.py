@@ -22,6 +22,11 @@ import services.memory_manager as memory_manager
 import services.session_service as session_service
 from services.prompt_compiler import _build_chat_messages
 from services.graph_service import retrieve_graph_context
+from services.retrieval_query_service import build_contextual_retrieval_query
+from services.prompt_token_estimator import (
+    estimate_prompt_tokens,
+    format_prompt_metrics_log,
+)
 
 
 def prepare_chat_context(
@@ -122,7 +127,9 @@ async def assemble_prompt_context(
     Returns:
         标准的 dict 形式 messages payload
     """
-    rag_query = user_msg.content
+    # Resolve pronouns and ellipsis with a small, branch-local context window.
+    # The same semantic query is shared by vector memory and graph retrieval.
+    rag_query = build_contextual_retrieval_query(session_id, user_msg, db)
 
     # 1. 跨继承链 RAG 向量检索
     memories = memory_manager.retrieve_memories(
@@ -139,9 +146,15 @@ async def assemble_prompt_context(
         db=db
     )
 
-    # 3. 提取历史记录轮次
+    # 3. 提取历史记录轮次。后台长期记忆提纯完成前，临时扩大窗口以保留
+    # 尚未总结的消息，避免它们先离开短期上下文形成记忆空档。
+    history_limit = memory_manager.get_memory_handoff_history_limit(session_id, db)
+    if old_reply is not None:
+        # 再生时旧的激活回复位于 user_msg 之后，会占用一次历史查询名额但随后
+        # 被 id 边界过滤，因此额外补一个名额。
+        history_limit += 1
     recent_records = session_service.get_session_history_with_inheritance(
-        session_id, db, settings.APP_CONTEXT_HISTORY_LIMIT
+        session_id, db, history_limit
     )
 
     recent_history = [
@@ -167,5 +180,9 @@ async def assemble_prompt_context(
         db=db,
         user_nickname=user_nickname
     )
+
+    # Observation only: never rewrite or trim the model payload here.
+    prompt_estimate = estimate_prompt_tokens(messages)
+    print(format_prompt_metrics_log(session_id, prompt_estimate))
 
     return messages

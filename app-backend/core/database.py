@@ -67,7 +67,8 @@ def run_migrations(db_engine):
         print(f"[ERROR] Database upgrade failed: {e}")
         raise e
 
-try:
-    run_migrations(engine)
-except Exception as e:
-    print(f"[WARN] Auto migration failed: {e}")
+if os.environ.get("APP_ALEMBIC_ENV_ACTIVE") != "1":
+    try:
+        run_migrations(engine)
+    except Exception as e:
+        print(f"[WARN] Auto migration failed: {e}")

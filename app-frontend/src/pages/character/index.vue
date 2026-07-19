@@ -6,7 +6,7 @@
     </view>
 
     <!-- 角色设定列表 -->
-    <scroll-view scroll-y class="character-scroll">
+    <scroll-view scroll-y class="character-scroll" @scrolltolower="loadNextPage">
       <view class="character-list">
         <view 
           class="character-card" 
@@ -36,16 +36,31 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { usePersonaStore } from "@/store/personaStore";
 import TabBar from "@/components/common/TabBar.vue";
 import { getAvatarUrl } from "@/api/characters";
 
 const personaStore = usePersonaStore();
+const limit = 15;
+const offset = ref(0);
+const hasMore = ref(true);
+
+const loadNextPage = async () => {
+  if (personaStore.isLoadingCharacters || !hasMore.value) return;
+  const count = await personaStore.loadCharacters(limit, offset.value, offset.value > 0);
+  if (count < limit) {
+    hasMore.value = false;
+  }
+  offset.value += limit;
+};
 
 onShow(() => {
   uni.hideTabBar({ animation: false });
-  personaStore.loadCharacters();
+  offset.value = 0;
+  hasMore.value = true;
+  loadNextPage();
 });
 
 const goToDetail = (char: any) => {

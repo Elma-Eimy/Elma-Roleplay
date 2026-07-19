@@ -46,6 +46,7 @@ def safe_delete_session(session_id: int, db: DBSession) -> dict:
         raise ValueError(f"Session {session_id} 不存在")
 
     parent_session_id = session.parent_session_id
+    parent_fork_message_id = session.fork_message_id
     result = {
         "deleted_session_id": session_id,
         "relinked_children": 0,
@@ -53,13 +54,21 @@ def safe_delete_session(session_id: int, db: DBSession) -> dict:
     }
 
     # Step 1: 重连子 Session
-    children_sessions = db.query(SessionModel).filter(
+    # 使用批量 UPDATE 在删除旧父节点前直接落下新的外键，规避自关联 ORM
+    # backref 在同一次 flush 中产生循环依赖。
+    result["relinked_children"] = db.query(SessionModel).filter(
         SessionModel.parent_session_id == session_id
-    ).all()
-
-    for child in children_sessions:
-        child.parent_session_id = parent_session_id
-        result["relinked_children"] += 1
+    ).update(
+        {
+            SessionModel.parent_session_id: parent_session_id,
+            # 中间节点删除后，子会话相对于新父会话（原祖父会话）的安全边界，
+            # 应继承被删除节点当初的分叉点。若删除根节点则清空边界。
+            SessionModel.fork_message_id: (
+                parent_fork_message_id if parent_session_id is not None else None
+            ),
+        },
+        synchronize_session=False,
+    )
 
     # Step 2: 重连子 Persona + 收集 ChromaDB 和音频清理所需信息
     persona = session.persona
@@ -78,12 +87,12 @@ def safe_delete_session(session_id: int, db: DBSession) -> dict:
         ).all()
         doc_ids = [c.chroma_doc_id for c in chunks if c.chroma_doc_id]
 
-        children_personas = db.query(SessionPersona).filter(
+        db.query(SessionPersona).filter(
             SessionPersona.parent_persona_id == persona.id
-        ).all()
-
-        for child_p in children_personas:
-            child_p.parent_persona_id = parent_persona_id
+        ).update(
+            {SessionPersona.parent_persona_id: parent_persona_id},
+            synchronize_session=False,
+        )
 
     # 收集当前会话中所有的消息音频路径
     messages_with_audio = db.query(ChatMessage).filter(
@@ -280,11 +289,19 @@ def create_session_service(
         # ── 继承/分支模式 ──
         # 根据传参或退避逻辑，复制首条触发分支的消息
         start_message = None
-        if start_message_id:
+        if start_message_id is not None:
             start_message = db.query(ChatMessage).filter(
                 ChatMessage.id == start_message_id,
                 ChatMessage.session_id == parent_session_id
             ).first()
+
+            # 调用方明确指定了分叉点时，不能静默改用另一条消息，否则会生成
+            # 与用户选择不一致且难以察觉的时间线。
+            if not start_message:
+                db.rollback()
+                raise ValueError(
+                    f"Start message {start_message_id} does not belong to parent session {parent_session_id}"
+                )
         
         if not start_message:
             # 退避策略：获取父会话最后一条激活的聊天消息
@@ -299,6 +316,7 @@ def create_session_service(
             )
 
         if start_message:
+            session.fork_message_id = start_message.id
             first_message = ChatMessage(
                 session_id=session.id,
                 role=start_message.role,
@@ -320,6 +338,7 @@ def create_session_service(
         "persona_id": persona.id,
         "character_id": character_id,
         "inherited": parent_session_id is not None,
+        "fork_message_id": session.fork_message_id,
         "title": session.title,
     }
 

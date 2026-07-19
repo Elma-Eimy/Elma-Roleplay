@@ -57,6 +57,9 @@ def parse_character(file: UploadFile = File(...)):
         card_data = parse_character_card(file_path)
 
         avatar_path = file_path if ext == ".png" else ""
+        if avatar_path:
+            # 统一使用正斜杠以适配 Web/URL 访问路径
+            avatar_path = avatar_path.replace("\\", "/")
         card_data["avatar_path"] = avatar_path
 
         return {"message": "Character parsed successfully", "data": card_data}

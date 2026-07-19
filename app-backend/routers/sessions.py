@@ -75,6 +75,7 @@ def list_sessions(
             "id": s.id,
             "title": s.title,
             "parent_session_id": s.parent_session_id,
+            "fork_message_id": s.fork_message_id,
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "updated_at": s.updated_at.isoformat() if s.updated_at else None,
             "persona": {
@@ -101,6 +102,7 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db)):
         "id": session.id,
         "title": session.title,
         "parent_session_id": session.parent_session_id,
+        "fork_message_id": session.fork_message_id,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         "persona": {
@@ -314,6 +316,7 @@ def get_session_memories(
     query = db.query(models.MemoryChunk).filter(
         models.MemoryChunk.persona_id.in_(ancestor_ids)
     )
+    superseded_ids = memory_manager.get_superseded_memory_ids(ancestor_ids, db)
     if q and q.strip():
         query = query.filter(models.MemoryChunk.content.contains(q.strip()))
 
@@ -327,7 +330,11 @@ def get_session_memories(
             "importance_score": c.importance_score,
             "is_local": c.persona_id == session.persona.id,
             "created_at": c.created_at.isoformat() if c.created_at else None,
-            "origin_session_id": c.origin_session_id
+            "origin_session_id": c.origin_session_id,
+            "source_start_message_id": c.source_start_message_id,
+            "source_message_id": c.source_message_id,
+            "supersedes_id": c.supersedes_id,
+            "is_superseded": c.id in superseded_ids,
         } for c in chunks
     ]
 
@@ -364,7 +371,11 @@ def create_session_memory(session_id: int, request: MemoryCreateRequest, db: Ses
             "importance_score": chunk.importance_score,
             "is_local": True,
             "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
-            "origin_session_id": chunk.origin_session_id
+            "origin_session_id": chunk.origin_session_id,
+            "source_start_message_id": chunk.source_start_message_id,
+            "source_message_id": chunk.source_message_id,
+            "supersedes_id": chunk.supersedes_id,
+            "is_superseded": False,
         }
     }
 
@@ -396,7 +407,10 @@ def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdate
             "memory": {
                 "id": updated_chunk.id,
                 "content": updated_chunk.content,
-                "importance_score": updated_chunk.importance_score
+                "importance_score": updated_chunk.importance_score,
+                "source_start_message_id": updated_chunk.source_start_message_id,
+                "source_message_id": updated_chunk.source_message_id,
+                "supersedes_id": updated_chunk.supersedes_id,
             }
         }
     except ValueError as e:
@@ -433,6 +447,7 @@ async def compile_session_prompt(
     """
     import services.context_assembler as context_assembler
     from services.prompt_compiler import compile_system_prompt
+    from services.prompt_token_estimator import estimate_prompt_tokens
 
     session = db.get(models.Session, session_id)
     if not session:
@@ -477,7 +492,10 @@ async def compile_session_prompt(
             change = first_assistant_msg.affection_change or 0
             formatted_xml = f"<reply>{first_assistant_msg.content}</reply>\n<status emotion=\"{emo}\" affection_change=\"{int(change)}\"/>"
             messages.append({"role": "assistant", "content": formatted_xml})
-        return {"messages": messages}
+        return {
+            "messages": messages,
+            "token_estimate": estimate_prompt_tokens(messages),
+        }
 
     # 2. 直接调用 context_assembler 进行 100% 同源拼装
     messages = await context_assembler.assemble_prompt_context(
@@ -490,4 +508,7 @@ async def compile_session_prompt(
         user_nickname=user_nickname
     )
 
-    return {"messages": messages}
+    return {
+        "messages": messages,
+        "token_estimate": estimate_prompt_tokens(messages),
+    }

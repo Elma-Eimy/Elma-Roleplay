@@ -51,7 +51,10 @@ class SettingsUpdate(BaseModel):
     temperature: Optional[float] = None
     reasoning_mode: Optional[bool] = None
     context_history_limit: Optional[int] = None
+    memory_handoff_margin: Optional[int] = None
     retrieval_top_k: Optional[int] = None
+    retrieval_context_turns: Optional[int] = None
+    retrieval_query_max_chars: Optional[int] = None
     retrieval_min_importance: Optional[float] = None
     retrieval_max_distance: Optional[float] = None
     lorebook_scan_depth: Optional[int] = None

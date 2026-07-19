@@ -13,7 +13,7 @@ def replace_placeholders(text: str, char_name: str, user_name: str) -> str:
       - <char> / <character> / <user>
       - {$char} / {$character} / {$user}
     支持不区分大小写，且容忍大括号/尖括号内的空格。
-    使用 lambda 函数避免用户昵称/角色名中的特殊字符 (如 \, $) 造成正则转义或捕获组错误。
+    使用 lambda 函数避免用户昵称/角色名中的特殊字符（如反斜杠、$）造成正则转义或捕获组错误。
     """
     if not text:
         return text
@@ -261,15 +261,28 @@ async def _build_chat_messages(
         user_nickname=user_nickname,
     )
 
-    # Step 2: 动态示例继承（子会话拉取父会话最后 4 条作为 Few-shot 伪历史）
+    # Step 2: 动态示例继承（仅拉取父会话分叉点之前最后 4 条，杜绝未来泄漏）
     if persona and persona.parent_persona_id and db is not None:
         from fastapi.concurrency import run_in_threadpool
 
         def fetch_parent_history():
             parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
-            if parent_persona:
+            child_session = db.get(models.Session, persona.session_id)
+            fork_message_id = child_session.fork_message_id if child_session else None
+
+            # 旧会话没有可靠的分叉点时，宁可不注入父示例，也不能读取父会话
+            # 当前最新消息并造成未来剧情泄漏。
+            if parent_persona and fork_message_id is not None:
+                fork_message_exists = db.query(models.ChatMessage.id).filter(
+                    models.ChatMessage.id == fork_message_id,
+                    models.ChatMessage.session_id == parent_persona.session_id,
+                ).first()
+                if not fork_message_exists:
+                    return []
+
                 return db.query(models.ChatMessage).filter(
                     models.ChatMessage.session_id == parent_persona.session_id,
+                    models.ChatMessage.id < fork_message_id,
                     models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant]),
                     models.ChatMessage.is_active == True
                 ).order_by(models.ChatMessage.id.desc()).limit(4).all()

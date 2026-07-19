@@ -92,6 +92,22 @@ class Session(Base):
         index=True
     )
 
+    # 创建分支时所选择的父会话消息。父历史注入必须严格限制在该消息之前，
+    # 避免父会话后续产生的内容泄漏到已经分叉的子时间线。
+    # 旧数据无法可靠反推分叉点，因此允许为 NULL，并在上下文组装时安全降级为
+    # 不注入额外父历史。
+    fork_message_id = Column(
+        Integer,
+        ForeignKey(
+            "chat_messages.id",
+            name="fk_sessions_fork_message_id_chat_messages",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
+        nullable=True,
+        index=True,
+    )
+
     title      = Column(String(50), default="New Story")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -106,6 +122,7 @@ class Session(Base):
     messages = relationship(
         "ChatMessage",
         back_populates="session",
+        foreign_keys="ChatMessage.session_id",
         cascade="all, delete-orphan",
         order_by="ChatMessage.id"  # 重构改进：使用主键排序，彻底防范 SQLite 并发插入微秒级排序错乱
     )
@@ -213,7 +230,7 @@ class SessionPersona(Base):
 #    关联规则：
 #      persona_id        → 该记忆"属于"哪个 Persona（用于 ChromaDB collection 路由）
 #      origin_session_id → 该记忆"产生于"哪个 Session（跨会话后不变，用于溯源展示）
-#      source_message_id → 可追溯到哪条原始消息（可选，调试用）
+#      source_start_message_id / source_message_id → 来源消息范围（起点 / 终点）
 #
 #    ChromaDB 关联：
 #      collection_name = f"persona_{persona_id}"
@@ -240,10 +257,27 @@ class MemoryChunk(Base):
     )
 
     # 可追溯到哪条原始消息
+    source_start_message_id = Column(
+        Integer,
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # 兼容旧数据：source_message_id 继续表示来源范围的结束消息
     source_message_id = Column(
         Integer,
         ForeignKey("chat_messages.id", ondelete="SET NULL"),
         nullable=True
+    )
+
+    # 可选的直接前一版本。它只表达“当前这条记忆替代哪一条”，不把旧记忆
+    # 全局标记为失效；是否隐藏旧记忆由当前 Persona 继承链动态解析，保证兄弟
+    # 分支互不污染。
+    supersedes_id = Column(
+        Integer,
+        ForeignKey("memory_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     content          = Column(Text,              nullable=False)           # 记忆的自然语言描述
@@ -257,7 +291,22 @@ class MemoryChunk(Base):
 
     # 关联
     persona        = relationship("SessionPersona", back_populates="memories")
-    source_message = relationship("ChatMessage",    back_populates="memory_chunks")
+    source_start_message = relationship(
+        "ChatMessage",
+        back_populates="memory_chunks_started",
+        foreign_keys=[source_start_message_id],
+    )
+    source_message = relationship(
+        "ChatMessage",
+        back_populates="memory_chunks",
+        foreign_keys=[source_message_id],
+    )
+    supersedes = relationship(
+        "MemoryChunk",
+        remote_side=[id],
+        foreign_keys=[supersedes_id],
+        backref="replacement_memories",
+    )
 
 
 # ──────────────────────────────────────────────
@@ -275,6 +324,7 @@ class GraphEntity(Base):
         index=True
     )
     name        = Column(String(100), nullable=False, index=True)
+    aliases     = Column(Text, nullable=True)  # JSON list of explicit nicknames/abbreviations
     entity_type = Column(String(50), nullable=False)  # "person", "place", "object", "event", "concept"
     description = Column(Text, nullable=True)
     created_at  = Column(DateTime, default=func.now())
@@ -338,8 +388,21 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=func.now())
 
     # 关联
-    session       = relationship("Session",     back_populates="messages")
-    memory_chunks = relationship("MemoryChunk", back_populates="source_message")
+    session       = relationship(
+        "Session",
+        back_populates="messages",
+        foreign_keys=[session_id],
+    )
+    memory_chunks = relationship(
+        "MemoryChunk",
+        back_populates="source_message",
+        foreign_keys="MemoryChunk.source_message_id",
+    )
+    memory_chunks_started = relationship(
+        "MemoryChunk",
+        back_populates="source_start_message",
+        foreign_keys="MemoryChunk.source_start_message_id",
+    )
 
 
 # ──────────────────────────────────────────────
@@ -398,7 +461,7 @@ class OutboxJob(Base):
     __tablename__ = "outbox_jobs"
 
     id           = Column(Integer, primary_key=True, index=True)
-    task_type    = Column(String(50), nullable=False) # e.g., "delete_vector", "delete_audio"
+    task_type    = Column(String(50), nullable=False) # e.g., "upsert_vector", "delete_vector", "delete_audio"
     payload      = Column(Text, nullable=False)       # JSON 序列化的数据负载
     status       = Column(SAEnum(OutboxJobStatus), default=OutboxJobStatus.pending, index=True, nullable=False)
     attempts     = Column(Integer, default=0, nullable=False)
@@ -406,4 +469,3 @@ class OutboxJob(Base):
     last_error   = Column(Text, nullable=True)
     created_at   = Column(DateTime, default=func.now())
     run_after    = Column(DateTime, default=func.now(), index=True, nullable=False) # 用于指数退避调度
-

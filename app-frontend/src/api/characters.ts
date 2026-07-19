@@ -226,11 +226,18 @@ export async function createCharacter(
  * 获取简要角色列表。
  * GET /characters
  */
-export async function getCharacters(): Promise<GetCharactersResponse> {
+export async function getCharacters(limit?: number, offset?: number): Promise<GetCharactersResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
+    let chars = db.characters;
+    if (offset !== undefined) {
+      chars = chars.slice(offset);
+    }
+    if (limit !== undefined) {
+      chars = chars.slice(0, limit);
+    }
     return {
-      characters: db.characters.map((c) => ({
+      characters: chars.map((c) => ({
         id: c.id,
         name: c.name,
         avatar_path: c.avatar_path || "",
@@ -239,7 +246,12 @@ export async function getCharacters(): Promise<GetCharactersResponse> {
     };
   }
 
-  return request<GetCharactersResponse>("/characters");
+  const queryParams = [];
+  if (limit !== undefined) queryParams.push(`limit=${limit}`);
+  if (offset !== undefined) queryParams.push(`offset=${offset}`);
+  const url = queryParams.length > 0 ? `/characters?${queryParams.join("&")}` : "/characters";
+
+  return request<GetCharactersResponse>(url);
 }
 
 /**

@@ -1,372 +1,430 @@
-"""
-知识图谱 RAG 服务 — 负责 SQLite 知识图谱实体的提取写入、匹配与检索
-"""
+"""Lightweight branch-aware Graph RAG storage and retrieval."""
 
-from sqlalchemy.orm import Session, aliased
-from sqlalchemy import and_
+from __future__ import annotations
+
+import json
+import unicodedata
+from collections import defaultdict
+from typing import Iterable
+
+from sqlalchemy.orm import Session
+
+from core.config import settings
 from core.models import GraphEntity, GraphRelation, SessionPersona
 from services.memory_manager import get_ancestor_persona_ids
-from core.config import settings
+
+
+GENERIC_ALIAS_KEYS = {
+    "他", "她", "它", "他们", "她们", "它们", "这里", "那里", "这儿", "那儿",
+    "这个", "那个", "这件事", "那件事", "对方", "某人", "someone", "somebody",
+    "he", "she", "it", "they", "here", "there", "this", "that",
+}
+MAX_ALIASES_PER_ENTITY = 8
+MAX_ALIAS_CHARS = 50
+
+
+def normalize_entity_name(value: object) -> str:
+    """Normalize a display name for matching, without changing stored text."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    return "".join(char for char in text if char.isalnum())
+
+
+def _load_aliases(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        values = raw
+    elif isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            values = parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+    else:
+        values = []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def sanitize_entity_aliases(raw: object, canonical_name: str) -> list[str]:
+    canonical_key = normalize_entity_name(canonical_name)
+    generic_keys = {normalize_entity_name(value) for value in GENERIC_ALIAS_KEYS}
+    aliases = []
+    seen = {canonical_key}
+    for alias in _load_aliases(raw):
+        if len(alias) > MAX_ALIAS_CHARS:
+            continue
+        key = normalize_entity_name(alias)
+        if not key or key in seen or key in generic_keys:
+            continue
+        aliases.append(alias)
+        seen.add(key)
+        if len(aliases) >= MAX_ALIASES_PER_ENTITY:
+            break
+    return aliases
+
+
+def _dump_aliases(aliases: list[str]) -> str | None:
+    return json.dumps(aliases, ensure_ascii=False) if aliases else None
+
+
+def _entity_match_keys(entity: GraphEntity) -> set[str]:
+    keys = {normalize_entity_name(entity.name)}
+    keys.update(normalize_entity_name(alias) for alias in _load_aliases(entity.aliases))
+    return {key for key in keys if key}
+
+
+def _find_matching_entity(
+    entities: Iterable[GraphEntity],
+    name: str,
+    persona_priority: dict[int, int] | None = None,
+) -> GraphEntity | None:
+    key = normalize_entity_name(name)
+    if not key:
+        return None
+    matches = [entity for entity in entities if key in _entity_match_keys(entity)]
+    if not matches:
+        return None
+    if persona_priority is None:
+        return min(matches, key=lambda entity: entity.id)
+    return min(
+        matches,
+        key=lambda entity: (persona_priority.get(entity.persona_id, 999), entity.id),
+    )
+
+
+def _merge_aliases(existing: object, incoming: object, canonical_name: str) -> list[str]:
+    return sanitize_entity_aliases(
+        _load_aliases(existing) + _load_aliases(incoming),
+        canonical_name,
+    )
+
+
+def _relation_type_key(value: object) -> str:
+    return unicodedata.normalize("NFKC", str(value or "related")).casefold().strip()
+
 
 def upsert_graph_data(
     persona_id: int,
     entities: list[dict],
     relations: list[dict],
-    db: Session
+    db: Session,
 ):
-    """
-    增量 Upsert 实体和关系到 SQLite。
-    
-    参数：
-      entities: [{"name": "小红", "entity_type": "person", "description": "用户的妹妹"}]
-      relations: [{"source": "用户", "relation_type": "sibling", "target": "小红", "description": "用户和小红是亲兄妹", "importance": 0.8}]
-    """
-    entity_name_to_id = {}
-    
-    # 1. Upsert 实体列表
-    for ent in entities:
-        name = ent.get("name", "").strip()
-        if not name:
-            continue
-        ent_type = ent.get("entity_type", "concept").strip()
-        desc = ent.get("description", "").strip()
-        
-        # 检索当前 Persona 下是否已存在同名实体
-        db_ent = db.query(GraphEntity).filter(
-            GraphEntity.persona_id == persona_id,
-            GraphEntity.name == name
-        ).first()
-        
-        if db_ent:
-            # 存在则合并更新描述和类型
-            if desc:
-                # 增量合并描述，避免直接覆盖
-                if db_ent.description and db_ent.description != desc and desc not in db_ent.description:
-                    db_ent.description = f"{db_ent.description}；{desc}"
-                else:
-                    db_ent.description = desc
-            db_ent.entity_type = ent_type
-        else:
-            # 本地不存在：检查是否有祖先链同名实体（实现写时复制 COW）
-            ancestor_ids = get_ancestor_persona_ids(persona_id, db)
-            ancestor_ent = None
-            if len(ancestor_ids) > 1:
-                # 取全部候选后在 Python 侧按 ancestor_ids 下标排序，
-                # 下标越小表示越靠近当前 Persona（直系父 > 祖父 > …），
-                # 不依赖 persona_id 数值（多分叉场景下数值大小与层级无关）
-                ancestor_candidates = db.query(GraphEntity).filter(
-                    GraphEntity.persona_id.in_(ancestor_ids[1:]),
-                    GraphEntity.name == name
-                ).all()
-                if ancestor_candidates:
-                    ancestor_ent = min(
-                        ancestor_candidates,
-                        key=lambda e: ancestor_ids.index(e.persona_id)
-                    )
-
-            if ancestor_ent:
-                # 触发写时复制：合并描述
-                merged_desc = ancestor_ent.description
-                if desc and desc != merged_desc and desc not in merged_desc:
-                    merged_desc = f"{merged_desc}；{desc}"
-
-                db_ent = GraphEntity(
-                    persona_id=persona_id,
-                    name=name,
-                    entity_type=ent_type,
-                    description=merged_desc
-                )
-            else:
-                db_ent = GraphEntity(
-                    persona_id=persona_id,
-                    name=name,
-                    entity_type=ent_type,
-                    description=desc
-                )
-            db.add(db_ent)
-            db.flush()  # 刷入内存以获取自增主键 ID
-
-        entity_name_to_id[name] = db_ent.id
-
-    # 2. 补齐关系中提到但未在 entities 列表中声明的实体
-    for rel in relations:
-        src = rel.get("source", "").strip()
-        tgt = rel.get("target", "").strip()
-        for name in (src, tgt):
-            if name and name not in entity_name_to_id:
-                # 检查数据库中是否存在（当前 persona）
-                db_ent = db.query(GraphEntity).filter(
-                    GraphEntity.persona_id == persona_id,
-                    GraphEntity.name == name
-                ).first()
-                if db_ent:
-                    entity_name_to_id[name] = db_ent.id
-                else:
-                    # 检查是否有祖先链同名实体（实现写时复制 COW）
-                    ancestor_ids = get_ancestor_persona_ids(persona_id, db)
-                    ancestor_ent = None
-                    if len(ancestor_ids) > 1:
-                        ancestor_candidates = db.query(GraphEntity).filter(
-                            GraphEntity.persona_id.in_(ancestor_ids[1:]),
-                            GraphEntity.name == name
-                        ).all()
-                        if ancestor_candidates:
-                            ancestor_ent = min(
-                                ancestor_candidates,
-                                key=lambda e: ancestor_ids.index(e.persona_id)
-                            )
-
-                    if ancestor_ent:
-                        # 触发写时复制
-                        db_ent = GraphEntity(
-                            persona_id=persona_id,
-                            name=name,
-                            entity_type=ancestor_ent.entity_type,
-                            description=ancestor_ent.description
-                        )
-                    else:
-                        # 创建兜底默认实体
-                        db_ent = GraphEntity(
-                            persona_id=persona_id,
-                            name=name,
-                            entity_type="concept",
-                            description=f"关于 {name} 的概念或事物。"
-                        )
-                    db.add(db_ent)
-                    db.flush()
-                    entity_name_to_id[name] = db_ent.id
-
-    # 3. Upsert 关系列表
-    for rel in relations:
-        src = rel.get("source", "").strip()
-        tgt = rel.get("target", "").strip()
-        if not src or not tgt:
-            continue
-
-        rel_type = rel.get("relation_type", "related").strip()
-        desc = rel.get("description", "").strip()
-        importance = rel.get("importance", 0.5)
-        try:
-            importance = float(importance)
-            importance = max(0.0, min(1.0, importance))
-        except (ValueError, TypeError):
-            importance = 0.5
-
-        src_id = entity_name_to_id.get(src)
-        tgt_id = entity_name_to_id.get(tgt)
-        if not src_id or not tgt_id:
-            continue
-
-        # 查重当前 Persona 下这两个实体间是否存在同种类型的关系
-        db_rel = db.query(GraphRelation).filter(
-            GraphRelation.persona_id == persona_id,
-            GraphRelation.source_id == src_id,
-            GraphRelation.target_id == tgt_id,
-            GraphRelation.relation_type == rel_type
-        ).first()
-
-        if db_rel:
-            if desc:
-                # 增量合并描述，避免直接覆盖
-                if db_rel.description and db_rel.description != desc and desc not in db_rel.description:
-                    db_rel.description = f"{db_rel.description}；{desc}"
-                else:
-                    db_rel.description = desc
-            # 融合重要性分值
-            db_rel.importance = min(1.0, max(db_rel.importance or 0.5, importance) + (1.0 - max(db_rel.importance or 0.5, importance)) * 0.1)
-        else:
-            # 检查是否有祖先链同种关系（写时复制 COW）
-            ancestor_ids = get_ancestor_persona_ids(persona_id, db)
-            ancestor_rel = None
-            if len(ancestor_ids) > 1:
-                EntSrc = aliased(GraphEntity)
-                EntTgt = aliased(GraphEntity)
-                # 取全部候选后在 Python 侧按 ancestor_ids 下标排序（同实体 COW 逻辑一致）
-                ancestor_rel_candidates = db.query(GraphRelation).join(
-                    EntSrc, GraphRelation.source_id == EntSrc.id
-                ).join(
-                    EntTgt, GraphRelation.target_id == EntTgt.id
-                ).filter(
-                    GraphRelation.persona_id.in_(ancestor_ids[1:]),
-                    EntSrc.name == src,
-                    EntTgt.name == tgt,
-                    GraphRelation.relation_type == rel_type
-                ).all()
-                if ancestor_rel_candidates:
-                    ancestor_rel = min(
-                        ancestor_rel_candidates,
-                        key=lambda r: ancestor_ids.index(r.persona_id)
-                    )
-
-            if ancestor_rel:
-                # 触发写时复制：合并描述和重要性分值
-                merged_desc = ancestor_rel.description
-                if desc and desc != merged_desc and desc not in merged_desc:
-                    merged_desc = f"{merged_desc}；{desc}"
-
-                merged_imp = min(1.0, max(ancestor_rel.importance or 0.5, importance) + (1.0 - max(ancestor_rel.importance or 0.5, importance)) * 0.1)
-
-                db_rel = GraphRelation(
-                    persona_id=persona_id,
-                    source_id=src_id,
-                    target_id=tgt_id,
-                    relation_type=rel_type,
-                    description=merged_desc,
-                    importance=merged_imp
-                )
-            else:
-                db_rel = GraphRelation(
-                    persona_id=persona_id,
-                    source_id=src_id,
-                    target_id=tgt_id,
-                    relation_type=rel_type,
-                    description=desc,
-                    importance=importance
-                )
-            db.add(db_rel)
-
-    # 提示：不在此处调用 db.commit()，由上游调用方事务统一提交，保证数据库原子性。
-
-
-def retrieve_graph_context(
-    persona_id: int,
-    query_text: str,
-    db: Session
-) -> str:
-    """
-    匹配当前消息中的实体，并从图谱（包含继承祖先链）中拉取 1-hop 和 2-hop 的关联关系。
-    """
-    if not query_text:
-        return ""
-        
-    # 1. 递归获取继承的祖先 Persona IDs
-    ancestor_ids = get_ancestor_persona_ids(persona_id, db)
-    if not ancestor_ids:
-        ancestor_ids = [persona_id]
-        
-    # 2. 读取这些 Persona 的所有实体
-    entities = db.query(GraphEntity).filter(
+    """Write current-branch entities and relations without semantic adjudication."""
+    ancestor_ids = get_ancestor_persona_ids(persona_id, db) or [persona_id]
+    persona_priority = {pid: index for index, pid in enumerate(ancestor_ids)}
+    chain_entities = db.query(GraphEntity).filter(
         GraphEntity.persona_id.in_(ancestor_ids)
     ).all()
-    
+    current_entities = [entity for entity in chain_entities if entity.persona_id == persona_id]
+    entity_lookup: dict[str, GraphEntity] = {}
+
+    def register(entity: GraphEntity) -> None:
+        for key in _entity_match_keys(entity):
+            entity_lookup[key] = entity
+
+    for entity in current_entities:
+        register(entity)
+
+    def ensure_local_entity(
+        name: str,
+        entity_type: str = "",
+        description: str = "",
+        aliases: object = None,
+        extracted: bool = False,
+    ) -> GraphEntity | None:
+        display_name = str(name or "").strip()
+        key = normalize_entity_name(display_name)
+        if not key:
+            return None
+
+        existing = entity_lookup.get(key) or _find_matching_entity(current_entities, display_name)
+        if existing is not None:
+            if description:
+                existing.description = description
+            if entity_type:
+                existing.entity_type = entity_type
+            merged_aliases = _merge_aliases(existing.aliases, aliases, existing.name)
+            existing.aliases = _dump_aliases(merged_aliases)
+            register(existing)
+            return existing
+
+        ancestor = _find_matching_entity(
+            (entity for entity in chain_entities if entity.persona_id != persona_id),
+            display_name,
+            persona_priority,
+        )
+        effective_name = ancestor.name if ancestor is not None else display_name
+        effective_type = entity_type or (
+            ancestor.entity_type if ancestor is not None else "concept"
+        )
+        effective_description = (
+            description
+            or (ancestor.description if ancestor is not None else "")
+            or ("" if extracted else f"关于 {display_name} 的概念或事物。")
+        )
+        merged_aliases = _merge_aliases(
+            ancestor.aliases if ancestor is not None else None,
+            aliases,
+            effective_name,
+        )
+        entity = GraphEntity(
+            persona_id=persona_id,
+            name=effective_name,
+            aliases=_dump_aliases(merged_aliases),
+            entity_type=effective_type,
+            description=effective_description,
+        )
+        db.add(entity)
+        db.flush()
+        current_entities.append(entity)
+        chain_entities.append(entity)
+        register(entity)
+        # Also resolve the exact relation spelling used in this batch.
+        entity_lookup[key] = entity
+        return entity
+
+    for raw_entity in entities or []:
+        if not isinstance(raw_entity, dict):
+            continue
+        ensure_local_entity(
+            name=raw_entity.get("name", ""),
+            entity_type=str(raw_entity.get("entity_type", "concept") or "concept").strip(),
+            description=str(raw_entity.get("description", "") or "").strip(),
+            aliases=raw_entity.get("aliases"),
+            extracted=True,
+        )
+
+    # Snapshot ancestor relations once; current relations are updated as we go.
+    chain_entity_by_id = {entity.id: entity for entity in chain_entities}
+    ancestor_relations = db.query(GraphRelation).filter(
+        GraphRelation.persona_id.in_(ancestor_ids[1:])
+    ).all() if len(ancestor_ids) > 1 else []
+
+    for raw_relation in relations or []:
+        if not isinstance(raw_relation, dict):
+            continue
+        source_name = str(raw_relation.get("source", "") or "").strip()
+        target_name = str(raw_relation.get("target", "") or "").strip()
+        if not source_name or not target_name:
+            continue
+
+        source = ensure_local_entity(source_name)
+        target = ensure_local_entity(target_name)
+        if source is None or target is None:
+            continue
+        chain_entity_by_id[source.id] = source
+        chain_entity_by_id[target.id] = target
+
+        relation_type = str(raw_relation.get("relation_type", "related") or "related").strip()
+        relation_key = _relation_type_key(relation_type)
+        description = str(raw_relation.get("description", "") or "").strip()
+        try:
+            importance = max(0.0, min(1.0, float(raw_relation.get("importance", 0.5))))
+        except (TypeError, ValueError):
+            importance = 0.5
+
+        current_relation = db.query(GraphRelation).filter(
+            GraphRelation.persona_id == persona_id,
+            GraphRelation.source_id == source.id,
+            GraphRelation.target_id == target.id,
+        ).all()
+        current_relation = next(
+            (
+                relation for relation in current_relation
+                if _relation_type_key(relation.relation_type) == relation_key
+            ),
+            None,
+        )
+        if current_relation is not None:
+            if description:
+                current_relation.description = description
+            current_relation.relation_type = relation_type
+            current_relation.importance = min(
+                1.0,
+                max(current_relation.importance or 0.5, importance)
+                + (1.0 - max(current_relation.importance or 0.5, importance)) * 0.1,
+            )
+            continue
+
+        source_key = normalize_entity_name(source.name)
+        target_key = normalize_entity_name(target.name)
+        ancestor_matches = []
+        for relation in ancestor_relations:
+            ancestor_source = chain_entity_by_id.get(relation.source_id)
+            ancestor_target = chain_entity_by_id.get(relation.target_id)
+            if not ancestor_source or not ancestor_target:
+                continue
+            if (
+                normalize_entity_name(ancestor_source.name) == source_key
+                and normalize_entity_name(ancestor_target.name) == target_key
+                and _relation_type_key(relation.relation_type) == relation_key
+            ):
+                ancestor_matches.append(relation)
+        ancestor_relation = min(
+            ancestor_matches,
+            key=lambda relation: (
+                persona_priority.get(relation.persona_id, 999),
+                relation.id,
+            ),
+            default=None,
+        )
+
+        inherited_importance = ancestor_relation.importance if ancestor_relation else 0.5
+        effective_importance = (
+            min(
+                1.0,
+                max(inherited_importance or 0.5, importance)
+                + (1.0 - max(inherited_importance or 0.5, importance)) * 0.1,
+            )
+            if ancestor_relation is not None
+            else importance
+        )
+        db.add(GraphRelation(
+            persona_id=persona_id,
+            source_id=source.id,
+            target_id=target.id,
+            relation_type=relation_type,
+            description=description or (
+                ancestor_relation.description if ancestor_relation is not None else ""
+            ),
+            importance=effective_importance,
+        ))
+
+    # Commit remains owned by the caller's memory-extraction transaction.
+
+
+def _effective_entities(
+    entities: list[GraphEntity],
+    persona_priority: dict[int, int],
+) -> dict[str, GraphEntity]:
+    effective: dict[str, GraphEntity] = {}
+    for entity in sorted(
+        entities,
+        key=lambda item: (persona_priority.get(item.persona_id, 999), item.id),
+    ):
+        key = normalize_entity_name(entity.name)
+        if key and key not in effective:
+            effective[key] = entity
+    return effective
+
+
+def retrieve_graph_context(persona_id: int, query_text: str, db: Session) -> str:
+    """Match canonical names/aliases and return deterministic true 1/2-hop context."""
+    if not query_text:
+        return ""
+
+    ancestor_ids = get_ancestor_persona_ids(persona_id, db) or [persona_id]
+    persona_priority = {pid: index for index, pid in enumerate(ancestor_ids)}
+    entities = db.query(GraphEntity).filter(GraphEntity.persona_id.in_(ancestor_ids)).all()
     if not entities:
         return ""
-        
-    # 3. 匹配消息中的实体（忽略大小写子串匹配）
-    matched_entity_ids = set()
-    query_lower = query_text.lower()
-    
-    for ent in entities:
-        if ent.name.lower() in query_lower:
-            matched_entity_ids.add(ent.id)
-            
-    if not matched_entity_ids:
+
+    effective_entities = _effective_entities(entities, persona_priority)
+    query_key = normalize_entity_name(query_text)
+    matched_keys = set()
+    for canonical_key, entity in effective_entities.items():
+        match_keys = _entity_match_keys(entity)
+        if any(key and key in query_key for key in match_keys):
+            matched_keys.add(canonical_key)
+    if not matched_keys:
         return ""
-        
-    # 4. 读出所有的图谱关系 (应用最低重要性过滤，剔除不重要关系)
-    all_relations = db.query(GraphRelation).filter(
+
+    entity_by_id = {entity.id: entity for entity in entities}
+    relations = db.query(GraphRelation).filter(
         GraphRelation.persona_id.in_(ancestor_ids),
-        GraphRelation.importance >= settings.APP_GRAPH_MIN_IMPORTANCE
+        GraphRelation.importance >= settings.APP_GRAPH_MIN_IMPORTANCE,
     ).all()
-    
-    # 获取当前 AI 角色本名，用于枢纽节点去极化过滤
-    persona = db.get(SessionPersona, persona_id)
-    char_name = persona.character.name if persona and persona.character else ""
-    
-    hub_names = {"user"}
-    if char_name:
-        hub_names.add(char_name.lower())
-        
-    entity_id_to_name = {ent.id: ent.name.lower() for ent in entities}
-    
-    # 5. 组装 1-hop 关系与 1-hop 邻居实体 IDs (枢纽节点防暴涨过滤)
-    matched_relations_1hop = []
-    first_hop_entity_ids = set()
-    relation_hop_level = {}  # rel.id -> level
-    
-    # 初始化非枢纽匹配实体
-    for eid in matched_entity_ids:
-        ename_lower = entity_id_to_name.get(eid, "")
-        if ename_lower not in hub_names:
-            first_hop_entity_ids.add(eid)
-            
-    for rel in all_relations:
-        if rel.source_id in matched_entity_ids or rel.target_id in matched_entity_ids:
-            matched_relations_1hop.append(rel)
-            relation_hop_level[rel.id] = 1
-            
-            # 若源/目标实体不是 Hub 节点（User/Character），则允许其做 2-hop 桥梁
-            src_name_lower = entity_id_to_name.get(rel.source_id, "")
-            if src_name_lower not in hub_names:
-                first_hop_entity_ids.add(rel.source_id)
-                
-            tgt_name_lower = entity_id_to_name.get(rel.target_id, "")
-            if tgt_name_lower not in hub_names:
-                first_hop_entity_ids.add(rel.target_id)
-            
-    # 6. 二度遍历 (2-hop)：拉取非枢纽邻居实体内部存在的其它关系
-    matched_relations_2hop = []
-    added_relation_ids = {r.id for r in matched_relations_1hop}
-    for rel in all_relations:
-        if rel.id not in added_relation_ids:
-            if rel.source_id in first_hop_entity_ids and rel.target_id in first_hop_entity_ids:
-                matched_relations_2hop.append(rel)
-                relation_hop_level[rel.id] = 2
-                added_relation_ids.add(rel.id)
-                
-    matched_relations = matched_relations_1hop + matched_relations_2hop
-    if not matched_relations:
-        return ""
-        
-    # 7. 格式化构建提示词背景
-    entity_map = {ent.id: ent.name for ent in entities}
-    
-    # 7.1 格式化实体定义描述（优先保留祖先链越新/越顶层的描述）
-    entity_desc_lines = []
-    matched_entities_to_describe = [ent for ent in entities if ent.id in first_hop_entity_ids]
-    seen_names = set()
-    
-    # 按祖先链出现的倒序排序，即子 Session 优先于父 Session
-    for ent in sorted(matched_entities_to_describe, key=lambda e: ancestor_ids.index(e.persona_id)):
-        if ent.name not in seen_names:
-            seen_names.add(ent.name)
-            if ent.description:
-                entity_desc_lines.append(f"- {ent.name}: {ent.description}")
-                
-    # 7.2 格式化关系描述列表
-    # 排序规则：
-    #   1. 优先展示 1-hop 关系，其次是 2-hop 关系
-    #   2. ancestor_ids 下标越小表示越靠近当前 Session（子 > 父 > 祖）
-    #   3. 重要性分值高者优先
-    relation_lines = []
-    seen_relation_triples = set()
-    matched_relations.sort(
-        key=lambda r: (
-            relation_hop_level.get(r.id, 2),
-            ancestor_ids.index(r.persona_id) if r.persona_id in ancestor_ids else 999,
-            -(r.importance or 0.5)
-        )
-    )
-    
-    for rel in matched_relations:
-        # 应用检索上限截断
-        if len(relation_lines) >= settings.APP_GRAPH_MAX_RELATIONS:
-            break
-            
-        src_name = entity_map.get(rel.source_id)
-        tgt_name = entity_map.get(rel.target_id)
-        if not src_name or not tgt_name:
+
+    # Collapse inherited COW IDs into name-level effective triples.
+    effective_relations: dict[tuple[str, str, str], GraphRelation] = {}
+    for relation in sorted(
+        relations,
+        key=lambda item: (persona_priority.get(item.persona_id, 999), item.id),
+    ):
+        source = entity_by_id.get(relation.source_id)
+        target = entity_by_id.get(relation.target_id)
+        if source is None or target is None:
             continue
-            
-        triple_key = (src_name, rel.relation_type, tgt_name)
-        if triple_key not in seen_relation_triples:
-            seen_relation_triples.add(triple_key)
-            if rel.description:
-                relation_lines.append(f"- {rel.description}")
-            else:
-                relation_lines.append(f"- {src_name}与{tgt_name}的关系是: {rel.relation_type}")
-                
-    # 组装输出
+        source_key = normalize_entity_name(source.name)
+        target_key = normalize_entity_name(target.name)
+        if source_key not in effective_entities or target_key not in effective_entities:
+            continue
+        triple = (source_key, _relation_type_key(relation.relation_type), target_key)
+        if triple not in effective_relations:
+            effective_relations[triple] = relation
+
+    if not effective_relations:
+        return ""
+
+    adjacency: dict[str, list[tuple[tuple[str, str, str], GraphRelation, str]]] = defaultdict(list)
+    for triple, relation in effective_relations.items():
+        source_key, _, target_key = triple
+        adjacency[source_key].append((triple, relation, target_key))
+        adjacency[target_key].append((triple, relation, source_key))
+
+    persona = db.get(SessionPersona, persona_id)
+    character_name = persona.character.name if persona and persona.character else ""
+    hub_keys = {normalize_entity_name("用户"), normalize_entity_name("user")}
+    if character_name:
+        hub_keys.add(normalize_entity_name(character_name))
+
+    selected: dict[tuple[str, str, str], tuple[GraphRelation, int]] = {}
+    first_hop_neighbors = set()
+    for seed in sorted(matched_keys):
+        for triple, relation, neighbor in adjacency.get(seed, []):
+            selected.setdefault(triple, (relation, 1))
+            if seed not in hub_keys and neighbor not in hub_keys:
+                first_hop_neighbors.add(neighbor)
+
+    for node in sorted(first_hop_neighbors):
+        for triple, relation, _neighbor in adjacency.get(node, []):
+            if triple not in selected:
+                selected[triple] = (relation, 2)
+
+    if not selected:
+        return ""
+
+    ranked = sorted(
+        selected.items(),
+        key=lambda item: (
+            item[1][1],
+            persona_priority.get(item[1][0].persona_id, 999),
+            -(item[1][0].importance or 0.5),
+            item[0][0],
+            item[0][1],
+            item[0][2],
+            item[1][0].id,
+        ),
+    )[:max(0, settings.APP_GRAPH_MAX_RELATIONS)]
+    if not ranked:
+        return ""
+
+    described_keys = set(matched_keys)
+    relation_lines = []
+    for (source_key, _relation_key, target_key), (relation, _hop) in ranked:
+        described_keys.update((source_key, target_key))
+        source_name = effective_entities[source_key].name
+        target_name = effective_entities[target_key].name
+        if relation.description:
+            relation_lines.append(f"- {relation.description}")
+        else:
+            relation_lines.append(
+                f"- {source_name}与{target_name}的关系是: {relation.relation_type}"
+            )
+
+    entity_desc_lines = []
+    for key in sorted(
+        described_keys,
+        key=lambda value: (
+            persona_priority.get(effective_entities[value].persona_id, 999),
+            effective_entities[value].name.casefold(),
+            effective_entities[value].id,
+        ),
+    ):
+        entity = effective_entities[key]
+        if entity.description:
+            entity_desc_lines.append(f"- {entity.name}: {entity.description}")
+
     output_parts = []
     if entity_desc_lines:
         output_parts.append("实体定义:")
@@ -376,5 +434,4 @@ def retrieve_graph_context(
             output_parts.append("")
         output_parts.append("关系网:")
         output_parts.extend(relation_lines)
-        
     return "\n".join(output_parts)

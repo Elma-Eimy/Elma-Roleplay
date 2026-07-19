@@ -3,11 +3,120 @@
 """
 
 import json
+import re
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core.models import SessionPersona, ChatMessage, MemoryType, MemoryChunk
 from services.llm_provider import get_llm_provider
 from core.config import settings
+
+
+_MEMORY_MAX_CARDS_PER_BATCH = 8
+_MEMORY_MAX_CONTENT_CHARS = 500
+_LEADING_REFERENCE_RE = re.compile(
+    r"^(?:他|她|它|他们|她们|它们|这|那|这个|那个|这里|那里|"
+    r"he\b|she\b|it\b|they\b|this\b|that\b)",
+    re.IGNORECASE,
+)
+_VAGUE_LOCATION_RE = re.compile(
+    r"(?:这里|那里|这边|那边|此处|彼处|\bhere\b|\bthere\b)",
+    re.IGNORECASE,
+)
+_TRIVIAL_MEMORY_TEXTS = {
+    "你好", "您好", "谢谢", "感谢", "再见", "晚安", "哈哈", "呵呵",
+    "ok", "okay", "thanks", "thankyou", "hello", "hi", "bye",
+}
+
+
+def _clean_memory_content(value: str) -> str:
+    content = re.sub(r"\s+", " ", value).strip().strip('"\'`-*# ')
+    if len(content) > _MEMORY_MAX_CONTENT_CHARS:
+        content = content[:_MEMORY_MAX_CONTENT_CHARS].rstrip(" ,，。;；") + "…"
+    return content
+
+
+def normalize_extracted_memories(
+    extracted_memories: list,
+    source_message_ids: list[int],
+) -> list[dict]:
+    """Validate model output and return bounded, self-contained memory cards."""
+    if not source_message_ids:
+        return []
+
+    valid_ids = set(source_message_ids)
+    default_start = source_message_ids[0]
+    default_end = source_message_ids[-1]
+    parsed: list[dict] = []
+
+    for memory in extracted_memories:
+        if len(parsed) >= _MEMORY_MAX_CARDS_PER_BATCH:
+            break
+        if not isinstance(memory, dict):
+            continue
+
+        raw_content = memory.get("content")
+        if not isinstance(raw_content, str):
+            continue
+        content = _clean_memory_content(raw_content)
+        compact = re.sub(r"[\W_]+", "", content, flags=re.UNICODE).casefold()
+        if len(compact) < 4 or compact in _TRIVIAL_MEMORY_TEXTS:
+            continue
+        # Do not discard a substantive role-play memory merely because it starts
+        # with a pronoun. Only reject very short fragments whose meaning is almost
+        # entirely dependent on an unresolved reference.
+        if _LEADING_REFERENCE_RE.match(content) and (
+            len(compact) < 8 or _VAGUE_LOCATION_RE.search(content)
+        ):
+            continue
+
+        # Only remove deterministically identical cards. Fuzzy text similarity is
+        # unsafe for negation pairs such as "likes" / "does not like"; semantic
+        # candidates are resolved later by the bounded LLM relationship check.
+        duplicate = False
+        for existing in parsed:
+            existing_compact = re.sub(
+                r"[\W_]+", "", existing["content"], flags=re.UNICODE
+            ).casefold()
+            if compact == existing_compact:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+
+        raw_type = memory.get("memory_type", "fact")
+        try:
+            memory_type = MemoryType(raw_type)
+        except (ValueError, TypeError):
+            memory_type = MemoryType.fact
+
+        try:
+            importance = max(
+                0.0, min(1.0, float(memory.get("importance_score", 0.5)))
+            )
+        except (ValueError, TypeError):
+            importance = 0.5
+
+        try:
+            source_start = int(memory.get("source_start_message_id"))
+            source_end = int(memory.get("source_end_message_id"))
+        except (ValueError, TypeError):
+            source_start, source_end = default_start, default_end
+        if (
+            source_start not in valid_ids
+            or source_end not in valid_ids
+            or source_start > source_end
+        ):
+            source_start, source_end = default_start, default_end
+
+        parsed.append({
+            "content": content,
+            "memory_type": memory_type,
+            "importance_score": importance,
+            "source_start_message_id": source_start,
+            "source_message_id": source_end,
+        })
+
+    return parsed
 
 
 def get_unsummarized_count(session_id: int, db: DBSession) -> int:
@@ -33,23 +142,67 @@ def get_unsummarized_count(session_id: int, db: DBSession) -> int:
     return query.count()
 
 
-def merge_memories_via_llm(old_content: str, new_content: str) -> str:
-    """
-    使用快速 LLM 合并两个语义相似的记忆。
+def get_memory_extract_batch_size() -> int:
+    """返回单次记忆提纯允许处理的最大消息数。"""
+    return max(30, max(1, int(settings.APP_MEMORY_EXTRACT_LIMIT)))
 
-    将待合并内容通过 user 消息传入，而非嵌入 system prompt f-string，
-    避免内容中含有 triple-quote 等特殊字符时破坏 prompt 结构。
+
+def get_effective_memory_extract_limit() -> int:
+    """计算不会晚于短期历史淘汰点的实际提纯触发阈值。
+
+    配置中的 memory_extract_history_limit 仍表示期望阈值；当它大于短期
+    history 窗口时，自动收紧到 ``history_limit - handoff_margin``，为后台
+    提纯任务留出少量缓冲消息。
     """
-    system_prompt = (
-        "你是一个记忆整理助手。你会收到两条相似的记忆片段，请将它们合并为"
-        "一句最精简、无冗余、包含所有最新细节的自然语言陈述。\n"
-        "如果新记忆是对旧记忆的纠正或状态更新，请以新记忆为准。\n"
-        "不要输出任何解释或前缀，直接返回合并后的单句记忆陈述。"
+    configured_limit = max(1, int(settings.APP_MEMORY_EXTRACT_LIMIT))
+    history_limit = max(1, int(settings.APP_CONTEXT_HISTORY_LIMIT))
+    configured_margin = max(0, int(settings.APP_MEMORY_HANDOFF_MARGIN))
+    margin = min(configured_margin, max(0, history_limit - 1))
+    safe_limit = max(1, history_limit - margin)
+    return min(configured_limit, safe_limit)
+
+
+def get_memory_handoff_history_limit(session_id: int, db: DBSession) -> int:
+    """返回本轮 Prompt 应保留的短期历史条数。
+
+    后台提纯完成前，尚未总结的活跃消息不能先被短期窗口淘汰，因此窗口会
+    临时扩展到未总结消息数；为防止外部服务长期失败导致 Prompt 无界增长，
+    扩展上限与单次提纯批次大小保持一致。指针推进后会自动恢复常规窗口。
+    """
+    base_limit = max(1, int(settings.APP_CONTEXT_HISTORY_LIMIT))
+    unsummarized_count = get_unsummarized_count(session_id, db)
+    retained_unsummarized = min(
+        unsummarized_count,
+        get_memory_extract_batch_size(),
     )
+    return max(base_limit, retained_unsummarized)
+
+
+def resolve_memory_relationship_via_llm(
+    old_content: str,
+    new_content: str,
+) -> dict[str, str]:
+    """Classify one high-similarity candidate conservatively.
+
+    Vector distance only selects a candidate; it must never delete or merge text
+    by itself. On malformed output or provider failure, coexist is the safe and
+    reversible fallback.
+    """
+    system_prompt = """你是一个长期记忆整理助手。比较一条已有记忆和一条新提取记忆，只能判断为以下三类之一：
+- same：两条表达实质相同，且新记忆没有值得保留的新细节。
+- replace：两条不能继续同时作为当前信息成立，或新记忆补充了应当成为默认表达的重要细节。
+- coexist：两条可以同时成立，或无法确定它们是否描述同一件事。
+
+特别注意否定词、程度变化、时间变化和关系变化。“喜欢”与“不喜欢”、“已经”与“尚未”绝不是 same。
+判断不确定时必须选择 coexist。不要编造输入中没有的信息。
+
+只返回 JSON：
+{"relation":"same|replace|coexist","resolved_content":"..."}
+
+same 时 resolved_content 使用已有记忆；replace 时输出一条可独立理解、以新信息为准且保留仍有效细节的记忆；coexist 时使用新记忆。"""
     user_content = (
-        f"【记忆 A (旧)】: {old_content}\n"
-        f"【记忆 B (新)】: {new_content}\n\n"
-        "请合并以上两条记忆，直接返回合并后的单句陈述。"
+        f"【已有记忆】：{old_content}\n"
+        f"【新提取记忆】：{new_content}"
     )
 
     try:
@@ -60,26 +213,37 @@ def merge_memories_via_llm(old_content: str, new_content: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.1,  # 极低温度以防自由发挥
+            temperature=0.0,
         )
-        merged = response.choices[0].message.content.strip()
-        # 剥离可能生成的引号
-        if merged.startswith('"') and merged.endswith('"'):
-            merged = merged[1:-1]
-        if merged.startswith("'") and merged.endswith("'"):
-            merged = merged[1:-1]
-        if merged:
-            return merged.strip()
-    except Exception as e:
-        print(f"[WARN] merge_memories_via_llm 失败: {e}")
+        content = response.choices[0].message.content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        payload = json.loads(content.strip())
+        relation = payload.get("relation") if isinstance(payload, dict) else None
+        if relation not in {"same", "replace", "coexist"}:
+            raise ValueError(f"unsupported relation: {relation!r}")
 
-    # 兜底返回新记忆
-    return new_content
+        default_content = old_content if relation == "same" else new_content
+        resolved = payload.get("resolved_content", default_content)
+        if not isinstance(resolved, str):
+            resolved = default_content
+        resolved = _clean_memory_content(resolved)
+        if not resolved:
+            resolved = default_content
+        return {"relation": relation, "resolved_content": resolved}
+    except Exception as exc:
+        print(f"[WARN] resolve_memory_relationship_via_llm 失败，保守按 coexist 处理: {exc}")
+        return {"relation": "coexist", "resolved_content": new_content}
 
 
 def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     """
-    核心提纯函数：从指定 Session 的未总结对话中提取结构化记忆，双写入库。
+    核心提纯函数：从指定 Session 的未总结对话中提取结构化记忆，
+    原子写入 SQLite 主数据与向量同步 Outbox 任务。
 
     增量机制：
       - 仅处理 last_summarized_msg_id 之后的消息（避免重复提纯）
@@ -112,7 +276,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
 
     # 限制单次提纯的最大消息数，防止大模型 Token 爆仓（默认设置为 30 条）
-    MAX_BATCH_SIZE = max(30, settings.APP_MEMORY_EXTRACT_LIMIT)
+    MAX_BATCH_SIZE = get_memory_extract_batch_size()
     unsummarized = query.order_by(ChatMessage.id).limit(MAX_BATCH_SIZE).all()
 
     if not unsummarized:
@@ -125,7 +289,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     chat_text = ""
     for msg in unsummarized:
         role_label = "User" if msg.role.value == "user" else "Assistant"
-        chat_text += f"{role_label}: {msg.content}\n"
+        chat_text += f"[消息ID={msg.id}] {role_label}: {msg.content}\n"
 
     # 【优化关键点】在大模型调用前，主动提交并结束当前事务，释放 SQLite 文件锁
     db.commit()
@@ -153,13 +317,32 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
 请过滤掉无意义的闲聊，只保留有价值的内容。
 
+【记忆卡颗粒度规则】
+1. 一张记忆卡必须是脱离原对话后仍能独立理解的完整事实、偏好、关系变化或事件。
+2. 必须消解“他、她、它、那里、那个、这件事”等指代，写出明确的人名、角色名、地点或事件。
+3. 同一事件中紧密关联的时间、地点、原因和结果应合并在一张卡中；不要按原始消息逐句切碎。
+4. 两个可以独立成立、独立更新的事实应拆成两张卡，不要写成笼统的大段对话摘要。
+5. 保留时间状态，如“过去”“目前”“计划于下个月”；不要把计划写成已经发生的事实。
+6. 不要记录寒暄、复述、推测、模型自己的措辞或角色基础人设中已有内容。
+7. 每张卡建议为 1 到 3 句，最多 300 个字符；本批最多输出 8 张记忆卡。
+8. source_start_message_id 和 source_end_message_id 必须引用输入中真实存在的消息ID，并覆盖支持该记忆的最小连续消息范围。
+
+【身份与指代规则】
+1. 输入中的 User 始终代表“用户”；User 的第一人称应改写为“用户”。
+2. 输入中的 Assistant 始终代表上方角色名称所指的角色；Assistant 的第一人称，以及明确指向 Assistant 的“你/他/她”，应改写为角色名称或“角色本人”。
+3. 第三方代词只有在本批对话中能确定身份时才展开；无法确定时不得编造姓名，可以使用“用户提到的妹妹”等有依据的描述性身份。
+4. 如果第三方身份和关系都无法确定，不要为了凑记忆而猜测。
+
 你需要提取出三部分内容：
 1. memories：长期记忆片段列表。每个记忆包含：
    - content：记忆的自然语言描述（例如："用户最喜欢的食物是草莓蛋糕"）
    - memory_type：必须是 "event" (事件), "emotion" (角色情绪), "relationship" (关系变化), "fact" (客观事实/设定) 之一
    - importance_score：0.0 到 1.0 之间的重要性评分
+   - source_start_message_id：支持该记忆的第一条消息ID
+   - source_end_message_id：支持该记忆的最后一条消息ID
 2. entities：对话中出现的重要实体/概念列表。每个实体包含：
    - name：实体或人名（例如："小红"、"草莓蛋糕"、"东京"）
+   - aliases：可选的明确昵称、简称或同一名称写法列表（例如：["阿墨", "墨哥"]）；不得把“他/她/它/这里/那个”等通用代词作为别名
    - entity_type：必须是 "person" (人物), "place" (地点), "object" (物品), "event" (事件), "concept" (概念/其它) 之一
    - description：对该实体的简要描述、状态或喜好（第一人称视角，例如："用户的妹妹，非常喜欢吃草莓蛋糕。"）
 3. relations：实体之间的关系列表。每个关系包含：
@@ -172,10 +355,10 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 你必须以一个 JSON 对象格式返回，结构如下：
 {
   "memories": [
-    {"content": "用户最喜欢的食物是草莓蛋糕", "memory_type": "fact", "importance_score": 0.7}
+    {"content": "用户最喜欢的食物是草莓蛋糕", "memory_type": "fact", "importance_score": 0.7, "source_start_message_id": 101, "source_end_message_id": 103}
   ],
   "entities": [
-    {"name": "小红", "entity_type": "person", "description": "用户的妹妹，非常喜欢吃草莓蛋糕"}
+    {"name": "小红", "aliases": ["红红"], "entity_type": "person", "description": "用户的妹妹，非常喜欢吃草莓蛋糕"}
   ],
   "relations": [
     {"source": "用户", "relation_type": "sibling", "target": "小红", "description": "用户和小红是亲兄妹", "importance": 0.8},
@@ -245,52 +428,16 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         print(f"==========================================")
         return 0
 
-    # Step 4: 解析并过滤有效记忆
-    parsed_memories = []
-    for mem in extracted_memories:
-        if not isinstance(mem, dict):
-            continue
-
-        mem_content = mem.get("content", "")
-        if not mem_content or not isinstance(mem_content, str):
-            continue
-
-        # 解析 memory_type（容错：无效类型默认为 fact）
-        raw_type = mem.get("memory_type", "fact")
-        try:
-            mem_type = MemoryType(raw_type)
-        except ValueError:
-            mem_type = MemoryType.fact
-
-        # 解析 importance_score（容错：无效值默认为 0.5）
-        raw_score = mem.get("importance_score", 0.5)
-        try:
-            mem_score = float(raw_score)
-            mem_score = max(0.0, min(1.0, mem_score))  # 钳位到 [0, 1]
-        except (ValueError, TypeError):
-            mem_score = 0.5
-
-        parsed_memories.append({
-            "content": mem_content,
-            "memory_type": mem_type,
-            "importance_score": mem_score,
-        })
+    # Step 4: 解析、规范化并过滤碎片/寒暄/同批重复记忆
+    parsed_memories = normalize_extracted_memories(
+        extracted_memories,
+        [message.id for message in unsummarized],
+    )
 
     # Step 5: 原子批量写入（全部成功 or 全部回滚）
     #
-    # 执行顺序（严格保证一致性）：
-    #   ① 所有 SQLite ORM flush（add / update，均不 commit）
-    #   ② 新建记忆写入 ChromaDB（add_memory_chunk 内部，auto_commit=False 时
-    #      已在 flush 后立即写入，这是 add 路径的固有设计）
-    #   ③ db.commit()  —— SQLite 侧原子落盘
-    #   ④ 执行所有延迟 ChromaDB 更新闭包（update 路径，仅在 commit 成功后写入）
-    #
-    # 这样设计确保：
-    #   • update 路径：ChromaDB 永远在 SQLite commit 之后才写，commit 失败则
-    #     ChromaDB 无任何修改，无需还原，天然一致。
-    #   • add 路径：ChromaDB 先写，commit 失败时通过 chroma_ids_written 回滚。
-    chroma_ids_written = []          # add_memory_chunk 写入的 ChromaDB doc id 列表
-    pending_chroma_updates = []      # update_memory_chunk 产生的延迟写入闭包列表
+    # 所有语义变化都创建新卡片，不原地覆盖旧内容和旧来源。记忆及其向量同步
+    # Outbox 任务由同一个 SQLite 事务原子提交。
     max_importance = 0.0
 
     # 重新绑定 persona 到当前新事务中
@@ -302,7 +449,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     try:
         # 批量写入传统向量记忆片段，引入增量融合与去重
         # 注意：这两个 import 因循环依赖不能放在文件顶层，保留在函数体内
-        from services.memory_manager import retrieve_memories, update_memory_chunk
+        from services.memory_manager import retrieve_memories
         from services.graph_service import upsert_graph_data
 
         for pm in parsed_memories:
@@ -317,78 +464,67 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                 min_importance=0.0
             )
 
-            # 按距离阈值筛选，再分为本地与祖先两类
-            similar_in_threshold = [
-                m for m in existing_similar if m.get("distance", 1.0) < settings.APP_DEDUP_WRITE_THRESHOLD
-            ]
-            local_candidates  = [m for m in similar_in_threshold if m.get("persona_id") == persona_id]
-            ancestor_candidates = [m for m in similar_in_threshold if m.get("persona_id") != persona_id]
-
-            if local_candidates:
-                # 2a. 本地记忆：将所有候选链式合并（chain-merge）进新内容，
-                #     只原地更新最佳匹配（得分最高/距离最近的第一条），其余靠检索侧去重自然消解
-                merged_content = pm["content"]
-                # 重要性融合公式：max(旧, 新) + 剩余空间 * 0.1
-                # 效果：高分端趋于饱和（如 0.95 → 0.955），低分端有明显提升（如 0.3 → 0.37）
-                merged_imp = float(pm["importance_score"])
-                for candidate in local_candidates:
-                    merged_content = merge_memories_via_llm(candidate["content"], merged_content)
-                    old_imp = float(candidate.get("importance_score", 0.5))
-                    merged_imp = min(1.0, max(old_imp, merged_imp) + (1.0 - max(old_imp, merged_imp)) * 0.1)
-
-                # 仅更新第一条（最佳匹配），ChromaDB 写入延迟到 commit 后
-                best_local = local_candidates[0]
-                chunk_id = best_local["id"]
-                updated_chunk = update_memory_chunk(
-                    chunk_id=chunk_id,
-                    content=merged_content,
-                    importance_score=merged_imp,
-                    db=db,
-                    auto_commit=False
+            # Distance only selects comparison candidates. It never directly
+            # deletes or merges text. Compare closest candidates first and stop
+            # at the first definite same/replace decision.
+            candidates = sorted(
+                (
+                    memory for memory in existing_similar
+                    if memory.get("id") is not None
+                    and memory.get("distance", 1.0) < settings.APP_DEDUP_WRITE_THRESHOLD
+                ),
+                key=lambda memory: memory.get("distance", 1.0),
+            )
+            decision = None
+            matched_candidate = None
+            for candidate in candidates:
+                candidate_decision = resolve_memory_relationship_via_llm(
+                    candidate["content"], pm["content"]
                 )
-                # 收集延迟写入闭包（字段快照已在 update_memory_chunk 内完成）
-                if updated_chunk is not None:
-                    pending_fn = getattr(updated_chunk, "_pending_chroma_update", None)
-                    if pending_fn is not None:
-                        pending_chroma_updates.append(pending_fn)
-                print(f"[INFO] 语义去重: 链式合并 {len(local_candidates)} 条本地记忆 -> "
-                      f"chunk_id={chunk_id} -> '{merged_content}'")
+                if candidate_decision["relation"] != "coexist":
+                    decision = candidate_decision
+                    matched_candidate = candidate
+                    break
 
-            elif ancestor_candidates:
-                # 2b. 无本地匹配，但祖先有相似记忆 → 写时复制 (COW)
-                best_ancestor = ancestor_candidates[0]
-                merged_content = merge_memories_via_llm(best_ancestor["content"], pm["content"])
-                old_imp = float(best_ancestor.get("importance_score", 0.5))
-                new_imp = float(pm["importance_score"])
-                merged_imp = min(1.0, max(old_imp, new_imp) + (1.0 - max(old_imp, new_imp)) * 0.1)
-                chunk = add_memory_chunk(
-                    persona_id=persona_id,
-                    character_id=character_id,
-                    content=merged_content,
-                    memory_type=pm["memory_type"],
-                    importance_score=merged_imp,
-                    origin_session_id=session_id,
-                    source_message_id=last_msg_id,
-                    db=db,
-                    auto_commit=False,
+            if decision and decision["relation"] == "same":
+                print(
+                    f"[INFO] 记忆判定 same: 保留 chunk_id={matched_candidate['id']}，"
+                    "跳过重复写入"
                 )
-                chroma_ids_written.append(chunk.chroma_doc_id)
-                print(f"[INFO] 语义去重: 继承祖先记忆并进行写时复制 (COW) -> '{merged_content}'")
-
             else:
-                # 3. 未找到相似记忆：正常插入新记录
+                supersedes_id = None
+                content_to_store = pm["content"]
+                importance_to_store = float(pm["importance_score"])
+                if decision and decision["relation"] == "replace":
+                    supersedes_id = matched_candidate["id"]
+                    content_to_store = decision["resolved_content"]
+                    old_importance = float(
+                        matched_candidate.get("importance_score", 0.5)
+                    )
+                    importance_to_store = min(
+                        1.0,
+                        max(old_importance, importance_to_store)
+                        + (1.0 - max(old_importance, importance_to_store)) * 0.1,
+                    )
+
                 chunk = add_memory_chunk(
                     persona_id=persona_id,
                     character_id=character_id,
-                    content=pm["content"],
+                    content=content_to_store,
                     memory_type=pm["memory_type"],
-                    importance_score=pm["importance_score"],
+                    importance_score=importance_to_store,
                     origin_session_id=session_id,
-                    source_message_id=last_msg_id,
+                    source_message_id=pm["source_message_id"],
                     db=db,
+                    source_start_message_id=pm["source_start_message_id"],
+                    supersedes_id=supersedes_id,
                     auto_commit=False,
                 )
-                chroma_ids_written.append(chunk.chroma_doc_id)
+                if supersedes_id is not None:
+                    print(
+                        f"[INFO] 记忆判定 replace: 新建 chunk_id={chunk.id} "
+                        f"替代 chunk_id={supersedes_id}"
+                    )
 
             if pm["importance_score"] > max_importance:
                 max_importance = pm["importance_score"]
@@ -405,40 +541,12 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         # 所有记忆写入成功，更新进度指针
         persona.last_summarized_msg_id = last_msg_id
 
-        # ③ 单次原子提交（SQLite 侧）
+        # 单次原子提交（SQLite 侧）
         db.commit()
-
-        # ④ SQLite commit 成功后，执行所有延迟 ChromaDB 更新（update 路径）
-        #    此时 commit 已完成，即使 ChromaDB 写入失败，SQLite 数据已持久化，
-        #    最坏情况是向量侧短暂滞后，下次 update 会覆盖修正。
-        if pending_chroma_updates:
-            chroma_update_errors = []
-            for fn in pending_chroma_updates:
-                try:
-                    fn()
-                except Exception as chroma_err:
-                    chroma_update_errors.append(chroma_err)
-            if chroma_update_errors:
-                print(f"[WARN] {len(chroma_update_errors)} 条延迟 ChromaDB 更新失败（SQLite 已成功提交）: "
-                      f"{chroma_update_errors[0]}")
 
     except Exception as e:
         # 任何一步 SQLite 操作失败 → 全部回滚
-        # 注意：update 路径的 pending_chroma_updates 尚未执行，ChromaDB 无任何修改，无需还原。
         db.rollback()
-
-        # 清理 add 路径已写入 ChromaDB 的文档（恢复到本次操作前的状态）
-        if chroma_ids_written:
-            try:
-                collection = get_character_collection(character_id)
-                collection.delete(ids=chroma_ids_written)
-                print(f"[INFO] 批量回滚: 已从 ChromaDB 清理 {len(chroma_ids_written)} 条文档")
-            except Exception as cleanup_err:
-                print(f"==========================================")
-                print(f"[CRITICAL] ChromaDB 批量回滚失败，可能存在孤儿文档")
-                print(f"[CRITICAL] 残留文档 IDs: {chroma_ids_written}")
-                print(f"[CRITICAL] 错误详情: {cleanup_err}")
-                print(f"==========================================")
 
         print(f"==========================================")
         print(f"[ERROR] summarize_and_store_memory: 批量写入失败，全部回滚")

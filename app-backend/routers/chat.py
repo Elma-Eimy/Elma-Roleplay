@@ -365,9 +365,13 @@ def run_auto_trigger_checks(session_id: int, persona_id: int):
     db = SessionLocal()
     try:
         unsummarized = memory_manager.get_unsummarized_count(session_id, db)
-        if unsummarized >= settings.APP_MEMORY_EXTRACT_LIMIT:
+        effective_limit = memory_manager.get_effective_memory_extract_limit()
+        if unsummarized >= effective_limit:
             count = memory_manager.summarize_and_store_memory(session_id, db)
-            print(f"[INFO] 自动记忆提纯: 提取了 {count} 条记忆 (session_id={session_id})")
+            print(
+                f"[INFO] 自动记忆提纯: 提取了 {count} 条记忆 "
+                f"(session_id={session_id}, trigger={effective_limit})"
+            )
     except Exception as e:
         print(f"[WARN] 自动记忆提纯失败: {e}")
 
