@@ -5,7 +5,7 @@ import sys
 # 将当前目录的父目录加入 python path 以确保能正确引入 services 和 core
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.lorebook_engine import process_lorebook
+from services.lorebook.lorebook_engine import process_lorebook
 
 # 模拟 Character 数据库 ORM 对象
 class MockCharacter:
@@ -217,7 +217,7 @@ def run_tests():
     # 测试清理：删除临时的 ChromaDB collection
     # ──────────────────────────────────────────────────
     try:
-        from services.clients import chroma_client
+        from services.infrastructure.clients import chroma_client
         chroma_client.delete_collection("lorebook_999")
         print("[INFO] 成功清理测试向量集合: lorebook_999")
     except Exception as e:

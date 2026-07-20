@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from routers.sessions import compile_session_prompt
-from services.prompt_token_estimator import (
+from services.conversation.prompt_token_estimator import (
     SECTION_ORDER,
     estimate_prompt_tokens,
     estimate_text_tokens,
@@ -101,7 +101,7 @@ class PromptTokenEstimatorTests(unittest.TestCase):
         db = _PreviewDB(session)
 
         with patch(
-            "services.prompt_compiler.compile_system_prompt",
+            "services.conversation.prompt_compiler.compile_system_prompt",
             return_value="固定角色提示词",
         ):
             response = asyncio.run(

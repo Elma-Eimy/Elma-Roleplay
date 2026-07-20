@@ -1,13 +1,13 @@
-"""
-认知状态更新与记忆提纯服务
-"""
+"""从对话中提取、规范化并持久化长期记忆。"""
 
 import json
 import re
-from typing import Optional
 from sqlalchemy.orm import Session as DBSession
-from core.models import SessionPersona, ChatMessage, MemoryType, MemoryChunk
-from services.llm_provider import get_llm_provider
+from core.models import SessionPersona, ChatMessage, MemoryType
+from services.infrastructure.llm_provider import get_llm_provider
+from services.memory.memory_manager import add_memory_chunk, retrieve_memories
+from services.memory.graph_service import upsert_graph_data
+import services.memory.cognition_service as cognition_service
 from core.config import settings
 
 
@@ -61,17 +61,13 @@ def normalize_extracted_memories(
         compact = re.sub(r"[\W_]+", "", content, flags=re.UNICODE).casefold()
         if len(compact) < 4 or compact in _TRIVIAL_MEMORY_TEXTS:
             continue
-        # Do not discard a substantive role-play memory merely because it starts
-        # with a pronoun. Only reject very short fragments whose meaning is almost
-        # entirely dependent on an unresolved reference.
+        # 不要仅仅因为实质性角色扮演记忆以代词开头就将其丢弃。只拒绝那些其含义几乎完全依赖于未解析指代的极短片段。
         if _LEADING_REFERENCE_RE.match(content) and (
             len(compact) < 8 or _VAGUE_LOCATION_RE.search(content)
         ):
             continue
 
-        # Only remove deterministically identical cards. Fuzzy text similarity is
-        # unsafe for negation pairs such as "likes" / "does not like"; semantic
-        # candidates are resolved later by the bounded LLM relationship check.
+        # 仅删除确定相同的记忆卡。对于否定对（例如“喜欢”/“不喜欢”），模糊文本相似度是不安全的；语义候选将在稍后通过受限的 LLM 关系检查进行解析。
         duplicate = False
         for existing in parsed:
             existing_compact = re.sub(
@@ -252,9 +248,6 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     返回成功入库的记忆条数。
     """
-    # 动态导入以防循环依赖
-    from services.memory_manager import add_memory_chunk
-
     # Step 1: 获取 Session 对应的 Persona
     persona = db.query(SessionPersona).filter(
         SessionPersona.session_id == session_id
@@ -448,10 +441,6 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     try:
         # 批量写入传统向量记忆片段，引入增量融合与去重
-        # 注意：这两个 import 因循环依赖不能放在文件顶层，保留在函数体内
-        from services.memory_manager import retrieve_memories
-        from services.graph_service import upsert_graph_data
-
         for pm in parsed_memories:
             # 1. 检索当前 Persona（含祖先链）下最多 3 条高相似度记忆（#5 fix：top_k=1 时
             #    若最佳候选被重要性/距离过滤掉会漏匹配，top_k=3 提供更充分的候选集）
@@ -561,126 +550,9 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     # Step 6: 检查是否需要触发 cognition_state 高重要性更新
     if max_importance >= settings.APP_COGNITION_IMPORTANCE_THRESHOLD:
         try:
-            update_cognition_state(persona_id, db)
+            cognition_service.update_cognition_state(persona_id, db)
             print(f"[INFO] 高重要性记忆 ({max_importance:.2f}) 触发了 cognition_state 即时更新")
         except Exception as e:
             print(f"[WARN] cognition_state 即时更新失败: {e}")
 
     return success_count
-
-
-def get_cognition_unseen_count(persona_id: int, session_id: int, db: DBSession) -> int:
-    """
-    返回自上次认知更新以来的新消息数量。
-
-    供调用方判断是否需要触发定期认知更新
-    （与 settings.APP_COGNITION_UPDATE_INTERVAL 比较）。
-    """
-    persona = db.get(SessionPersona, persona_id)
-    if not persona:
-        return 0
-
-    query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.is_active == True
-    )
-    if persona.last_cognition_update_msg_id is not None:
-        query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
-
-    return query.count()
-
-
-def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
-    """
-    调用 LLM 更新 SessionPersona.cognition_state（角色宏观认知摘要）。
-
-    输入：旧 cognition_state + 自上次认知更新以来的消息
-    输出：新的认知摘要文本，同时写入 SessionPersona.cognition_state
-
-    触发方式：
-      a. 日常积累：当 get_cognition_unseen_count() >= cognition_update_interval 时
-      b. 高重要性：当记忆提纯产生 importance >= cognition_importance_threshold 的记忆时
-    """
-    persona = db.get(SessionPersona, persona_id)
-    if not persona:
-        print(f"[WARN] update_cognition_state: Persona {persona_id} 不存在")
-        return None
-
-    session_id = persona.session_id
-    old_cognition = persona.cognition_state or "（尚未建立认知）"
-
-    # 查询自上次认知更新以来的消息
-    query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.is_active == True
-    )
-    if persona.last_cognition_update_msg_id is not None:
-        query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
-
-    recent_messages = query.order_by(ChatMessage.id).all()
-
-    if not recent_messages:
-        return persona.cognition_state
-
-    # 提取所需数据，防止之后事务释放后访问属性报错
-    last_msg_id = recent_messages[-1].id
-
-    # 组合对话文本
-    chat_text = ""
-    for msg in recent_messages:
-        role_label = "User" if msg.role.value == "user" else "Assistant"
-        chat_text += f"{role_label}: {msg.content}\n"
-
-    # LLM Prompt
-    system_prompt = f"""你是一个角色认知更新专家。你需要基于角色当前的认知状态 and 最近的对话，生成更新后的认知摘要。
-
-认知摘要应当描述"角色（名字为：{persona.character.name}）此刻对自己、世界和用户的整体认知"，它将直接组装进角色的 System Prompt。
-
-要求：
-1. 保留旧认知中仍然有效的部分
-2. 融入新对话中产生的重要认知变化
-3. 必须使用角色（名字为：{persona.character.name}）自己的第一人称视角描述（如"作为 {persona.character.name}，我认为..."、"我知道..."、"我感觉..."），禁止使用第三人称（如"他"、"她"、"{persona.character.name}认为..."），以使生成的内容能够作为 {persona.character.name} 的第一人称心声无缝融入扮演设定。
-4. 控制在 {settings.APP_COGNITION_MAX_WORDS} 字以内
-5. 直接返回纯文本，不要使用 JSON 或 markdown 格式"""
-
-    user_content = f"""当前认知状态：
-{old_cognition}
-
-最近的对话：
-{chat_text}
-
-请生成更新后的认知摘要："""
-
-    # 【优化关键点】在大模型调用前，主动提交并结束当前事务，释放 SQLite 文件锁
-    db.commit()
-
-    try:
-        provider = get_llm_provider()
-        response = provider.generate(
-            model=settings.LLM_MEMORY_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=settings.LLM_MEMORY_TEMPERATURE,
-        )
-
-        new_cognition = response.choices[0].message.content.strip()
-
-        # 重新获取 Persona，在一个独立的小事务中更新认知数据
-        persona = db.get(SessionPersona, persona_id)
-        if persona:
-            persona.cognition_state = new_cognition
-            persona.last_cognition_update_msg_id = last_msg_id
-            db.commit()
-
-        print(f"[INFO] cognition_state 已更新 (persona_id={persona_id})")
-        return new_cognition
-
-    except Exception as e:
-        print(f"==========================================")
-        print(f"[ERROR] update_cognition_state: LLM 调用失败")
-        print(f"[ERROR] 错误类型: {type(e).__name__}")
-        print(f"[ERROR] 错误详情: {e}")
-        print(f"==========================================")
-        return None

@@ -17,7 +17,7 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services.graph_service import (
+from services.memory.graph_service import (
     normalize_entity_name,
     retrieve_graph_context,
     sanitize_entity_aliases,

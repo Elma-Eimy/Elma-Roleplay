@@ -26,8 +26,8 @@ from sqlalchemy.pool import StaticPool
 
 from core.config import settings
 from core.models import Base, ChatMessage, MessageRole, Session
-from services import context_assembler
-from services.retrieval_query_service import build_contextual_retrieval_query
+from services.conversation import context_assembler
+from services.conversation.retrieval_query_service import build_contextual_retrieval_query
 
 
 if sys.platform.startswith("win"):
@@ -191,7 +191,7 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
                 return_value="",
             ) as graph_mock,
             patch.object(
-                context_assembler.memory_manager,
+                context_assembler,
                 "get_memory_handoff_history_limit",
                 return_value=15,
             ),
@@ -202,8 +202,13 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
             ),
             patch.object(
                 context_assembler,
-                "_build_chat_messages",
-                new=AsyncMock(return_value=[]),
+                "get_parent_history_examples",
+                return_value=[],
+            ),
+            patch.object(
+                context_assembler,
+                "build_chat_messages",
+                return_value=[],
             ),
         ):
             asyncio.run(

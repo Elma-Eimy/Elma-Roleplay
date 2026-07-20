@@ -379,6 +379,7 @@ tts:
 | GET | `/utils/settings` | 获取当前运行时配置 |
 | PUT | `/utils/settings` | 热更新配置并持久化到 `config.yaml` |
 | POST | `/utils/tts` | 文本转语音合成接口（返回合成音频的挂载 URL） |
+| GET | `/audio/{filename}` | 获取/播放已合成音频文件（支持文件物理丢失后的在线延迟自愈重建） |
 
 ### 角色卡管理 `/characters`
 
@@ -449,7 +450,7 @@ app-backend/
 │   ├── database.py          # 数据库连接、Session 工厂与自适应在轨迁移逻辑
 │   ├── config.py            # Settings 类，加载 .env + config.yaml
 │   ├── auth.py              # X-API-Key 鉴权依赖
-│   ├── locking.py           # 会话级 asyncio.Lock 管理
+│   ├── locking.py           # 会话级 asyncio.Lock 锁管理
 │   └── utils.py             # 工具函数（获取本机 IP 等）
 │
 ├── routers/                 # 路由层 (轻量级，仅负责 HTTP 路径定义、参数校验与异常封装，具体业务委托给 services)
@@ -459,18 +460,35 @@ app-backend/
 │   ├── lorebooks.py         # /lorebooks 端点（导入、详情、编辑、绑定等）
 │   └── utils.py             # /upload/avatar 与 /utils/tts 端点
 │
-├── services/                # 业务服务层 (高内聚核心业务逻辑，脱离 HTTP 协议)
-│   ├── chat_engine.py       # LLM 执行引擎 (专注于大模型请求参数合并与响应结构化解析)
-│   ├── context_assembler.py # 对话上下文装配服务 (统一装配 RAG 检索、知识图谱与对话历史，拼装 Prompt)
-│   ├── retrieval_query_service.py # 有界、分支安全的上下文化检索查询构造器
-│   ├── llm_provider.py      # 大模型服务适配器 (抽象适配层，解耦具体大模型厂商 API SDK)
-│   ├── tts_service.py       # TTS 前处理（动作过滤、声效保留）、云端合成、LRU 音频缓存
-│   ├── memory_manager.py    # RAG 检索、记忆存储、外观层入口
-│   ├── cognition_service.py # 记忆提纯、认知更新
-│   ├── lorebook_engine.py   # 世界书关键词匹配与注入
-│   ├── ahocorasick.py       # Aho-Corasick 自动机实现
-│   ├── session_service.py   # 会话生命周期、分支拷贝、消息删除状态回滚业务服务
-│   └── parse.py             # SillyTavern 角色卡解析
+├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
+│   ├── conversation/        # 对话与会话相关业务服务
+│   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
+│   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）
+│   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
+│   │   ├── message_service.py # 消息生命周期管理服务
+│   │   ├── prompt_compiler.py # Prompt 拼装与格式规整编译器
+│   │   ├── prompt_token_estimator.py # 启发式 Prompt Token 范围估算服务
+│   │   ├── retrieval_query_service.py # 上下文化检索查询生成器
+│   │   └── session_service.py # 会话生命周期与分支状态拷贝/回滚服务
+│   ├── infrastructure/      # 底层基础设施与服务客户端
+│   │   ├── clients.py       # Chroma/SQLite 客户端连接管理
+│   │   ├── llm_logger.py    # LLM 输入输出专门调试日志器
+│   │   ├── llm_provider.py  # 统一大模型服务适配器接口（解耦 SDK 调用）
+│   │   └── outbox_worker.py # 发件箱后台异步任务处理器（向量同步与延迟退避）
+│   ├── lorebook/            # 世界书引擎
+│   │   ├── ahocorasick.py   # Aho-Corasick AC自动机快速多词匹配算法
+│   │   ├── lorebook_engine.py # 世界书加载、递归扫描与 Token 预算裁剪引擎
+│   │   └── parse_lorebook.py # SillyTavern 格式世界书 JSON 导入与解析
+│   ├── memory/              # 记忆与知识图谱相关服务
+│   │   ├── cognition_service.py # Persona 认知更新服务
+│   │   ├── graph_service.py # 知识图谱 Graph RAG 增强关系检索服务
+│   │   ├── memory_extraction_service.py # 长期记忆提取、剪裁与来源范围限制服务
+│   │   ├── memory_manager.py # RAG 检索粗排与精排计算、记忆库接口层外观模式（Facade）
+│   │   ├── persona_lineage.py # Persona 继承树追溯与分支 turn 计算服务
+│   │   └── session_memory_service.py # 会话专属记忆管理服务
+│   ├── character_service.py # 角色卡增删改查业务服务
+│   ├── parse.py             # SillyTavern 角色卡解析与清洗
+│   └── tts_service.py       # TTS 文本预处理与音频缓存自愈重建服务
 │
 ├── schemas.py               # Pydantic 请求/响应模型
 ├── alembic.ini              # Alembic 数据库迁移配置文件
@@ -511,73 +529,86 @@ app-backend/
 
 所有单元测试和集成测试均存放于 `tests/` 目录下，在运行测试前请确保已激活虚拟环境。
 
-Windows 开发环境也可以直接使用项目虚拟环境解释器运行本轮新增的完全离线测试：
+Windows 开发环境可以直接使用项目虚拟环境解释器运行完全离线测试（不依赖外部大模型及向量数据库）：
 
 ```powershell
-.\venv\Scripts\python.exe .\tests\test_branch_context_boundary.py
-.\venv\Scripts\python.exe .\tests\test_memory_handoff.py
-.\venv\Scripts\python.exe .\tests\test_contextual_retrieval_query.py
-.\venv\Scripts\python.exe .\tests\test_memory_card_extraction.py
-.\venv\Scripts\python.exe .\tests\test_memory_versioning.py
-.\venv\Scripts\python.exe .\tests\test_memory_manager_offline.py
-.\venv\Scripts\python.exe -m unittest tests.test_vector_outbox_consistency -v
-.\venv\Scripts\python.exe -m unittest tests.test_alembic_cli -v
+.\venv\Scripts\python.exe .\tests\test_branch_context_boundary.py      # 分叉边界持久化与未来消息隔离测试
+.\venv\Scripts\python.exe .\tests\test_memory_handoff.py              # 短短期上下文与长期记忆动态交接测试
+.\venv\Scripts\python.exe .\tests\test_contextual_retrieval_query.py   # 上下文化检索查询生成与边界测试
+.\venv\Scripts\python.exe .\tests\test_memory_card_extraction.py       # 语义记忆卡提取及来源定位测试
+.\venv\Scripts\python.exe .\tests\test_memory_versioning.py            # same/replace/coexist 分支局部替代关系测试
+.\venv\Scripts\python.exe .\tests\test_memory_manager_offline.py       # 向量数据库不可用时降级退避与冷处理测试
+.\venv\Scripts\python.exe -m unittest tests.test_vector_outbox_consistency -v # SQLite-Chroma 一致性测试
+.\venv\Scripts\python.exe -m unittest tests.test_alembic_cli -v        # Alembic 启动与命令行冲突避免测试
+.\venv\Scripts\python.exe .\tests\test_prompt_token_estimator.py       # 启发式 Token 估算器与块分析测试
+.\venv\Scripts\python.exe .\tests\test_router_service_boundaries.py    # 路由层参数与异常处理的边界单元测试
 ```
 
-这些测试不会调用真实对话模型或向量模型。此前记录的三个检索 `expectedFailure`——SQLite commit 失败后的向量一致性、分支轮次衰减和零距离配置除零——现均已转为正式通过的回归测试。
+这些测试不会调用真实对话模型或向量模型，提供稳定的离线持续回归验证。
 
-需要人工抽查真实记忆模型的身份解析与卡片颗粒度时，可运行：
+如果运行全套集成与单元测试，请在终端（激活环境后）执行对应的脚本：
+
+```bash
+# 1. 动态配置参数加载与热更新单元测试
+python tests/test_config.py
+
+# 2. 消息候选版本（Swipe）切换与删除好感度/心情回滚测试
+python tests/test_delete_candidate.py
+
+# 3. 独立世界书（Lorebook）加载与角色绑定测试
+python tests/test_independent_lorebook.py
+
+# 4. 世界书关键词匹配、深度扫描与 Token 限制裁剪测试
+python tests/test_lorebook.py
+
+# 5. 记忆合并替代与跨分支继承的图谱/向量召回集成测试
+python tests/test_memory_deduplication.py
+
+# 6. 分剧情线分叉起点克隆绑定首条消息测试
+python tests/test_branching_start_message.py
+
+# 7. 知识图谱 Graph RAG 两邻接点召回与合并重叠实体测试
+python tests/test_graph_rag.py
+
+# 8. 知识图谱图论相关特性（别名处理、COW 关系折叠、枢纽抑制）测试
+python tests/test_graph_rag_quality.py
+
+# 9. 发件箱 outbox_worker 异常断电租约锁与指数退避重试测试
+python tests/test_outbox.py
+
+# 10. SillyTavern V1/V2 角色卡解析、元数据解码与 HTML 清洗测试
+python tests/test_parse.py
+
+# 11. TTS 前处理（动作过滤、声效保留）及云端合成模拟测试
+python tests/test_tts_api.py
+
+# 12. 记忆提纯触发、认知更新迭代与 RAG 结合的闭环流程测试
+python tests/test_closed_loop_memory.py
+
+# 13. 对话流式接口中途异常、断开导致的消息事务性物理回滚与释放锁测试
+python tests/test_chat_turn_service.py
+
+# 14. 向量嵌入失败下的容错和空值响应退避策略测试
+python tests/test_embedding_failure_policy.py
+
+# 15. 路由树挂载、级联删除重连与会话继承树完整性集成测试
+python tests/test_api.py
+```
+
+需要人工抽查真实大模型对于记忆提取身份解析、卡片颗粒度生成的质量时，可运行：
 
 ```powershell
 .\venv\Scripts\python.exe .\tests\manual_deepseek_memory_quality.py
 ```
 
-该脚本调用配置中的聊天记忆模型，但会替换向量和图谱写入，不要求 Embedding 服务可达。
+该脚本调用配置中的记忆提取大模型，但会使用内存 Mock 屏蔽向量与图谱写入，因此不依赖真实 ChromaDB 服务。
 
-Alembic CLI 与应用启动迁移都受支持。CLI 加载 `alembic/env.py` 时会临时关闭 `core.database` 的自动迁移副作用，避免递归进入；应用正常导入数据库模块时仍会自动升级到最新版本：
+Alembic 迁移机制与命令行也受到完全支持。加载 `alembic/env.py` 时会自动识别命令行环境并临时屏蔽 `database.py` 的应用级自动升级副作用，确保无循环：
 
 ```powershell
 .\venv\Scripts\python.exe -m alembic heads
 .\venv\Scripts\python.exe -m alembic current
 .\venv\Scripts\python.exe -m alembic upgrade head
-```
-
-```bash
-# 1. 动态配置参数加载单元测试
-python tests/test_config.py
-
-# 2. 消息候选版本删除与好感度回滚单元测试
-python tests/test_delete_candidate.py
-
-# 3. 独立世界书绑定与匹配注入单元测试
-python tests/test_independent_lorebook.py
-
-# 4. 世界书引擎检索与条件触发单元测试
-python tests/test_lorebook.py
-
-# 5. 记忆替代与多级继承集成测试（需要向量服务）
-python tests/test_memory_deduplication.py
-
-# 6. 分叉剧情线分支起始消息复制与自动绑定测试
-python tests/test_branching_start_message.py
-
-# 7. 知识图谱 Graph RAG 双向检索增强集成测试
-python tests/test_graph_rag.py
-
-# 8. 发件箱异步任务重试与退避调度测试
-python tests/test_outbox.py
-
-# 9. SillyTavern 角色卡解析与清洗单元测试
-python tests/test_parse.py
-
-# 10. 语音合成预处理（动作过滤、声效保留）单元测试
-python tests/test_tts_api.py
-
-# 11. 记忆提纯与 RAG 闭环集成测试
-python tests/test_closed_loop_memory.py
-
-# 12. 会话剧情线重连、继承与 API 路由测试
-python tests/test_api.py
 ```
 
 ---

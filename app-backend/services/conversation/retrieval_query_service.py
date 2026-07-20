@@ -1,4 +1,4 @@
-"""Build a compact, branch-safe query for memory and graph retrieval."""
+"""构建用于记忆和图谱检索的紧凑且分支安全的查询。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def _normalize_text(value: str | None) -> str:
 
 
 def _clip_middle(value: str, limit: int) -> str:
-    """Keep both ends because the subject and the actual question often differ."""
+    """保留两端，因为主题和实际问题通常会不同。"""
     if len(value) <= limit:
         return value
     if limit <= 1:
@@ -36,11 +36,10 @@ def build_contextual_retrieval_query(
     user_msg: ChatMessage,
     db: DBSession,
 ) -> str:
-    """Combine the current question with a small amount of active local history.
+    """将当前问题与少量的活跃本地历史记录相结合。
 
-    Only messages in the current session and strictly before ``user_msg`` are
-    considered. A branch already owns a copied fork-boundary message, so avoiding
-    recursive parent reads here also prevents parent-future leakage.
+    仅考虑当前会话中且严格在 ``user_msg`` 之前的消息。
+    由于分支本身已拥有一份复制的分支边界消息，在此处避免递归读取父会话，也能防止父会话的未来数据泄露。
     """
     max_chars = max(200, int(settings.APP_RETRIEVAL_QUERY_MAX_CHARS))
     context_turns = max(0, min(10, int(settings.APP_RETRIEVAL_CONTEXT_TURNS)))
@@ -53,8 +52,8 @@ def build_contextual_retrieval_query(
     if context_turns == 0 or not current_text:
         return current_block
 
-    # A turn normally contains one user message and one active assistant reply.
-    # The wider fetch limit also accommodates an opening assistant message.
+    # 一轮对话通常包含一条用户消息和一条活跃的助手回复。
+    # 较宽的获取限制也能容纳助手开场白消息。
     fetch_limit = max(4, context_turns * 3 + 2)
     records_desc = (
         db.query(ChatMessage)
@@ -86,9 +85,8 @@ def build_contextual_retrieval_query(
     if remaining <= 4:
         return current_block
 
-    # Allocate a fair base share before giving spare capacity to newer messages.
-    # Long role-play replies must not consume the entire budget and silently turn
-    # a configured three-turn query into only the latest turn.
+    # 在将剩余容量分配给较新的消息之前，先分配一个公平的基础份额。
+    # 冗长的角色扮演回复绝不能消耗掉所有预算，从而将配置好的三轮查询默默变成仅针对最后一轮的查询。
     line_specs: list[dict] = []
     for recency, record in enumerate(selected_desc):
         text = _normalize_text(record.content)
@@ -101,8 +99,7 @@ def build_contextual_retrieval_query(
             "prefix": f"{role_label}\uff1a",
             "text": text,
             "recency": recency,
-            # Assistant replies contain both actions and dialogue and are often
-            # materially longer than user turns in role-play conversations.
+            # 助手的回复同时包含动作和对话，在角色扮演对话中通常比用户发言要长得多。
             "cap": 320 if record.role == MessageRole.user else 640,
             "allocated": 0,
         })
@@ -116,14 +113,13 @@ def build_contextual_retrieval_query(
     if content_budget <= 0:
         return current_block
 
-    # Every selected message first receives an equal representative share.
+    # 每条被选中的消息首先会获得等额的代表性份额。
     base_share = max(1, content_budget // len(line_specs))
     for spec in line_specs:
         spec["allocated"] = min(len(spec["text"]), spec["cap"], base_share)
 
     spare = content_budget - sum(spec["allocated"] for spec in line_specs)
-    # Distribute spare capacity newest-first, but only after every message has a
-    # share. This preserves recency without starving the oldest selected turn.
+    # 按照从新到旧的顺序分发剩余容量，但前提是每条消息都已分得份额。这在保留时效性的同时，不会让最早被选中的那一轮对话分不到容量。
     for spec in sorted(line_specs, key=lambda item: item["recency"]):
         if spare <= 0:
             break

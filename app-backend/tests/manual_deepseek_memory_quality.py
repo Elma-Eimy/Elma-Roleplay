@@ -33,7 +33,7 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services import cognition_service, graph_service, memory_manager
+from services.memory import cognition_service, memory_extraction_service, graph_service, memory_manager
 
 
 def main() -> None:
@@ -102,20 +102,20 @@ def main() -> None:
         captured_graph["relations"] = kwargs.get("relations", [])
 
     with (
-        patch.object(memory_manager, "retrieve_memories", return_value=[]),
+        patch.object(memory_extraction_service, "retrieve_memories", return_value=[]),
         patch.object(
-            memory_manager,
+            memory_extraction_service,
             "add_memory_chunk",
             side_effect=fake_add_memory_chunk,
         ),
         patch.object(
-            graph_service,
+            memory_extraction_service,
             "upsert_graph_data",
             side_effect=fake_upsert_graph_data,
         ),
         patch.object(cognition_service, "update_cognition_state"),
     ):
-        count = cognition_service.summarize_and_store_memory(session.id, db)
+        count = memory_extraction_service.summarize_and_store_memory(session.id, db)
 
     result = {
         "count": count,

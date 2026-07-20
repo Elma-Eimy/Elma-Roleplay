@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
 from services.parse import parse_character_card
+import services.character_service as character_service
+from core.locking import cleanup_session_lock
 from schemas import CharacterCreate
 import json
 import os
@@ -72,41 +74,7 @@ def parse_character(file: UploadFile = File(...)):
 def create_character(character_data: CharacterCreate, db: Session = Depends(get_db)):
     """接收结构化的角色数据，存入数据库。"""
     try:
-        existing_char = db.query(models.Character).filter(
-            models.Character.name == character_data.name
-        ).first()
-        if existing_char:
-            return {
-                "message": f"Character '{character_data.name}' already exists.",
-                "character_id": existing_char.id,
-            }
-
-        tags_str = json.dumps(character_data.tags, ensure_ascii=False)
-        extensions_str = json.dumps(character_data.extensions, ensure_ascii=False)
-
-        new_char = models.Character(
-            name=character_data.name,
-            avatar_path=character_data.avatar_path,
-            description=character_data.description,
-            personality=character_data.personality,
-            scenario=character_data.scenario,
-            first_mes=character_data.first_mes,
-            mes_example=character_data.mes_example,
-            creator_notes=character_data.creator_notes,
-            system_prompt_override=character_data.system_prompt_override,
-            post_history_instructions=character_data.post_history_instructions,
-            tags=tags_str,
-            extensions=extensions_str,
-        )
-        db.add(new_char)
-        db.commit()
-        db.refresh(new_char)
-
-        return {
-            "message": "Character created successfully",
-            "character_id": new_char.id,
-            "name": new_char.name,
-        }
+        return character_service.create_character(character_data.dict(), db)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to create character: {str(e)}")
 
@@ -194,68 +162,26 @@ def get_character_detail(character_id: int, db: Session = Depends(get_db)):
 @router.put("/{character_id}")
 def update_character(character_id: int, character_data: CharacterCreate, db: Session = Depends(get_db)):
     """更新已存在角色的设定属性"""
-    character = db.get(models.Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    character.name = character_data.name
-    character.avatar_path = character_data.avatar_path
-    character.description = character_data.description
-    character.personality = character_data.personality
-    character.scenario = character_data.scenario
-    character.first_mes = character_data.first_mes
-    character.mes_example = character_data.mes_example
-    character.creator_notes = character_data.creator_notes
-    character.system_prompt_override = character_data.system_prompt_override
-    character.post_history_instructions = character_data.post_history_instructions
-    character.tags = json.dumps(character_data.tags, ensure_ascii=False)
-    character.extensions = json.dumps(character_data.extensions, ensure_ascii=False)
-
-    db.commit()
-    db.refresh(character)
-    return {
-        "message": "Character updated successfully",
-        "character_id": character.id,
-        "name": character.name
-    }
+    try:
+        return character_service.update_character(
+            character_id, character_data.dict(), db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 @router.delete("/{character_id}")
 @router.post("/{character_id}/delete")
 def delete_character(character_id: int, db: Session = Depends(get_db)):
-    """删除指定角色，并清理关联会话和向量数据库"""
-    character = db.get(models.Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    # 1. 查找所有关联的 SessionPersona
-    personas = db.query(models.SessionPersona).filter(
-        models.SessionPersona.character_id == character_id
-    ).all()
-
-    # 2. 清除该角色在 ChromaDB 中的向量集合
-    #    注意：所有关联 Persona 的记忆均存放在同一个角色 collection 中 (character_{character_id})
-    from services.clients import chroma_client
-    collection_deleted = False
-    collection_name = f"character_{character_id}"
+    """删除指定角色，并通过 Outbox 异步清理关联外部资源。"""
     try:
-        chroma_client.delete_collection(collection_name)
-        print(f"[INFO] Deleted ChromaDB collection: {collection_name}")
-        collection_deleted = True
-    except Exception as e:
-        print(f"[WARN] Failed to delete ChromaDB collection '{collection_name}': {e}")
+        result = character_service.delete_character_service(character_id, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # 3. 级联删除关联的会话 (Session)
-    session_ids = [p.session_id for p in personas]
-    if session_ids:
-        db.query(models.Session).filter(models.Session.id.in_(session_ids)).delete(synchronize_session="fetch")
-
-    # 4. 删除角色自身记录
-    db.delete(character)
-    db.commit()
+    for session_id in result.pop("session_ids"):
+        cleanup_session_lock(session_id)
 
     return {
         "message": "Character and all associated sessions/memories deleted successfully",
-        "character_id": character_id,
-        "sessions_deleted_count": len(session_ids),
-        "collection_deleted": collection_deleted,
+        **result,
     }

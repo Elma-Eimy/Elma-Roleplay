@@ -2,8 +2,7 @@ import re
 import json
 from typing import Optional
 from core.config import settings
-import core.models as models
-from services.lorebook_engine import process_lorebook
+from services.lorebook.lorebook_engine import process_lorebook
 
 def replace_placeholders(text: str, char_name: str, user_name: str) -> str:
     """
@@ -235,21 +234,26 @@ def build_system_prompt(
     }
 
 
-async def _build_chat_messages(
+def build_chat_messages(
     character,
     persona,
     recent_history: list,
     user_message: str,
     retrieved_memories: Optional[list] = None,
     graph_knowledge: Optional[str] = None,
-    db=None,
+    parent_history: Optional[list] = None,
     user_nickname: str = "用户",
 ) -> list:
     """
-    组装 LLM 所需的完整 messages 列表（system + history + 动态上下文）。
+    纯函数式组装 LLM 所需的完整 messages 列表。
+
+    所有数据库查询和事务处理必须在调用本函数前完成。
     """
     char_name = character.name or "AI"
     user_name = user_nickname or "用户"
+
+    # 父分支示例由上下文装配层提前查询，编译器只负责稳定排序。
+    combined_history = list(parent_history or []) + list(recent_history)
 
     # Step 1: 组装缓存友好型静态 System Prompt 并抽取动态要素
     prompt_result = build_system_prompt(
@@ -261,52 +265,11 @@ async def _build_chat_messages(
         user_nickname=user_nickname,
     )
 
-    # Step 2: 动态示例继承（仅拉取父会话分叉点之前最后 4 条，杜绝未来泄漏）
-    if persona and persona.parent_persona_id and db is not None:
-        from fastapi.concurrency import run_in_threadpool
-
-        def fetch_parent_history():
-            parent_persona = db.get(models.SessionPersona, persona.parent_persona_id)
-            child_session = db.get(models.Session, persona.session_id)
-            fork_message_id = child_session.fork_message_id if child_session else None
-
-            # 旧会话没有可靠的分叉点时，宁可不注入父示例，也不能读取父会话
-            # 当前最新消息并造成未来剧情泄漏。
-            if parent_persona and fork_message_id is not None:
-                fork_message_exists = db.query(models.ChatMessage.id).filter(
-                    models.ChatMessage.id == fork_message_id,
-                    models.ChatMessage.session_id == parent_persona.session_id,
-                ).first()
-                if not fork_message_exists:
-                    return []
-
-                return db.query(models.ChatMessage).filter(
-                    models.ChatMessage.session_id == parent_persona.session_id,
-                    models.ChatMessage.id < fork_message_id,
-                    models.ChatMessage.role.in_([models.MessageRole.user, models.MessageRole.assistant]),
-                    models.ChatMessage.is_active == True
-                ).order_by(models.ChatMessage.id.desc()).limit(4).all()
-            return []
-
-        parent_msgs = await run_in_threadpool(fetch_parent_history)
-        if parent_msgs:
-            parent_msgs.reverse()
-            parent_history_formatted = [
-                {
-                    "role": msg.role.value,
-                    "content": msg.content,
-                    "emotion_tag": getattr(msg, "emotion_tag", "平静"),
-                    "affection_change": getattr(msg, "affection_change", 0)
-                }
-                for msg in parent_msgs
-            ]
-            recent_history = parent_history_formatted + recent_history
-
-    # Step 3: 构建 messages 列表（首位为单条静态 system prompt）
+    # Step 2: 构建 messages 列表（首位为单条静态 system prompt）
     messages = [{"role": "system", "content": prompt_result["system_prompt"]}]
 
     # 历史消息：assistant 消息统一包装为 XML 格式保持上下文一致性
-    for msg in recent_history:
+    for msg in combined_history:
         if msg["role"] == "assistant":
             content_str = replace_placeholders(msg["content"], char_name, user_name)
             emo = msg.get("emotion_tag") or "平静"
@@ -317,7 +280,7 @@ async def _build_chat_messages(
             content_str = replace_placeholders(msg["content"], char_name, user_name)
             messages.append({"role": msg["role"], "content": content_str})
 
-    # Step 4: 动态上下文包装，统一挂载到最后一轮 User 消息中
+    # Step 3: 动态上下文包装，统一挂载到最后一轮 User 消息中
     dynamic_context_blocks = []
 
     # 4.1 场景与认知状态
@@ -374,13 +337,5 @@ async def _build_chat_messages(
     enhanced_user_content += f"【当前用户的最新消息：】\n{resolved_user_message}"
 
     messages.append({"role": "user", "content": enhanced_user_content})
-
-    # Step 5: 调用 LLM 之前主动提交并结束当前事务，释放 SQLite 文件锁
-    if db is not None:
-        try:
-            from fastapi.concurrency import run_in_threadpool
-            await run_in_threadpool(db.commit)
-        except Exception as e:
-            print(f"[WARN] prompt_compiler._build_chat_messages: 释放 SQLite 锁失败: {e}")
 
     return messages

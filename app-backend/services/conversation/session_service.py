@@ -5,8 +5,6 @@
 1. 会话生命周期的安全删除与子会话关系的安全重连（重连继承链以防止 timeline 损坏）。
 2. 新建会话（全新起步 / 从父会话继承好感度及认知状态的深拷贝复制）。
 3. 角色开场白注入与利用正则表达式的动态场景（Scenario）/地点解析算法。
-4. 消息的删除与状态回滚（包括好感度、心情及 Swipe 多回复候选的向前回溯与替补激活）。
-5. 消息删除时，异步语音文件的发件箱队列任务注册。
 """
 
 import json
@@ -343,143 +341,23 @@ def create_session_service(
     }
 
 
-def delete_message_service(message_id: int, db: DBSession) -> dict:
-    """
-    业务逻辑：删除单条聊天消息，并执行好感度与心情回滚缓冲，同时提供未提纯和认知指针的安全降级保护。
-    """
-    message = db.get(ChatMessage, message_id)
-    if not message:
-        raise ValueError("Message not found")
-
-    deleted_id = message.id
-    session_id = message.session_id
-
-    # 1. 查找该会话关联的 SessionPersona 实体以执行状态回滚
-    persona = db.query(SessionPersona).filter(
-        SessionPersona.session_id == session_id
-    ).first()
-
-    if persona:
-        # ── 1a. 好感度与心情回退 & Swipe 候选回退处理 ──
-        if message.role == MessageRole.assistant:
-            if message.is_active:
-                sibling = db.query(ChatMessage).filter(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.role == MessageRole.assistant,
-                    ChatMessage.parent_id == message.parent_id,
-                    ChatMessage.id != message_id
-                ).order_by(ChatMessage.id.desc()).first()
-
-                if sibling:
-                    # 激活替补候选版本
-                    sibling.is_active = True
-                    old_change = message.affection_change or 0
-                    new_change = sibling.affection_change or 0
-                    persona.affection_score = persona.affection_score - old_change + new_change
-                    persona.affection_score = max(0, min(100, persona.affection_score))
-                    persona.current_mood = sibling.emotion_tag or "平静"
-                else:
-                    # 没有候选替补，常规回滚
-                    if message.affection_change is not None:
-                        persona.affection_score -= message.affection_change
-                        persona.affection_score = max(0, persona.affection_score)
-
-                    # ── 1b. 情绪状态回滚 ──
-                    # 查找在当前被删消息时间线之前的最近一条 assistant 消息
-                    prev_assistant_msg = db.query(ChatMessage).filter(
-                        ChatMessage.session_id == session_id,
-                        ChatMessage.role == MessageRole.assistant,
-                        ChatMessage.id < message_id
-                    ).order_by(ChatMessage.id.desc()).first()
-
-                    if prev_assistant_msg:
-                        persona.current_mood = prev_assistant_msg.emotion_tag or "平静"
-                    else:
-                        persona.current_mood = "平静"
-            else:
-                # 若被删除的是非激活候选版本，直接跳过好感度与心情回滚
-                pass
-
-        elif message.role == MessageRole.user:
-            # 找到将被级联删除的、当前处于激活状态的 AI 回复
-            active_child = db.query(ChatMessage).filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.role == MessageRole.assistant,
-                ChatMessage.parent_id == message_id,
-                ChatMessage.is_active == True
-            ).first()
-            if active_child and active_child.affection_change is not None:
-                persona.affection_score -= active_child.affection_change
-                persona.affection_score = max(0, persona.affection_score)
-            
-            # 回滚情绪状态至上一轮对话的最近一条 AI 消息
-            prev_assistant_msg = db.query(ChatMessage).filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.role == MessageRole.assistant,
-                ChatMessage.id < message_id
-            ).order_by(ChatMessage.id.desc()).first()
-            if prev_assistant_msg:
-                persona.current_mood = prev_assistant_msg.emotion_tag or "平静"
-            else:
-                persona.current_mood = "平静"
-
-        # ── 1c. 记忆提纯与认知指针安全降级保护 ──
-        # 如果被删的消息 ID 刚好等于分界指针，安全寻找上一条消息 ID 进行向前递减
-        if persona.last_summarized_msg_id == message_id:
-            prev_msg = db.query(ChatMessage).filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.id < message_id
-            ).order_by(ChatMessage.id.desc()).first()
-            persona.last_summarized_msg_id = prev_msg.id if prev_msg else None
-
-        if persona.last_cognition_update_msg_id == message_id:
-            prev_msg = db.query(ChatMessage).filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.id < message_id
-            ).order_by(ChatMessage.id.desc()).first()
-            persona.last_cognition_update_msg_id = prev_msg.id if prev_msg else None
-
-    # 2. 收集音频文件路径以便异步清理
-    audio_paths = []
-    if message.audio_path:
-        audio_paths.append(message.audio_path)
-    if message.role == MessageRole.user:
-        # 收集将被级联删除的所有子消息的音频路径
-        children = db.query(ChatMessage).filter(
-            ChatMessage.parent_id == message_id
-        ).all()
-        for child in children:
-            if child.audio_path:
-                audio_paths.append(child.audio_path)
-
-    # 3. 物理删除消息记录
-    db.delete(message)
-
-    # 4. 写入发件箱语音文件清理任务
-    if audio_paths:
-        try:
-            payload = {
-                "file_paths": audio_paths
-            }
-            job = OutboxJob(
-                task_type="delete_audio",
-                payload=json.dumps(payload)
-            )
-            db.add(job)
-            print(f"[INFO] Outbox: 已入库消息关联 of {len(audio_paths)} 个语音文件删除任务")
-        except Exception as e:
-            print(f"[WARN] delete_message_service 写入发件箱任务失败: {e}")
-
+def update_session_title(session_id: int, title: str, db: DBSession) -> dict:
     session = db.get(SessionModel, session_id)
-    if session:
-        session.updated_at = func.now()
-    db.commit()
+    if session is None:
+        raise ValueError("Session not found")
+
+    session.title = title
+    try:
+        db.commit()
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        raise
 
     return {
-        "message": "Message deleted and state rolled back successfully",
-        "message_id": deleted_id,
-        "affection_score": persona.affection_score if persona else None,
-        "current_mood": persona.current_mood if persona else None
+        "message": "Session title updated successfully",
+        "session_id": session.id,
+        "title": session.title,
     }
 
 
@@ -509,6 +387,31 @@ def get_session_history_with_inheritance(
     )
     messages.reverse()  # 反转以恢复时间正序
     return messages
+
+
+def get_candidates_by_parent(
+    session_id: int,
+    parent_ids: list[int],
+    db: DBSession,
+) -> dict[int, list[ChatMessage]]:
+    """在单次查询中获取历史页面中所有滑动候选（swipe candidates）。"""
+    if not parent_ids:
+        return {}
+
+    candidates = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == MessageRole.assistant,
+            ChatMessage.parent_id.in_(set(parent_ids)),
+        )
+        .order_by(ChatMessage.id)
+        .all()
+    )
+    grouped: dict[int, list[ChatMessage]] = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate.parent_id, []).append(candidate)
+    return grouped
 
 
 def save_chat_response(
@@ -576,29 +479,34 @@ def save_chat_response(
     if session_obj:
         session_obj.updated_at = func.now()
 
-    db.commit()
-    db.refresh(ai_msg)
-    db.refresh(p)
+    try:
+        # 在提交前完成 ID 分配、候选查询和响应构建，避免 commit 成功后再发生
+        # 查询异常，导致调用方把一个已经落库的回合误判为失败。
+        db.flush()
+        candidates = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == MessageRole.assistant,
+            ChatMessage.parent_id == user_msg_id
+        ).order_by(ChatMessage.id).all()
 
-    # 查询此轮对话的用户消息下的所有候选回复列表
-    candidates = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.role == MessageRole.assistant,
-        ChatMessage.parent_id == user_msg_id
-    ).order_by(ChatMessage.id).all()
+        candidates_list = [
+            {
+                "id": c.id,
+                "role": c.role.value,
+                "content": c.content,
+                "reasoning_content": c.reasoning_content,
+                "emotion_tag": c.emotion_tag,
+                "affection_change": c.affection_change,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "audio_path": c.audio_path,
+            }
+            for c in candidates
+        ]
+        ai_message_id = ai_msg.id
+        final_affection_score = p.affection_score
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
-    candidates_list = [
-        {
-            "id": c.id,
-            "role": c.role.value,
-            "content": c.content,
-            "reasoning_content": c.reasoning_content,
-            "emotion_tag": c.emotion_tag,
-            "affection_change": c.affection_change,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "audio_path": c.audio_path,
-        }
-        for c in candidates
-    ]
-
-    return ai_msg.id, p.affection_score, candidates_list
+    return ai_message_id, final_affection_score, candidates_list

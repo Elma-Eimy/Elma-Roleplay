@@ -18,10 +18,10 @@ from core.models import (
     MemoryChunk, MemoryType, SessionPersona,
     Session, Character, ChatMessage, MessageRole,
 )
-from services.memory_manager import (
+from services.memory.memory_manager import (
     retrieve_memories, add_memory_chunk, delete_persona_memories,
 )
-from services.cognition_service import (
+from services.memory.memory_extraction_service import (
     summarize_and_store_memory,
     resolve_memory_relationship_via_llm,
 )
@@ -32,7 +32,7 @@ def test_relationship_classifier_fallback():
     print("\n[Test 1] relationship classifier LLM-failure fallback")
     old = "User likes strawberry cake."
     new = "User likes strawberry cake, especially with hot milk."
-    with patch("services.cognition_service.get_llm_provider") as mock_get_provider:
+    with patch("services.memory.memory_extraction_service.get_llm_provider") as mock_get_provider:
         mock_provider = MagicMock()
         mock_provider.generate.side_effect = ConnectionError("mock")
         mock_get_provider.return_value = mock_provider
@@ -51,7 +51,7 @@ def test_multi_level_fork_cow():
     char_id = char.id
 
     try:
-        from services.clients import chroma_client
+        from services.infrastructure.clients import chroma_client
         chroma_client.delete_collection(name=f"character_{char_id}")
     except Exception:
         pass
@@ -120,7 +120,7 @@ def run_integration_test():
     char_id = char.id
 
     try:
-        from services.clients import chroma_client
+        from services.infrastructure.clients import chroma_client
         chroma_client.delete_collection(name=f"character_{char_id}")
     except Exception:
         pass

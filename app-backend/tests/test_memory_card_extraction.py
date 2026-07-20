@@ -35,7 +35,8 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services import cognition_service, graph_service, memory_manager, outbox_worker
+from services.memory import memory_extraction_service, memory_manager
+from services.infrastructure import outbox_worker
 
 
 if sys.platform.startswith("win"):
@@ -109,7 +110,7 @@ class MemoryCardExtractionTests(unittest.TestCase):
     def test_normalizer_filters_fragments_greetings_and_batch_duplicates(self):
         first_id = self.messages[0].id
         last_id = self.messages[-1].id
-        cards = cognition_service.normalize_extracted_memories(
+        cards = memory_extraction_service.normalize_extracted_memories(
             [
                 {
                     "content": "User plans to move to Hangzhou Binjiang next month for work.",
@@ -146,7 +147,7 @@ class MemoryCardExtractionTests(unittest.TestCase):
 
     def test_normalizer_keeps_substantive_pronouns_and_negation_pairs(self):
         message_ids = [message.id for message in self.messages]
-        cards = cognition_service.normalize_extracted_memories(
+        cards = memory_extraction_service.normalize_extracted_memories(
             [
                 {
                     "content": "她因为用户送来的生日礼物感动得哭了。",
@@ -209,16 +210,16 @@ class MemoryCardExtractionTests(unittest.TestCase):
         ]
 
         with (
-            patch.object(cognition_service, "get_llm_provider", return_value=provider),
-            patch.object(memory_manager, "retrieve_memories", return_value=[]),
+            patch.object(memory_extraction_service, "get_llm_provider", return_value=provider),
+            patch.object(memory_extraction_service, "retrieve_memories", return_value=[]),
             patch.object(
-                memory_manager,
+                memory_extraction_service,
                 "add_memory_chunk",
                 side_effect=added_chunks,
             ) as add_mock,
-            patch.object(graph_service, "upsert_graph_data"),
+            patch.object(memory_extraction_service, "upsert_graph_data"),
         ):
-            count = cognition_service.summarize_and_store_memory(
+            count = memory_extraction_service.summarize_and_store_memory(
                 self.session_id, self.db
             )
 
@@ -289,16 +290,16 @@ class MemoryCardExtractionTests(unittest.TestCase):
         provider = self._provider_with_payload(payload)
 
         with (
-            patch.object(cognition_service, "get_llm_provider", return_value=provider),
-            patch.object(memory_manager, "retrieve_memories", return_value=[]),
+            patch.object(memory_extraction_service, "get_llm_provider", return_value=provider),
+            patch.object(memory_extraction_service, "retrieve_memories", return_value=[]),
             patch.object(
-                memory_manager,
+                memory_extraction_service,
                 "add_memory_chunk",
                 side_effect=RuntimeError("outbox enqueue failed"),
             ),
-            patch.object(graph_service, "upsert_graph_data"),
+            patch.object(memory_extraction_service, "upsert_graph_data"),
         ):
-            count = cognition_service.summarize_and_store_memory(
+            count = memory_extraction_service.summarize_and_store_memory(
                 self.session_id, self.db
             )
 
@@ -343,10 +344,10 @@ class MemoryCardExtractionTests(unittest.TestCase):
         }
 
         with (
-            patch.object(cognition_service, "get_llm_provider", return_value=provider),
-            patch.object(memory_manager, "retrieve_memories", return_value=[candidate]),
+            patch.object(memory_extraction_service, "get_llm_provider", return_value=provider),
+            patch.object(memory_extraction_service, "retrieve_memories", return_value=[candidate]),
             patch.object(
-                cognition_service,
+                memory_extraction_service,
                 "resolve_memory_relationship_via_llm",
                 return_value={
                     "relation": "replace",
@@ -354,11 +355,15 @@ class MemoryCardExtractionTests(unittest.TestCase):
                 },
             ),
             patch.object(
+                memory_extraction_service.cognition_service,
+                "update_cognition_state",
+            ),
+            patch.object(
                 memory_manager, "get_character_collection", return_value=collection
             ),
-            patch.object(graph_service, "upsert_graph_data"),
+            patch.object(memory_extraction_service, "upsert_graph_data"),
         ):
-            count = cognition_service.summarize_and_store_memory(
+            count = memory_extraction_service.summarize_and_store_memory(
                 self.session_id, self.db
             )
 
@@ -404,17 +409,17 @@ class MemoryCardExtractionTests(unittest.TestCase):
         }
 
         with (
-            patch.object(cognition_service, "get_llm_provider", return_value=provider),
-            patch.object(memory_manager, "retrieve_memories", return_value=[candidate]),
+            patch.object(memory_extraction_service, "get_llm_provider", return_value=provider),
+            patch.object(memory_extraction_service, "retrieve_memories", return_value=[candidate]),
             patch.object(
-                cognition_service,
+                memory_extraction_service,
                 "resolve_memory_relationship_via_llm",
                 return_value={"relation": "same", "resolved_content": old.content},
             ),
-            patch.object(memory_manager, "add_memory_chunk") as add_mock,
-            patch.object(graph_service, "upsert_graph_data"),
+            patch.object(memory_extraction_service, "add_memory_chunk") as add_mock,
+            patch.object(memory_extraction_service, "upsert_graph_data"),
         ):
-            count = cognition_service.summarize_and_store_memory(
+            count = memory_extraction_service.summarize_and_store_memory(
                 self.session_id, self.db
             )
 

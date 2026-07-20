@@ -8,7 +8,7 @@ from core.database import SessionLocal
 from core.models import OutboxJob, OutboxJobStatus
 from core.config import settings
 
-# A flag to control the background task execution
+# 控制后台任务执行的标志
 is_worker_running = True
 PROCESSING_LEASE_SECONDS = 300
 MAX_BACKOFF_SECONDS = 3600
@@ -22,7 +22,7 @@ async def run_outbox_worker():
         except Exception as e:
             print(f"[OUTBOX WORKER ERROR] Exception in loop: {e}")
             traceback.print_exc()
-        await asyncio.sleep(5.0)  # Check every 5 seconds
+        await asyncio.sleep(5.0)  # 每 5 秒检查一次
 
 async def process_pending_jobs():
     db = SessionLocal()
@@ -51,7 +51,7 @@ async def process_pending_jobs():
             if job.status == OutboxJobStatus.processing:
                 job.last_error = "Processing lease expired; retrying idempotently"
 
-            # Mark as processing and start/renew its lease.
+            # 标记为正在处理中，并启动/更新其租期。
             job.status = OutboxJobStatus.processing
             job.run_after = datetime.now() + timedelta(seconds=PROCESSING_LEASE_SECONDS)
             db.commit()
@@ -60,12 +60,12 @@ async def process_pending_jobs():
             payload = job.payload
 
             try:
-                # Process the task in a thread executor to avoid blocking the event loop
+                # 在线程执行器（thread executor）中处理任务，以避免阻塞事件循环
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, execute_task, task_type, payload)
 
-                # On success:
-                # Physically delete the job to keep the outbox table clean and small
+                # 成功时：
+                # 物理删除该任务，以保持发件箱（outbox）表干净且体积小
                 db.delete(job)
                 db.commit()
             except Exception as e:
@@ -74,20 +74,19 @@ async def process_pending_jobs():
                 if job is None:
                     continue
 
-                # On failure:
+                # 失败时：
                 job.attempts += 1
                 job.last_error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
                 
                 if job.attempts >= job.max_attempts:
                     job.status = OutboxJobStatus.failed
-                    # max_attempts limits one retry burst, not the lifetime of a
-                    # persistent task. Cool down and start another burst later.
+                    # max_attempts 限制的是单次重试并发次数，而不是持久任务的生命周期。冷却并稍后启动另一次重试。
                     job.attempts = 0
                     job.run_after = datetime.now() + timedelta(seconds=MAX_BACKOFF_SECONDS)
                     print(f"[OUTBOX WORKER ERROR] Job #{job.id} ({job.task_type}) exhausted a retry burst; cooling down until {job.run_after}.")
                 else:
                     job.status = OutboxJobStatus.failed
-                    # Exponential backoff: retry in 15 * (2 ** attempts) seconds
+                    # 指数退避：在 15 * (2 ** attempts) 秒后重试
                     backoff_seconds = min(
                         MAX_BACKOFF_SECONDS,
                         15 * (2 ** job.attempts),
@@ -100,7 +99,7 @@ async def process_pending_jobs():
         db.close()
 
 def execute_job(job: OutboxJob):
-    """Backward-compatible facade used by diagnostics and older callers."""
+    """用于诊断和旧调用者的向后兼容外观（facade）。"""
     execute_task(job.task_type, job.payload)
 
 
@@ -109,6 +108,8 @@ def execute_task(task_type: str, payload: str):
         handle_upsert_vector(payload)
     elif task_type == "delete_vector":
         handle_delete_vector(payload)
+    elif task_type == "delete_vector_collection":
+        handle_delete_vector_collection(payload)
     elif task_type == "delete_audio":
         handle_delete_audio(payload)
     else:
@@ -118,7 +119,7 @@ def execute_task(task_type: str, payload: str):
 def handle_upsert_vector(payload_str: str):
     """从 SQLite 读取最新值，并按稳定文档 ID 幂等写入 ChromaDB。"""
     from core.models import MemoryChunk
-    from services.memory_manager import (
+    from services.memory.memory_manager import (
         _build_chroma_metadata,
         get_character_collection,
     )
@@ -134,7 +135,7 @@ def handle_upsert_vector(payload_str: str):
     try:
         chunk = db.get(MemoryChunk, memory_id)
         if chunk is None:
-            # The memory may have been deleted after this task was enqueued.
+            # 该记忆可能会在任务排队后被删除。
             collection = get_character_collection(fallback_character_id)
             collection.delete(ids=[fallback_doc_id])
             return
@@ -160,8 +161,8 @@ def handle_upsert_vector(payload_str: str):
         db.close()
 
 def handle_delete_vector(payload_str: str):
-    # Import inside handler to avoid circular dependencies
-    from services.memory_manager import get_character_collection
+    # 在处理程序内部导入以避免循环依赖
+    from services.memory.memory_manager import get_character_collection
     payload = json.loads(payload_str)
     character_id = payload.get("character_id")
     doc_ids = payload.get("doc_ids", [])
@@ -169,6 +170,25 @@ def handle_delete_vector(payload_str: str):
         collection = get_character_collection(character_id)
         collection.delete(ids=doc_ids)
         print(f"[OUTBOX] ChromaDB deleted vector ids={doc_ids} for character_id={character_id}")
+
+
+def handle_delete_vector_collection(payload_str: str):
+    """幂等删除已被删除角色所拥有的所有向量。"""
+    from chromadb.errors import NotFoundError
+    from services.infrastructure.clients import chroma_client
+
+    payload = json.loads(payload_str)
+    character_id = payload.get("character_id")
+    if not character_id:
+        raise ValueError("Invalid delete_vector_collection payload")
+
+    collection_name = f"character_{character_id}"
+    try:
+        chroma_client.delete_collection(collection_name)
+        print(f"[OUTBOX] Deleted ChromaDB collection: {collection_name}")
+    except NotFoundError:
+        # 成功删除后的重试，或者从未拥有过记忆的角色，目前已经处于所需的最终状态。
+        print(f"[OUTBOX] ChromaDB collection already absent: {collection_name}")
 
 def handle_delete_audio(payload_str: str):
     payload = json.loads(payload_str)

@@ -5,14 +5,11 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from core import Base, engine
 from core.config import settings
+from core.database import run_migrations
 from core.auth import verify_api_key
 from core.utils import get_local_ips
 from routers import utils_router, characters_router, sessions_router, chat_router, lorebooks_router
-
-# 初始化并建表
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="AI Roleplay Backend",
@@ -99,9 +96,12 @@ _BACKGROUND_TASKS = set()
 
 @app.on_event("startup")
 async def show_startup_banner():
+    # 数据库架构所有权属于 Alembic。在此处运行可使启动工作保持显式，并避免仅通过导入模块就产生数据库变更。
+    run_migrations()
+
     # 启动发件箱后台异步任务处理器
     import asyncio
-    from services.outbox_worker import run_outbox_worker
+    from services.infrastructure.outbox_worker import run_outbox_worker
     task = asyncio.create_task(run_outbox_worker())
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
@@ -131,7 +131,7 @@ async def show_startup_banner():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    import services.outbox_worker as outbox_worker
+    import services.infrastructure.outbox_worker as outbox_worker
     outbox_worker.is_worker_running = False
     print("[SHUTDOWN] Stopping background outbox worker...")
 

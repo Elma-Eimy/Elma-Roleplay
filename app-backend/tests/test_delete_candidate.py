@@ -15,7 +15,8 @@ if sys.platform.startswith('win'):
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal
-from core import Base, engine
+from core.database import engine
+from core.models import Base
 from core.models import Character, Session, SessionPersona, ChatMessage, MessageRole
 from routers.sessions import delete_message
 

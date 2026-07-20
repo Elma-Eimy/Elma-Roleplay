@@ -1,12 +1,10 @@
 """
-记忆管理器 — 负责记忆的提纯、存储、检索与清理
+记忆管理器 — 负责记忆的存储、检索与清理
 
 核心职责：
-  1. 从对话中提取结构化记忆（LLM 提纯） [已移至 cognition_service]
-  2. 将 MemoryChunk 与向量同步 Outbox 任务原子写入 SQLite
-  3. 跨继承链的单次 RAG 检索
-  4. Session 删除时的 ChromaDB 数据一致性清理
-  5. 代理并重新导出子模块服务以实现向后兼容 (Facade 模式)
+  1. 将 MemoryChunk 与向量同步 Outbox 任务原子写入 SQLite
+  2. 跨继承链的单次 RAG 检索
+  3. Session 删除时的 ChromaDB 数据一致性清理
 
 ChromaDB 架构：
   每个 Character 共享一个 collection（collection_name = f"character_{character_id}"）
@@ -24,10 +22,9 @@ from core.models import (
     MemoryChunk,
     MemoryType,
     MessageRole,
-    Session,
-    SessionPersona,
 )
-from services.clients import LLM_MODEL, chroma_client, openai_ef
+from services.infrastructure.clients import chroma_client, openai_ef
+import services.memory.persona_lineage as persona_lineage
 from core.config import settings
 
 
@@ -49,71 +46,11 @@ def get_character_collection(character_id: int):
         embedding_function=openai_ef
     )
 
-    # 动态探测 collection 已有的向量维度，并同步给 embedding_function 的缓存，以防 API 失败时 fallback 维度不匹配
-    try:
-        if collection.count() > 0:
-            existing = collection.get(limit=1, include=["embeddings"])
-            if existing and existing.get("embeddings") is not None and len(existing["embeddings"]) > 0:
-                openai_ef.__class__._cached_dim = len(existing["embeddings"][0])
-    except Exception as e:
-        print(f"[WARN] 动态探测 collection {collection_name} 向量维度失败: {e}")
-
     return collection
 
 
 # ──────────────────────────────────────────────
-# 2. 继承链工具
-# ──────────────────────────────────────────────
-
-def get_ancestor_persona_ids(persona_id: int, db: DBSession) -> list[int]:
-    """
-    沿 SessionPersona.parent_persona_id 向上遍历，返回完整的祖先链。
-
-    使用递归公共表表达式 (CTE) 进行单次数据库查询优化，规避 N+1 数据库阻塞。
-    返回值示例：[3, 2, 1]（当前 Persona → 父 → 祖父）
-    如果没有继承，返回 [persona_id] 仅包含自身。
-    """
-    from sqlalchemy import text
-    sql = """
-    WITH RECURSIVE ancestor(id, parent_id) AS (
-        SELECT id, parent_persona_id FROM session_personas WHERE id = :persona_id
-        UNION ALL
-        SELECT sp.id, sp.parent_persona_id 
-        FROM session_personas sp
-        JOIN ancestor a ON sp.id = a.parent_id
-    )
-    SELECT id FROM ancestor;
-    """
-    try:
-        # SQLite 递归 CTE 一次性获取所有祖先 ID
-        result = db.execute(text(sql), {"persona_id": persona_id}).fetchall()
-        ids = [row[0] for row in result]
-        if ids:
-            return ids
-    except Exception as e:
-        print(f"[WARN] get_ancestor_persona_ids: SQL CTE 递归查询失败: {e}. 已自动回退到循环同步遍历。")
-
-    # 容错降级回退机制
-    ids = []
-    cur = persona_id
-    visited = set()  # 防御性：防止循环引用导致死循环
-
-    while cur is not None:
-        if cur in visited:
-            break
-        visited.add(cur)
-        ids.append(cur)
-
-        persona = db.get(SessionPersona, cur)
-        if persona is None:
-            break
-        cur = persona.parent_persona_id
-
-    return ids
-
-
-# ──────────────────────────────────────────────
-# 3. 记忆写入（SQLite 主数据 + Outbox 同步 ChromaDB）
+# 2. 记忆写入（SQLite 主数据 + Outbox 同步 ChromaDB）
 # ──────────────────────────────────────────────
 
 def _build_chroma_metadata(
@@ -215,58 +152,8 @@ def add_memory_chunk(
 
 
 # ──────────────────────────────────────────────
-# 4. 跨继承链 RAG 检索
+# 3. 跨继承链 RAG 检索
 # ──────────────────────────────────────────────
-
-def _build_branch_turn_segments(persona_id: int, db: DBSession) -> list[dict]:
-    """Build current-to-root session segments visible on one branch.
-
-    ``through_message_id`` is the inclusive fork boundary in an ancestor.
-    Because that boundary is copied into the child session, the child's first
-    message ID is also captured and excluded when continuing the count there.
-    A missing legacy boundary remains ``None`` and is treated conservatively.
-    """
-    segments = []
-    current = db.get(SessionPersona, persona_id)
-    child_session = None
-    visited = set()
-
-    while current is not None and current.id not in visited:
-        visited.add(current.id)
-        session = db.get(Session, current.session_id)
-        if session is None:
-            break
-        copied_boundary_message_id = None
-        if session.parent_session_id is not None and session.fork_message_id is not None:
-            first_message = (
-                db.query(ChatMessage)
-                .filter(ChatMessage.session_id == session.id)
-                .order_by(ChatMessage.id.asc())
-                .first()
-            )
-            fork_message = db.get(ChatMessage, session.fork_message_id)
-            if (
-                first_message is not None
-                and fork_message is not None
-                and first_message.role == fork_message.role
-                and first_message.content == fork_message.content
-            ):
-                copied_boundary_message_id = first_message.id
-        segments.append({
-            "persona_id": current.id,
-            "session_id": session.id,
-            "through_message_id": (
-                child_session.fork_message_id if child_session is not None else None
-            ),
-            "copied_boundary_message_id": copied_boundary_message_id,
-        })
-        child_session = session
-        if current.parent_persona_id is None:
-            break
-        current = db.get(SessionPersona, current.parent_persona_id)
-
-    return segments
-
 
 def calculate_memory_age_turns(
     memory_persona_id: Optional[int],
@@ -276,7 +163,7 @@ def calculate_memory_age_turns(
     branch_segments: Optional[list[dict]] = None,
     count_cache: Optional[dict] = None,
 ) -> int:
-    """Count effective user turns after a memory on the current branch only."""
+    """仅计算当前分支上某个记忆之后的有效用户轮数。"""
     if source_message_id is None or memory_persona_id is None:
         return 0
 
@@ -288,7 +175,7 @@ def calculate_memory_age_turns(
 
     segments = branch_segments
     if segments is None:
-        segments = _build_branch_turn_segments(current_persona_id, db)
+        segments = persona_lineage.build_branch_turn_segments(current_persona_id, db)
     cache = count_cache if count_cache is not None else {}
 
     source_index = next(
@@ -377,7 +264,7 @@ def retrieve_memories(
         return []
 
     # Step 1: 获取祖先链
-    ancestor_ids = get_ancestor_persona_ids(persona_id, db)
+    ancestor_ids = persona_lineage.get_ancestor_persona_ids(persona_id, db)
     superseded_ids = get_superseded_memory_ids(ancestor_ids, db)
 
     # Step 2: 构建 where 过滤条件
@@ -453,7 +340,7 @@ def retrieve_memories(
             turns_passed = 0
         else:
             if branch_turn_segments is None:
-                branch_turn_segments = _build_branch_turn_segments(persona_id, db)
+                branch_turn_segments = persona_lineage.build_branch_turn_segments(persona_id, db)
             turns_passed = calculate_memory_age_turns(
                 memory_persona_id=meta.get("persona_id"),
                 source_message_id=meta.get("source_message_id"),
@@ -670,9 +557,7 @@ def delete_memory_chunk(
         db.add(job)
         print(f"[INFO] Outbox: 已入库 chunk_id={chunk_id} 的 1 条记忆删除任务")
 
-    # Keep a replacement chain connected when a manually managed middle version
-    # is deleted. Chroma metadata does not participate in version resolution;
-    # SQLite is authoritative for this relation.
+    # 当手动管理的中间版本被删除时，保持替换链的连接。Chroma 元数据不参与版本解析；SQLite 对此关系具有权威性。
     db.query(MemoryChunk).filter(
         MemoryChunk.supersedes_id == chunk.id
     ).update(
@@ -687,13 +572,3 @@ def delete_memory_chunk(
 # ──────────────────────────────────────────────
 # 6. 外观接口 (Facade Pattern) 重新导出子服务函数以维持 100% 向后兼容性
 # ──────────────────────────────────────────────
-
-from services.cognition_service import (
-    get_unsummarized_count,
-    get_effective_memory_extract_limit,
-    get_memory_handoff_history_limit,
-    summarize_and_store_memory,
-    get_cognition_unseen_count,
-    update_cognition_state,
-)
-from services.session_service import safe_delete_session

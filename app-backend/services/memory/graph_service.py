@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.models import GraphEntity, GraphRelation, SessionPersona
-from services.memory_manager import get_ancestor_persona_ids
+from services.memory.persona_lineage import get_ancestor_persona_ids
 
 
 GENERIC_ALIAS_KEYS = {
@@ -335,7 +335,7 @@ def retrieve_graph_context(persona_id: int, query_text: str, db: Session) -> str
         GraphRelation.importance >= settings.APP_GRAPH_MIN_IMPORTANCE,
     ).all()
 
-    # Collapse inherited COW IDs into name-level effective triples.
+    # 将继承的写时复制（COW）ID 合并为名称级别的有效三元组（triples）。
     effective_relations: dict[tuple[str, str, str], GraphRelation] = {}
     for relation in sorted(
         relations,

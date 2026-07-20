@@ -13,17 +13,19 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from core.database import get_db
 from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
-import services.memory_manager as memory_manager
+import services.memory.memory_manager as memory_manager
+import services.memory.memory_extraction_service as memory_extraction_service
+import services.memory.cognition_service as cognition_service
+from services.memory.persona_lineage import get_ancestor_persona_ids
 from core.config import settings
 from core.locking import cleanup_session_lock
-import services.session_service as session_service
-import json
-
+import services.conversation.session_service as session_service
+import services.conversation.message_service as message_service
+import services.memory.session_memory_service as session_memory_service
 router = APIRouter()
 
 
@@ -138,6 +140,15 @@ def get_session_history(
     fetch_limit = min(fetch_limit, settings.APP_HISTORY_FETCH_MAX)
 
     messages = session_service.get_session_history_with_inheritance(session_id, db, fetch_limit, before_id)
+    candidate_groups = session_service.get_candidates_by_parent(
+        session_id,
+        [
+            message.parent_id
+            for message in messages
+            if message.role == MessageRole.assistant and message.parent_id is not None
+        ],
+        db,
+    )
 
     session_history = []
     for m in messages:
@@ -156,14 +167,7 @@ def get_session_history(
         
         if m.role.value == "assistant":
             # 查找此轮对话的所有候选回复列表
-            candidates = db.query(models.ChatMessage).filter(
-                models.ChatMessage.session_id == session_id,
-                models.ChatMessage.role == MessageRole.assistant,
-                models.ChatMessage.parent_id == m.parent_id
-            ).order_by(models.ChatMessage.id).all()
-            
-            if not candidates:
-                candidates = [m]
+            candidates = candidate_groups.get(m.parent_id) or [m]
                 
             msg_dict["candidates"] = [
                 {
@@ -200,18 +204,10 @@ def update_session_title(
     db: Session = Depends(get_db)
 ):
     """更新指定会话的标题"""
-    session = db.get(models.Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    session.title = request.title
-    db.commit()
-
-    return {
-        "message": "Session title updated successfully",
-        "session_id": session_id,
-        "title": session.title,
-    }
+    try:
+        return session_service.update_session_title(session_id, request.title, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{session_id}")
@@ -237,7 +233,7 @@ def trigger_memory_summary(session_id: int, db: Session = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    extracted_count = memory_manager.summarize_and_store_memory(session_id, db)
+    extracted_count = memory_extraction_service.summarize_and_store_memory(session_id, db)
 
     return {
         "message": "记忆提纯流程已完成",
@@ -255,7 +251,7 @@ def trigger_cognition_update(session_id: int, db: Session = Depends(get_db)):
     if not session.persona:
         raise HTTPException(status_code=404, detail="Session has no persona")
 
-    new_cognition = memory_manager.update_cognition_state(session.persona.id, db)
+    new_cognition = cognition_service.update_cognition_state(session.persona.id, db)
 
     return {
         "message": "认知更新已完成",
@@ -267,23 +263,10 @@ def trigger_cognition_update(session_id: int, db: Session = Depends(get_db)):
 @router.put("/messages/{message_id}")
 def update_message(message_id: int, request: MessageUpdate, db: Session = Depends(get_db)):
     """编辑/更新单条聊天消息内容"""
-    message = db.get(models.ChatMessage, message_id)
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    message.content = request.content
-    message.audio_path = None
-    
-    session = db.get(models.Session, message.session_id)
-    if session:
-        session.updated_at = func.now()
-    db.commit()
-    db.refresh(message)
-    return {
-        "message": "Message updated successfully",
-        "message_id": message_id,
-        "content": message.content
-    }
+    try:
+        return message_service.update_message(message_id, request.content, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/messages/{message_id}")
@@ -293,7 +276,7 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
     删除单条聊天消息，并执行好感度与心情回滚缓冲，同时提供未提纯和认知指针的安全降级保护。
     """
     try:
-        result = session_service.delete_message_service(message_id, db)
+        result = message_service.delete_message(message_id, db)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -312,7 +295,7 @@ def get_session_memories(
     if not session or not session.persona:
         raise HTTPException(status_code=404, detail="Session or Persona not found")
 
-    ancestor_ids = memory_manager.get_ancestor_persona_ids(session.persona.id, db)
+    ancestor_ids = get_ancestor_persona_ids(session.persona.id, db)
     query = db.query(models.MemoryChunk).filter(
         models.MemoryChunk.persona_id.in_(ancestor_ids)
     )
@@ -342,25 +325,16 @@ def get_session_memories(
 @router.post("/{session_id}/memories")
 def create_session_memory(session_id: int, request: MemoryCreateRequest, db: Session = Depends(get_db)):
     """手动在指定会话下添加一条事实记忆（写入 SQLite 和 ChromaDB）"""
-    session = db.get(models.Session, session_id)
-    if not session or not session.persona:
-        raise HTTPException(status_code=404, detail="Session or Persona not found")
-
     try:
-        m_type = models.MemoryType(request.memory_type)
-    except ValueError:
-        m_type = models.MemoryType.fact
-
-    chunk = memory_manager.add_memory_chunk(
-        persona_id=session.persona.id,
-        character_id=session.persona.character_id,
-        content=request.content,
-        memory_type=m_type,
-        importance_score=request.importance_score or 0.8,
-        origin_session_id=session_id,
-        source_message_id=None,
-        db=db
-    )
+        chunk = session_memory_service.create_memory(
+            session_id=session_id,
+            content=request.content,
+            memory_type=request.memory_type,
+            importance_score=request.importance_score,
+            db=db,
+        )
+    except session_memory_service.SessionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return {
         "message": "Memory added successfully",
@@ -383,24 +357,13 @@ def create_session_memory(session_id: int, request: MemoryCreateRequest, db: Ses
 @router.put("/{session_id}/memories/{memory_id}")
 def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdateRequest, db: Session = Depends(get_db)):
     """更新某条属于当前会话的本地记忆（继承的只读记忆不允许在此更新）"""
-    session = db.get(models.Session, session_id)
-    if not session or not session.persona:
-        raise HTTPException(status_code=404, detail="Session or Persona not found")
-
-    chunk = db.get(models.MemoryChunk, memory_id)
-    if not chunk:
-        raise HTTPException(status_code=404, detail="Memory not found")
-
-    # 权限检查：只允许更新当前会话关联的本地记忆
-    if chunk.persona_id != session.persona.id:
-        raise HTTPException(status_code=403, detail="Cannot edit inherited memories")
-
     try:
-        updated_chunk = memory_manager.update_memory_chunk(
-            chunk_id=memory_id,
+        updated_chunk = session_memory_service.update_memory(
+            session_id=session_id,
+            memory_id=memory_id,
             content=request.content,
             importance_score=request.importance_score,
-            db=db
+            db=db,
         )
         return {
             "message": "Memory updated successfully",
@@ -413,26 +376,21 @@ def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdate
                 "supersedes_id": updated_chunk.supersedes_id,
             }
         }
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except session_memory_service.InheritedMemoryMutationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.SessionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{session_id}/memories/{memory_id}")
 def delete_session_memory(session_id: int, memory_id: int, db: Session = Depends(get_db)):
     """删除属于当前会话的某条本地记忆（继承的只读记忆不允许在此删除）"""
-    session = db.get(models.Session, session_id)
-    if not session or not session.persona:
-        raise HTTPException(status_code=404, detail="Session or Persona not found")
-
-    chunk = db.get(models.MemoryChunk, memory_id)
-    if not chunk:
-        raise HTTPException(status_code=404, detail="Memory not found")
-
-    # 权限检查：只允许删除当前会话关联的本地记忆
-    if chunk.persona_id != session.persona.id:
-        raise HTTPException(status_code=403, detail="Cannot delete inherited memories")
-
-    memory_manager.delete_memory_chunk(memory_id, db)
+    try:
+        session_memory_service.delete_memory(session_id, memory_id, db)
+    except session_memory_service.InheritedMemoryMutationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.SessionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"message": "Memory deleted successfully", "memory_id": memory_id}
 
 
@@ -445,9 +403,9 @@ async def compile_session_prompt(
     """
     预览/编译当前会话的最近一次大模型 Prompt 组装。
     """
-    import services.context_assembler as context_assembler
-    from services.prompt_compiler import compile_system_prompt
-    from services.prompt_token_estimator import estimate_prompt_tokens
+    import services.conversation.context_assembler as context_assembler
+    from services.conversation.prompt_compiler import compile_system_prompt
+    from services.conversation.prompt_token_estimator import estimate_prompt_tokens
 
     session = db.get(models.Session, session_id)
     if not session:

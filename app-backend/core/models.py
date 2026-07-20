@@ -324,8 +324,8 @@ class GraphEntity(Base):
         index=True
     )
     name        = Column(String(100), nullable=False, index=True)
-    aliases     = Column(Text, nullable=True)  # JSON list of explicit nicknames/abbreviations
-    entity_type = Column(String(50), nullable=False)  # "person", "place", "object", "event", "concept"
+    aliases     = Column(Text, nullable=True)  # JSON 列表，存储显式的昵称/缩写
+    entity_type = Column(String(50), nullable=False)  # 实体类型：如 "person"(人物)、"place"(地点)、"object"(物品)、"event"(事件)、"concept"(概念)
     description = Column(Text, nullable=True)
     created_at  = Column(DateTime, default=func.now())
 

@@ -50,9 +50,9 @@ CONFIG_SCHEMA = {
         "context_history_limit": {"type": int, "default": 10, "dynamic": True, "attr": "APP_CONTEXT_HISTORY_LIMIT"},
         # 从向量记忆库中检索注入上下文的相关记忆条目数 (Top-K)
         "retrieval_top_k": {"type": int, "default": 3, "dynamic": True, "attr": "APP_RETRIEVAL_TOP_K"},
-        # Number of recent user turns used to resolve references in a retrieval query.
+        # 用于在检索查询中解析指代的最近用户轮数。
         "retrieval_context_turns": {"type": int, "default": 3, "dynamic": True, "attr": "APP_RETRIEVAL_CONTEXT_TURNS"},
-        # Hard character budget for current question plus retrieval-only context.
+        # 当前问题加上仅检索上下文的硬字符预算限制。
         "retrieval_query_max_chars": {"type": int, "default": 2400, "dynamic": True, "attr": "APP_RETRIEVAL_QUERY_MAX_CHARS"},
         # 触发记忆提取的未整理消息轮数阈值
         "memory_extract_history_limit": {"type": int, "default": 20, "dynamic": False, "attr": "APP_MEMORY_EXTRACT_LIMIT"},

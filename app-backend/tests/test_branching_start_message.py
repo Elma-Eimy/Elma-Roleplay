@@ -5,7 +5,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal, engine
-from core import Base, models
+from core import models
+from core.models import Base
 from core.models import MessageRole
 from schemas import SessionCreate
 from routers.sessions import create_session

@@ -15,19 +15,71 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
-from core.database import get_db, SessionLocal
-from core import models
-from core.models import MessageRole
+from core.database import get_db
 from schemas import ChatRequest, SwitchCandidateRequest
-from core.config import settings
-import services.chat_engine as chat_engine
-import services.memory_manager as memory_manager
-import services.context_assembler as context_assembler
+import services.conversation.chat_engine as chat_engine
+import services.conversation.context_assembler as context_assembler
+import services.conversation.chat_turn_service as chat_turn_service
+import services.conversation.message_service as message_service
 import re
 from core.locking import get_session_lock
 
 router = APIRouter()
+
+
+async def _prepare_turn_and_messages(request: ChatRequest, db: Session):
+    """共用聊天回合准备流程，并在模型调用前结束数据库读取事务。"""
+    def run_prepare():
+        return chat_turn_service.prepare_chat_turn(
+            session_id=request.session_id,
+            db=db,
+            user_message=None if request.is_regenerate else request.user_message,
+            is_regenerate=request.is_regenerate,
+        )
+
+    try:
+        turn = await run_in_threadpool(run_prepare)
+    except chat_turn_service.ChatTurnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    try:
+        messages = await context_assembler.assemble_prompt_context(
+            session_id=turn.session.id,
+            character=turn.character,
+            persona=turn.persona,
+            user_msg=turn.user_message,
+            old_reply=turn.old_reply,
+            db=db,
+            user_nickname=request.user_nickname,
+        )
+        await run_in_threadpool(chat_turn_service.release_prompt_read_transaction, db)
+        return turn, messages
+    except BaseException:
+        await run_in_threadpool(chat_turn_service.abort_chat_turn, turn, db)
+        raise
+
+
+async def _complete_turn(
+    turn,
+    db: Session,
+    reply_text: str,
+    reasoning_content: str,
+    emotion_tag: str,
+    affection_change: int,
+):
+    return await run_in_threadpool(
+        chat_turn_service.complete_chat_turn,
+        turn,
+        reply_text,
+        reasoning_content,
+        emotion_tag,
+        affection_change,
+        db,
+    )
+
+
+async def _abort_turn(turn, db: Session):
+    await run_in_threadpool(chat_turn_service.abort_chat_turn, turn, db)
 
 
 @router.post("")
@@ -46,31 +98,12 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         )
 
     try:
-        # ── Step 1: 在线程池中准备实体上下文与保存用户新消息 ──
-        def run_prepare():
-            return context_assembler.prepare_chat_context(
-                session_id=request.session_id,
-                db=db,
-                user_message=None if request.is_regenerate else request.user_message,
-                is_regenerate=request.is_regenerate
-            )
-        session, persona, character, user_msg, old_reply = await run_in_threadpool(run_prepare)
+        turn, messages = await _prepare_turn_and_messages(request, db)
 
         try:
-            # ── Step 2: 统一调用装配器进行 RAG、图谱检索并拼装消息列表 ──
-            messages = await context_assembler.assemble_prompt_context(
-                session_id=session.id,
-                character=character,
-                persona=persona,
-                user_msg=user_msg,
-                old_reply=old_reply,
-                db=db,
-                user_nickname=request.user_nickname
-            )
-
-            # ── Step 3: 调用模型生成引擎获取回复 ──
+            # 调用模型生成引擎获取回复
             response_data = await chat_engine.generate_reply(
-                character=character,
+                character=turn.character,
                 messages=messages,
                 use_reasoning=request.use_reasoning,
                 temperature=request.temperature,
@@ -86,50 +119,35 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             affection_change = int(response_data.get("affection_change", 0))
             reasoning_content = response_data.get("reasoning_content", "")
 
-            # ── Step 4: 保存 AI 回复与更新状态 ──
-            import services.session_service as session_service
-
-            def run_save():
-                return session_service.save_chat_response(
-                    session_id=request.session_id,
-                    persona_id=persona.id,
-                    user_msg_id=user_msg.id,
-                    reply_text=reply_text,
-                    reasoning_content=reasoning_content,
-                    emotion_tag=emotion_tag,
-                    affection_change=affection_change,
-                    is_regenerate=request.is_regenerate,
-                    old_reply_id=old_reply.id if old_reply else None,
-                    db=db
-                )
-
-            ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(run_save)
-        except Exception as e:
-            if not request.is_regenerate:
-                def run_cleanup():
-                    try:
-                        db_msg = db.get(models.ChatMessage, user_msg.id)
-                        if db_msg:
-                            db.delete(db_msg)
-                            db.commit()
-                    except Exception as cleanup_err:
-                        print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
-                await run_in_threadpool(run_cleanup)
-            raise e
+            completed = await _complete_turn(
+                turn,
+                db,
+                reply_text,
+                reasoning_content,
+                emotion_tag,
+                affection_change,
+            )
+        except BaseException:
+            await _abort_turn(turn, db)
+            raise
 
         # ── Step 5: 后台触发提纯检查 ──
-        background_tasks.add_task(run_auto_trigger_checks, request.session_id, persona.id)
+        background_tasks.add_task(
+            chat_turn_service.run_post_turn_maintenance,
+            request.session_id,
+            turn.persona.id,
+        )
 
         return {
             "reply": reply_text,
             "emotion_tag": emotion_tag,
             "affection_change": affection_change,
-            "affection_score": final_affection_score,
+            "affection_score": completed.affection_score,
             "model_used": response_data.get("model_used"),
-            "user_message_id": user_msg.id,
-            "assistant_message_id": ai_msg_id,
-            "candidates": candidates_list,
-            "active_index": len(candidates_list) - 1,
+            "user_message_id": turn.user_message.id,
+            "assistant_message_id": completed.assistant_message_id,
+            "candidates": completed.candidates,
+            "active_index": len(completed.candidates) - 1,
         }
     finally:
         lock.release()
@@ -155,32 +173,12 @@ async def chat_stream(
         )
 
     try:
-        # ── Step 1: 准备实体上下文 ──
-        def run_prepare():
-            return context_assembler.prepare_chat_context(
-                session_id=session_id,
-                db=db,
-                user_message=None if request.is_regenerate else request.user_message,
-                is_regenerate=request.is_regenerate
-            )
-        session, persona, character, user_msg, old_reply = await run_in_threadpool(run_prepare)
-
         try:
-            # ── Step 2: 统一调用装配器进行 RAG、图谱检索并拼装消息列表 ──
-            messages = await context_assembler.assemble_prompt_context(
-                session_id=session.id,
-                character=character,
-                persona=persona,
-                user_msg=user_msg,
-                old_reply=old_reply,
-                db=db,
-                user_nickname=request.user_nickname
-            )
+            turn, messages = await _prepare_turn_and_messages(request, db)
 
-            # ── Step 3: 调用模型生成引擎获取流 ──
             try:
                 stream, model = await chat_engine.generate_reply_stream(
-                    character=character,
+                    character=turn.character,
                     messages=messages,
                     use_reasoning=request.use_reasoning,
                     temperature=request.temperature,
@@ -192,18 +190,10 @@ async def chat_stream(
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to start stream: {e}")
-        except Exception as e:
-            if not request.is_regenerate:
-                def run_cleanup():
-                    try:
-                        db_msg = db.get(models.ChatMessage, user_msg.id)
-                        if db_msg:
-                            db.delete(db_msg)
-                            db.commit()
-                    except Exception as cleanup_err:
-                        print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
-                await run_in_threadpool(run_cleanup)
-            raise e
+        except Exception:
+            if "turn" in locals():
+                await _abort_turn(turn, db)
+            raise
 
         async def event_generator():
             accumulated_text = ""
@@ -214,6 +204,7 @@ async def chat_stream(
             fallback_mode = False
             reply_closed = False
             last_sent_index = 0
+            turn_completed = False
             
             try:
                 async for chunk in stream:
@@ -293,53 +284,40 @@ async def chat_stream(
                 if not reply_text.strip():
                     reply_text = "（大模型未生成有效回复）"
 
-                # 保存 AI 回复与更新状态
-                import services.session_service as session_service
-
-                def run_save():
-                    return session_service.save_chat_response(
-                        session_id=session_id,
-                        persona_id=persona.id,
-                        user_msg_id=user_msg.id,
-                        reply_text=reply_text,
-                        reasoning_content=reasoning_text,
-                        emotion_tag=emotion_tag,
-                        affection_change=affection_change,
-                        is_regenerate=request.is_regenerate,
-                        old_reply_id=old_reply.id if old_reply else None,
-                        db=db
-                    )
-
-                ai_msg_id, final_affection_score, candidates_list = await run_in_threadpool(run_save)
+                completed = await _complete_turn(
+                    turn,
+                    db,
+                    reply_text,
+                    reasoning_text,
+                    emotion_tag,
+                    affection_change,
+                )
+                turn_completed = True
  
-                background_tasks.add_task(run_auto_trigger_checks, session_id, persona.id)
+                background_tasks.add_task(
+                    chat_turn_service.run_post_turn_maintenance,
+                    session_id,
+                    turn.persona.id,
+                )
  
                 meta_payload = {
                     "emotion_tag": emotion_tag,
                     "affection_change": affection_change,
-                    "affection_score": final_affection_score,
+                    "affection_score": completed.affection_score,
                     "model_used": model,
-                    "user_message_id": user_msg.id,
-                    "assistant_message_id": ai_msg_id,
-                    "candidates": candidates_list,
-                    "active_index": len(candidates_list) - 1,
+                    "user_message_id": turn.user_message.id,
+                    "assistant_message_id": completed.assistant_message_id,
+                    "candidates": completed.candidates,
+                    "active_index": len(completed.candidates) - 1,
                 }
                 yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
 
             except Exception as generator_err:
                 print(f"[ERROR] 发生流生成错误: {generator_err}")
-                if not request.is_regenerate:
-                    def run_cleanup():
-                        try:
-                            db_msg = db.get(models.ChatMessage, user_msg.id)
-                            if db_msg:
-                                db.delete(db_msg)
-                                db.commit()
-                        except Exception as cleanup_err:
-                            print(f"[WARN] Failed to cleanup user message: {cleanup_err}")
-                    await run_in_threadpool(run_cleanup)
                 yield f"data: {json.dumps({'error': str(generator_err)}, ensure_ascii=False)}\n\n"
             finally:
+                if not turn_completed:
+                    await _abort_turn(turn, db)
                 lock.release()
 
         return StreamingResponse(
@@ -357,94 +335,14 @@ async def chat_stream(
         raise e
 
 
-def run_auto_trigger_checks(session_id: int, persona_id: int):
-    """
-    后台任务：自动检查并执行记忆提纯和认知更新。
-    使用独立的数据库会话，避免与主请求线程的 Session 冲突。
-    """
-    db = SessionLocal()
-    try:
-        unsummarized = memory_manager.get_unsummarized_count(session_id, db)
-        effective_limit = memory_manager.get_effective_memory_extract_limit()
-        if unsummarized >= effective_limit:
-            count = memory_manager.summarize_and_store_memory(session_id, db)
-            print(
-                f"[INFO] 自动记忆提纯: 提取了 {count} 条记忆 "
-                f"(session_id={session_id}, trigger={effective_limit})"
-            )
-    except Exception as e:
-        print(f"[WARN] 自动记忆提纯失败: {e}")
-
-    try:
-        cognition_unseen = memory_manager.get_cognition_unseen_count(
-            persona_id, session_id, db
-        )
-        if cognition_unseen >= settings.APP_COGNITION_UPDATE_INTERVAL:
-            memory_manager.update_cognition_state(persona_id, db)
-            print(f"[INFO] 自动认知更新完成 (persona_id={persona_id})")
-    except Exception as e:
-        print(f"[WARN] 自动认知更新失败: {e}")
-    finally:
-        db.close()
-
-
 @router.post("/switch_candidate")
 async def switch_candidate(request: SwitchCandidateRequest, db: Session = Depends(get_db)):
     """
     切换同一轮对话下的激活 AI 候选回复版本，并同步调整好感度及心情。
     """
-    msg = db.get(models.ChatMessage, request.message_id)
-    if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
-        
-    if msg.role != MessageRole.assistant:
-        raise HTTPException(status_code=400, detail="Only assistant messages can be switched")
-        
-    if msg.parent_id is None:
-        raise HTTPException(status_code=400, detail="Cannot switch candidates for a message without a parent message")
-        
-    session_id = msg.session_id
-    
-    persona = db.query(models.SessionPersona).filter(
-        models.SessionPersona.session_id == session_id
-    ).first()
-    
-    old_active = db.query(models.ChatMessage).filter(
-        models.ChatMessage.session_id == session_id,
-        models.ChatMessage.role == MessageRole.assistant,
-        models.ChatMessage.parent_id == msg.parent_id,
-        models.ChatMessage.is_active == True
-    ).first()
-    
-    db.query(models.ChatMessage).filter(
-        models.ChatMessage.session_id == session_id,
-        models.ChatMessage.role == MessageRole.assistant,
-        models.ChatMessage.parent_id == msg.parent_id
-    ).update({"is_active": False})
-    
-    msg.is_active = True
-    
-    if persona:
-        if old_active and old_active.affection_change is not None:
-            persona.affection_score -= old_active.affection_change
-        if msg.affection_change is not None:
-            persona.affection_score += msg.affection_change
-        persona.affection_score = max(0, min(100, persona.affection_score))
-        persona.current_mood = msg.emotion_tag or "平静"
-        
-    session_obj = db.get(models.Session, session_id)
-    if session_obj:
-        session_obj.updated_at = func.now()
-        
-    db.commit()
-    db.refresh(msg)
-    if persona:
-        db.refresh(persona)
-        
-    return {
-        "message": "Candidate switched successfully",
-        "message_id": msg.id,
-        "is_active": msg.is_active,
-        "affection_score": persona.affection_score if persona else None,
-        "current_mood": persona.current_mood if persona else None
-    }
+    try:
+        return message_service.switch_candidate(request.message_id, db)
+    except message_service.CandidateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except message_service.CandidateValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

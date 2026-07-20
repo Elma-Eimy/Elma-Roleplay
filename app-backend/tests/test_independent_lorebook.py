@@ -6,10 +6,10 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal, engine
-from core import Base
 from core import models
-from services.parse_lorebook import parse_sillytavern_lorebook
-from services.lorebook_engine import process_lorebook
+from core.models import Base
+from services.lorebook.parse_lorebook import parse_sillytavern_lorebook
+from services.lorebook.lorebook_engine import process_lorebook
 
 def run_tests():
     print("==================================================")

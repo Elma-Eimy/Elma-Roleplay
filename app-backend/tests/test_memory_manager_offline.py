@@ -102,12 +102,16 @@ def _load_memory_manager():
     config_mod = types.ModuleType("core.config")
     config_mod.settings = settings
 
-    clients_mod = types.ModuleType("services.clients")
+    clients_mod = types.ModuleType("services.infrastructure.clients")
     clients_mod.LLM_MODEL = "offline"
     clients_mod.chroma_client = MagicMock(name="offline_chroma_client")
     clients_mod.openai_ef = MagicMock(name="offline_embedding_function")
 
-    cognition_mod = types.ModuleType("services.cognition_service")
+    lineage_mod = types.ModuleType("services.memory.persona_lineage")
+    lineage_mod.get_ancestor_persona_ids = MagicMock(return_value=[7])
+    lineage_mod.build_branch_turn_segments = MagicMock(return_value=[])
+
+    cognition_mod = types.ModuleType("services.memory.cognition_service")
     for name in (
         "get_unsummarized_count",
         "get_effective_memory_extract_limit",
@@ -118,22 +122,32 @@ def _load_memory_manager():
     ):
         setattr(cognition_mod, name, MagicMock(name=name))
 
-    session_service_mod = types.ModuleType("services.session_service")
+    session_service_mod = types.ModuleType("services.conversation.session_service")
     session_service_mod.safe_delete_session = MagicMock(name="safe_delete_session")
 
     replacements = {
         "core": core_pkg,
         "core.models": models_mod,
         "core.config": config_mod,
-        "services.clients": clients_mod,
-        "services.cognition_service": cognition_mod,
-        "services.session_service": session_service_mod,
+        "services.infrastructure.clients": clients_mod,
+        "services.memory.persona_lineage": lineage_mod,
+        "services.memory.cognition_service": cognition_mod,
+        "services.conversation.session_service": session_service_mod,
     }
     saved = {name: sys.modules.get(name) for name in replacements}
+    services_pkg = sys.modules.get("services")
+    had_lineage_attr = services_pkg is not None and hasattr(
+        services_pkg, "persona_lineage"
+    )
+    previous_lineage_attr = (
+        getattr(services_pkg, "persona_lineage", None) if services_pkg else None
+    )
     sys.modules.update(replacements)
+    if services_pkg is not None:
+        services_pkg.persona_lineage = lineage_mod
     try:
         spec = importlib.util.spec_from_file_location(
-            module_name, ROOT / "services" / "memory_manager.py"
+            module_name, ROOT / "services" / "memory" / "memory_manager.py"
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
@@ -146,6 +160,11 @@ def _load_memory_manager():
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+        if services_pkg is not None:
+            if had_lineage_attr:
+                services_pkg.persona_lineage = previous_lineage_attr
+            elif hasattr(services_pkg, "persona_lineage"):
+                delattr(services_pkg, "persona_lineage")
 
 
 class _AddDB:
@@ -317,8 +336,8 @@ class MemoryManagerOfflineTests(unittest.TestCase):
             "distances": [[0.1]],
         }
         self.mm.get_character_collection = MagicMock(return_value=collection)
-        self.mm.get_ancestor_persona_ids = MagicMock(return_value=[7])
-        self.mm._build_branch_turn_segments = MagicMock(return_value=[])
+        self.mm.persona_lineage.get_ancestor_persona_ids = MagicMock(return_value=[7])
+        self.mm.persona_lineage.build_branch_turn_segments = MagicMock(return_value=[])
         self.mm.calculate_memory_age_turns = MagicMock(return_value=1)
 
         result = self.mm.retrieve_memories(
@@ -347,7 +366,7 @@ class MemoryManagerOfflineTests(unittest.TestCase):
             "distances": [[0.0]],
         }
         self.mm.get_character_collection = MagicMock(return_value=collection)
-        self.mm.get_ancestor_persona_ids = MagicMock(return_value=[7])
+        self.mm.persona_lineage.get_ancestor_persona_ids = MagicMock(return_value=[7])
         self.mm.settings.APP_RETRIEVAL_MAX_DISTANCE = 0
 
         result = self.mm.retrieve_memories(
@@ -374,7 +393,7 @@ class MemoryManagerOfflineTests(unittest.TestCase):
             "distances": [[0.01]],
         }
         self.mm.get_character_collection = MagicMock(return_value=collection)
-        self.mm.get_ancestor_persona_ids = MagicMock(return_value=[7])
+        self.mm.persona_lineage.get_ancestor_persona_ids = MagicMock(return_value=[7])
         self.mm.settings.APP_RETRIEVAL_MAX_DISTANCE = 0
 
         result = self.mm.retrieve_memories(

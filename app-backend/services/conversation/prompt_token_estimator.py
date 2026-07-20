@@ -1,6 +1,6 @@
-"""Heuristic prompt token-range estimation without model-specific tokenizers.
+"""无特定模型分词器（Tokenizer）的启发式 Prompt Token 范围估算。
 
-This module is observational only: it never rewrites or trims messages.
+本模块仅用于观察/测量：绝不会重写或裁剪消息。
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ CURRENT_USER_MARKER = "【当前用户的最新消息：】"
 
 
 def estimate_text_tokens(text: str | None) -> dict[str, int]:
-    """Return a deliberately broad token estimate for mixed Chinese/Latin text."""
+    """针对混合中文/拉丁文文本，返回一个故意放宽的 Token 估算值。"""
     value = text or ""
     if not value:
         return {
@@ -95,8 +95,7 @@ def _split_enhanced_user_content(content: str) -> Iterable[tuple[str, str]]:
     for match in TAG_BLOCK_RE.finditer(content):
         spans.append((match.start(), match.end(), TAG_TO_SECTION[match.group(1)]))
 
-    # The compiler appends this marker last. rfind avoids a lorebook or memory
-    # quotation containing the same literal label from stealing the split point.
+    # 编译器会在最后附加此标记。使用 rfind 可避免包含相同字面量标签的世界书或记忆引用抢占分割点。
     marker_index = content.rfind(CURRENT_USER_MARKER)
     if marker_index >= 0:
         spans.append((marker_index, len(content), "current_user_message"))

@@ -34,7 +34,7 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services import cognition_service, memory_manager
+from services.memory import memory_extraction_service, memory_manager, persona_lineage
 from routers.sessions import get_session_memories
 
 
@@ -131,10 +131,10 @@ class MemoryVersioningTests(unittest.TestCase):
             supersedes=old,
         )
 
-        child_chain = memory_manager.get_ancestor_persona_ids(
+        child_chain = persona_lineage.get_ancestor_persona_ids(
             self.child_persona.id, self.db
         )
-        sibling_chain = memory_manager.get_ancestor_persona_ids(
+        sibling_chain = persona_lineage.get_ancestor_persona_ids(
             self.sibling_persona.id, self.db
         )
         self.assertEqual(
@@ -247,9 +247,9 @@ class MemoryVersioningTests(unittest.TestCase):
             )
         )
         with patch.object(
-            cognition_service, "get_llm_provider", return_value=provider
+            memory_extraction_service, "get_llm_provider", return_value=provider
         ):
-            result = cognition_service.resolve_memory_relationship_via_llm(
+            result = memory_extraction_service.resolve_memory_relationship_via_llm(
                 "用户住在北京。", "用户已经搬到杭州。"
             )
         self.assertEqual("replace", result["relation"])
@@ -259,11 +259,11 @@ class MemoryVersioningTests(unittest.TestCase):
             generate=MagicMock(side_effect=ConnectionError("offline"))
         )
         with patch.object(
-            cognition_service,
+            memory_extraction_service,
             "get_llm_provider",
             return_value=failing_provider,
         ):
-            fallback = cognition_service.resolve_memory_relationship_via_llm(
+            fallback = memory_extraction_service.resolve_memory_relationship_via_llm(
                 "旧信息", "新信息"
             )
         self.assertEqual(

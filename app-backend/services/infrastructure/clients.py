@@ -3,15 +3,17 @@ from openai import OpenAI, AsyncOpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
 
+
+class EmbeddingGenerationError(RuntimeError):
+    """Embedding 服务未能为输入生成可用向量。"""
+
+
 # ChromaDB 持久化客户端
 CHROMA_DATA_PATH = settings.STORAGE_CHROMA_DB_PATH
 chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
 
 # OpenAI Compatible Robust Embedding Function
 class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
-    # Static class member to cache vector dimension
-    _cached_dim = None
-
     def __call__(self, input):
         import urllib.request
         import json
@@ -82,19 +84,14 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 else:
                     raise ValueError(f"API returned unexpected data field type: {type(data_field)}")
                         
-                if embeddings and len(embeddings) > 0:
-                    self.__class__._cached_dim = len(embeddings[0])
                 return embeddings
             except Exception as e:
                 print(f"==========================================")
                 print(f"[WARNING] Multimodal Embedding API call failed: {e}")
-                
-                dim = self.__class__._cached_dim
-                if dim is None:
-                    dim = 2048  # Match the real model's default dimension of 2048
-                print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
                 print(f"==========================================")
-                return [[0.0] * dim for _ in input]
+                raise EmbeddingGenerationError(
+                    f"Multimodal embedding generation failed: {e}"
+                ) from e
         else:
             # Standard Text API endpoint
             try:
@@ -106,29 +103,14 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                         base_url=self.api_base or settings.EMBEDDING_BASE_URL,
                         timeout=30.0  # 稍微长一点的合理超时时间
                     )
-                embeddings = super().__call__(input)
-                if embeddings and len(embeddings) > 0:
-                    self.__class__._cached_dim = len(embeddings[0])
-                return embeddings
+                return super().__call__(input)
             except Exception as e:
                 print(f"==========================================")
                 print(f"[WARNING] Embedding API call failed: {e}")
-                
-                dim = self.__class__._cached_dim
-                if dim is None:
-                    model_lower = model_name.lower()
-                    if "3-large" in model_lower:
-                        dim = 3072
-                    elif "ada-002" in model_lower or "3-small" in model_lower:
-                        dim = 1536
-                    elif "bge-large" in model_lower or "doubao" in model_lower:
-                        dim = 1024
-                    else:
-                        dim = 1536
-                
-                print(f"[INFO] Falling back to zero-vector mock embeddings of dimension {dim}.")
                 print(f"==========================================")
-                return [[0.0] * dim for _ in input]
+                raise EmbeddingGenerationError(
+                    f"Embedding generation failed: {e}"
+                ) from e
 
 openai_ef = RobustOpenAIEmbeddingFunction(
     api_key=settings.EMBEDDING_API_KEY,
@@ -138,7 +120,7 @@ openai_ef = RobustOpenAIEmbeddingFunction(
 
 # ── 大模型适配提供商兼容性代理 ──
 # 作用：保持系统其他辅助模块（如 cognition_service、tts_service）的历史导入接口兼容
-from services.llm_provider import get_llm_provider
+from services.infrastructure.llm_provider import get_llm_provider
 
 class CompatibilitySyncLLMClient:
     @property

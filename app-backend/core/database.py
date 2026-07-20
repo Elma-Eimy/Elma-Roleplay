@@ -39,7 +39,8 @@ def get_db():
     finally:
         db.close()
 
-def run_migrations(db_engine):
+def run_migrations(db_engine=engine):
+    """Apply pending Alembic migrations explicitly during application startup."""
     from sqlalchemy import inspect
     from alembic.config import Config
     from alembic import command
@@ -47,7 +48,10 @@ def run_migrations(db_engine):
     inspector = inspect(db_engine)
     tables = inspector.get_table_names()
     
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = Config(os.path.join(BASE_DIR, "alembic.ini"))
+    alembic_cfg.set_main_option(
+        "script_location", os.path.join(BASE_DIR, "alembic")
+    )
     
     # 如果已存在 chat_messages 但没有 alembic_version，说明是已存在的旧版数据库，对其执行 baseline stamp
     if "chat_messages" in tables and "alembic_version" not in tables:
@@ -66,9 +70,3 @@ def run_migrations(db_engine):
     except Exception as e:
         print(f"[ERROR] Database upgrade failed: {e}")
         raise e
-
-if os.environ.get("APP_ALEMBIC_ENV_ACTIVE") != "1":
-    try:
-        run_migrations(engine)
-    except Exception as e:
-        print(f"[WARN] Auto migration failed: {e}")

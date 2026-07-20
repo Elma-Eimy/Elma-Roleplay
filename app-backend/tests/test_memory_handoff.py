@@ -34,8 +34,8 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services import cognition_service
-from services import context_assembler
+from services.memory import memory_extraction_service
+from services.conversation import context_assembler
 
 chat_router = importlib.import_module("routers.chat")
 
@@ -110,7 +110,7 @@ class MemoryHandoffTests(unittest.TestCase):
         ):
             self.assertEqual(
                 13,
-                cognition_service.get_effective_memory_extract_limit(),
+                memory_extraction_service.get_effective_memory_extract_limit(),
             )
 
         # 用户显式配置了更早的阈值时应尊重该阈值。
@@ -121,7 +121,7 @@ class MemoryHandoffTests(unittest.TestCase):
         ):
             self.assertEqual(
                 10,
-                cognition_service.get_effective_memory_extract_limit(),
+                memory_extraction_service.get_effective_memory_extract_limit(),
             )
 
     def test_unsummarized_messages_temporarily_expand_history_then_restore(self):
@@ -132,7 +132,7 @@ class MemoryHandoffTests(unittest.TestCase):
         ):
             self.assertEqual(
                 18,
-                cognition_service.get_memory_handoff_history_limit(
+                memory_extraction_service.get_memory_handoff_history_limit(
                     self.session_id,
                     self.db,
                 ),
@@ -143,7 +143,7 @@ class MemoryHandoffTests(unittest.TestCase):
             self.db.commit()
             self.assertEqual(
                 15,
-                cognition_service.get_memory_handoff_history_limit(
+                memory_extraction_service.get_memory_handoff_history_limit(
                     self.session_id,
                     self.db,
                 ),
@@ -157,7 +157,7 @@ class MemoryHandoffTests(unittest.TestCase):
         ):
             self.assertEqual(
                 30,
-                cognition_service.get_memory_handoff_history_limit(
+                memory_extraction_service.get_memory_handoff_history_limit(
                     self.session_id,
                     self.db,
                 ),
@@ -171,7 +171,7 @@ class MemoryHandoffTests(unittest.TestCase):
 
         with (
             patch.object(
-                context_assembler.memory_manager,
+                context_assembler,
                 "get_memory_handoff_history_limit",
                 return_value=18,
             ),
@@ -192,8 +192,13 @@ class MemoryHandoffTests(unittest.TestCase):
             ) as history_mock,
             patch.object(
                 context_assembler,
-                "_build_chat_messages",
-                new=AsyncMock(return_value=[]),
+                "get_parent_history_examples",
+                return_value=[],
+            ),
+            patch.object(
+                context_assembler,
+                "build_chat_messages",
+                return_value=[],
             ),
         ):
             asyncio.run(context_assembler.assemble_prompt_context(
@@ -220,32 +225,36 @@ class MemoryHandoffTests(unittest.TestCase):
     def test_auto_trigger_uses_effective_handoff_threshold(self):
         db = MagicMock()
         with (
-            patch.object(chat_router, "SessionLocal", return_value=db),
+            patch.object(chat_router.chat_turn_service, "SessionLocal", return_value=db),
             patch.object(
-                chat_router.memory_manager,
+                chat_router.chat_turn_service.memory_extraction_service,
                 "get_unsummarized_count",
                 side_effect=[12, 13],
             ),
             patch.object(
-                chat_router.memory_manager,
+                chat_router.chat_turn_service.memory_extraction_service,
                 "get_effective_memory_extract_limit",
                 return_value=13,
             ),
             patch.object(
-                chat_router.memory_manager,
+                chat_router.chat_turn_service.memory_extraction_service,
                 "summarize_and_store_memory",
                 return_value=1,
             ) as summarize_mock,
             patch.object(
-                chat_router.memory_manager,
+                chat_router.chat_turn_service.cognition_service,
                 "get_cognition_unseen_count",
                 return_value=0,
             ),
         ):
-            chat_router.run_auto_trigger_checks(session_id=1, persona_id=2)
+            chat_router.chat_turn_service.run_post_turn_maintenance(
+                session_id=1, persona_id=2
+            )
             summarize_mock.assert_not_called()
 
-            chat_router.run_auto_trigger_checks(session_id=1, persona_id=2)
+            chat_router.chat_turn_service.run_post_turn_maintenance(
+                session_id=1, persona_id=2
+            )
             summarize_mock.assert_called_once_with(1, db)
 
 

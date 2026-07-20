@@ -23,7 +23,8 @@ from core.models import (
     Session,
     SessionPersona,
 )
-from services import memory_manager, outbox_worker
+from services.memory import memory_manager
+from services.infrastructure import outbox_worker
 
 
 class _StatefulCollection:

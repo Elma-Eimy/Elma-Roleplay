@@ -23,8 +23,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.models import Base, Character, ChatMessage, MessageRole, Session
-from services.prompt_compiler import _build_chat_messages
-from services.session_service import create_session_service, safe_delete_session
+from services.conversation.context_assembler import get_parent_history_examples
+from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.session_service import create_session_service, safe_delete_session
 
 
 if sys.platform.startswith("win"):
@@ -119,15 +120,16 @@ class BranchContextBoundaryTests(unittest.TestCase):
             }
             for message in child_messages
         ]
-        return asyncio.run(_build_chat_messages(
+        parent_history = get_parent_history_examples(child.persona, self.db)
+        return build_chat_messages(
             character=child.persona.character,
             persona=child.persona,
             recent_history=recent_history,
+            parent_history=parent_history,
             user_message=current_user_message.content,
             retrieved_memories=None,
             graph_knowledge=None,
-            db=self.db,
-        ))
+        )
 
     def test_branch_prompt_stops_before_fork_and_does_not_duplicate_boundary(self):
         parent = self._create_root()
