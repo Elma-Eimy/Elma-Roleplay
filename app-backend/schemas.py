@@ -92,9 +92,18 @@ class LorebookEntry(BaseModel):
     constant: bool = False
     case_sensitive: bool = False
     selective: bool = False
+    selective_logic: str = "and_any"
     secondary_keys: list[str] = []
+    use_regex: bool = False
+    probability: int = 100
+    use_probability: bool = True
     position: str = "before_char"
     insertion_order: int = 100
+    # SillyTavern 的 @ Depth 条目使用这两个可选元数据；其它位置会忽略它们。
+    depth: int = 4
+    role: str = "system"
+    # Outlet 当前只保真存储，不会自动注入；后续可配合宏系统使用。
+    outlet: str = ""
 
 class LorebookCreate(BaseModel):
     name: str

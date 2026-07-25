@@ -34,8 +34,12 @@ TAG_TO_SECTION = {
 }
 TAG_BLOCK_RE = re.compile(
     r"<(current_scenario|cognition_state|current_status|lorebook_knowledge|"
-    r"recalled_memories|factual_relationships)>.*?</\1>",
+    r"recalled_memories|factual_relationships)(?:\s[^>]*)?>.*?</\1>",
     re.DOTALL,
+)
+GENERATED_LOREBOOK_RE = re.compile(
+    r"<lorebook_knowledge\s+position=",
+    re.IGNORECASE,
 )
 CURRENT_USER_MARKER = "【当前用户的最新消息：】"
 
@@ -121,15 +125,62 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]] | None) -> dict[str, A
     if payload:
         _add_text(sections["character"], str(payload[0].get("content", "")))
 
-    has_final_user = bool(payload and payload[-1].get("role") == "user")
-    history_end = len(payload) - 1 if has_final_user else len(payload)
-    for message in payload[1:history_end]:
-        _add_text(sections["recent_history"], str(message.get("content", "")))
+    # 正常聊天 Payload 以 PHI / 输出契约 system 消息收尾。它仍属于提示指令，
+    # 计入 character 区段；随后再定位其前方真正的当前 user 消息。
+    has_post_history_system = bool(
+        len(payload) > 1 and payload[-1].get("role") == "system"
+    )
+    conversation_end = len(payload) - 1 if has_post_history_system else len(payload)
+    if has_post_history_system:
+        _add_text(sections["character"], str(payload[-1].get("content", "")))
 
-    if has_final_user:
-        final_content = str(payload[-1].get("content", ""))
-        for section_name, fragment in _split_enhanced_user_content(final_content):
-            _add_text(sections[section_name], fragment)
+    # @ Depth 0 世界书可能位于真实用户消息之后，其角色本身也可能是 user。
+    # 从后向前跳过带生成标记的世界书消息，定位本轮真正的用户原话。
+    final_user_index = None
+    for index in range(conversation_end - 1, -1, -1):
+        message = payload[index]
+        content = str(message.get("content", ""))
+        if (
+            message.get("role") == "user"
+            and not GENERATED_LOREBOOK_RE.search(content)
+        ):
+            final_user_index = index
+            break
+
+    # 角色定义可能因 before/after_char 注入而成为首条 system 后的独立
+    # system。在首个非 system 消息前，非动态 system 仍属于角色提示区。
+    leading_system_indexes = set()
+    for index in range(1, conversation_end):
+        message = payload[index]
+        if message.get("role") != "system":
+            break
+        content = str(message.get("content", ""))
+        if TAG_BLOCK_RE.search(content):
+            for section_name, fragment in _split_enhanced_user_content(content):
+                _add_text(sections[section_name], fragment)
+        else:
+            _add_text(sections["character"], content)
+        leading_system_indexes.add(index)
+
+    for index, message in enumerate(payload[1:conversation_end], start=1):
+        if index in leading_system_indexes or index == final_user_index:
+            continue
+        content = str(message.get("content", ""))
+        # @ Depth 世界书可以使用任意角色，所以按标签而非 role 识别；
+        # 同时继续兼容旧版增强 user 中相同的 XML 动态块。
+        if TAG_BLOCK_RE.search(content):
+            for section_name, fragment in _split_enhanced_user_content(content):
+                _add_text(sections[section_name], fragment)
+        else:
+            _add_text(sections["recent_history"], content)
+
+    if final_user_index is not None:
+        final_content = str(payload[final_user_index].get("content", ""))
+        if CURRENT_USER_MARKER in final_content:
+            for section_name, fragment in _split_enhanced_user_content(final_content):
+                _add_text(sections[section_name], fragment)
+        else:
+            _add_text(sections["current_user_message"], final_content)
 
     # Chat APIs add role/separator framing that is not present in content.
     # Keep it visible under "other" instead of pretending the section sum is exact.

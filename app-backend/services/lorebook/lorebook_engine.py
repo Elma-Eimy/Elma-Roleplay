@@ -1,6 +1,173 @@
 import json
+import random
+import re
 from typing import Optional
 from core.config import settings
+from services.lorebook.parse_lorebook import (
+    normalize_lorebook_depth,
+    normalize_lorebook_keys,
+    normalize_lorebook_position,
+    normalize_lorebook_role,
+    normalize_probability,
+    normalize_selective_logic,
+)
+
+
+LOREBOOK_INSERTION_POSITIONS = (
+    "before_char",
+    "after_char",
+    "before_examples",
+    "after_examples",
+    "top_an",
+    "bottom_an",
+    "at_depth",
+    "outlet",
+)
+
+
+def empty_lorebook_result() -> dict:
+    """返回完整且彼此独立的世界书位置桶。"""
+    return {position: [] for position in LOREBOOK_INSERTION_POSITIONS}
+
+
+def _entry_extensions(entry: dict) -> dict:
+    extensions = entry.get("extensions")
+    return extensions if isinstance(extensions, dict) else {}
+
+
+def _entry_value(entry: dict, *names: str, default=None):
+    """按顶级字段优先、extensions 次之读取多种兼容字段名。"""
+    extensions = _entry_extensions(entry)
+    for source in (entry, extensions):
+        for name in names:
+            if name in source and source[name] is not None:
+                return source[name]
+    return default
+
+
+def _entry_enabled(entry: dict) -> bool:
+    if "enabled" in entry:
+        return bool(entry["enabled"])
+    return not bool(_entry_value(entry, "disable", default=False))
+
+
+def _coerce_keys(raw_keys) -> list[str]:
+    return normalize_lorebook_keys(raw_keys)
+
+
+def _entry_keys(entry: dict, *, secondary: bool = False) -> list[str]:
+    if secondary:
+        raw_keys = _entry_value(
+            entry,
+            "secondary_keys",
+            "keysecondary",
+            "secondaryKeys",
+            default=[],
+        )
+    else:
+        raw_keys = _entry_value(entry, "keys", "key", default=[])
+    return _coerce_keys(raw_keys)
+
+
+def _compile_regex_key(
+    raw_key: str,
+    *,
+    force_regex: bool,
+    case_sensitive: bool,
+) -> Optional[re.Pattern]:
+    """把 JavaScript 风格 `/pattern/flags` 安全转换为 Python 正则。"""
+    pattern_text = raw_key
+    flags = 0 if case_sensitive else re.IGNORECASE
+    is_delimited = False
+
+    if raw_key.startswith("/") and len(raw_key) > 1:
+        closing_slash = raw_key.rfind("/")
+        if closing_slash > 0:
+            is_delimited = True
+            pattern_text = raw_key[1:closing_slash]
+            raw_flags = raw_key[closing_slash + 1 :]
+            # 显式 JavaScript flags 决定正则大小写；g/y/u/d/v 不影响 Python 搜索语义。
+            flags = 0
+            if "i" in raw_flags:
+                flags |= re.IGNORECASE
+            if "m" in raw_flags:
+                flags |= re.MULTILINE
+            if "s" in raw_flags:
+                flags |= re.DOTALL
+
+    if not force_regex and not is_delimited:
+        return None
+    try:
+        return re.compile(pattern_text, flags)
+    except re.error:
+        # 无效正则不能中断整轮生成，也不回退为宽松的字面量误触发。
+        return None
+
+
+def _passes_probability(entry: dict) -> bool:
+    use_probability = bool(
+        _entry_value(
+            entry,
+            "use_probability",
+            "useProbability",
+            default=True,
+        )
+    )
+    if not use_probability:
+        return True
+    probability = normalize_probability(
+        _entry_value(entry, "probability", default=100)
+    )
+    if probability <= 0:
+        return False
+    if probability >= 100:
+        return True
+    return random.random() * 100 < probability
+
+
+def _matches_optional_filter(
+    entry: dict,
+    matched_secondary_indexes: set[int],
+) -> bool:
+    """评估 SillyTavern Optional Filter 的四种组合逻辑。"""
+    secondary_keys = _entry_keys(entry, secondary=True)
+    if not bool(_entry_value(entry, "selective", default=False)):
+        return True
+    if not secondary_keys:
+        # 官方语义：没有可选过滤关键词时忽略 Optional Filter。
+        return True
+
+    matched_count = len(matched_secondary_indexes)
+    all_matched = matched_count >= len(secondary_keys)
+    any_matched = matched_count > 0
+    logic = normalize_selective_logic(
+        _entry_value(
+            entry,
+            "selective_logic",
+            "selectiveLogic",
+            default=0,
+        )
+    )
+    if logic == "and_all":
+        return all_matched
+    if logic == "not_any":
+        return not any_matched
+    if logic == "not_all":
+        return not all_matched
+    return any_matched
+
+
+def _coerce_entry_list(raw_entries) -> list[dict]:
+    if isinstance(raw_entries, list):
+        return [entry for entry in raw_entries if isinstance(entry, dict)]
+    if isinstance(raw_entries, dict):
+        return [
+            entry
+            for entry in raw_entries.values()
+            if isinstance(entry, dict)
+        ]
+    return []
+
 
 def process_lorebook(
     character,
@@ -11,7 +178,7 @@ def process_lorebook(
     处理角色专属的世界书（Lorebook/CharacterBook）匹配与筛选。
     """
     if not recent_history and not user_message:
-        return {"before_char": [], "after_char": []}
+        return empty_lorebook_result()
 
     # 1. 安全解析 extensions
     extensions_dict = {}
@@ -28,9 +195,7 @@ def process_lorebook(
     if not isinstance(character_book, dict):
         character_book = {}
         
-    embedded_entries = character_book.get("entries", [])
-    if not isinstance(embedded_entries, list):
-        embedded_entries = []
+    embedded_entries = _coerce_entry_list(character_book.get("entries", []))
         
     # 2. 提取并合并绑定的独立世界书 entries
     independent_entries = []
@@ -44,8 +209,7 @@ def process_lorebook(
             if lb.entries:
                 try:
                     lb_entries = json.loads(lb.entries)
-                    if isinstance(lb_entries, list):
-                        independent_entries.extend(lb_entries)
+                    independent_entries.extend(_coerce_entry_list(lb_entries))
                 except Exception as e:
                     print(f"[ERROR] Failed to load entries from independent lorebook '{lb.name}': {e}")
             
@@ -73,7 +237,7 @@ def process_lorebook(
     entries.extend(independent_entries)
     
     if not entries:
-        return {"before_char": [], "after_char": []}
+        return empty_lorebook_result()
     
     # 3. 构造基础扫描文本
     history_to_scan = recent_history[-scan_depth:] if scan_depth > 0 and recent_history else []
@@ -93,41 +257,62 @@ def process_lorebook(
     
     has_insensitive = False
     has_sensitive = False
+    regex_matchers = []
     
     for idx, entry in enumerate(entries):
-        if not isinstance(entry, dict) or not entry.get("enabled", True):
+        if not isinstance(entry, dict) or not _entry_enabled(entry):
             continue
         # 常驻条目不需要加入自动机，会在扫描时直接触发
-        if bool(entry.get("constant", False)):
+        if bool(_entry_value(entry, "constant", "constant_activation", default=False)):
             continue
             
-        case_sensitive = bool(entry.get("case_sensitive", False))
+        case_sensitive = bool(
+            _entry_value(
+                entry,
+                "case_sensitive",
+                "caseSensitive",
+                default=False,
+            )
+        )
+        use_regex = bool(
+            _entry_value(
+                entry,
+                "use_regex",
+                "useRegex",
+                default=False,
+            )
+        )
         
         # 提取 Keys 与 Secondary Keys
-        keys = entry.get("keys", [])
-        if not isinstance(keys, list):
-            keys = [keys] if keys else []
-        secondary_keys = entry.get("secondary_keys", [])
-        if not isinstance(secondary_keys, list):
-            secondary_keys = [secondary_keys] if secondary_keys else []
-            
-        if case_sensitive:
-            for k in keys:
-                if k:
-                    ac_sensitive.add_keyword(str(k), (idx, "primary"))
+        keys = _entry_keys(entry)
+        secondary_keys = _entry_keys(entry, secondary=True)
+
+        for key_type, candidate_keys in (
+            ("primary", keys),
+            ("secondary", secondary_keys),
+        ):
+            for key_index, key in enumerate(candidate_keys):
+                regex = _compile_regex_key(
+                    key,
+                    force_regex=use_regex,
+                    case_sensitive=case_sensitive,
+                )
+                if regex is not None:
+                    regex_matchers.append((idx, key_type, key_index, regex))
+                elif use_regex or key.startswith("/"):
+                    # 已声明为正则但编译失败的关键词不应回退为普通子串。
+                    continue
+                elif case_sensitive:
+                    ac_sensitive.add_keyword(
+                        key,
+                        (idx, key_type, key_index),
+                    )
                     has_sensitive = True
-            for sk in secondary_keys:
-                if sk:
-                    ac_sensitive.add_keyword(str(sk), (idx, "secondary"))
-                    has_sensitive = True
-        else:
-            for k in keys:
-                if k:
-                    ac_insensitive.add_keyword(str(k).lower(), (idx, "primary"))
-                    has_insensitive = True
-            for sk in secondary_keys:
-                if sk:
-                    ac_insensitive.add_keyword(str(sk).lower(), (idx, "secondary"))
+                else:
+                    ac_insensitive.add_keyword(
+                        key.lower(),
+                        (idx, key_type, key_index),
+                    )
                     has_insensitive = True
                     
     if has_insensitive:
@@ -138,6 +323,7 @@ def process_lorebook(
     # 5. 条目触发匹配 (支持递归扫描)
     max_passes = settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES if recursive_scanning else 1
     triggered_indexes = set()
+    probability_rejected_indexes = set()
     triggered_entries = []
     
     current_scan_text = scan_text
@@ -150,11 +336,14 @@ def process_lorebook(
         
         # 首先：触发所有尚未触发的常驻条目 (Constant)
         for idx, entry in enumerate(entries):
-            if idx in triggered_indexes:
+            if idx in triggered_indexes or idx in probability_rejected_indexes:
                 continue
-            if not isinstance(entry, dict) or not entry.get("enabled", True):
+            if not isinstance(entry, dict) or not _entry_enabled(entry):
                 continue
-            if bool(entry.get("constant", False)):
+            if bool(_entry_value(entry, "constant", "constant_activation", default=False)):
+                if not _passes_probability(entry):
+                    probability_rejected_indexes.add(idx)
+                    continue
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
                 # 常驻条目不更新 new_trigger_added，不干扰循环提前退出的判断
@@ -170,52 +359,55 @@ def process_lorebook(
         if has_insensitive:
             text_lower = current_scan_text.lower()
             for start, end, key, value in ac_insensitive.search_all(text_lower):
-                idx, key_type = value
-                if idx in triggered_indexes:
+                idx, key_type, key_index = value
+                if idx in triggered_indexes or idx in probability_rejected_indexes:
                     continue
                 if key_type == "primary":
-                    matched_primaries.setdefault(idx, set()).add(key)
+                    matched_primaries.setdefault(idx, set()).add(key_index)
                 else:
-                    matched_secondaries.setdefault(idx, set()).add(key)
+                    matched_secondaries.setdefault(idx, set()).add(key_index)
                     
         # 匹配区分大小写的关键词
         if has_sensitive:
             for start, end, key, value in ac_sensitive.search_all(current_scan_text):
-                idx, key_type = value
-                if idx in triggered_indexes:
+                idx, key_type, key_index = value
+                if idx in triggered_indexes or idx in probability_rejected_indexes:
                     continue
                 if key_type == "primary":
-                    matched_primaries.setdefault(idx, set()).add(key)
+                    matched_primaries.setdefault(idx, set()).add(key_index)
                 else:
-                    matched_secondaries.setdefault(idx, set()).add(key)
+                    matched_secondaries.setdefault(idx, set()).add(key_index)
+
+        # JavaScript 风格和 use_regex 条目走独立正则匹配路径；无效模式已在
+        # 编译阶段跳过，不会影响其它世界书条目。
+        for idx, key_type, key_index, regex in regex_matchers:
+            if idx in triggered_indexes or idx in probability_rejected_indexes:
+                continue
+            if regex.search(current_scan_text):
+                if key_type == "primary":
+                    matched_primaries.setdefault(idx, set()).add(key_index)
+                else:
+                    matched_secondaries.setdefault(idx, set()).add(key_index)
                     
         # 评估触发条件
-        for idx in (set(matched_primaries.keys()) | set(matched_secondaries.keys())):
-            if idx in triggered_indexes:
+        for idx in sorted(
+            set(matched_primaries.keys()) | set(matched_secondaries.keys())
+        ):
+            if idx in triggered_indexes or idx in probability_rejected_indexes:
                 continue
                 
             entry = entries[idx]
-            selective = bool(entry.get("selective", False))
-            
-            keys = entry.get("keys", [])
-            if not isinstance(keys, list):
-                keys = [keys] if keys else []
-            has_primary_keys = any(k for k in keys if k)
-            
-            secondary_keys = entry.get("secondary_keys", [])
-            if not isinstance(secondary_keys, list):
-                secondary_keys = [secondary_keys] if secondary_keys else []
-            has_secondary_keys = any(sk for sk in secondary_keys if sk)
-            
-            primary_matched = (idx in matched_primaries) if has_primary_keys else False
-            
-            if selective:
-                secondary_matched = (idx in matched_secondaries) if has_secondary_keys else False
-                matched = primary_matched and secondary_matched
-            else:
-                matched = primary_matched
+            primary_matched = bool(matched_primaries.get(idx))
+            matched = primary_matched and _matches_optional_filter(
+                entry,
+                matched_secondaries.get(idx, set()),
+            )
                 
             if matched:
+                if not _passes_probability(entry):
+                    # 同一轮生成只掷一次概率，递归扫描不能反复重试。
+                    probability_rejected_indexes.add(idx)
+                    continue
                 triggered_indexes.add(idx)
                 triggered_entries.append(entry)
                 new_trigger_added = True  # 关键词命中才设为 True
@@ -243,17 +435,31 @@ def process_lorebook(
             selected_entries.append(entry)
             budget_used += content_len
             
-    # 6. 分类位置归宿
-    before_char = []
-    after_char = []
+    # 6. 分类位置归宿。这里不改变上面的预算筛选，只保留并归一化注入元数据。
+    result = empty_lorebook_result()
     for entry in selected_entries:
-        pos = entry.get("position", "after_char")
-        if pos == "before_char":
-            before_char.append(entry)
-        else:
-            after_char.append(entry)
-            
-    return {
-        "before_char": before_char,
-        "after_char": after_char
-    }
+        item_extensions = entry.get("extensions")
+        if not isinstance(item_extensions, dict):
+            item_extensions = {}
+
+        raw_position = entry.get("position")
+        if raw_position is None:
+            raw_position = item_extensions.get("position")
+        position = normalize_lorebook_position(raw_position)
+        normalized_entry = dict(entry)
+        normalized_entry["position"] = position
+        raw_depth = entry.get("depth")
+        if raw_depth is None:
+            raw_depth = item_extensions.get("depth")
+        normalized_entry["depth"] = normalize_lorebook_depth(
+            raw_depth
+        )
+        raw_role = entry.get("role")
+        if raw_role is None:
+            raw_role = item_extensions.get("role")
+        normalized_entry["role"] = normalize_lorebook_role(
+            raw_role
+        )
+        result[position].append(normalized_entry)
+
+    return result

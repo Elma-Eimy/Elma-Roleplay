@@ -51,17 +51,21 @@ class PromptTokenEstimatorTests(unittest.TestCase):
             {"role": "user", "content": "之前的问题"},
             {"role": "assistant", "content": "<reply>之前的回答</reply>"},
             {
-                "role": "user",
+                "role": "system",
                 "content": (
-                    "【系统提供的上下文背景信息】：\n"
+                    "【当前回合动态背景】\n"
                     "<current_scenario>办公室</current_scenario>\n"
                     "<cognition_state>信任用户</cognition_state>\n"
                     "<current_status>当前心情: 平静</current_status>\n"
                     "<lorebook_knowledge>城市设定</lorebook_knowledge>\n"
                     "<recalled_memories>- 用户喜欢咖啡</recalled_memories>\n"
-                    "<factual_relationships>用户 friend 角色</factual_relationships>\n"
-                    "【当前用户的最新消息：】\n我们继续调查吧。"
+                    "<factual_relationships>用户 friend 角色</factual_relationships>"
                 ),
+            },
+            {"role": "user", "content": "我们继续调查吧。"},
+            {
+                "role": "system",
+                "content": "【后置扮演规则】\n保持简短。\n\n【重要：输出格式要求】",
             },
         ]
         original = copy.deepcopy(messages)
@@ -93,6 +97,10 @@ class PromptTokenEstimatorTests(unittest.TestCase):
         )
         self.assertFalse(report["is_exact"])
         self.assertEqual("heuristic_v1", report["method"])
+        self.assertGreater(
+            report["sections"]["current_user_message"]["estimated_tokens"],
+            0,
+        )
 
     def test_opening_prompt_without_user_message_is_still_reported(self):
         character = SimpleNamespace()
@@ -118,6 +126,33 @@ class PromptTokenEstimatorTests(unittest.TestCase):
         )
         self.assertIn("token_estimate", response)
         self.assertGreater(response["token_estimate"]["estimated_tokens"], 0)
+
+    def test_at_depth_user_after_current_message_is_counted_as_lorebook(self):
+        messages = [
+            {"role": "system", "content": "固定角色提示词"},
+            {"role": "user", "content": "真正的当前问题"},
+            {
+                "role": "user",
+                "content": (
+                    '<lorebook_knowledge position="at_depth" depth="0">\n'
+                    "用户角色的世界书资料\n"
+                    "</lorebook_knowledge>"
+                ),
+            },
+            {"role": "system", "content": "【重要：输出格式要求】"},
+        ]
+
+        report = estimate_prompt_tokens(messages)
+
+        self.assertEqual(
+            len("真正的当前问题"),
+            report["sections"]["current_user_message"]["characters"],
+        )
+        self.assertGreater(report["sections"]["lorebook"]["characters"], 0)
+        self.assertNotEqual(
+            0,
+            report["sections"]["current_user_message"]["estimated_tokens"],
+        )
 
 
 if __name__ == "__main__":
