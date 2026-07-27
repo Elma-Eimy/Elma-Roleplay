@@ -160,6 +160,7 @@
     <PromptPreviewModal
       :isOpen="isPromptPreviewOpen"
       :messages="compiledPromptMessages"
+      :tokenEstimate="compiledPromptTokenEstimate"
       @close="isPromptPreviewOpen = false"
     />
   </view>
@@ -236,6 +237,7 @@ const activeParentSessionId = ref<number | null>(null);
 // 提示词预览状态
 const isPromptPreviewOpen = ref(false);
 const compiledPromptMessages = ref<{ role: string; content: string }[]>([]);
+const compiledPromptTokenEstimate = ref<any>(null);
 
 const openPromptPreview = async () => {
   isStatusPanelOpen.value = false;
@@ -244,6 +246,7 @@ const openPromptPreview = async () => {
     uni.showLoading({ title: "正在组装提示词..." });
     const res = await getCompiledPrompt(currentSessionId.value);
     compiledPromptMessages.value = res.messages;
+    compiledPromptTokenEstimate.value = res.token_estimate || null;
     isPromptPreviewOpen.value = true;
   } catch (e) {
     console.error("Failed to load compiled prompt", e);

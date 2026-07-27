@@ -63,6 +63,8 @@ def get_settings():
         "reasoning_mode": settings.LLM_REASONING_MODE,
         "context_history_limit": settings.APP_CONTEXT_HISTORY_LIMIT,
         "retrieval_top_k": settings.APP_RETRIEVAL_TOP_K,
+        "retrieval_context_turns": settings.APP_RETRIEVAL_CONTEXT_TURNS,
+        "retrieval_query_max_chars": settings.APP_RETRIEVAL_QUERY_MAX_CHARS,
         "retrieval_min_importance": settings.APP_RETRIEVAL_MIN_IMPORTANCE,
         "retrieval_max_distance": settings.APP_RETRIEVAL_MAX_DISTANCE,
         "lorebook_scan_depth": settings.APP_LOREBOOK_SCAN_DEPTH,

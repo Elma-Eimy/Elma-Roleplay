@@ -4,7 +4,7 @@ import json
 
 from core.database import get_db
 from core import models
-from services.parse_lorebook import parse_sillytavern_lorebook
+from services.lorebook.parse_lorebook import parse_sillytavern_lorebook
 from schemas import LorebookCreate, LorebookUpdate
 
 router = APIRouter()

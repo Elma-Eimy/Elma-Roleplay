@@ -1,12 +1,10 @@
 """
-记忆管理器 — 负责记忆的提纯、存储、检索与清理
+记忆管理器 — 负责记忆的存储、检索与清理
 
 核心职责：
-  1. 从对话中提取结构化记忆（LLM 提纯） [已移至 cognition_service]
-  2. 双写入 SQLite（MemoryChunk）和 ChromaDB（向量 embedding）
-  3. 跨继承链的单次 RAG 检索
-  4. Session 删除时的 ChromaDB 数据一致性清理
-  5. 代理并重新导出子模块服务以实现向后兼容 (Facade 模式)
+  1. 将 MemoryChunk 与向量同步 Outbox 任务原子写入 SQLite
+  2. 跨继承链的单次 RAG 检索
+  3. Session 删除时的 ChromaDB 数据一致性清理
 
 ChromaDB 架构：
   每个 Character 共享一个 collection（collection_name = f"character_{character_id}"）
@@ -16,12 +14,17 @@ ChromaDB 架构：
 import json
 import time
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 from core import models
-from core.models import MemoryChunk, SessionPersona, ChatMessage, MemoryType, Session
-from services.clients import LLM_MODEL, chroma_client, openai_ef
+from core.models import (
+    ChatMessage,
+    MemoryChunk,
+    MemoryType,
+    MessageRole,
+)
+from services.infrastructure.clients import chroma_client, openai_ef
+import services.memory.persona_lineage as persona_lineage
 from core.config import settings
 
 
@@ -43,71 +46,11 @@ def get_character_collection(character_id: int):
         embedding_function=openai_ef
     )
 
-    # 动态探测 collection 已有的向量维度，并同步给 embedding_function 的缓存，以防 API 失败时 fallback 维度不匹配
-    try:
-        if collection.count() > 0:
-            existing = collection.get(limit=1, include=["embeddings"])
-            if existing and existing.get("embeddings") is not None and len(existing["embeddings"]) > 0:
-                openai_ef.__class__._cached_dim = len(existing["embeddings"][0])
-    except Exception as e:
-        print(f"[WARN] 动态探测 collection {collection_name} 向量维度失败: {e}")
-
     return collection
 
 
 # ──────────────────────────────────────────────
-# 2. 继承链工具
-# ──────────────────────────────────────────────
-
-def get_ancestor_persona_ids(persona_id: int, db: DBSession) -> list[int]:
-    """
-    沿 SessionPersona.parent_persona_id 向上遍历，返回完整的祖先链。
-
-    使用递归公共表表达式 (CTE) 进行单次数据库查询优化，规避 N+1 数据库阻塞。
-    返回值示例：[3, 2, 1]（当前 Persona → 父 → 祖父）
-    如果没有继承，返回 [persona_id] 仅包含自身。
-    """
-    from sqlalchemy import text
-    sql = """
-    WITH RECURSIVE ancestor(id, parent_id) AS (
-        SELECT id, parent_persona_id FROM session_personas WHERE id = :persona_id
-        UNION ALL
-        SELECT sp.id, sp.parent_persona_id 
-        FROM session_personas sp
-        JOIN ancestor a ON sp.id = a.parent_id
-    )
-    SELECT id FROM ancestor;
-    """
-    try:
-        # SQLite 递归 CTE 一次性获取所有祖先 ID
-        result = db.execute(text(sql), {"persona_id": persona_id}).fetchall()
-        ids = [row[0] for row in result]
-        if ids:
-            return ids
-    except Exception as e:
-        print(f"[WARN] get_ancestor_persona_ids: SQL CTE 递归查询失败: {e}. 已自动回退到循环同步遍历。")
-
-    # 容错降级回退机制
-    ids = []
-    cur = persona_id
-    visited = set()  # 防御性：防止循环引用导致死循环
-
-    while cur is not None:
-        if cur in visited:
-            break
-        visited.add(cur)
-        ids.append(cur)
-
-        persona = db.get(SessionPersona, cur)
-        if persona is None:
-            break
-        cur = persona.parent_persona_id
-
-    return ids
-
-
-# ──────────────────────────────────────────────
-# 3. 记忆写入（SQLite + ChromaDB 双写）
+# 2. 记忆写入（SQLite 主数据 + Outbox 同步 ChromaDB）
 # ──────────────────────────────────────────────
 
 def _build_chroma_metadata(
@@ -116,7 +59,8 @@ def _build_chroma_metadata(
     importance_score: float,
     origin_session_id: Optional[int],
     created_at: datetime,
-    source_message_id: Optional[int]
+    source_message_id: Optional[int],
+    source_start_message_id: Optional[int] = None,
 ) -> dict:
     """
     构建 ChromaDB metadata 字典，严格对齐 SQLite MemoryChunk 字段类型。
@@ -139,8 +83,29 @@ def _build_chroma_metadata(
         metadata["origin_session_id"] = origin_session_id
     if source_message_id is not None:
         metadata["source_message_id"] = source_message_id
+    if source_start_message_id is not None:
+        metadata["source_start_message_id"] = source_start_message_id
 
     return metadata
+
+
+def _enqueue_vector_upsert(
+    chunk: MemoryChunk,
+    character_id: int,
+    db: DBSession,
+) -> None:
+    """在当前 SQLite 事务内登记幂等向量同步任务。"""
+    if not chunk.id or not chunk.chroma_doc_id:
+        raise ValueError("MemoryChunk must be flushed before vector sync is queued")
+
+    db.add(models.OutboxJob(
+        task_type="upsert_vector",
+        payload=json.dumps({
+            "memory_id": chunk.id,
+            "character_id": character_id,
+            "chroma_doc_id": chunk.chroma_doc_id,
+        }),
+    ))
 
 
 def add_memory_chunk(
@@ -152,23 +117,11 @@ def add_memory_chunk(
     origin_session_id: Optional[int],
     source_message_id: Optional[int],
     db: DBSession,
+    source_start_message_id: Optional[int] = None,
+    supersedes_id: Optional[int] = None,
     auto_commit: bool = True
 ) -> MemoryChunk:
-    """
-    创建一条记忆并双写入 SQLite 和 ChromaDB。
-
-    参数：
-      auto_commit — True（默认）：每条记忆独立 commit，适合单条写入场景。
-                    False：只 flush + 写 ChromaDB，不 commit。
-                    适合批量写入场景（由调用方做单次原子 commit）。
-
-    流程：
-      1. 创建 MemoryChunk ORM 对象 → db.flush() 获取自增 ID
-      2. 生成 chroma_doc_id = f"mem_{chunk.id}"
-      3. 写入 ChromaDB collection（character_{character_id}）
-      4. 若 auto_commit=True → db.commit()
-    """
-    # Step 1: SQLite 写入（flush 获取 ID，但不 commit）
+    """创建记忆，并在同一 SQLite 事务内登记向量同步任务。"""
     chunk = MemoryChunk(
         persona_id=persona_id,
         content=content,
@@ -176,67 +129,96 @@ def add_memory_chunk(
         importance_score=importance_score,
         origin_session_id=origin_session_id,
         source_message_id=source_message_id,
+        source_start_message_id=source_start_message_id,
+        supersedes_id=supersedes_id,
     )
     db.add(chunk)
     db.flush()  # 获取自增 ID
 
-    # Step 2: 生成 ChromaDB document ID
     chroma_doc_id = f"mem_{chunk.id}"
     chunk.chroma_doc_id = chroma_doc_id
+    _enqueue_vector_upsert(chunk, character_id, db)
 
-    # Step 3: 写入 ChromaDB
-    now = chunk.created_at or datetime.now(timezone.utc)
-    metadata = _build_chroma_metadata(
-        persona_id=persona_id,
-        memory_type=memory_type,
-        importance_score=importance_score,
-        origin_session_id=origin_session_id,
-        created_at=now,
-        source_message_id=source_message_id,
-    )
-
-    collection = get_character_collection(character_id)
-    try:
-        collection.add(
-            ids=[chroma_doc_id],
-            documents=[content],
-            metadatas=[metadata],
-        )
-    except Exception as e:
-        # ChromaDB 写入失败时回滚 SQLite，保持一致性
-        db.rollback()
-        print(f"==========================================")
-        print(f"[ERROR] add_memory_chunk: ChromaDB 写入失败，已回滚 SQLite")
-        print(f"[ERROR] 错误类型: {type(e).__name__}")
-        print(f"[ERROR] 错误详情: {e}")
-        print(f"==========================================")
-        raise
-
-    # Step 4: 提交事务（仅在 auto_commit 模式下）
     if auto_commit:
         try:
             db.commit()
             db.refresh(chunk)
         except Exception as e:
-            # SQLite commit 失败 → 回滚 ChromaDB 中刚写入的文档
-            try:
-                collection.delete(ids=[chroma_doc_id])
-            except Exception:
-                print(f"[CRITICAL] ChromaDB 回滚也失败，可能存在孤儿文档: {chroma_doc_id}")
             db.rollback()
-            print(f"==========================================")
-            print(f"[ERROR] add_memory_chunk: db.commit() 失败，已回滚 ChromaDB")
-            print(f"[ERROR] 错误类型: {type(e).__name__}")
-            print(f"[ERROR] 错误详情: {e}")
-            print(f"==========================================")
+            print(f"[ERROR] add_memory_chunk SQLite commit 失败: {type(e).__name__}: {e}")
             raise
 
     return chunk
 
 
 # ──────────────────────────────────────────────
-# 4. 跨继承链 RAG 检索
+# 3. 跨继承链 RAG 检索
 # ──────────────────────────────────────────────
+
+def calculate_memory_age_turns(
+    memory_persona_id: Optional[int],
+    source_message_id: Optional[int],
+    current_persona_id: int,
+    db: DBSession,
+    branch_segments: Optional[list[dict]] = None,
+    count_cache: Optional[dict] = None,
+) -> int:
+    """仅计算当前分支上某个记忆之后的有效用户轮数。"""
+    if source_message_id is None or memory_persona_id is None:
+        return 0
+
+    try:
+        memory_persona_id = int(memory_persona_id)
+        source_message_id = int(source_message_id)
+    except (TypeError, ValueError):
+        return 0
+
+    segments = branch_segments
+    if segments is None:
+        segments = persona_lineage.build_branch_turn_segments(current_persona_id, db)
+    cache = count_cache if count_cache is not None else {}
+
+    source_index = next(
+        (
+            index for index, segment in enumerate(segments)
+            if segment["persona_id"] == memory_persona_id
+        ),
+        None,
+    )
+    if source_index is None:
+        return 0
+
+    turns = 0
+    for index in range(source_index, -1, -1):
+        segment = segments[index]
+        through_id = segment["through_message_id"]
+
+        # For an ancestor with an unknown legacy fork boundary, counting its
+        # current tail could leak unrelated future turns into this branch.
+        if index > 0 and through_id is None:
+            continue
+
+        after_id = (
+            source_message_id
+            if index == source_index
+            else segment["copied_boundary_message_id"]
+        )
+        cache_key = (segment["session_id"], after_id, through_id)
+        if cache_key not in cache:
+            query = db.query(ChatMessage).filter(
+                ChatMessage.session_id == segment["session_id"],
+                ChatMessage.role == MessageRole.user,
+                ChatMessage.is_active == True,
+            )
+            if after_id is not None:
+                query = query.filter(ChatMessage.id > after_id)
+            if through_id is not None:
+                query = query.filter(ChatMessage.id <= through_id)
+            cache[cache_key] = query.count()
+        turns += cache[cache_key]
+
+    return turns
+
 
 def retrieve_memories(
     persona_id: int,
@@ -265,6 +247,14 @@ def retrieve_memories(
     if min_importance is None:
         min_importance = settings.APP_RETRIEVAL_MIN_IMPORTANCE
 
+    max_distance = settings.APP_RETRIEVAL_MAX_DISTANCE
+    if max_distance < 0:
+        print(
+            "[WARN] retrieve_memories: retrieval_max_distance 小于 0，"
+            "本轮不召回长期记忆。"
+        )
+        return []
+
     collection = get_character_collection(character_id)
     try:
         if collection.count() == 0:
@@ -274,7 +264,8 @@ def retrieve_memories(
         return []
 
     # Step 1: 获取祖先链
-    ancestor_ids = get_ancestor_persona_ids(persona_id, db)
+    ancestor_ids = persona_lineage.get_ancestor_persona_ids(persona_id, db)
+    superseded_ids = get_superseded_memory_ids(ancestor_ids, db)
 
     # Step 2: 构建 where 过滤条件
     where_filter = {"persona_id": {"$in": ancestor_ids}}
@@ -311,16 +302,8 @@ def retrieve_memories(
     if not results or not results.get("documents") or not results["documents"][0]:
         return []
 
-    # 获取当前最新的消息 ID，作为逻辑时间的基准
-    current_msg_id = 0
-    persona = db.get(SessionPersona, persona_id)
-    if persona:
-        current_msg = db.query(ChatMessage).filter(
-            ChatMessage.session_id == persona.session_id,
-            ChatMessage.is_active == True
-        ).order_by(ChatMessage.id.desc()).first()
-        if current_msg:
-            current_msg_id = current_msg.id
+    branch_turn_segments = None
+    turn_count_cache = {}
 
     raw_memories = []
     docs = results["documents"][0]
@@ -330,8 +313,14 @@ def retrieve_memories(
 
     for doc, meta, dist, cid in zip(docs, metas, dists, ids):
         # 叠加向量相似度距离阈值过滤，防止召回无关的多余内容
-        if dist > settings.APP_RETRIEVAL_MAX_DISTANCE:
-            continue
+        if max_distance == 0:
+            if dist != 0:
+                continue
+            sim_score = 1.0
+        else:
+            if dist > max_distance:
+                continue
+            sim_score = max(0.0, 1.0 - (dist / max_distance))
             
         chunk_id = None
         if cid.startswith("mem_"):
@@ -339,8 +328,9 @@ def retrieve_memories(
                 chunk_id = int(cid[4:])
             except ValueError:
                 pass
+        if chunk_id in superseded_ids:
+            continue
 
-        sim_score = max(0.0, 1.0 - (dist / settings.APP_RETRIEVAL_MAX_DISTANCE))
         imp_score = float(meta.get("importance_score", 0.5))
         
         # 计算逻辑时间衰减（类型感知：客观事实在单会话内不应用逻辑时间衰减，时间得分保持满分）
@@ -349,8 +339,16 @@ def retrieve_memories(
             time_score = 1.0
             turns_passed = 0
         else:
-            source_msg_id = int(meta.get("source_message_id", current_msg_id))
-            turns_passed = max(0, current_msg_id - source_msg_id)
+            if branch_turn_segments is None:
+                branch_turn_segments = persona_lineage.build_branch_turn_segments(persona_id, db)
+            turns_passed = calculate_memory_age_turns(
+                memory_persona_id=meta.get("persona_id"),
+                source_message_id=meta.get("source_message_id"),
+                current_persona_id=persona_id,
+                db=db,
+                branch_segments=branch_turn_segments,
+                count_cache=turn_count_cache,
+            )
             half_life = max(1, settings.APP_RETRIEVAL_HALF_LIFE_TURNS)
             time_score = 0.5 ** (turns_passed / half_life)
         
@@ -384,6 +382,8 @@ def retrieve_memories(
             "importance_score": imp_score,
             "persona_id": meta.get("persona_id"),
             "origin_session_id": meta.get("origin_session_id"),
+            "source_start_message_id": meta.get("source_start_message_id"),
+            "source_message_id": meta.get("source_message_id"),
             "distance": dist,
             "sim_score": sim_score,
             "time_score": time_score,
@@ -394,20 +394,52 @@ def retrieve_memories(
     # 按 final_score 降序排序
     raw_memories.sort(key=lambda x: x["final_score"], reverse=True)
 
-    # 语义去重 (Deduplication) - 采用基于 SequenceMatcher 的轻量级文本去重以消除继承链 COW 重复记录
+    # Retrieval-side deduplication is intentionally exact after normalization.
+    # Fuzzy character similarity can collapse semantic opposites that differ only
+    # by a negation word. Version masking handles known replacements separately.
     deduped_memories = []
+    seen_normalized_contents = set()
     for rm in raw_memories:
-        is_duplicate = False
-        for dm in deduped_memories:
-            ratio = SequenceMatcher(None, rm["content"], dm["content"]).ratio()
-            if ratio >= settings.APP_DEDUP_RETRIEVE_TEXT_THRESHOLD:
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            deduped_memories.append(rm)
+        normalized = "".join(
+            char.casefold() for char in rm["content"] if char.isalnum()
+        )
+        if normalized in seen_normalized_contents:
+            continue
+        seen_normalized_contents.add(normalized)
+        deduped_memories.append(rm)
 
     memories = deduped_memories[:top_k]
     return memories
+
+
+def get_superseded_memory_ids(
+    persona_ids: list[int],
+    db: DBSession,
+) -> set[int]:
+    """Return memories masked by replacements visible on one Persona chain.
+
+    A child replacement points at its ancestor but does not mutate the ancestor
+    row. Querying a sibling chain therefore does not see that replacement and the
+    ancestor remains available there.
+    """
+    if not persona_ids:
+        return set()
+    try:
+        rows = (
+            db.query(MemoryChunk.supersedes_id)
+            .filter(
+                MemoryChunk.persona_id.in_(persona_ids),
+                MemoryChunk.supersedes_id.isnot(None),
+            )
+            .all()
+        )
+        return {row[0] for row in rows if row[0] is not None}
+    except Exception as exc:
+        # Retrieval must remain available for offline/fallback test doubles and
+        # during a partially applied migration. No masking is safer than failing
+        # the whole chat request.
+        print(f"[WARN] get_superseded_memory_ids 失败，跳过版本屏蔽: {exc}")
+        return set()
 
 
 # ──────────────────────────────────────────────
@@ -440,19 +472,16 @@ def delete_persona_memories(
 
     # 写入发件箱任务
     if doc_ids:
-        try:
-            payload = {
-                "character_id": character_id,
-                "doc_ids": doc_ids
-            }
-            job = models.OutboxJob(
-                task_type="delete_vector",
-                payload=json.dumps(payload)
-            )
-            db.add(job)
-            print(f"[INFO] Outbox: 已入库 persona_id={persona_id} 的 {deleted_count} 条记忆删除任务")
-        except Exception as e:
-            print(f"[ERROR] delete_persona_memories 写入发件箱任务失败: {e}")
+        payload = {
+            "character_id": character_id,
+            "doc_ids": doc_ids
+        }
+        job = models.OutboxJob(
+            task_type="delete_vector",
+            payload=json.dumps(payload)
+        )
+        db.add(job)
+        print(f"[INFO] Outbox: 已入库 persona_id={persona_id} 的 {deleted_count} 条记忆删除任务")
 
     # 清理 SQLite（补充保障，即使 CASCADE 会处理）
     try:
@@ -471,55 +500,28 @@ def update_memory_chunk(
     content: str,
     importance_score: float,
     db: DBSession,
-    auto_commit: bool = True
+    auto_commit: bool = True,
+    source_start_message_id: Optional[int] = None,
+    source_message_id: Optional[int] = None,
 ) -> MemoryChunk:
-    """
-    修改单条记忆（SQLite + ChromaDB 同步更新）。
-
-    auto_commit=True（默认，单条写入场景）：
-      SQLite flush → ChromaDB update → db.commit()，全部在本函数内完成。
-      任何一步失败均 rollback，保持两侧一致。
-
-    auto_commit=False（批量事务场景）：
-      只做 SQLite flush，不立即写 ChromaDB，消除"ChromaDB 已落盘但
-      SQLite commit 尚未成功"的不一致窗口。
-      函数在 chunk 上挂载 _pending_chroma_update 闭包属性，调用方必须在
-      db.commit() 成功后立即调用该闭包以完成 ChromaDB 侧的更新；若
-      db.commit() 失败则丢弃该闭包即可，ChromaDB 无任何修改，天然一致。
-    """
+    """修改 SQLite 主数据，并在同一事务内登记向量同步任务。"""
     chunk = db.get(MemoryChunk, chunk_id)
     if not chunk:
         raise ValueError("MemoryChunk not found")
 
     chunk.content = content
     chunk.importance_score = importance_score
+    if source_start_message_id is not None:
+        chunk.source_start_message_id = source_start_message_id
+    if source_message_id is not None:
+        chunk.source_message_id = source_message_id
+    if not chunk.chroma_doc_id:
+        chunk.chroma_doc_id = f"mem_{chunk.id}"
     db.flush()
 
-    if auto_commit:
-        # ── 即时模式：SQLite flush 成功后立刻写 ChromaDB，再 commit ──
-        if chunk.chroma_doc_id:
-            try:
-                character_id = chunk.persona.character_id
-                collection = get_character_collection(character_id)
-                now = chunk.created_at or datetime.now(timezone.utc)
-                metadata = _build_chroma_metadata(
-                    persona_id=chunk.persona_id,
-                    memory_type=chunk.memory_type,
-                    importance_score=importance_score,
-                    origin_session_id=chunk.origin_session_id,
-                    created_at=now,
-                    source_message_id=chunk.source_message_id
-                )
-                collection.update(
-                    ids=[chunk.chroma_doc_id],
-                    documents=[content],
-                    metadatas=[metadata]
-                )
-            except Exception as e:
-                db.rollback()
-                print(f"[ERROR] update_memory_chunk ChromaDB 更新失败: {e}")
-                raise
+    _enqueue_vector_upsert(chunk, chunk.persona.character_id, db)
 
+    if auto_commit:
         try:
             db.commit()
             db.refresh(chunk)
@@ -527,43 +529,7 @@ def update_memory_chunk(
             db.rollback()
             print(f"[ERROR] update_memory_chunk db.commit() 失败: {e}")
             raise
-
-        return chunk
-
-    else:
-        # ── 延迟模式：只改 SQLite ORM，ChromaDB 写入交由调用方在 commit 后执行 ──
-        # 提前快照所有需要的字段值（flush 后属性仍可读；commit 后会 expire，
-        # 所以必须在此处捕获，不能在 commit 后依赖 ORM 对象属性）
-        chroma_doc_id = chunk.chroma_doc_id
-        character_id = chunk.persona.character_id
-        now = chunk.created_at or datetime.now(timezone.utc)
-        snap_persona_id = chunk.persona_id
-        snap_memory_type = chunk.memory_type
-        snap_origin_session_id = chunk.origin_session_id
-        snap_source_message_id = chunk.source_message_id
-
-        def _flush_to_chroma():
-            """在 db.commit() 成功后由调用方调用，将变更同步写入 ChromaDB。"""
-            if not chroma_doc_id:
-                return
-            collection = get_character_collection(character_id)
-            metadata = _build_chroma_metadata(
-                persona_id=snap_persona_id,
-                memory_type=snap_memory_type,
-                importance_score=importance_score,
-                origin_session_id=snap_origin_session_id,
-                created_at=now,
-                source_message_id=snap_source_message_id
-            )
-            collection.update(
-                ids=[chroma_doc_id],
-                documents=[content],
-                metadatas=[metadata]
-            )
-
-        # 将闭包挂载到 chunk，方便调用方通过对象引用统一追踪
-        chunk._pending_chroma_update = _flush_to_chroma
-        return chunk
+    return chunk
 
 
 def delete_memory_chunk(
@@ -579,21 +545,25 @@ def delete_memory_chunk(
 
     # 异步删除 ChromaDB
     if chunk.chroma_doc_id:
-        try:
-            character_id = chunk.persona.character_id
-            payload = {
-                "character_id": character_id,
-                "doc_ids": [chunk.chroma_doc_id]
-            }
-            job = models.OutboxJob(
-                task_type="delete_vector",
-                payload=json.dumps(payload)
-            )
-            db.add(job)
-            print(f"[INFO] Outbox: 已入库 chunk_id={chunk_id} 的 1 条记忆删除任务")
-        except Exception as e:
-            print(f"[WARN] delete_memory_chunk 写入发件箱任务失败: {e}")
+        character_id = chunk.persona.character_id
+        payload = {
+            "character_id": character_id,
+            "doc_ids": [chunk.chroma_doc_id]
+        }
+        job = models.OutboxJob(
+            task_type="delete_vector",
+            payload=json.dumps(payload)
+        )
+        db.add(job)
+        print(f"[INFO] Outbox: 已入库 chunk_id={chunk_id} 的 1 条记忆删除任务")
 
+    # 当手动管理的中间版本被删除时，保持替换链的连接。Chroma 元数据不参与版本解析；SQLite 对此关系具有权威性。
+    db.query(MemoryChunk).filter(
+        MemoryChunk.supersedes_id == chunk.id
+    ).update(
+        {MemoryChunk.supersedes_id: chunk.supersedes_id},
+        synchronize_session="fetch",
+    )
     db.delete(chunk)
     db.commit()
 
@@ -602,11 +572,3 @@ def delete_memory_chunk(
 # ──────────────────────────────────────────────
 # 6. 外观接口 (Facade Pattern) 重新导出子服务函数以维持 100% 向后兼容性
 # ──────────────────────────────────────────────
-
-from services.cognition_service import (
-    get_unsummarized_count,
-    summarize_and_store_memory,
-    get_cognition_unseen_count,
-    update_cognition_state,
-)
-from services.session_service import safe_delete_session

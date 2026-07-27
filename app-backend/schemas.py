@@ -51,7 +51,10 @@ class SettingsUpdate(BaseModel):
     temperature: Optional[float] = None
     reasoning_mode: Optional[bool] = None
     context_history_limit: Optional[int] = None
+    memory_handoff_margin: Optional[int] = None
     retrieval_top_k: Optional[int] = None
+    retrieval_context_turns: Optional[int] = None
+    retrieval_query_max_chars: Optional[int] = None
     retrieval_min_importance: Optional[float] = None
     retrieval_max_distance: Optional[float] = None
     lorebook_scan_depth: Optional[int] = None
@@ -89,9 +92,18 @@ class LorebookEntry(BaseModel):
     constant: bool = False
     case_sensitive: bool = False
     selective: bool = False
+    selective_logic: str = "and_any"
     secondary_keys: list[str] = []
+    use_regex: bool = False
+    probability: int = 100
+    use_probability: bool = True
     position: str = "before_char"
     insertion_order: int = 100
+    # SillyTavern 的 @ Depth 条目使用这两个可选元数据；其它位置会忽略它们。
+    depth: int = 4
+    role: str = "system"
+    # Outlet 当前只保真存储，不会自动注入；后续可配合宏系统使用。
+    outlet: str = ""
 
 class LorebookCreate(BaseModel):
     name: str

@@ -4,7 +4,7 @@ class TrieNode:
     def __init__(self):
         self.children = {}
         self.fail = None
-        self.output = []  # Elements are (keyword, value)
+        self.output = []  # 元素格式为 (keyword, value)
 
 class AhoCorasick:
     def __init__(self):

@@ -276,8 +276,8 @@ const formatDate = (dateString: string) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: rgba(255, 255, 255, 0.70);
-  backdrop-filter: blur(10px);
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   z-index: 50;
 }
@@ -336,11 +336,11 @@ const formatDate = (dateString: string) => {
   top: calc(110rpx + env(safe-area-inset-top, 40rpx) + 8rpx);
   right: 28rpx;
   width: 280rpx;
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px);
   border-radius: 20rpx;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   z-index: 100;
   padding: 8rpx 0;
   animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -403,14 +403,14 @@ const formatDate = (dateString: string) => {
 
 .session-item:active {
   background-color: rgba(0, 0, 0, 0.02);
-  transform: scale(0.995);
+  opacity: 0.95;
 }
 
 .session-avatar {
   width: 100rpx;
   height: 100rpx;
-  border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 32%;
+  background-color: rgba(0, 0, 0, 0.02);
   border: 1px solid rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
 }

@@ -2,9 +2,9 @@
 Memory deduplication and fork-inheritance integration tests.
 
 Scenarios:
-  1. Main flow: parent-child COW + retrieval-side dedup  (original)
-  2. merge_memories_via_llm LLM-failure fallback        (new: #10)
-  3. Three-level fork (grandparent->parent->child) COW  (new: #10)
+  1. Main flow: parent-child replacement + retrieval masking
+  2. Relationship classifier LLM-failure fallback
+  3. Three-level fork inheritance
 """
 
 import os
@@ -18,23 +18,27 @@ from core.models import (
     MemoryChunk, MemoryType, SessionPersona,
     Session, Character, ChatMessage, MessageRole,
 )
-from services.memory_manager import (
+from services.memory.memory_manager import (
     retrieve_memories, add_memory_chunk, delete_persona_memories,
 )
-from services.cognition_service import summarize_and_store_memory, merge_memories_via_llm
+from services.memory.memory_extraction_service import (
+    summarize_and_store_memory,
+    resolve_memory_relationship_via_llm,
+)
 
 
-def test_merge_memories_llm_fallback():
-    """When LLM call raises, merge_memories_via_llm must return new_content."""
-    print("\n[Test 1] merge_memories_via_llm LLM-failure fallback")
+def test_relationship_classifier_fallback():
+    """When LLM call raises, relationship resolution must preserve both cards."""
+    print("\n[Test 1] relationship classifier LLM-failure fallback")
     old = "User likes strawberry cake."
     new = "User likes strawberry cake, especially with hot milk."
-    with patch("services.cognition_service.get_llm_provider") as mock_get_provider:
+    with patch("services.memory.memory_extraction_service.get_llm_provider") as mock_get_provider:
         mock_provider = MagicMock()
         mock_provider.generate.side_effect = ConnectionError("mock")
         mock_get_provider.return_value = mock_provider
-        result = merge_memories_via_llm(old, new)
-    assert result == new, f"Fallback failed: expected new_content, got {result!r}"
+        result = resolve_memory_relationship_via_llm(old, new)
+    assert result == {"relation": "coexist", "resolved_content": new}, \
+        f"Fallback failed: got {result!r}"
     print(f"   [PASS] fallback OK -> {result!r}")
 
 
@@ -47,7 +51,7 @@ def test_multi_level_fork_cow():
     char_id = char.id
 
     try:
-        from services.clients import chroma_client
+        from services.infrastructure.clients import chroma_client
         chroma_client.delete_collection(name=f"character_{char_id}")
     except Exception:
         pass
@@ -116,7 +120,7 @@ def run_integration_test():
     char_id = char.id
 
     try:
-        from services.clients import chroma_client
+        from services.infrastructure.clients import chroma_client
         chroma_client.delete_collection(name=f"character_{char_id}")
     except Exception:
         pass
@@ -198,6 +202,6 @@ def run_integration_test():
 
 
 if __name__ == "__main__":
-    test_merge_memories_llm_fallback()
+    test_relationship_classifier_fallback()
     test_multi_level_fork_cow()
     run_integration_test()

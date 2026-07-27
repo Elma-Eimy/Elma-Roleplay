@@ -24,7 +24,7 @@
           
           <view class="form-item">
             <text class="label">描述</text>
-            <textarea class="textarea-small" v-model="lorebook.description" placeholder="输入这本世界书设定集的整体背景说明..." />
+            <textarea class="textarea-small" v-model="lorebook.description" placeholder="输入这本世界书设定集的整体背景说明..." :maxlength="-1" />
           </view>
         </view>
 

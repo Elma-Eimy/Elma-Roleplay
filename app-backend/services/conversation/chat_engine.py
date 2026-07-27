@@ -15,7 +15,7 @@ from typing import Optional
 
 from core.config import settings
 from services.parse import _extract_xml_block
-from services.llm_logger import log_llm_stream_wrapper_async
+from services.infrastructure.llm_logger import log_llm_stream_wrapper_async
 
 
 def _resolve_model(use_reasoning: Optional[bool]) -> str:
@@ -91,7 +91,7 @@ async def generate_reply(
         kwargs["extra_body"] = extra_body
 
     try:
-        from services.llm_provider import get_llm_provider
+        from services.infrastructure.llm_provider import get_llm_provider
         provider = get_llm_provider()
         kwargs.pop("model", None)
         kwargs.pop("messages", None)
@@ -187,7 +187,7 @@ async def generate_reply_stream(
         kwargs["extra_body"] = extra_body
 
     try:
-        from services.llm_provider import get_llm_provider
+        from services.infrastructure.llm_provider import get_llm_provider
         provider = get_llm_provider()
         kwargs.pop("model", None)
         kwargs.pop("messages", None)

@@ -1,3 +1,5 @@
-from core.config import settings
-from core.database import engine, SessionLocal, get_db
-from core.models import Base
+"""核心基础设施包。
+
+在调用处导入具体的模块（如 ``core.database``、``core.models`` 等）。
+保持该包初始化器无副作用，可以防止单纯的 ``import core`` 打开数据库或运行应用程序启动工作。
+"""

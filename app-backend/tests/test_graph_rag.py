@@ -21,9 +21,10 @@ if sys.platform.startswith('win'):
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal
-from core import Base, engine
+from core.database import engine
+from core.models import Base
 from core.models import Character, Session, SessionPersona, GraphEntity, GraphRelation
-from services.graph_service import upsert_graph_data, retrieve_graph_context
+from services.memory.graph_service import upsert_graph_data, retrieve_graph_context
 
 def run_graph_rag_test():
     print("=" * 60)

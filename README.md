@@ -6,7 +6,7 @@
 
 ## 项目初衷与应用场景
 
-本项目由作者基于本人的日常需要开发制作，旨在提供高度私密、可定制的 AI 虚拟角色互动体验（如个性化的角色扮演娱乐等）。通过本地私有化部署，用户可以在完全保障数据隐私的前提下，构建拥有长期记忆与世界观设定的 AI 伴侣。
+本项目由作者基于本人的日常需要开发制作，旨在提供高度私密、可定制的 AI 虚拟角色互动体验（如小说创作辅助、同人口语对话练习以及个性化的角色扮演娱乐等）。通过本地私有化部署，用户可以在完全保障数据隐私的前提下，构建拥有长期记忆与世界观设定的 AI 伴侣。
 
 同时，作者也希望本项目的全栈实现方案（FastAPI + UniApp 跨平台）能为其他有类似私有化部署或 AI 角色扮演系统开发需求的朋友提供一些参考与启发。
 
@@ -64,7 +64,7 @@
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
 │   ├── core/          # 数据库、配置、会话锁、在轨自适应迁移逻辑
 │   ├── routers/       # 聊天候选分支、会话管理、角色卡管理及系统 API
-│   ├── services/      # 聊天生成、MIMO-TTS 合成与文本前处理、RAG 记忆服务
+│   ├── services/      # 模块化业务服务层 (分包管理：对话/基础架构/世界书/记忆及 TTS)
 │   └── README.md      # 后端专属详细技术设计与接口文档
 └── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript + UnoCSS)
     ├── src/
@@ -83,29 +83,27 @@
 graph TD
     %% Frontend Group
     subgraph Frontend [app-frontend: Vue 3 / UniApp]
-        UI[聊天与角色管理界面]
-        EC[情绪标签与好感度状态反馈]
-        SS[高级参数折叠设置面板]
-        LS[本地持久化 API 缓存层]
-        MC[世界线分支与候选回复切换]
-        AP[原生音频播放器与音波特效]
+        UI[聊天与角色管理 UI 界面]
+        MC[分支剧情线与 Swipe 候选切换]
+        AP[音频播放与声波动效]
     end
 
     %% Backend Group
     subgraph Backend [app-backend: FastAPI Core Engine]
-        API[FastAPI 核心路由器]
-        LOCK[会话级 asyncio.Lock 锁]
-        SSE[SSE 异步流式生成器]
-        LRE[Aho-Corasick 世界书引擎]
-        BG[后台异步记忆提取任务]
-        TTS[MIMO-TTS 语音合成与文本前处理服务]
+        API[FastAPI 路由器 / routers]
+        LOCK[会话并发锁 / core/locking]
+        CHAT[对话流控与 Prompt 装配 / services/conversation]
+        LORE[AC自动机世界书扫描 / services/lorebook]
+        MEM[RAG与图谱检索服务 / services/memory]
+        OUTBOX[事务性发件箱 Worker / services/infrastructure]
+        TTS[TTS前处理与合成服务 / services/tts_service]
     end
 
     %% Storage Group
     subgraph Storage [持久化存储层]
-        DB[(SQLAlchemy SQLite WAL: 会话与消息候选分支树)]
-        VDB[(ChromaDB: 长期记忆向量隔离库)]
-        CACHE[本地音频 LRU 缓存目录]
+        DB[(SQLite WAL: 会话/消息分支/图谱三元组/发件箱任务)]
+        VDB[(ChromaDB: 长期记忆向量库)]
+        CACHE[本地音频 LRU 缓存]
     end
 
     %% External Services
@@ -114,19 +112,22 @@ graph TD
 
     %% Relationships
     UI -->|HTTP / SSE 流| API
-    UI -->|运行时 API 热重定向| LS
-    API -->|并发保护/时序写安全| LOCK
-    API -->|递归 SQL 查询会话树| DB
-    API -->|RAG 余弦/时间/重要性检索| VDB
-    API -->|Prompt Caching 友好提示词| LLM
-    SSE -->|流式 Token 提取并解析| UI
-    BG -->|手动/自动触发记忆提纯| DB
-    BG -->|异步凝结自我认知| VDB
-    LRE -->|高并发世界书扫描| API
-    API -->|语音合成请求与清洗| TTS
-    TTS -->|调用云端接口| MIMO
-    TTS -->|写入/命中缓存| CACHE
-    CACHE -->|挂载静态路由播放| AP
+    API -->|会话并发锁控制| LOCK
+    API -->|调用对话与编译服务| CHAT
+    CHAT -->|扫描并注入| LORE
+    CHAT -->|混合召回| MEM
+    CHAT -->|存储对话与产生后台任务| DB
+    CHAT -->|大模型推理/嵌入生成| LLM
+    MEM -->|检索语义向量| VDB
+    MEM -->|递归查询祖先链与实体关系| DB
+    OUTBOX -->|轮询并执行任务| DB
+    OUTBOX -->|异步增删向量| VDB
+    OUTBOX -->|清理缓存文件| CACHE
+    API -->|请求语音合成| TTS
+    TTS -->|清洗文本/保留声效| LLM
+    TTS -->|请求云端TTS服务| MIMO
+    TTS -->|写入或读取缓存| CACHE
+    CACHE -->|静态文件挂载 URL| AP
 ```
 
 ---
@@ -187,23 +188,38 @@ graph TD
 
 ## 自动化测试验证
 
-后端提供了多套自动化与集成测试脚本，在 `app-backend` 目录下直接运行：
+后端提供了多套自动化与集成测试脚本，在 `app-backend` 目录下运行：
 
-1. **TTS 语音合成与清洗单元测试**：
+1. **完全离线测试**（不需要调用大模型与 ChromaDB）：
    ```bash
-   python test_tts_api.py
+   # 分叉边界隔离测试
+   python tests/test_branch_context_boundary.py
+   # 短期历史与长期记忆动态交接测试
+   python tests/test_memory_handoff.py
+   # 上下文化检索查询生成测试
+   python tests/test_contextual_retrieval_query.py
+   # 语义记忆卡提取及来源定位测试
+   python tests/test_memory_card_extraction.py
+   # 记忆局部替代版本测试
+   python tests/test_memory_versioning.py
+   # 向量故障降级测试
+   python tests/test_memory_manager_offline.py
+   # 启发式 Token 范围统计测试
+   python tests/test_prompt_token_estimator.py
    ```
-2. **世界书独立单元测试**：
+
+2. **全套集成与单元测试**（需要配置好 API 密钥并保证服务可用）：
    ```bash
-   python test_lorebook.py
-   ```
-3. **记忆提纯与 RAG 闭环验证**：
-   ```bash
-   python test_closed_loop_memory.py
-   ```
-4. **全流程 API 时空分支集成测试**：
-   ```bash
-   python test_api.py
+   # TTS 语音合成与清洗单元测试
+   python tests/test_tts_api.py
+   # 世界书独立单元测试
+   python tests/test_lorebook.py
+   # 记忆提纯与 RAG 闭环验证
+   python tests/test_closed_loop_memory.py
+   # 对话流式锁与异常回滚机制测试
+   python tests/test_chat_turn_service.py
+   # 全流程 API 时空分支集成测试
+   python tests/test_api.py
    ```
 
 ---

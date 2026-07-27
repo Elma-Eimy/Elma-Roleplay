@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from main import app
 from core.database import SessionLocal
 from core.models import MemoryChunk, SessionPersona, Session
-from services.memory_manager import get_character_collection, retrieve_memories
+from services.memory.memory_manager import get_character_collection, retrieve_memories
 
 API_KEY = "ILOVEYOU1234567890"
 client = TestClient(app, raise_server_exceptions=False)

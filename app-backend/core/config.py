@@ -50,8 +50,14 @@ CONFIG_SCHEMA = {
         "context_history_limit": {"type": int, "default": 10, "dynamic": True, "attr": "APP_CONTEXT_HISTORY_LIMIT"},
         # 从向量记忆库中检索注入上下文的相关记忆条目数 (Top-K)
         "retrieval_top_k": {"type": int, "default": 3, "dynamic": True, "attr": "APP_RETRIEVAL_TOP_K"},
+        # 用于在检索查询中解析指代的最近用户轮数。
+        "retrieval_context_turns": {"type": int, "default": 3, "dynamic": True, "attr": "APP_RETRIEVAL_CONTEXT_TURNS"},
+        # 当前问题加上仅检索上下文的硬字符预算限制。
+        "retrieval_query_max_chars": {"type": int, "default": 2400, "dynamic": True, "attr": "APP_RETRIEVAL_QUERY_MAX_CHARS"},
         # 触发记忆提取的未整理消息轮数阈值
         "memory_extract_history_limit": {"type": int, "default": 20, "dynamic": False, "attr": "APP_MEMORY_EXTRACT_LIMIT"},
+        # 在短期历史窗口淘汰前预留多少条消息作为异步提纯缓冲区
+        "memory_handoff_margin": {"type": int, "default": 2, "dynamic": True, "attr": "APP_MEMORY_HANDOFF_MARGIN"},
         # 被检索记忆的最低重要度得分阈值 (低于该值的记忆将被过滤丢弃)
         "retrieval_min_importance": {"type": float, "default": 0.3, "dynamic": True, "attr": "APP_RETRIEVAL_MIN_IMPORTANCE"},
         # 触发高层认知状态 (Cognition State) 汇总更新的消息轮数间隔
@@ -82,10 +88,8 @@ CONFIG_SCHEMA = {
         "retrieval_max_distance": {"type": float, "default": 1.2, "dynamic": True, "attr": "APP_RETRIEVAL_MAX_DISTANCE"},
         # 认知状态字段所允许保存的最大汇总字符长度
         "cognition_max_words": {"type": int, "default": 200, "dynamic": True, "attr": "APP_COGNITION_MAX_WORDS"},
-        # 记忆写入或合并去重时的向量距离阈值 (小于该值判定为高度重叠，执行合并)
+        # 记忆写入时挑选 same/replace/coexist 判断候选的向量距离阈值
         "dedup_write_threshold": {"type": float, "default": 0.15, "dynamic": True, "attr": "APP_DEDUP_WRITE_THRESHOLD"},
-        # 记忆检索过滤时的文本重叠率阈值（编辑距离相似度，大于该值判定为重复内容以作过滤）
-        "dedup_retrieve_text_threshold": {"type": float, "default": 0.70, "dynamic": True, "attr": "APP_DEDUP_RETRIEVE_TEXT_THRESHOLD"},
         # 知识图谱 (Graph RAG) 实体/关系网络检索时的最低重要度评级要求
         "graph_min_importance": {"type": float, "default": 0.5, "dynamic": True, "attr": "APP_GRAPH_MIN_IMPORTANCE"},
         # 注入上下文的知识图谱三元组最大关联条目上限限制

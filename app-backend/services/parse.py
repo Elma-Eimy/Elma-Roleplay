@@ -195,6 +195,22 @@ def _html_to_markdown(text: str) -> str:
 
     return "\n".join(result_lines).strip()
 
+
+def _normalize_prompt_text(text: str) -> str:
+    """
+    规范化角色卡中的 Prompt DSL，同时保留其原始语义结构。
+
+    system prompt、Post-History Instructions、示例对话和世界书内容不是单纯的
+    展示型 HTML。它们可能包含 ``{{original}}``、``<START>`` 或作者自定义的
+    XML/伪 XML 标签，因此不能交给通用 HTML 清洗器删除尖括号结构。
+    """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def _extract_v2_data(raw_data: dict) -> dict:
     """
     从原始 JSON 数据中提取符合 V2 规范的字段，并向后兼容 V1，确保输出字段的结构完全归一化。
@@ -210,7 +226,9 @@ def _extract_v2_data(raw_data: dict) -> dict:
     scenario = data.get("scenario", data.get("world_scenario", ""))
     first_mes = data.get("first_mes", data.get("greeting", ""))
     mes_example = data.get("mes_example", data.get("example_dialogue", ""))
-    system_prompt = data.get("system_prompt_override", data.get("system_prompt", ""))
+    # 标准 V2 字段为 system_prompt；system_prompt_override 是本项目及部分平台
+    # 使用的兼容别名。仅在别名具有非空内容时优先，避免空别名遮蔽标准字段。
+    system_prompt = data.get("system_prompt_override") or data.get("system_prompt", "")
 
     # 融合 character_book (世界书/百科设定) 到 extensions 扩展中，实现零 schema 改动下的完美数据存储
     extensions = data.get("extensions", {})
@@ -230,13 +248,13 @@ def _extract_v2_data(raw_data: dict) -> dict:
     # 融合 alternate_greetings 到 extensions 以持久化存储
     extensions["alternate_greetings"] = alt_greetings
 
-    # 清洗 extensions 内的世界书 entries 的内容为 Markdown
+    # 世界书内容同样属于 Prompt DSL，保留作者定义的结构标签与宏。
     if 'character_book' in extensions and isinstance(extensions['character_book'], dict):
         char_book = extensions['character_book']
         if 'entries' in char_book and isinstance(char_book['entries'], list):
             for entry in char_book['entries']:
                 if isinstance(entry, dict) and 'content' in entry:
-                    entry['content'] = _html_to_markdown(entry['content'])
+                    entry['content'] = _normalize_prompt_text(entry['content'])
 
     # 归一化输出字段，包含完整的默认值以防 undefined 报错，并进行 HTML 到 Markdown 的格式清洗
     return {
@@ -245,10 +263,11 @@ def _extract_v2_data(raw_data: dict) -> dict:
         "personality": _html_to_markdown(data.get("personality", "")),
         "scenario": _html_to_markdown(scenario),
         "first_mes": _html_to_markdown(first_mes),
-        "mes_example": _html_to_markdown(mes_example),
+        # 以下字段包含 SillyTavern Prompt DSL，不能删除 <START>、结构标签或宏。
+        "mes_example": _normalize_prompt_text(mes_example),
         "creator_notes": _html_to_markdown(data.get("creator_notes", "")),
-        "system_prompt_override": _html_to_markdown(system_prompt),
-        "post_history_instructions": _html_to_markdown(data.get("post_history_instructions", "")),
+        "system_prompt_override": _normalize_prompt_text(system_prompt),
+        "post_history_instructions": _normalize_prompt_text(data.get("post_history_instructions", "")),
         "tags": data.get("tags", []),
         "creator": _html_to_markdown(data.get("creator", "")),
         "character_version": data.get("character_version", ""),
@@ -308,4 +327,3 @@ def extract_xml_block(text: str) -> dict:
 
 # 兼容性别名
 _extract_xml_block = extract_xml_block
-

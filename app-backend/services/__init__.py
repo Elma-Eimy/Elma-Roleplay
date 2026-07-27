@@ -1,10 +1,4 @@
-from services.chat_engine import generate_reply
-from services.memory_manager import (
-    retrieve_memories,
-    summarize_and_store_memory,
-    update_cognition_state,
-    safe_delete_session,
-    get_unsummarized_count,
-    get_cognition_unseen_count
-)
-from services.parse import parse_character_card
+"""应用服务包。
+
+从具体的模块中导入服务。在此处过早/急切地重新导出每一个服务，会使原本相互独立的模块耦合在一起，并导致导入单个服务时就会初始化整个应用程序依赖图。
+"""

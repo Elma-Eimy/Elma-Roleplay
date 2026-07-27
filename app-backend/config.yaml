@@ -18,7 +18,10 @@ llm:
 app:
   context_history_limit: 15
   retrieval_top_k: 3
+  retrieval_context_turns: 3
+  retrieval_query_max_chars: 2400
   memory_extract_history_limit: 20
+  memory_handoff_margin: 2
   retrieval_min_importance: 0.3
   cognition_update_interval: 30
   cognition_importance_threshold: 0.8
@@ -33,12 +36,11 @@ app:
   max_card_size_mb: 10
   history_fetch_default: 50
   history_fetch_max: 500
-  retrieval_max_distance: 1.2
+  retrieval_max_distance: 1.2  # 0 仅允许精确距离，负数禁用本轮长期记忆召回
   cognition_max_words: 200
   retrieval_half_life_turns: 50
   retrieval_candidate_multiplier: 3
   dedup_write_threshold: 0.15
-  dedup_retrieve_text_threshold: 0.7
   graph_min_importance: 0.5
   graph_max_relations: 12
   retrieval_weight_similarity: 0.6

@@ -19,9 +19,10 @@ if sys.platform.startswith('win'):
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal
-from core import Base, engine
+from core.database import engine
+from core.models import Base
 from core.models import OutboxJob, OutboxJobStatus
-from services.outbox_worker import process_pending_jobs, execute_job
+from services.infrastructure.outbox_worker import process_pending_jobs, execute_job
 
 
 def run_outbox_test():
@@ -60,7 +61,7 @@ def run_outbox_test():
         mock_collection = MagicMock()
         
         # 使用 patch 模拟 ChromaDB 获取 collection
-        with patch("services.memory_manager.get_character_collection", return_value=mock_collection) as mock_get_col:
+        with patch("services.memory.memory_manager.get_character_collection", return_value=mock_collection) as mock_get_col:
             # 运行 worker 任务处理器
             import asyncio
             asyncio.run(process_pending_jobs())
@@ -84,7 +85,7 @@ def run_outbox_test():
         db.add(fail_job)
         db.commit()
 
-        with patch("services.memory_manager.get_character_collection", side_effect=Exception("ChromaDB Connection Timeout")) as mock_fail_col:
+        with patch("services.memory.memory_manager.get_character_collection", side_effect=Exception("ChromaDB Connection Timeout")) as mock_fail_col:
             asyncio.run(process_pending_jobs())
 
             # 再次查询该任务的状态

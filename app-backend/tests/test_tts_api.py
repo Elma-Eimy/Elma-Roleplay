@@ -279,7 +279,7 @@ async def async_db_bound_test():
         print(f"[INFO] 成功插入 Inactive 消息 ID={inactive_msg.id}")
         
         # 测试记忆提纯
-        from services.cognition_service import get_unsummarized_count
+        from services.memory.memory_extraction_service import get_unsummarized_count
         unsummarized_cnt = get_unsummarized_count(session.id, db)
         print(f"未总结消息数 (已过滤 Inactive): {unsummarized_cnt}")
         

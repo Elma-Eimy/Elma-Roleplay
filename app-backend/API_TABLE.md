@@ -59,7 +59,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 | **POST** | `/sessions/{session_id}/memories` | Manually add a custom vector memory to this session |
 | **PUT** | `/sessions/{session_id}/memories/{memory_id}` | Edit a local vector memory (inherited memories are read-only) |
 | **DELETE** | `/sessions/{session_id}/memories/{memory_id}` | Delete a local vector memory (inherited memories are read-only) |
-| **GET** | `/sessions/{session_id}/compile_prompt` | Preview / debug the assembled prompt context sent to the LLM |
+| **GET** | `/sessions/{session_id}/compile_prompt` | Preview the assembled prompt and its heuristic Token range/section breakdown |
 
 ### 4. World Book (Lorebook) Management (`/lorebooks`)
 | Method | Endpoint | Description |
@@ -113,6 +113,8 @@ This document describes the HTTP API endpoints provided by the backend for front
     "reasoning_mode": false,
     "context_history_limit": 15,
     "retrieval_top_k": 3,
+    "retrieval_context_turns": 3,
+    "retrieval_query_max_chars": 2400,
     "retrieval_min_importance": 0.3,
     "retrieval_max_distance": 1.2,
     "lorebook_scan_depth": 5,
@@ -500,7 +502,11 @@ This document describes the HTTP API endpoints provided by the backend for front
       "importance_score": 0.85,
       "is_local": true,
       "created_at": "2026-05-23T16:00:19",
-      "origin_session_id": 1
+      "origin_session_id": 1,
+      "source_start_message_id": 20,
+      "source_message_id": 22,
+      "supersedes_id": null,
+      "is_superseded": false
     }
   ]
   ```
@@ -525,7 +531,11 @@ This document describes the HTTP API endpoints provided by the backend for front
       "importance_score": 0.9,
       "is_local": true,
       "created_at": "2026-05-23T16:10:00",
-      "origin_session_id": 1
+      "origin_session_id": 1,
+      "source_start_message_id": null,
+      "source_message_id": null,
+      "supersedes_id": null,
+      "is_superseded": false
     }
   }
   ```
@@ -545,7 +555,10 @@ This document describes the HTTP API endpoints provided by the backend for front
     "memory": {
       "id": 5,
       "content": "修改后的记忆文本内容",
-      "importance_score": 0.8
+      "importance_score": 0.8,
+      "source_start_message_id": null,
+      "source_message_id": null,
+      "supersedes_id": null
     }
   }
   ```
@@ -574,9 +587,21 @@ This document describes the HTTP API endpoints provided by the backend for front
         "role": "user",
         "content": "... (Compiled user message with context wrappers) ..."
       }
-    ]
+    ],
+    "token_estimate": {
+      "characters": 18420,
+      "estimated_tokens": 12800,
+      "lower_bound": 9760,
+      "upper_bound": 16720,
+      "method": "heuristic_v1",
+      "is_exact": false,
+      "sections": {
+        "character": {"characters": 8200, "estimated_tokens": 6100, "lower_bound": 4800, "upper_bound": 7600}
+      }
+    }
   }
   ```
+  `sections` always includes all documented prompt sections, including zero-valued ones. See `NEW_API.md` for the complete additive contract and estimation caveats.
 
 ---
 

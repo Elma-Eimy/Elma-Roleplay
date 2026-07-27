@@ -57,14 +57,20 @@ export const usePersonaStore = defineStore("persona", () => {
 
   // ===== 操作方法 (Actions) =====
 
-  /** 从后端 API 异步加载角色设定列表 */
-  async function loadCharacters() {
+  /** 从后端 API 异步加载角色设定列表 (支持分页与追加模式) */
+  async function loadCharacters(limit?: number, offset?: number, append = false) {
     isLoadingCharacters.value = true;
     try {
-      const res = await getCharacters();
-      characterList.value = res.characters;
+      const res = await getCharacters(limit, offset);
+      if (append) {
+        characterList.value = [...characterList.value, ...res.characters];
+      } else {
+        characterList.value = res.characters;
+      }
+      return res.characters.length;
     } catch (e) {
       console.error("Failed to load characters", e);
+      return 0;
     } finally {
       isLoadingCharacters.value = false;
     }

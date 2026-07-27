@@ -31,13 +31,17 @@
           v-for="item in filteredMemories"
           :key="item.id"
           class="memory-card"
-          :class="{ 'is-inherited': !item.is_local }"
+          :class="{ 'is-inherited': !item.is_local, 'is-superseded': item.is_superseded }"
         >
           <view class="card-header">
             <view class="tag-row">
               <text class="memory-type-badge">{{ item.memory_type }}</text>
               <text v-if="!item.is_local" class="inherited-badge">继承记忆</text>
               <text v-else class="local-badge">本地记忆</text>
+              <text v-if="item.is_superseded" class="superseded-badge">已替代</text>
+              <text v-if="item.source_start_message_id || item.source_message_id" class="source-badge">
+                来源: #{{ item.source_start_message_id || item.source_message_id }}<template v-if="item.source_start_message_id && item.source_message_id && item.source_start_message_id !== item.source_message_id">-#{{ item.source_message_id }}</template>
+              </text>
             </view>
             <text class="score-text">权重: {{ item.importance_score.toFixed(1) }}</text>
           </view>
@@ -443,6 +447,12 @@ const addMemory = async () => {
   border: 1px dashed rgba(0, 0, 0, 0.08);
 }
 
+.memory-card.is-superseded {
+  opacity: 0.65;
+  border: 1px solid rgba(255, 149, 0, 0.15);
+  background-color: rgba(242, 242, 247, 0.3);
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -454,6 +464,7 @@ const addMemory = async () => {
   display: flex;
   align-items: center;
   gap: 10rpx;
+  flex-wrap: wrap;
 }
 
 .memory-type-badge {
@@ -480,6 +491,24 @@ const addMemory = async () => {
   font-weight: 500;
   color: #34c759;
   background-color: rgba(52, 199, 89, 0.10);
+  padding: 4rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.superseded-badge {
+  font-size: 18rpx;
+  font-weight: 500;
+  color: #ff9500;
+  background-color: rgba(255, 149, 0, 0.10);
+  padding: 4rpx 10rpx;
+  border-radius: 6rpx;
+}
+
+.source-badge {
+  font-size: 18rpx;
+  font-weight: 500;
+  color: #007aff;
+  background-color: rgba(0, 122, 255, 0.10);
   padding: 4rpx 10rpx;
   border-radius: 6rpx;
 }
