@@ -55,12 +55,14 @@
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
 		"navigationBarTitleText": "AI Roleplay",
-		"navigationBarBackgroundColor": "#FFFFFF",
-		"backgroundColor": "#FFFFFF"
+		"navigationBarBackgroundColor": "#F7F9F7",
+		"backgroundColor": "#F7F9F7",
+		"backgroundColorTop": "#F7F9F7",
+		"backgroundColorBottom": "#F7F9F7"
 	},
 	"tabBar": {
-		"color": "#9ca3af",
-		"selectedColor": "#111827",
+		"color": "#7C8983",
+		"selectedColor": "#4F8E7C",
 		"backgroundColor": "#ffffff",
 		"borderStyle": "white",
 		"list": [

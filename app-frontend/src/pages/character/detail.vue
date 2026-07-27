@@ -1,11 +1,11 @@
 <template>
-  <view class="detail-container" v-if="character">
+  <view class="detail-container app-motion-enter" v-if="character">
     <!-- 头部导航栏 -->
     <view class="header">
       <view class="back-btn" @tap="goBack">
         <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
       </view>
-      <text class="title">角色设定</text>
+      <text class="title">人物档案</text>
       <view class="header-right">
         <view class="header-btn sync-btn" @tap="quickUpdateFromCard">
           <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
@@ -21,17 +21,17 @@
         <!-- 角色立绘面板 -->
         <view class="portrait-panel">
           <!-- 模糊氛围背景 -->
-          <image 
+          <AvatarImage
             class="portrait-blur-bg" 
-            :src="getAvatarUrl(character.avatar_path || '') || '/static/default-avatar.png'" 
-            mode="aspectFill"
+            :src="getAvatarUrl(character.avatar_path || '')"
+            :lazy-load="false"
           />
           <!-- 前景高清立绘卡 -->
           <view class="portrait-card-wrapper">
-            <image 
+            <AvatarImage
               class="portrait-img" 
-              :src="getAvatarUrl(character.avatar_path || '') || '/static/default-avatar.png'" 
-              mode="aspectFill" 
+              :src="getAvatarUrl(character.avatar_path || '')"
+              :lazy-load="false"
               @tap="previewPortrait"
             />
           </view>
@@ -45,7 +45,11 @@
 
         <!-- 角色基本名称与标签区域 -->
         <view class="char-header-section">
+          <text class="archive-eyebrow">CHARACTER FILE</text>
           <text class="char-name">{{ character.name }}</text>
+          <text class="char-summary">
+            {{ character.description?.trim() || "这位角色还没有留下档案摘要。" }}
+          </text>
           <view class="tag-row" v-if="character.personality || (character.tags && character.tags.length > 0)">
             <view 
               class="personality-tag" 
@@ -62,30 +66,48 @@
               #{{ tag }}
             </view>
           </view>
+          <view class="archive-stats">
+            <view class="archive-stat">
+              <text class="archive-stat-value">{{ sessions.length }}</text>
+              <text class="archive-stat-label">故事线</text>
+            </view>
+            <view class="archive-stat-divider"></view>
+            <view class="archive-stat">
+              <text class="archive-stat-value">{{ lorebookEntriesCount }}</text>
+              <text class="archive-stat-label">世界条目</text>
+            </view>
+          </view>
         </view>
 
         <!-- 页签导航栏 -->
         <view class="tabs-nav">
-          <view 
-            class="tab-item" 
-            :class="{ 'is-active': activeTab === 'sessions' }"
-            @tap="activeTab = 'sessions'"
-          >
-            <text class="tab-label">故事宇宙 ({{ sessions.length }})</text>
-          </view>
-          <view 
-            class="tab-item" 
+          <view
+            class="tab-item"
             :class="{ 'is-active': activeTab === 'profile' }"
             @tap="activeTab = 'profile'"
           >
-            <text class="tab-label">人设细节</text>
+            <text class="tab-label">档案</text>
           </view>
           <view 
             class="tab-item" 
             :class="{ 'is-active': activeTab === 'lorebook' }"
             @tap="activeTab = 'lorebook'"
           >
-            <text class="tab-label">专属世界书 ({{ lorebookEntriesCount }})</text>
+            <text class="tab-label">世界</text>
+          </view>
+          <view
+            class="tab-item"
+            :class="{ 'is-active': activeTab === 'memory' }"
+            @tap="activeTab = 'memory'"
+          >
+            <text class="tab-label">记忆</text>
+          </view>
+          <view
+            class="tab-item"
+            :class="{ 'is-active': activeTab === 'sessions' }"
+            @tap="activeTab = 'sessions'"
+          >
+            <text class="tab-label">故事线</text>
           </view>
         </view>
 
@@ -179,6 +201,28 @@
             @entries-count="onEntriesCountUpdate"
           />
         </view>
+
+        <!-- 记忆按故事线隔离保存，进入具体故事后查看和管理。 -->
+        <view v-if="activeTab === 'memory'" class="memory-archive">
+          <view class="memory-orbit">
+            <view class="memory-orbit-ring"></view>
+            <view class="memory-orbit-core"></view>
+          </view>
+          <text class="memory-title">记忆随故事生长</text>
+          <text class="memory-description">
+            每条故事线拥有独立的人格状态与长期记忆。进入故事后，可在状态面板中查看和管理。
+          </text>
+          <view class="memory-note">
+            <text class="memory-note-label">当前档案</text>
+            <text class="memory-note-value">
+              {{ sessions.length > 0 ? `已连接 ${sessions.length} 条故事线` : "尚未建立故事记忆" }}
+            </text>
+          </view>
+          <view class="memory-action" @tap="openMemoryStory">
+            <text>{{ sessions.length > 0 ? "进入最近故事" : "开启第一段故事" }}</text>
+            <text class="memory-action-arrow">→</text>
+          </view>
+        </view>
       </view>
     </scroll-view>
 
@@ -186,7 +230,7 @@
     <view class="footer">
       <view class="action-btn" @tap="openNewBranchModal">
         <image class="action-icon" src="/static/icons/header_plus.svg" mode="aspectFit" />
-        <text class="action-btn-text">开启全新平行故事</text>
+        <text class="action-btn-text">开启新的故事线</text>
       </view>
     </view>
 
@@ -222,6 +266,7 @@ import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vu
 
 // 引入重命名分支子组件
 import RenameSessionModal from "@/components/common/RenameSessionModal.vue";
+import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const personaStore = usePersonaStore();
 
@@ -233,7 +278,7 @@ const isNewBranchModalOpen = ref(false);
 const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
 const activeParentSessionId = ref<number | null>(null);
-const activeTab = ref<"sessions" | "profile" | "lorebook">("sessions");
+const activeTab = ref<"profile" | "lorebook" | "memory" | "sessions">("profile");
 const viewMode = ref<"list" | "tree">("tree");
 
 const lorebookEntriesCount = ref(0);
@@ -433,7 +478,7 @@ const previewPortrait = () => {
 const changePortrait = () => {
   uni.chooseImage({
     count: 1,
-    sizeType: ['compressed'],
+    sizeType: ['original'],
     sourceType: ['album', 'camera'],
     success: async (res) => {
       const tempPath = res.tempFilePaths[0];
@@ -463,6 +508,15 @@ const changePortrait = () => {
 const openNewBranchModal = () => {
   activeParentSessionId.value = null;
   isNewBranchModalOpen.value = true;
+};
+
+const openMemoryStory = () => {
+  const latestSession = sessions.value[0];
+  if (latestSession) {
+    resumeSession(latestSession);
+    return;
+  }
+  openNewBranchModal();
 };
 
 const handleTreeNodeBranch = (session: any) => {

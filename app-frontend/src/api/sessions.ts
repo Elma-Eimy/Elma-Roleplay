@@ -42,6 +42,16 @@ export interface SessionDetail {
   character: CharacterRef;
 }
 
+export interface MessageCandidate {
+  id: number;
+  content: string;
+  reasoning_content?: string | null;
+  emotion_tag: string | null;
+  affection_change: number | null;
+  created_at: string;
+  audio_path?: string | null;
+}
+
 export interface Message {
   id: number;
   role: "user" | "assistant";
@@ -53,7 +63,7 @@ export interface Message {
   model_used?: string;
   parent_id?: number | null;
   is_active?: boolean;
-  candidates?: Message[];
+  candidates?: MessageCandidate[];
   active_index?: number;
   audio_path?: string | null;
 }
@@ -92,6 +102,18 @@ export interface CreateSessionResponse {
 export interface GetSessionsResponse {
   character_id: number;
   sessions: SessionSummary[];
+}
+
+export interface RecentSessionSummary extends SessionSummary {
+  character: CharacterRef;
+  last_message: Pick<Message, "content" | "created_at"> | null;
+}
+
+export interface GetRecentSessionsResponse {
+  sessions: RecentSessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface GetHistoryResponse {
@@ -275,6 +297,66 @@ export async function getSessions(characterId: number): Promise<GetSessionsRespo
   }
 
   return request<GetSessionsResponse>(`/sessions?character_id=${characterId}`);
+}
+
+/**
+ * 获取首页最近会话聚合数据。
+ * 后端应在一次查询中返回角色摘要与最后一条消息，避免首页 N+1 请求。
+ * GET /sessions/recent?limit={limit}&offset={offset}
+ */
+export async function getRecentSessions(
+  limit = 50,
+  offset = 0
+): Promise<GetRecentSessionsResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB();
+    const sessions = db.sessions
+      .map((session) => {
+        const character = db.characters.find((item) => item.id === session.character_id);
+        const messages = db.messages[session.id] || [];
+        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+
+        return {
+          id: session.id,
+          title: session.title,
+          parent_session_id: session.parent_session_id,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          persona: {
+            id: session.persona.id,
+            affection_score: session.persona.affection_score,
+            current_mood: session.persona.current_mood,
+          },
+          character: {
+            id: character?.id ?? session.character_id,
+            name: character?.name ?? "Unknown Character",
+            avatar_path: character?.avatar_path ?? "",
+          },
+          last_message: lastMessage
+            ? {
+                content: String(lastMessage.content || ""),
+                created_at: lastMessage.created_at,
+              }
+            : null,
+        };
+      })
+      .sort((a, b) => {
+        const aTime = a.last_message?.created_at || a.updated_at;
+        const bTime = b.last_message?.created_at || b.updated_at;
+        return new Date(bTime).getTime() - new Date(aTime).getTime();
+      });
+
+    return {
+      sessions: sessions.slice(offset, offset + limit),
+      total: sessions.length,
+      limit,
+      offset,
+    };
+  }
+
+  return request<GetRecentSessionsResponse>(
+    `/sessions/recent?limit=${limit}&offset=${offset}`
+  );
 }
 
 /**

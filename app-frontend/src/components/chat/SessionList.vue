@@ -22,10 +22,9 @@
           :class="{ 'is-active': activeSessionId === session.id }"
           @tap="onSelectSession(session.id)"
         >
-          <image 
+          <AvatarImage
             class="session-avatar" 
-            :src="characterAvatar || '/static/default-avatar.png'" 
-            mode="aspectFill" 
+            :src="characterAvatar"
           />
           <view class="session-content">
             <view class="title-row">
@@ -53,6 +52,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { SessionSummary } from "@/api/sessions";
+import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
   isOpen: boolean;

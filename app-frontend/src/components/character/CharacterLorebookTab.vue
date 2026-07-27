@@ -131,6 +131,55 @@ const availableLorebooks = computed(() => {
   return allLibraryLorebooks.value.filter(lb => !boundIds.includes(lb.id));
 });
 
+const normalizeEntry = (entry: any) => {
+  let keys = entry.keys;
+  if (!Array.isArray(keys)) {
+    keys = keys ? [keys] : [];
+  }
+  let secondaryKeys = entry.secondary_keys;
+  if (!Array.isArray(secondaryKeys)) {
+    secondaryKeys = secondaryKeys ? [secondaryKeys] : [];
+  }
+  return {
+    keys: keys.filter(Boolean),
+    secondary_keys: secondaryKeys.filter(Boolean),
+    content: entry.content || "",
+    constant: !!entry.constant,
+    priority: entry.priority || entry.insertion_order || 100
+  };
+};
+
+const lorebookEntries = computed(() => {
+  const entries: any[] = [];
+
+  const charBook = props.character?.extensions?.character_book as any;
+  if (charBook && Array.isArray(charBook.entries)) {
+    charBook.entries.forEach((entry: any) => {
+      if (entry && entry.enabled !== false) {
+        entries.push({
+          ...normalizeEntry(entry),
+          sourceName: "专属"
+        });
+      }
+    });
+  }
+
+  boundLorebooksDetails.value.forEach((lorebook: any) => {
+    if (lorebook && Array.isArray(lorebook.entries)) {
+      lorebook.entries.forEach((entry: any) => {
+        if (entry && entry.enabled !== false) {
+          entries.push({
+            ...normalizeEntry(entry),
+            sourceName: lorebook.name
+          });
+        }
+      });
+    }
+  });
+
+  return entries;
+});
+
 const loadBoundLorebooksDetails = async () => {
   boundLorebooksDetails.value = [];
   if (props.character && props.character.lorebooks) {
@@ -220,62 +269,12 @@ const handleUnbind = async (lorebookId: number) => {
   });
 };
 
-const lorebookEntries = computed(() => {
-  const entries: any[] = [];
-  
-  // 1. 专属（内置）条目
-  const charBook = props.character?.extensions?.character_book as any;
-  if (charBook && Array.isArray(charBook.entries)) {
-    charBook.entries.forEach((e: any) => {
-      if (e && e.enabled !== false) {
-        entries.push({
-          ...normalizeEntry(e),
-          sourceName: "专属"
-        });
-      }
-    });
-  }
-  
-  // 2. 绑定的独立世界书条目
-  boundLorebooksDetails.value.forEach((lb: any) => {
-    if (lb && Array.isArray(lb.entries)) {
-      lb.entries.forEach((e: any) => {
-        if (e && e.enabled !== false) {
-          entries.push({
-            ...normalizeEntry(e),
-            sourceName: lb.name
-          });
-        }
-      });
-    }
-  });
-  
-  return entries;
-});
-
-const normalizeEntry = (e: any) => {
-  let keys = e.keys;
-  if (!Array.isArray(keys)) {
-    keys = keys ? [keys] : [];
-  }
-  let secondaryKeys = e.secondary_keys;
-  if (!Array.isArray(secondaryKeys)) {
-    secondaryKeys = secondaryKeys ? [secondaryKeys] : [];
-  }
-  return {
-    keys: keys.filter(Boolean),
-    secondary_keys: secondaryKeys.filter(Boolean),
-    content: e.content || "",
-    constant: !!e.constant,
-    priority: e.priority || e.insertion_order || 100
-  };
-};
 </script>
 
 <style scoped>
 /* ===== 专属世界书 (Lorebook Section) ===== */
 .lorebook-section {
-  padding: 8rpx 0 100rpx 0;
+  padding: 0 var(--app-page-gutter, 36rpx) 100rpx;
 }
 
 .lore-grid {
@@ -285,11 +284,10 @@ const normalizeEntry = (e: any) => {
 }
 
 .lore-card {
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 24rpx;
   padding: 28rpx;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
   display: flex;
   flex-direction: column;
   gap: 16rpx;
@@ -312,9 +310,9 @@ const normalizeEntry = (e: any) => {
 .lore-tag {
   font-size: 20rpx;
   font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.03);
-  border: 1px solid rgba(0, 0, 0, 0.02);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border: 1px solid rgba(112, 174, 155, 0.12);
   padding: 4rpx 14rpx;
   border-radius: 40rpx;
 }
@@ -343,8 +341,8 @@ const normalizeEntry = (e: any) => {
 .lore-meta-item {
   font-size: 18rpx;
   font-weight: 500;
-  color: #8e8e93;
-  background-color: rgba(0, 0, 0, 0.01);
+  color: var(--app-color-text-secondary, #7c8983);
+  background-color: rgba(255, 255, 255, 0.42);
   padding: 2rpx 10rpx;
   border-radius: 6rpx;
 }
@@ -353,12 +351,12 @@ const normalizeEntry = (e: any) => {
   display: block !important;
   box-sizing: border-box !important;
   font-size: 24rpx;
-  color: #48484a;
+  color: var(--app-color-text-primary, #26332e);
   line-height: 1.6;
-  background-color: rgba(0, 0, 0, 0.02) !important;
+  background-color: var(--app-color-background, #f7f9f7) !important;
   padding: 20rpx 24rpx !important;
   border-radius: 16rpx !important;
-  border: 1px solid rgba(0, 0, 0, 0.03) !important;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08)) !important;
   word-break: break-all;
   white-space: pre-wrap !important;
   transition: all 0.2s ease;
@@ -382,7 +380,7 @@ const normalizeEntry = (e: any) => {
 
 .lore-expand-toggle {
   font-size: 20rpx;
-  color: #007aff;
+  color: var(--app-color-primary-strong, #4f8e7c);
   font-weight: 600;
   text-align: center;
 }
@@ -401,8 +399,8 @@ const normalizeEntry = (e: any) => {
   content: "";
   width: 8rpx;
   height: 8rpx;
-  border-right: 2rpx solid #007aff;
-  border-bottom: 2rpx solid #007aff;
+  border-right: 2rpx solid var(--app-color-primary-strong, #4f8e7c);
+  border-bottom: 2rpx solid var(--app-color-primary-strong, #4f8e7c);
   transform: rotate(45deg);
 }
 
@@ -422,7 +420,7 @@ const normalizeEntry = (e: any) => {
 .bound-title {
   font-size: 28rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .bind-action-btn {
@@ -430,7 +428,7 @@ const normalizeEntry = (e: any) => {
   align-items: center;
   gap: 8rpx;
   padding: 10rpx 20rpx;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-text-primary, #26332e);
   border-radius: 30rpx;
 }
 
@@ -461,8 +459,8 @@ const normalizeEntry = (e: any) => {
 .bound-tag-card {
   display: flex;
   align-items: center;
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  background-color: rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 16rpx;
   padding: 12rpx 20rpx;
   gap: 12rpx;
@@ -477,7 +475,7 @@ const normalizeEntry = (e: any) => {
 .bound-tag-name {
   font-size: 24rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .bound-tag-close {
@@ -490,16 +488,16 @@ const normalizeEntry = (e: any) => {
 
 .bound-list-empty {
   padding: 24rpx;
-  background-color: rgba(0,0,0,0.01);
+  background-color: rgba(255, 255, 255, 0.38);
   border-radius: 16rpx;
   text-align: center;
   margin-bottom: 36rpx;
-  border: 1px dashed rgba(0,0,0,0.04);
+  border: 1px dashed var(--app-color-border, rgba(38, 51, 46, 0.1));
 }
 
 .bound-empty-text {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
 }
 
 .entries-section-header {
@@ -511,14 +509,14 @@ const normalizeEntry = (e: any) => {
 .entries-title {
   font-size: 28rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .lore-source-tag {
   font-size: 20rpx;
   font-weight: 700;
-  color: #007aff;
-  background-color: rgba(0, 122, 255, 0.08);
+  color: #5d83a1;
+  background-color: rgba(139, 184, 220, 0.12);
   padding: 4rpx 12rpx;
   border-radius: 6rpx;
   margin-right: 12rpx;

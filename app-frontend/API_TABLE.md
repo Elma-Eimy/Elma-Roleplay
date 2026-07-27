@@ -6,14 +6,15 @@ This document describes the HTTP API endpoints provided by the backend for front
 
 * **Base URL**: `http://127.0.0.1:8000`
 * **Content-Type**: `application/json` (except file uploads)
-* **Authentication**: All endpoints require the `X-API-Key` header when `ACCESS_API_KEY` is configured in `.env`.
+* **Authentication**: API endpoints and `/audio/{filename}` require the `X-API-Key` header when `ACCESS_API_KEY` is configured in `.env`. `/assets/avatars/{filename}` is the explicit public exception.
   - Header: `X-API-Key: <your-secret>`
   - If `ACCESS_API_KEY` is empty (local dev), the header can be omitted.
   - Missing or wrong key returns `403 Forbidden`.
 * **CORS**: Enabled for `GET`, `POST`, `PUT`, `DELETE` methods and all headers.
 * **Static Assets & Audio**: 
-  - Uploaded avatars: `http://127.0.0.1:8000/assets/avatars/{filename}`
-  - Synthesized speech: `http://127.0.0.1:8000/audio/{filename}` (Supports automatic on-demand recovery and rebuilding if the physical file is lost)
+  - Uploaded avatars: `http://127.0.0.1:8000/assets/avatars/{filename}` — public static resource; no API key in either headers or URL.
+  - Synthesized speech: `http://127.0.0.1:8000/audio/{filename}` — protected resource; clients must send `X-API-Key` in the request header. Supports automatic on-demand recovery and rebuilding if the physical file is lost.
+  - Clients must never put the long-lived API key in URL query parameters.
 
 ---
 
@@ -44,6 +45,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **POST** | `/sessions/create` | Create a new session (fresh or inherited) |
+| **GET** | `/sessions/recent` | Get paginated recent sessions with character and last-message summaries |
 | **GET** | `/sessions` | List sessions associated with a character |
 | **GET** | `/sessions/{session_id}` | Retrieve details of a session and its persona |
 | **GET** | `/sessions/{session_id}/history` | Get inheritance-aware chronological chat history (cursor pagination) |
@@ -175,6 +177,7 @@ This document describes the HTTP API endpoints provided by the backend for front
   ```
 
 #### GET `/audio/{filename}`
+* **Authentication**: Send `X-API-Key` in the request header when `ACCESS_API_KEY` is configured. Query-string credentials are not supported.
 * **Response (200 OK)**: Binary audio stream (typically MP3/WAV format).
   - *Note*: If the file doesn't exist on disk but corresponds to an existing database message ID in the name, the system will trigger a self-healing process to rebuild the audio file on the fly before returning it.
 
@@ -350,6 +353,43 @@ This document describes the HTTP API endpoints provided by the backend for front
         }
       }
     ]
+  }
+  ```
+
+#### GET `/sessions/recent`
+* **Purpose**: Home-screen aggregate endpoint. The backend should fetch sessions, character summaries, and each session's latest active message in one database query (or a bounded query set) to avoid client-side N+1 requests.
+* **Query Parameters**:
+  - `limit`: Optional pagination limit (frontend default: `50`)
+  - `offset`: Optional pagination offset (default: `0`)
+* **Response (200 OK)**:
+  ```json
+  {
+    "sessions": [
+      {
+        "id": 1,
+        "title": "测试对话 1",
+        "parent_session_id": null,
+        "created_at": "2026-05-23T16:00:19",
+        "updated_at": "2026-05-23T16:05:00",
+        "persona": {
+          "id": 1,
+          "affection_score": 10,
+          "current_mood": "平静"
+        },
+        "character": {
+          "id": 1,
+          "name": "测试小助手",
+          "avatar_path": "assets/avatars/4a6b2c8d_helper.png"
+        },
+        "last_message": {
+          "content": "你好呀！有什么我可以帮你的吗？",
+          "created_at": "2026-05-23T16:05:00"
+        }
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0
   }
   ```
 

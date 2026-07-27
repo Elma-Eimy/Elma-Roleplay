@@ -1,5 +1,5 @@
 <template>
-  <view class="page-container" :class="{ 'is-android': isAndroid }">
+  <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid }">
     <!-- 导航栏 -->
     <view class="nav-bar">
       <view class="back-btn" @tap="goBack">
@@ -35,7 +35,23 @@
         </view>
 
         <!-- 世界书列表 -->
-        <view class="lorebooks-list" v-if="lorebooks.length > 0">
+        <AppStatusState
+          v-if="isLoading"
+          kind="loading"
+          title="正在整理世界书库"
+          description="读取已导入的世界设定集。"
+        />
+
+        <AppStatusState
+          v-else-if="loadError"
+          kind="error"
+          title="世界书库加载失败"
+          description="请检查连接后重试，已导入的设定不会丢失。"
+          action-label="重新加载"
+          @action="loadLorebooks"
+        />
+
+        <view class="lorebooks-list" v-else-if="lorebooks.length > 0">
           <view 
             class="lorebook-item"
             v-for="lb in lorebooks"
@@ -66,11 +82,12 @@
         </view>
 
         <!-- 空状态 -->
-        <view class="empty-state" v-else>
-          <image class="empty-image" src="/static/icons/modal_book_gray.svg" mode="aspectFit" />
-          <text class="empty-text">书库中暂无独立世界书</text>
-          <text class="empty-desc">点击上方导入卡片添加你的第一本世界设定集吧</text>
-        </view>
+        <AppStatusState
+          v-else
+          kind="empty"
+          title="书库中暂无独立世界书"
+          description="点击上方导入卡片，添加第一本世界设定集。"
+        />
         
       </view>
     </scroll-view>
@@ -82,9 +99,11 @@ import { ref } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { getLorebooks, deleteLorebook, importLorebook } from "@/api/lorebooks";
 import type { LorebookSummary } from "@/api/lorebooks";
+import AppStatusState from "@/components/common/AppStatusState.vue";
 
 const lorebooks = ref<LorebookSummary[]>([]);
-const isLoading = ref(false);
+const isLoading = ref(true);
+const loadError = ref(false);
 
 let isAndroid = false;
 // #ifdef APP-PLUS
@@ -93,12 +112,13 @@ isAndroid = uni.getSystemInfoSync().platform === 'android';
 
 const loadLorebooks = async () => {
   isLoading.value = true;
+  loadError.value = false;
   try {
     const res = await getLorebooks();
     lorebooks.value = res.lorebooks;
   } catch (e) {
+    loadError.value = true;
     console.error("Failed to load lorebooks", e);
-    uni.showToast({ title: "加载世界书失败", icon: "none" });
   } finally {
     isLoading.value = false;
   }
@@ -469,37 +489,6 @@ const onLongPress = (lb: LorebookSummary) => {
   font-size: 22rpx;
   font-weight: 600;
   color: #ff3b30;
-}
-
-/* ===== 空状态 ===== */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 120rpx 40rpx;
-  text-align: center;
-}
-
-.empty-image {
-  width: 120rpx;
-  height: 120rpx;
-  opacity: 0.15;
-  margin-bottom: 30rpx;
-}
-
-.empty-text {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #3a3a3c;
-  margin-bottom: 12rpx;
-}
-
-.empty-desc {
-  font-size: 24rpx;
-  color: #8e8e93;
-  max-width: 480rpx;
-  line-height: 1.4;
 }
 
 /* Android Performance Fallbacks */

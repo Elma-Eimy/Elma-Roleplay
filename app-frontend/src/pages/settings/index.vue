@@ -1,5 +1,5 @@
 <template>
-  <view class="page-container">
+  <view class="page-container app-motion-enter">
     <!-- 自定义导航栏 -->
     <view class="nav-bar">
       <text class="nav-title">设置</text>
@@ -7,131 +7,181 @@
 
     <scroll-view scroll-y class="settings-scroll">
       <view class="settings-list">
-
-        <!-- 显示与交互设置组 -->
-        <view class="setting-group">
-          <text class="group-title">显示与交互</text>
-
-          <view class="setting-item">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/settings_font.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">文字大小</text>
-                <text class="setting-desc">调整整个应用内的字体显示大小</text>
-              </view>
+        <view class="settings-hero">
+          <text class="hero-eyebrow">APP PREFERENCES</text>
+          <text class="hero-title">让故事按你的方式运行</text>
+          <text class="hero-description">从分类入口调整体验。主页面只保留当前状态，需要时再展开具体参数。</text>
+          <view class="hero-status-row">
+            <view class="hero-status">
+              <view class="status-dot" :class="{ 'is-mock': isMock }"></view>
+              <text>{{ isMock ? 'Mock 模式' : 'API 已连接' }}</text>
             </view>
-            <view class="setting-action">
-              <view class="stepper">
-                <view class="step-btn" @tap="changeFontSize(-1)">-</view>
-                <text class="step-value">{{ fontSize }}</text>
-                <view class="step-btn" @tap="changeFontSize(1)">+</view>
-              </view>
+            <view class="hero-status">
+              <view class="status-dot" :class="{ 'is-ready': apiKeyConfigured || isMock }"></view>
+              <text>{{ apiKeyConfigured ? '密钥已配置' : (isMock ? '本地免密' : '密钥未配置') }}</text>
             </view>
           </view>
         </view>
 
-        <!-- AI 引擎配置组 -->
-        <view class="setting-group">
-          <text class="group-title">AI 引擎参数</text>
-          <text class="group-desc">以下参数实时影响后端对话生成与记忆检索行为，修改后点击保存生效。</text>
-
-          <EngineSettingsCard
-            :settings="engineSettings"
-            :isLoading="isLoadingSettings"
-            @save="saveEngineSettings"
-          />
-        </view>
-
-        <!-- 数据源模式与连接认证配置组 -->
-        <view class="setting-group">
-          <text class="group-title">数据与连接</text>
-
-          <view class="setting-item">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/settings_database.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">运行模式</text>
-                <text class="setting-desc">当前系统的API data源模式</text>
-              </view>
+        <view class="category-grid">
+          <view class="category-card" :class="{ 'is-active': activeCategory === 'appearance' }" @tap="toggleCategory('appearance')">
+            <view class="category-icon-wrap mint">
+              <image class="category-icon" src="/static/icons/settings_font.svg" mode="aspectFit" />
             </view>
-            <view class="setting-action">
-              <text class="status-tag" :class="{ 'is-mock': isMock }">
-                {{ isMock ? 'Mock 模拟' : 'API 联调' }}
-              </text>
-            </view>
+            <text class="category-name">外观与沉浸</text>
+            <text class="category-status">文字 {{ fontSize }}px</text>
           </view>
 
-          <view class="setting-item" @tap="openUrlModal">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/settings_globe.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">服务器连接地址</text>
-                <text class="setting-desc">{{ currentBaseUrl }}</text>
-              </view>
+          <view class="category-card" :class="{ 'is-active': activeCategory === 'engine' }" @tap="toggleCategory('engine')">
+            <view class="category-icon-wrap blue">
+              <image class="category-icon" src="/static/icons/settings_database.svg" mode="aspectFit" />
             </view>
-            <view class="setting-action">
-              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
-            </view>
+            <text class="category-name">模型与生成</text>
+            <text class="category-status">温度 {{ engineSettings.temperature.toFixed(1) }}</text>
           </view>
 
-          <view class="setting-item" @tap="openKeyModal">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/settings_key.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">API 访问密钥</text>
-                <text class="setting-desc">{{ apiKeyConfigured ? '已配置安全密钥' : '未配置密钥 (本地免密)' }}</text>
-              </view>
+          <view class="category-card" :class="{ 'is-active': activeCategory === 'memory' }" @tap="toggleCategory('memory')">
+            <view class="category-icon-wrap gold">
+              <image class="category-icon" src="/static/icons/modal_book_gray.svg" mode="aspectFit" />
             </view>
-            <view class="setting-action">
-              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
-            </view>
+            <text class="category-name">记忆与世界</text>
+            <text class="category-status">管理世界书库</text>
           </view>
 
-          <view class="setting-item" @tap="goToLorebooks">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/modal_book_gray.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">独立世界书库</text>
-                <text class="setting-desc">导入、编辑并管理公共世界书设定集</text>
-              </view>
+          <view class="category-card" :class="{ 'is-active': activeCategory === 'connection' }" @tap="toggleCategory('connection')">
+            <view class="category-icon-wrap lilac">
+              <image class="category-icon" src="/static/icons/settings_globe.svg" mode="aspectFit" />
             </view>
-            <view class="setting-action">
-              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
-            </view>
+            <text class="category-name">连接与安全</text>
+            <text class="category-status">{{ isMock ? 'Mock 模拟' : 'API 联调' }}</text>
           </view>
 
-          <view class="setting-item" @tap="handleResetDatabase">
-            <view class="setting-item-left">
-              <image class="item-icon danger-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name danger-text">重置本地数据库</text>
-                <text class="setting-desc">清空并恢复默认的Mock角色及会话</text>
-              </view>
+          <view class="category-card category-card-wide" :class="{ 'is-active': activeCategory === 'data' }" @tap="toggleCategory('data')">
+            <view class="category-icon-wrap neutral">
+              <image class="category-icon" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
             </view>
-            <view class="setting-action">
-              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
+            <view class="category-wide-copy">
+              <text class="category-name">数据管理</text>
+              <text class="category-status">本地 Mock 数据与恢复操作</text>
             </view>
+            <image class="category-chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
           </view>
         </view>
 
-        <!-- 关于应用组 -->
-        <view class="setting-group">
-          <text class="group-title">关于</text>
+        <view v-show="activeCategory" class="category-detail">
+          <view class="detail-header">
+            <view class="detail-heading-copy">
+              <text class="detail-eyebrow">当前分类</text>
+              <text class="detail-title">{{ activeCategoryTitle }}</text>
+            </view>
+            <view class="detail-close" @tap="activeCategory = null">×</view>
+          </view>
 
-          <view class="setting-item">
-            <view class="setting-item-left">
-              <image class="item-icon" style="width: 42rpx; height: 42rpx; flex-shrink: 0;" src="/static/icons/header_info.svg" mode="aspectFit" />
-              <view class="setting-info">
-                <text class="setting-name">应用版本</text>
-                <text class="setting-desc">AI 角色扮演 Uni-app 客户端</text>
+          <view v-show="activeCategory === 'appearance'" class="setting-group">
+            <view class="setting-item">
+              <view class="setting-item-left">
+                <image class="item-icon" src="/static/icons/settings_font.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name">文字大小</text>
+                  <text class="setting-desc">调整整个应用内的字体显示大小</text>
+                </view>
+              </view>
+              <view class="setting-action">
+                <view class="stepper">
+                  <view class="step-btn" @tap="changeFontSize(-1)">−</view>
+                  <text class="step-value">{{ fontSize }}</text>
+                  <view class="step-btn" @tap="changeFontSize(1)">＋</view>
+                </view>
               </view>
             </view>
-            <view class="setting-action">
-              <text class="version-text">v1.1.0</text>
+          </view>
+
+          <view v-show="activeCategory === 'engine'" class="setting-group">
+            <text class="group-desc">参数会影响对话生成与记忆检索，修改后请在本区底部保存。</text>
+            <EngineSettingsCard
+              :settings="engineSettings"
+              :isLoading="isLoadingSettings"
+              @save="saveEngineSettings"
+            />
+          </view>
+
+          <view v-show="activeCategory === 'memory'" class="setting-group">
+            <view class="setting-item" @tap="goToLorebooks">
+              <view class="setting-item-left">
+                <image class="item-icon" src="/static/icons/modal_book_gray.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name">独立世界书库</text>
+                  <text class="setting-desc">导入、编辑并管理公共世界设定集</text>
+                </view>
+              </view>
+              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
+            </view>
+          </view>
+
+          <view v-show="activeCategory === 'connection'" class="setting-group">
+            <AppStatusState
+              v-if="isOffline"
+              kind="offline"
+              title="当前处于离线状态"
+              description="本地内容仍可使用，恢复网络后再连接服务器。"
+              action-label="重新检查"
+              compact
+              @action="refreshNetworkStatus"
+            />
+            <view class="setting-item">
+              <view class="setting-item-left">
+                <image class="item-icon" src="/static/icons/settings_database.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name">运行模式</text>
+                  <text class="setting-desc">当前应用使用的数据来源</text>
+                </view>
+              </view>
+              <text class="status-tag" :class="{ 'is-mock': isMock }">{{ isMock ? 'Mock 模拟' : 'API 联调' }}</text>
+            </view>
+            <view class="setting-item" @tap="openUrlModal">
+              <view class="setting-item-left">
+                <image class="item-icon" src="/static/icons/settings_globe.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name">服务器连接地址</text>
+                  <text class="setting-desc">{{ currentBaseUrl }}</text>
+                </view>
+              </view>
+              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
+            </view>
+            <view class="setting-item" @tap="openKeyModal">
+              <view class="setting-item-left">
+                <image class="item-icon" src="/static/icons/settings_key.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name">API 访问密钥</text>
+                  <text class="setting-desc">{{ apiKeyConfigured ? '已配置安全密钥' : '未配置密钥（本地免密）' }}</text>
+                </view>
+              </view>
+              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
+            </view>
+          </view>
+
+          <view v-show="activeCategory === 'data'" class="danger-zone">
+            <text class="danger-zone-label">危险操作</text>
+            <view class="setting-item danger-item" @tap="handleResetDatabase">
+              <view class="setting-item-left">
+                <image class="item-icon danger-icon" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
+                <view class="setting-info">
+                  <text class="setting-name danger-text">重置本地数据库</text>
+                  <text class="setting-desc">清空新建角色与会话，并恢复默认 Mock 数据</text>
+                </view>
+              </view>
+              <image class="chevron" src="/static/icons/settings_chevron.svg" mode="aspectFit" />
             </view>
           </view>
         </view>
 
+        <view class="about-card">
+          <view class="about-copy">
+            <text class="about-title">AI 角色扮演</text>
+            <text class="about-description">测试中ing</text>
+          </view>
+          <text class="version-text">v1.1.0</text>
+        </view>
       </view>
     </scroll-view>
 
@@ -157,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from "vue";
+import { ref, reactive, computed, onUnmounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import TabBar from "@/components/common/TabBar.vue";
 import { USE_MOCK, getSavedBaseUrl, setSavedBaseUrl, setSavedApiKey } from "@/api/config";
@@ -168,10 +218,48 @@ import type { AppSettings } from "@/api/settings";
 import EngineSettingsCard from "./EngineSettingsCard.vue";
 import ApiKeyModal from "./ApiKeyModal.vue";
 import ServerUrlModal from "./ServerUrlModal.vue";
+import AppStatusState from "@/components/common/AppStatusState.vue";
 
 const fontSize = ref(16);
 const isMock = ref(USE_MOCK);
 const isLoadingSettings = ref(false);
+const isOffline = ref(false);
+type SettingsCategory = "appearance" | "engine" | "memory" | "connection" | "data";
+const activeCategory = ref<SettingsCategory | null>(null);
+
+const categoryTitles: Record<SettingsCategory, string> = {
+  appearance: "外观与沉浸",
+  engine: "模型与生成",
+  memory: "记忆与世界",
+  connection: "连接与安全",
+  data: "数据管理",
+};
+
+const activeCategoryTitle = computed(() => (
+  activeCategory.value ? categoryTitles[activeCategory.value] : ""
+));
+
+const toggleCategory = (category: SettingsCategory) => {
+  activeCategory.value = activeCategory.value === category ? null : category;
+};
+
+const refreshNetworkStatus = () => {
+  uni.getNetworkType({
+    success: (result) => {
+      isOffline.value = result.networkType === "none";
+    },
+  });
+};
+
+const handleNetworkStatusChange = (result: UniApp.OnNetworkStatusChangeSuccess) => {
+  isOffline.value = !result.isConnected;
+};
+
+refreshNetworkStatus();
+uni.onNetworkStatusChange(handleNetworkStatusChange);
+onUnmounted(() => {
+  uni.offNetworkStatusChange(handleNetworkStatusChange);
+});
 
 // 引擎设置的状态变量（从后端加载的响应式副本）
 const engineSettings = reactive<AppSettings>({ ...DEFAULT_SETTINGS });

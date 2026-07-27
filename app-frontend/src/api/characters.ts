@@ -1,4 +1,6 @@
-import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders, getSavedApiKey } from "./config";
+import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
+
+export const DEFAULT_AVATAR_URL = "/static/logo.png";
 
 // ===================== 类型定义 =====================
 
@@ -347,15 +349,11 @@ export async function deleteCharacter(
  * 辅助函数：从数据库中存储的相对路径获取头像的完整 URL。
  */
 export function getAvatarUrl(avatarPath: string): string {
-  if (!avatarPath) return "/static/default-avatar.png";
+  if (!avatarPath) return DEFAULT_AVATAR_URL;
   if (avatarPath.startsWith("blob:") || avatarPath.startsWith("http://") || avatarPath.startsWith("https://") || avatarPath.startsWith("file://") || avatarPath.startsWith("wxfile://")) {
     return avatarPath;
   }
   const filename = avatarPath.replace(/^.*[\\/]/, "");
-  let url = `${getBaseUrl()}/assets/avatars/${filename}`;
-  const apiKey = getSavedApiKey();
-  if (apiKey) {
-    url += `?token=${encodeURIComponent(apiKey)}`;
-  }
-  return url;
+  // 头像是公开静态资源，URL 中不携带 API Key。
+  return `${getBaseUrl()}/assets/avatars/${filename}`;
 }

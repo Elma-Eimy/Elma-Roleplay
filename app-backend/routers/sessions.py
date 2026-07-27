@@ -90,6 +90,16 @@ def list_sessions(
     return {"character_id": character_id, "sessions": result}
 
 
+@router.get("/recent")
+def list_recent_sessions(
+    limit: int = Query(50, ge=1, description="每页返回的会话数量"),
+    offset: int = Query(0, ge=0, description="分页偏移量"),
+    db: Session = Depends(get_db),
+):
+    """获取首页最近会话及其角色、最后一条有效消息摘要。"""
+    return session_service.get_recent_sessions(limit=limit, offset=offset, db=db)
+
+
 @router.get("/{session_id}")
 def get_session_detail(session_id: int, db: Session = Depends(get_db)):
     """获取会话详情（含 Persona 完整状态 + Character 基本信息）"""

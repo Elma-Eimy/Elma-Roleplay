@@ -14,10 +14,10 @@
 
         <!-- ① 角色卡片面板 -->
         <view class="char-card">
-          <image
+          <AvatarImage
             class="char-card-avatar"
             :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
-            mode="aspectFill"
+            :lazy-load="false"
           />
           <view class="char-card-info">
             <text class="char-card-name">{{ personaStore.characterName }}</text>
@@ -306,6 +306,7 @@ import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
+import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
   isOpen: boolean;

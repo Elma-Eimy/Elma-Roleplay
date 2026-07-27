@@ -17,9 +17,13 @@
       <!-- 树渲染区域 -->
       <scroll-view scroll-y class="tree-scroll-area">
         <view class="tree-padding">
-          <view v-if="isLoading" class="tree-loading">
-            <text class="loading-text">正在加载平行时空...</text>
-          </view>
+          <AppStatusState
+            v-if="isLoading"
+            kind="loading"
+            title="正在整理故事线"
+            description="正在还原这段故事的分支关系。"
+            compact
+          />
           <BranchTreeView 
             v-else
             :sessions="sessions" 
@@ -36,6 +40,7 @@
 <script setup lang="ts">
 import { defineProps, defineEmits } from "vue";
 import BranchTreeView from "./BranchTreeView.vue";
+import AppStatusState from "@/components/common/AppStatusState.vue";
 
 defineProps<{
   isOpen: boolean;
@@ -103,7 +108,7 @@ const branchNode = (session: any) => {
 
 .right-btn {
   margin-right: -10rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .header-center {
@@ -115,7 +120,7 @@ const branchNode = (session: any) => {
 .character-name {
   font-size: 30rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 /* ===== 平行时空分支树全屏遮罩面板样式 ===== */
@@ -125,7 +130,7 @@ const branchNode = (session: any) => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   z-index: 100;
   display: flex;
   justify-content: flex-end;
@@ -163,18 +168,6 @@ const branchNode = (session: any) => {
 .tree-padding {
   padding: 36rpx;
   padding-bottom: calc(36rpx + env(safe-area-inset-bottom, 24rpx));
-}
-
-.tree-loading {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 80rpx 0;
-}
-
-.loading-text {
-  font-size: 26rpx;
-  color: #8e8e93;
 }
 
 .back-icon {

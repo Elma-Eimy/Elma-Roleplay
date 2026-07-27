@@ -100,7 +100,7 @@ const toggleSection = (key: string) => {
 };
 
 const md = new MarkdownIt({
-  html: true,
+  html: false,
   breaks: true,
   linkify: true,
 });
@@ -122,6 +122,7 @@ const renderMarkdown = (content: string, isCode = false) => {
     raw = "```\n" + raw + "\n```";
   }
   let html = md.render(raw);
+  html = html.replace(/<pre>/g, '<pre class="md-pre">');
   
   if (isCode) {
     html = html.replace(/<p>/g, '<p class="md-p">');
@@ -149,16 +150,15 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
 .profile-details-section {
   display: flex;
   flex-direction: column;
-  gap: 36rpx;
-  padding: 8rpx 0 100rpx 0;
+  gap: 16rpx;
+  padding: 0 var(--app-page-gutter, 36rpx) 100rpx;
 }
 
 .section-card {
-  background-color: #ffffff;
-  border-radius: 24rpx;
-  padding: 36rpx;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02);
+  background-color: rgba(255, 255, 255, 0.6);
+  border-radius: var(--app-radius-md, 24rpx);
+  padding: 30rpx 32rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   display: flex;
   flex-direction: column;
   gap: 20rpx;
@@ -167,7 +167,8 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
 
 .section-card.is-collapsed {
   gap: 0;
-  padding: 28rpx 36rpx;
+  padding: 24rpx 32rpx;
+  background-color: rgba(255, 255, 255, 0.38);
 }
 
 .section-card-header {
@@ -178,11 +179,10 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
 }
 
 .section-title {
-  font-size: 26rpx;
+  font-size: 24rpx;
   font-weight: 700;
-  color: #8e8e93;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: var(--app-color-text-primary, #26332e);
+  letter-spacing: 0.5rpx;
   flex: 1;
 }
 
@@ -200,8 +200,8 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
   content: "";
   width: 12rpx;
   height: 12rpx;
-  border-right: 3rpx solid #8e8e93;
-  border-bottom: 3rpx solid #8e8e93;
+  border-right: 3rpx solid var(--app-color-primary-strong, #4f8e7c);
+  border-bottom: 3rpx solid var(--app-color-primary-strong, #4f8e7c);
   transform: rotate(45deg);
   transition: transform 0.2s ease;
 }
@@ -217,15 +217,15 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
 
 .section-body {
   font-size: 28rpx;
-  color: #1c1c1e;
-  line-height: 1.6;
+  color: var(--app-color-text-primary, #26332e);
+  line-height: 1.72;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .section-body.italic {
   font-style: italic;
-  color: #3a3a3c;
+  color: var(--app-color-text-secondary, #7c8983);
 }
 
 .section-body :deep(.md-p) {
@@ -237,43 +237,43 @@ const renderedPostHistoryInstructions = computed(() => renderMarkdown(props.char
 }
 
 .section-body :deep(.md-em) {
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
   font-style: italic;
 }
 
 .section-body :deep(.md-strong) {
   font-weight: 600;
-  color: #000000;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .section-body :deep(.md-dialogue) {
-  color: #1c1c1e;
+  color: var(--app-color-primary-strong, #4f8e7c);
   font-weight: 500;
 }
 
 .section-body.code-text {
   font-family: monospace;
   font-size: 24rpx;
-  background-color: #f2f2f7;
+  background-color: var(--app-color-background, #f7f9f7);
   padding: 20rpx;
   border-radius: 14rpx;
-  color: #48484a;
+  color: var(--app-color-text-primary, #26332e);
 }
 
-.section-body :deep(pre) {
-  background-color: #f2f2f7;
+.section-body :deep(.md-pre) {
+  background-color: var(--app-color-background, #f7f9f7);
   padding: 16rpx 20rpx;
   border-radius: 12rpx;
   font-family: monospace;
   font-size: 24rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   word-break: break-all;
   white-space: pre-wrap;
   margin: 10rpx 0;
 }
 
 .section-body.dialogue-example :deep(.md-dialogue) {
-  color: #007aff;
+  color: #5d83a1;
   font-weight: 600;
 }
 </style>

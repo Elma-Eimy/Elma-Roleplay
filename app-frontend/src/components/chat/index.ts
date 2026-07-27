@@ -9,3 +9,7 @@ export { default as ChatDrawer } from './ChatDrawer.vue';
 export { default as MemoryManagerModal } from './MemoryManagerModal.vue';
 export { default as PromptPreviewModal } from './PromptPreviewModal.vue';
 export { default as BranchTreePanel } from './BranchTreePanel.vue';
+export { default as ChatHeader } from './ChatHeader.vue';
+export { default as ChatMessageList } from './ChatMessageList.vue';
+export { default as ChatComposer } from './ChatComposer.vue';
+export { default as EditMessageModal } from './EditMessageModal.vue';
