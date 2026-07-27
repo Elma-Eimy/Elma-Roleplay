@@ -194,7 +194,7 @@ llm:
   presence_penalty: 0.0
   frequency_penalty: 0.0
   repetition_penalty: 1.0
-  reasoning_effort: high
+  reasoning_effort: null
 
 app:
   context_history_limit: 15                    # 注入 LLM 的最近对话条数
@@ -250,7 +250,7 @@ tts:
 `retrieval_top_k` · `retrieval_min_importance` · `retrieval_max_distance` ·  
 `lorebook_scan_depth` · `lorebook_token_budget` · `lorebook_max_recursive_passes` ·  
 `cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier` ·  
-`top_p` · `presence_penalty` · `frequency_penalty` · `repetition_penalty` · `reasoning_effort`
+`dedup_write_threshold` · `dedup_retrieve_text_threshold` · `graph_min_importance` · `graph_max_relations`
 
 ---
 
@@ -276,9 +276,9 @@ tts:
 | POST | `/characters/parse` | 解析 PNG/JSON 角色卡，返回结构化数据（不入库） |
 | POST | `/characters/create` | 将角色数据存入数据库 |
 | GET | `/characters` | 获取所有角色简要列表 |
-| GET | `/characters/{character_id}` | 获取角色完整设定 |
-| PUT | `/characters/{character_id}` | 更新角色设定 |
-| DELETE / POST | `/characters/{character_id}` 或 `/characters/{character_id}/delete` | 级联删除角色、所有会话及 ChromaDB 集合 (POST 用于避让) |
+| GET | `/characters/{id}` | 获取角色完整设定 |
+| PUT | `/characters/{id}` | 更新角色设定 |
+| DELETE / POST | `/characters/{id}` 或 `/characters/{id}/delete` | 级联删除角色、所有会话及 ChromaDB 集合 (POST 用于避让) |
 
 ### 会话管理 `/sessions`
 
@@ -286,12 +286,12 @@ tts:
 |------|------|------|
 | POST | `/sessions/create` | 新建会话（指定 `parent_session_id` 则继承分叉） |
 | GET | `/sessions` | 查询角色的所有会话列表 |
-| GET | `/sessions/{session_id}` | 获取会话详情（含 Persona 完整状态） |
-| GET | `/sessions/{session_id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
-| PUT | `/sessions/{session_id}/title` | 修改会话标题 |
-| DELETE / POST | `/sessions/{session_id}` 或 `/sessions/{session_id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于避让) |
-| POST | `/sessions/{session_id}/trigger_summary` | 手动触发记忆提纯 |
-| POST | `/sessions/{session_id}/trigger_cognition` | 手动触发认知状态更新 |
+| GET | `/sessions/{id}` | 获取会话详情（含 Persona 完整状态） |
+| GET | `/sessions/{id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
+| PUT | `/sessions/{id}/title` | 修改会话标题 |
+| DELETE / POST | `/sessions/{id}` 或 `/sessions/{id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于避让) |
+| POST | `/sessions/{id}/trigger_summary` | 手动触发记忆提纯 |
+| POST | `/sessions/{id}/trigger_cognition` | 手动触发认知状态更新 |
 | PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
 | DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
 | GET | `/sessions/{session_id}/memories` | 获取当前会话的可用向量记忆列表（含继承，支持检索与分页） |
