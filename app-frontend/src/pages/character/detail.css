@@ -657,18 +657,33 @@
   font-weight: 650;
 }
 
-.memory-action {
+.memory-action-group {
   margin-top: 30rpx;
-  padding: 18rpx 30rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  width: 100%;
+}
+
+.memory-action {
+  padding: 18rpx 36rpx;
   border-radius: 999rpx;
   background-color: var(--app-color-text-primary, #26332e);
   transition: transform var(--app-motion-fast, 160ms) ease;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12rpx;
   color: #ffffff;
   font-size: 24rpx;
   font-weight: 650;
+}
+
+.memory-action.secondary {
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  color: var(--app-color-primary-strong, #4f8e7c);
+  border: 1px solid rgba(112, 174, 155, 0.28);
 }
 
 .memory-action:active {

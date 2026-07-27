@@ -218,9 +218,15 @@
               {{ sessions.length > 0 ? `已连接 ${sessions.length} 条故事线` : "尚未建立故事记忆" }}
             </text>
           </view>
-          <view class="memory-action" @tap="openMemoryStory">
-            <text>{{ sessions.length > 0 ? "进入最近故事" : "开启第一段故事" }}</text>
-            <text class="memory-action-arrow">→</text>
+          <view class="memory-action-group">
+            <view v-if="sessions.length > 0" class="memory-action secondary" @tap="openMemoryModal">
+              <text>查看向量记忆库</text>
+              <text class="memory-action-arrow">→</text>
+            </view>
+            <view class="memory-action" @tap="openMemoryStory">
+              <text>{{ sessions.length > 0 ? "进入最近故事" : "开启第一段故事" }}</text>
+              <text class="memory-action-arrow">→</text>
+            </view>
           </view>
         </view>
       </view>
@@ -233,6 +239,14 @@
         <text class="action-btn-text">开启新的故事线</text>
       </view>
     </view>
+
+    <!-- 向量记忆管理弹窗 -->
+    <MemoryManagerModal
+      v-if="isMemoryModalOpen"
+      :isOpen="isMemoryModalOpen"
+      :sessionId="activeMemorySessionId"
+      @close="isMemoryModalOpen = false"
+    />
 
     <!-- 新建平行宇宙分支模态框 -->
     <NewSessionModal 
@@ -263,6 +277,7 @@ import BranchTreeView from "@/components/chat/BranchTreeView.vue";
 import { usePersonaStore } from "@/store/personaStore";
 import CharacterProfileTab from "@/components/character/CharacterProfileTab.vue";
 import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vue";
+import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 
 // 引入重命名分支子组件
 import RenameSessionModal from "@/components/common/RenameSessionModal.vue";
@@ -274,6 +289,17 @@ const characterId = ref<number | null>(null);
 const character = ref<CharacterDetail | null>(null);
 const sessions = ref<any[]>([]);
 const isNewBranchModalOpen = ref(false);
+const isMemoryModalOpen = ref(false);
+
+const activeMemorySessionId = computed(() => sessions.value[0]?.id || null);
+
+const openMemoryModal = () => {
+  if (!activeMemorySessionId.value) {
+    uni.showToast({ title: "请先开启一段故事线", icon: "none" });
+    return;
+  }
+  isMemoryModalOpen.value = true;
+};
 
 const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
@@ -317,7 +343,7 @@ onShow(() => {
   }
 });
 
-const loadCharacterData = async (id: number) => {
+async function loadCharacterData(id: number) {
   try {
     const char = await getCharacter(id);
     character.value = char;
@@ -508,7 +534,7 @@ const changePortrait = () => {
 const openNewBranchModal = () => {
   activeParentSessionId.value = null;
   isNewBranchModalOpen.value = true;
-};
+}
 
 const openMemoryStory = () => {
   const latestSession = sessions.value[0];

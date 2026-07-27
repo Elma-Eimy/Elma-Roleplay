@@ -142,32 +142,7 @@ const editingContent = ref("");
 // New memory creation states
 const newMemoryContent = ref("");
 
-// Load memories when modal opens
-watch(
-  () => props.isOpen,
-  async (newVal) => {
-    if (newVal && props.sessionId !== null) {
-      // 打开弹窗时清空搜索框
-      searchQuery.value = "";
-      await loadMemories();
-    }
-  }
-);
-
-// 监听搜索词变化并进行防抖检索
-let searchTimeout: any = null;
-watch(searchQuery, () => {
-  if (searchTimeout) {
-    clearTimeout(searchTimeout);
-  }
-  searchTimeout = setTimeout(async () => {
-    if (props.isOpen && props.sessionId !== null) {
-      await loadMemories();
-    }
-  }, 300);
-});
-
-const loadMemories = async () => {
+async function loadMemories() {
   if (props.sessionId === null) return;
   isLoading.value = true;
   offset.value = 0;
@@ -187,7 +162,33 @@ const loadMemories = async () => {
   } finally {
     isLoading.value = false;
   }
-};
+}
+
+// Load memories when modal opens or sessionId changes
+watch(
+  [() => props.isOpen, () => props.sessionId],
+  async ([newOpen, newSessionId]) => {
+    if (newOpen && newSessionId !== null) {
+      // 打开弹窗时清空搜索框
+      searchQuery.value = "";
+      await loadMemories();
+    }
+  },
+  { immediate: true }
+);
+
+// 监听搜索词变化并进行防抖检索
+let searchTimeout: any = null;
+watch(searchQuery, () => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout);
+  }
+  searchTimeout = setTimeout(async () => {
+    if (props.isOpen && props.sessionId !== null) {
+      await loadMemories();
+    }
+  }, 300);
+});
 
 const loadMore = async () => {
   if (props.sessionId === null || isMoreLoading.value || !hasMore.value) return;
