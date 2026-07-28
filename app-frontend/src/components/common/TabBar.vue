@@ -47,16 +47,23 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   activeTab: 'index' | 'character' | 'settings';
 }>();
 
 const switchTab = (url: string) => {
+  const targetTab = url.includes('/character/')
+    ? 'character'
+    : url.includes('/settings/')
+      ? 'settings'
+      : 'index';
+
+  if (targetTab === props.activeTab) return;
+
   uni.switchTab({
     url,
-    success: () => {
-      uni.hideTabBar({ animation: false });
-    }
+    // 避免快速重复点击导航时产生未处理的 Promise 拒绝。
+    fail: () => {}
   });
 };
 </script>

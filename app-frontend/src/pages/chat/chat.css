@@ -29,6 +29,16 @@
   transition: opacity var(--app-motion-slow, 360ms) ease;
 }
 
+.chat-scene-image {
+  position: absolute;
+  inset: -3%;
+  width: 106%;
+  height: 106%;
+  opacity: 0.8;
+  filter: blur(8rpx) saturate(0.78);
+  transform: scale(1.02);
+}
+
 .chat-bg::after {
   content: "";
   position: absolute;
@@ -36,17 +46,17 @@
   width: 100%;
   height: 100%;
   background:
-    linear-gradient(180deg, rgba(247, 249, 247, 0.08), transparent 20%),
-    linear-gradient(0deg, rgba(247, 249, 247, 0.86), transparent 18%);
+    linear-gradient(180deg, rgba(247, 249, 247, 0.38), rgba(247, 249, 247, 0.5)),
+    linear-gradient(0deg, rgba(247, 249, 247, 0.9), transparent 22%);
   pointer-events: none;
 }
 
-.chat-bg.mode-clear {
+.chat-bg.mode-clean {
   opacity: 0;
 }
 
-.chat-bg.mode-scene {
-  opacity: 0.82;
+.chat-bg.mode-character {
+  opacity: 1;
 }
 
 .is-android .chat-bg {

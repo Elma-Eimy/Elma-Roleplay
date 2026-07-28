@@ -19,7 +19,10 @@ from core.models import (
     SessionPersona,
 )
 from routers.sessions import router
-from services.conversation.session_service import get_recent_sessions
+from services.conversation.session_service import (
+    get_character_sessions,
+    get_recent_sessions,
+)
 
 
 class RecentSessionsTests(unittest.TestCase):
@@ -51,6 +54,7 @@ class RecentSessionsTests(unittest.TestCase):
         )
         self.db.add_all([character, older_session, newer_session])
         self.db.flush()
+        self.character_id = character.id
         self.db.add_all(
             [
                 SessionPersona(
@@ -123,6 +127,35 @@ class RecentSessionsTests(unittest.TestCase):
             "最新的有效消息",
             result["sessions"][0]["last_message"]["content"],
         )
+        self.assertTrue(result["has_more"])
+
+    def test_character_sessions_include_last_message_and_standard_pagination(self):
+        result = get_character_sessions(
+            character_id=self.character_id,
+            include_last_message=True,
+            limit=1,
+            offset=0,
+            db=self.db,
+        )
+        self.assertEqual(self.character_id, result["character_id"])
+        self.assertEqual(2, result["total"])
+        self.assertTrue(result["has_more"])
+        self.assertEqual(
+            "最新的有效消息",
+            result["sessions"][0]["last_message"]["content"],
+        )
+
+        without_preview = get_character_sessions(
+            character_id=self.character_id,
+            include_last_message=False,
+            limit=50,
+            offset=0,
+            db=self.db,
+        )
+        self.assertFalse(without_preview["has_more"])
+        self.assertTrue(
+            all(item["last_message"] is None for item in without_preview["sessions"])
+        )
 
     def test_endpoint_is_not_shadowed_by_session_id_route(self):
         app = FastAPI()
@@ -145,8 +178,13 @@ class RecentSessionsTests(unittest.TestCase):
 
         with TestClient(app) as client:
             response = client.get("/sessions/recent", params={"limit": 0, "offset": -1})
+            character_response = client.get(
+                "/sessions",
+                params={"character_id": self.character_id, "limit": 101},
+            )
 
         self.assertEqual(422, response.status_code)
+        self.assertEqual(422, character_response.status_code)
 
 
 if __name__ == "__main__":

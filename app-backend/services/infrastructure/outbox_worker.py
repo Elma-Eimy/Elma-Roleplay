@@ -3,6 +3,7 @@ import json
 import asyncio
 import traceback
 from datetime import datetime, timedelta
+from pathlib import Path
 from sqlalchemy import and_, or_
 from core.database import SessionLocal
 from core.models import OutboxJob, OutboxJobStatus
@@ -112,6 +113,8 @@ def execute_task(task_type: str, payload: str):
         handle_delete_vector_collection(payload)
     elif task_type == "delete_audio":
         handle_delete_audio(payload)
+    elif task_type == "delete_avatar":
+        handle_delete_avatar(payload)
     else:
         raise ValueError(f"Unknown task type: {task_type}")
 
@@ -210,3 +213,74 @@ def handle_delete_audio(payload_str: str):
                 raise e
         else:
             print(f"[OUTBOX] Audio file not found for deletion: {actual_path} (skipped)")
+
+
+def _resolve_managed_avatar_path(file_path: str):
+    """Resolve an avatar path only when it stays inside the managed upload root."""
+    if not isinstance(file_path, str) or not file_path.strip():
+        return None
+
+    managed_root = Path(settings.STORAGE_UPLOAD_AVATAR_DIR).resolve()
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+        if not candidate.exists() and Path(file_path).name == file_path:
+            candidate = managed_root / file_path
+    candidate = candidate.resolve()
+
+    try:
+        candidate.relative_to(managed_root)
+    except ValueError:
+        return None
+    if candidate == managed_root:
+        return None
+    return candidate
+
+
+def _avatar_is_still_referenced(target_path: Path) -> bool:
+    """Avoid deleting a managed file that another character still references."""
+    from core.models import Character
+
+    db = SessionLocal()
+    try:
+        paths = (
+            db.query(Character.avatar_path)
+            .filter(
+                Character.avatar_path.isnot(None),
+                Character.avatar_path != "",
+            )
+            .all()
+        )
+        for (avatar_path,) in paths:
+            resolved = _resolve_managed_avatar_path(avatar_path)
+            if resolved == target_path:
+                return True
+        return False
+    finally:
+        db.close()
+
+
+def handle_delete_avatar(payload_str: str):
+    """Idempotently delete an unreferenced avatar owned by this application."""
+    payload = json.loads(payload_str)
+    file_path = payload.get("file_path")
+    target_path = _resolve_managed_avatar_path(file_path)
+    if target_path is None:
+        print(
+            f"[OUTBOX] Avatar path is outside the managed upload directory: "
+            f"{file_path!r} (skipped)"
+        )
+        return
+
+    if _avatar_is_still_referenced(target_path):
+        print(f"[OUTBOX] Avatar is still referenced: {target_path} (skipped)")
+        return
+
+    if not target_path.exists():
+        print(f"[OUTBOX] Avatar file not found: {target_path} (skipped)")
+        return
+    if not target_path.is_file():
+        raise ValueError(f"Avatar cleanup target is not a file: {target_path}")
+
+    target_path.unlink()
+    print(f"[OUTBOX] Deleted physical avatar file: {target_path}")

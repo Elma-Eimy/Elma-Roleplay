@@ -180,7 +180,7 @@
             <text class="about-title">AI 角色扮演</text>
             <text class="about-description">测试中ing</text>
           </view>
-          <text class="version-text">v1.1.0</text>
+          <text class="version-text">v1.0</text>
         </view>
       </view>
     </scroll-view>
@@ -266,7 +266,9 @@ const engineSettings = reactive<AppSettings>({ ...DEFAULT_SETTINGS });
 
 // 页面显示时从后端加载自定义引擎配置
 onShow(async () => {
+  // #ifndef H5
   uni.hideTabBar({ animation: false });
+  // #endif
   if (USE_MOCK) return; // 如果处于 mock 模式则跳过 API 加载
   isLoadingSettings.value = true;
   try {

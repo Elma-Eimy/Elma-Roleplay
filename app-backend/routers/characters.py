@@ -5,6 +5,7 @@ from core.database import get_db
 from core import models
 from services.parse import parse_character_card
 import services.character_service as character_service
+import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
 from schemas import CharacterCreate
 import json
@@ -110,6 +111,26 @@ def list_characters(
             ),
         })
     return {"characters": result}
+
+
+@router.get("/{character_id}/memory-overview")
+def get_character_memory_overview(
+    character_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """获取角色的故事记忆导航、最后消息及分支级记忆统计。"""
+    try:
+        return session_memory_query_service.get_character_memory_overview(
+            character_id=character_id,
+            limit=limit,
+            offset=offset,
+            db=db,
+        )
+    except session_memory_query_service.MemoryQueryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
 
 @router.get("/{character_id}")
 def get_character_detail(character_id: int, db: Session = Depends(get_db)):

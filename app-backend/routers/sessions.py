@@ -11,21 +11,20 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
+from typing import Literal, Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
-import services.memory.memory_manager as memory_manager
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
-from services.memory.persona_lineage import get_ancestor_persona_ids
 from core.config import settings
 from core.locking import cleanup_session_lock
 import services.conversation.session_service as session_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
+import services.memory.session_memory_query_service as session_memory_query_service
 router = APIRouter()
 
 
@@ -52,47 +51,24 @@ def create_session(request: SessionCreate, db: Session = Depends(get_db)):
 @router.get("")
 def list_sessions(
     character_id: int = Query(..., description="筛选指定角色的会话"),
-    limit: Optional[int] = Query(None, description="限制返回数量"),
-    offset: Optional[int] = Query(None, description="偏移量"),
+    include_last_message: bool = Query(True, description="是否返回最后一条有效消息"),
+    limit: int = Query(50, ge=1, le=100, description="限制返回数量"),
+    offset: int = Query(0, ge=0, description="偏移量"),
     db: Session = Depends(get_db),
 ):
-    """获取某个角色的所有会话列表 (支持分页)"""
-    query = (
-        db.query(models.Session)
-        .join(models.SessionPersona)
-        .filter(models.SessionPersona.character_id == character_id)
-        .order_by(models.Session.updated_at.desc())
+    """获取某个角色的会话列表、最后有效消息和标准分页信息。"""
+    return session_service.get_character_sessions(
+        character_id=character_id,
+        include_last_message=include_last_message,
+        limit=limit,
+        offset=offset,
+        db=db,
     )
-    
-    if offset is not None:
-        query = query.offset(offset)
-    if limit is not None:
-        query = query.limit(limit)
-        
-    sessions = query.all()
-
-    result = []
-    for s in sessions:
-        result.append({
-            "id": s.id,
-            "title": s.title,
-            "parent_session_id": s.parent_session_id,
-            "fork_message_id": s.fork_message_id,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-            "persona": {
-                "id": s.persona.id,
-                "affection_score": s.persona.affection_score,
-                "current_mood": s.persona.current_mood,
-            } if s.persona else None,
-        })
-
-    return {"character_id": character_id, "sessions": result}
 
 
 @router.get("/recent")
 def list_recent_sessions(
-    limit: int = Query(50, ge=1, description="每页返回的会话数量"),
+    limit: int = Query(50, ge=1, le=100, description="每页返回的会话数量"),
     offset: int = Query(0, ge=0, description="分页偏移量"),
     db: Session = Depends(get_db),
 ):
@@ -295,41 +271,26 @@ def delete_message(message_id: int, db: Session = Depends(get_db)):
 @router.get("/{session_id}/memories")
 def get_session_memories(
     session_id: int,
-    q: str = Query(None, description="搜索关键词"),
-    limit: int = Query(20, ge=1, description="获取记忆卡片的条数限制"),
+    q: str | None = Query(None, max_length=200, description="搜索关键词"),
+    scope: Literal["all", "local", "inherited"] = Query("all"),
+    status: Literal["active", "superseded", "all"] = Query("active"),
+    limit: int = Query(20, ge=1, le=100, description="获取记忆卡片的条数限制"),
     offset: int = Query(0, ge=0, description="获取记忆卡片的偏移量"),
     db: Session = Depends(get_db)
 ):
-    """获取指定会话可调用的全部向量记忆（支持分页与检索）"""
-    session = db.get(models.Session, session_id)
-    if not session or not session.persona:
-        raise HTTPException(status_code=404, detail="Session or Persona not found")
-
-    ancestor_ids = get_ancestor_persona_ids(session.persona.id, db)
-    query = db.query(models.MemoryChunk).filter(
-        models.MemoryChunk.persona_id.in_(ancestor_ids)
-    )
-    superseded_ids = memory_manager.get_superseded_memory_ids(ancestor_ids, db)
-    if q and q.strip():
-        query = query.filter(models.MemoryChunk.content.contains(q.strip()))
-
-    chunks = query.order_by(models.MemoryChunk.created_at.desc()).offset(offset).limit(limit).all()
-
-    return [
-        {
-            "id": c.id,
-            "content": c.content,
-            "memory_type": c.memory_type.value if c.memory_type else "fact",
-            "importance_score": c.importance_score,
-            "is_local": c.persona_id == session.persona.id,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "origin_session_id": c.origin_session_id,
-            "source_start_message_id": c.source_start_message_id,
-            "source_message_id": c.source_message_id,
-            "supersedes_id": c.supersedes_id,
-            "is_superseded": c.id in superseded_ids,
-        } for c in chunks
-    ]
+    """获取指定故事线可见记忆；筛选与统计均在数据库分页前完成。"""
+    try:
+        return session_memory_query_service.query_session_memories(
+            session_id=session_id,
+            q=q,
+            scope=scope,
+            status=status,
+            limit=limit,
+            offset=offset,
+            db=db,
+        )
+    except session_memory_query_service.MemoryQueryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/memories")

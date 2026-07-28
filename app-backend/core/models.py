@@ -9,7 +9,7 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 
 from sqlalchemy import (
     Table, Column, Integer, String, Text, Float, Boolean,
-    ForeignKey, DateTime, Enum as SAEnum
+    ForeignKey, DateTime, Enum as SAEnum, Index
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -289,6 +289,15 @@ class MemoryChunk(Base):
 
     created_at = Column(DateTime, default=func.now())
 
+    __table_args__ = (
+        Index(
+            "ix_memory_chunks_persona_created_id",
+            persona_id,
+            created_at.desc(),
+            id.desc(),
+        ),
+    )
+
     # 关联
     persona        = relationship("SessionPersona", back_populates="memories")
     source_start_message = relationship(
@@ -386,6 +395,16 @@ class ChatMessage(Base):
     is_active  = Column(Boolean, default=True, nullable=False)
 
     created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_chat_messages_session_active_created_id",
+            session_id,
+            is_active,
+            created_at.desc(),
+            id.desc(),
+        ),
+    )
 
     # 关联
     session       = relationship(

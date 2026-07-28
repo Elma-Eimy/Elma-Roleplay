@@ -36,12 +36,13 @@
 
 ### 1. 优化 Prompt Caching 的提示词设计
 
-- **默认 Main RP Prompt**：即使角色卡没有自定义 Main Prompt，也会明确要求模型扮演当前角色、续写下一条回复、保持人设与上下文一致，并尊重用户角色的台词、思想、情绪和关键行动自主权。
+- **角色数量中立的 Main RP Prompt**：`{{char}}` 表示当前角色卡或叙事主体，不机械推断卡内逻辑角色数量。单角色卡不会被擅自扩展成群像；单卡若明确声明多个角色、Narrator、Director 或场景主持职责，则允许在同一 assistant 回复中呈现多个受控角色，并要求分别维持身份、目标、知识边界、秘密、人格和语言风格。
+- **叙事视角服从角色卡**：不再强制第一人称，由角色卡、示例和既有历史决定采用第一人称、第三人称或混合叙事；多角色正文必须使用清晰的台词归属、动作和必要旁白，同时继续禁止替用户角色决定台词、思想、情绪或关键行动。这里兼容的是“一张卡内的多个逻辑角色”，项目尚未实现多张独立角色卡参与同一会话的群聊调度。
 - **SillyTavern `{{original}}` 兼容**：角色卡 Main Prompt Override 中的 `{{original}}` 表示被覆盖前的默认 Main RP Prompt；角色描述和性格作为独立模块注入，不再冒充 `{{original}}`。
 - **结构化示例对话**：非空 `mes_example` 会按 `<START>` 分块，并将 `{{user}}:` / `{{char}}:` 转换为真实的 `user` / `assistant` few-shot 消息后放在对话历史之前；assistant 示例沿用 `<reply>/<status>` 输出契约，避免模型模仿纯文本示例而破坏结构化响应；缺失、`null`、空白或只有分隔符时零注入。
 - **示例兼容与防重复**：没有 `<START>` 的非空示例按单块兼容，无法识别发言者的内容保守回退为带标签的 system 示例；Main Prompt 或 PHI 已显式使用 `{{mesExamples}}` / `{{mesExamplesRaw}}` 时不再自动注入。
 - **PHI 真正后置**：角色卡 `post_history_instructions` 不再混入开头的静态 system，而是在真实历史、动态背景和当前用户消息之后编译为最后一条 system 消息；其中的 `{{original}}` 仍按独立的全局 PHI 语义展开。
-- **最终输出契约**：`<reply>/<status>` XML 要求跟随 PHI 放在最后，并排在角色自定义 PHI 之后，降低长历史或示例对最终结构化响应的稀释。
+- **最终输出契约**：`<reply>/<status>` XML 要求跟随 PHI 放在最后，并排在角色自定义 PHI 之后，降低长历史或示例对最终结构化响应的稀释。`reply` 可包含旁白及一个或多个受控角色的台词；单一 `status` 暂表示本回合主要互动焦点的情绪，以及角色卡主体与用户之间的总体关系变化。
 - **静态与动态内容分离**：角色设定、性格描述、规范等稳定内容归入开头的 `system`；当前场景、认知状态、好感心情、世界书条目、RAG 召回记忆等当轮背景统一以 XML 标签包裹，放入当前用户消息之前的独立 `system`。
 - **动态上下文信任边界**：动态背景带有明确的来源和优先级声明，只作为场景连续性资料，不能覆盖核心角色设定、用户自主权、PHI 或最终输出格式；即使召回内容包含命令式文字，也不会被伪装成用户指令。
 - **保留纯净用户原话**：占位符解析后的当前用户消息作为独立 `user` 原样提交，不再附加“当前用户最新消息”包装或检索资料；没有任何动态资料时不会生成空的中间 `system`。
@@ -111,6 +112,7 @@
 - 展示型字段仍会将常见 HTML 转换为 Markdown；`system_prompt`、Post-History Instructions、示例对话和世界书内容按 Prompt DSL 保真解析。
 - 保留 `{{original}}`、`<START>` 以及角色卡作者定义的 XML/伪 XML 结构标签，避免导入阶段破坏主提示词、示例分块和世界书语义。
 - `system_prompt_override` 作为兼容别名仅在非空时覆盖标准 V2 `system_prompt` 字段。
+- 支持常见的 `extensions.depth_prompt`：读取 `prompt`、`role` 与 `depth`，替换 `{{char}}` / `{{user}}` 后按 SillyTavern 的聊天深度语义注入；数字或字符串角色均可归一化，缺失及畸形配置安全忽略。
 
 ### 11. 独立世界书与 SillyTavern 格式兼容 (Independent Lorebook)
 
@@ -216,7 +218,7 @@
 - 默认检索在当前 Persona 继承链内隐藏已被替代的旧卡。子分支替代祖先记忆不会修改祖先记录，因此父分支和兄弟分支仍可继续使用原记忆。
 - 检索侧只直接去除规范化后完全相同的内容；“喜欢/不喜欢”“已经/尚未”等高字面相似但语义相反的记忆不会再被字符相似度误删。
 - 这里只实现面向 Prompt 的轻量替代关系，不引入当前/历史/计划/取消状态机、事实槽位、有效时间或复杂历史查询。
-- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 增量字段见 `NEW_API.md`。
+- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 字段见 `API_TABLE.md`。
 
 ### 6. 向量 Outbox、故障降级与离线回归
 
@@ -225,6 +227,7 @@
 - `retrieval_max_distance=0` 只接受距离恰为 0 的候选；负数配置安全返回空结果，避免除零或意外放宽召回。
 - 自动提纯、手动新增和手动修改都先在同一个 SQLite 事务中保存记忆及 `upsert_vector` 任务；SQLite 提交失败时两者一同回滚，ChromaDB 不会被提前修改。
 - Outbox worker 以稳定的 `mem_{memory_id}` 文档 ID 执行幂等 `upsert`。向量服务失败时任务保留并指数退避；一次重试周期耗尽后冷却再试，不丢弃任务。
+- 角色删除与头像替换会在同一个 SQLite 事务中登记 `delete_avatar` 任务，由 Outbox 异步回收旧文件；清理器仅允许删除配置的受管头像目录内文件，仍被其他角色引用、路径越界或已经不存在的文件均会安全跳过。
 - `processing` 任务使用 5 分钟租约；worker 在向量写入后异常退出时，租约到期可自动恢复并安全重放。过期的新增任务若发现 SQLite 记忆已被删除，只会清理对应向量，不会复活旧记忆。
 - 正常情况下后台 worker 每 5 秒轮询并尽快同步；短暂延迟或向量服务故障期间，SQLite 记忆仍是权威数据，但该记忆可能尚未参与向量召回。
 - 短期交接窗口在提纯失败期间继续兜底，并受到批次上限保护。
@@ -417,15 +420,16 @@ tts:
 | POST | `/characters/create` | 将角色数据存入数据库 |
 | GET | `/characters` | 获取所有角色简要列表 |
 | GET | `/characters/{character_id}` | 获取角色完整设定 |
+| GET | `/characters/{character_id}/memory-overview` | 分页获取故事记忆导航、最后消息和分支级统计 |
 | PUT | `/characters/{character_id}` | 更新角色设定 |
-| DELETE / POST | `/characters/{character_id}` 或 `/characters/{character_id}/delete` | 级联删除角色、所有会话及 ChromaDB 集合 (POST 用于避让) |
+| DELETE / POST | `/characters/{character_id}` 或 `/characters/{character_id}/delete` | 级联删除角色与所有会话，并通过 Outbox 异步清理 ChromaDB 集合、对话音频和不再被引用的受管头像（POST 用于兼容客户端） |
 
 ### 会话管理 `/sessions`
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/sessions/create` | 新建会话（指定 `parent_session_id` 则继承分叉） |
-| GET | `/sessions` | 查询角色的所有会话列表 |
+| GET | `/sessions` | 分页查询角色会话，并可批量返回最后一条有效消息 |
 | GET | `/sessions/{session_id}` | 获取会话详情（含 Persona 完整状态） |
 | GET | `/sessions/{session_id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
 | PUT | `/sessions/{session_id}/title` | 修改会话标题 |
@@ -434,7 +438,7 @@ tts:
 | POST | `/sessions/{session_id}/trigger_cognition` | 手动触发认知状态更新 |
 | PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
 | DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
-| GET | `/sessions/{session_id}/memories` | 获取当前会话的可用向量记忆列表（含继承，支持检索与分页） |
+| GET | `/sessions/{session_id}/memories` | 服务端筛选并分页返回当前故事的记忆、总数和分类统计 |
 | POST | `/sessions/{session_id}/memories` | 手动写入当前会话的专属向量记忆 |
 | PUT | `/sessions/{session_id}/memories/{memory_id}` | 修改当前会话的本地专属向量记忆（继承只读） |
 | DELETE | `/sessions/{session_id}/memories/{memory_id}` | 删除当前会话的本地专属向量记忆（继承只读） |
@@ -502,7 +506,7 @@ app-backend/
 │   │   ├── clients.py       # Chroma/SQLite 客户端连接管理
 │   │   ├── llm_logger.py    # LLM 输入输出专门调试日志器
 │   │   ├── llm_provider.py  # 统一大模型服务适配器接口（解耦 SDK 调用）
-│   │   └── outbox_worker.py # 发件箱后台异步任务处理器（向量同步与延迟退避）
+│   │   └── outbox_worker.py # 发件箱后台异步任务处理器（向量同步、音频/头像清理与延迟退避）
 │   ├── lorebook/            # 世界书引擎
 │   │   ├── ahocorasick.py   # Aho-Corasick AC自动机快速多词匹配算法
 │   │   ├── lorebook_engine.py # 世界书加载、递归扫描与 Token 预算裁剪引擎
@@ -541,8 +545,9 @@ app-backend/
 │   ├── test_graph_rag.py    # 知识图谱 Graph RAG 增强检索测试
 │   ├── test_graph_rag_quality.py # 别名、分支覆盖、真实 2-hop 与枢纽抑制离线测试
 │   ├── test_outbox.py       # 发件箱模式任务消费与退避重试单元测试
+│   ├── test_avatar_cleanup.py # 受管头像删除、共享引用、越界防护与幂等清理测试
 │   ├── test_parse.py        # SillyTavern V1/V2 角色卡解析与清洗单元测试
-│   ├── test_character_prompt_compatibility.py # Prompt DSL 与 Main RP Prompt 兼容测试
+│   ├── test_character_prompt_compatibility.py # Prompt DSL、Depth Prompt、单卡多逻辑角色与 Main RP Prompt 兼容测试
 │   ├── test_tts_api.py      # TTS 预处理过滤及云端合成测试
 │   ├── test_closed_loop_memory.py # 记忆提纯与 RAG 闭环流程测试
 │   └── test_api.py          # 路由树与会话剧情重连集成测试
@@ -572,6 +577,7 @@ Windows 开发环境可以直接使用项目虚拟环境解释器运行完全离
 .\venv\Scripts\python.exe -m unittest tests.test_alembic_cli -v        # Alembic 启动与命令行冲突避免测试
 .\venv\Scripts\python.exe .\tests\test_prompt_token_estimator.py       # 启发式 Token 估算器与块分析测试
 .\venv\Scripts\python.exe .\tests\test_character_prompt_compatibility.py # 角色卡 Prompt DSL 与 Main RP Prompt 兼容测试
+.\venv\Scripts\python.exe -m unittest tests.test_avatar_cleanup -v       # 受管头像生命周期与安全删除测试
 .\venv\Scripts\python.exe -m unittest discover -s tests -p 'test_lorebook_trigger_compatibility.py' -v # 世界书触发语义兼容测试
 .\venv\Scripts\python.exe .\tests\test_router_service_boundaries.py    # 路由层参数与异常处理的边界单元测试
 ```

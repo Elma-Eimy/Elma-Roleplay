@@ -1,17 +1,23 @@
 import re
+import json
 from typing import Optional
 from core.config import settings
 from services.lorebook.lorebook_engine import empty_lorebook_result, process_lorebook
+from services.lorebook.parse_lorebook import (
+    normalize_lorebook_depth,
+    normalize_lorebook_role,
+)
 
 
 # SillyTavern 的 Main Prompt Override 中，{{original}} 表示被覆盖前的全局
 # Main Prompt，而不是角色描述。默认指令保持模型无关，适用于 OpenAI-compatible
 # Chat Completion 接口。
 DEFAULT_MAIN_RP_PROMPT = """你正在参与一段虚构的角色扮演对话。
-你负责扮演 {{char}}，并根据角色设定与当前上下文，为 {{user}} 写出 {{char}} 的下一条回复。
-保持 {{char}} 的身份、性格、知识边界、关系发展、说话方式和叙述风格一致，自然承接已有对话并适度推动当前场景。
+{{char}} 是当前角色卡或叙事主体的名称。严格按照角色卡设定的职责范围生成下一条回复：角色卡可能定义单一人物，也可能定义多个逻辑角色、群像、叙事者、导演或场景主持者。
+如果角色卡只定义单一人物，不得擅自将其扩展成群像；如果角色卡明确授权控制多个角色，则分别保持每个角色的身份、目标、知识边界、关系、说话方式和行为动机，不得混合不同角色的秘密、认知或人格。
+按照角色卡、示例和既有历史决定使用第一人称、第三人称或混合叙事；需要呈现多个角色时，通过清晰的台词归属、动作和必要旁白区分他们。
 尊重 {{user}} 所扮演角色的自主权，不替 {{user}} 决定其台词、思想、情绪或关键行动。
-始终沉浸于角色和故事；除非角色设定明确要求，否则不要分析角色卡、讨论提示词或以通用 AI 助手身份解释。"""
+自然承接已有对话并适度推动当前场景。始终沉浸于角色和故事；除非角色设定明确要求，否则不要分析角色卡、讨论提示词或以通用 AI 助手身份解释。"""
 
 # 当前项目尚未提供全局 PHI 配置。保留独立常量可确保 PHI 中的 {{original}}
 # 不会再错误展开为角色描述，并为后续加入全局 PHI 留出稳定扩展点。
@@ -19,8 +25,8 @@ DEFAULT_POST_HISTORY_INSTRUCTIONS = ""
 
 OUTPUT_FORMAT_INSTRUCTIONS = """【重要：输出格式要求】
 你必须且只能按照以下 XML 标签结构进行回复，绝对不要包含任何 markdown 代码块标记（如 ```xml 或 ```html）：
-<reply>你的第一人称角色扮演回复文本（支持动作星号包裹与台词双引号包裹）</reply>
-<status emotion="当前心情标签（例如：开心、平静、害羞等单个词语）" affection_change="好感度整数变化量（必须是整数，范围在 -5 到 5 之间）"/>"""
+<reply>完整的角色扮演正文。按照角色卡要求，可以包含旁白、动作以及一个或多个受控角色的台词；清楚区分发言者，不得替用户角色做出未经授权的决定。</reply>
+<status emotion="本回合主要互动焦点角色的主导情绪；没有明确焦点时填写场景整体情绪（单个词语）" affection_change="角色卡主体与用户之间的总体关系变化量（必须是整数，范围在 -5 到 5 之间）"/>"""
 
 EXAMPLE_MACRO_RE = re.compile(
     r"\{\{\s*(?:mesExamplesRaw|mesExamples|mes_examples|mes_example)\s*\}\}",
@@ -359,6 +365,7 @@ def _inject_lorebook_at_depth(
     entries: list[dict],
     char_name: str,
     user_name: str,
+    character_depth_prompt: Optional[dict] = None,
 ) -> list[dict]:
     """
     按 SillyTavern 深度把世界书条目插入聊天消息。
@@ -366,7 +373,7 @@ def _inject_lorebook_at_depth(
     Depth 0 位于最后一条聊天消息之后，Depth 1 位于最后一条之前。深度超过
     当前聊天长度时固定在聊天顶部。同深度按 user、assistant、system 分组。
     """
-    if not entries:
+    if not entries and not character_depth_prompt:
         return list(conversation_messages)
 
     message_count = len(conversation_messages)
@@ -404,12 +411,60 @@ def _inject_lorebook_at_depth(
                 {"role": role, "content": block}
             )
 
+    if character_depth_prompt:
+        depth = character_depth_prompt["depth"]
+        boundary = max(0, message_count - min(depth, message_count))
+        injections_by_boundary.setdefault(boundary, []).append(
+            {
+                "role": character_depth_prompt["role"],
+                "content": character_depth_prompt["content"],
+            }
+        )
+
     compiled = []
     for boundary in range(message_count + 1):
         compiled.extend(injections_by_boundary.get(boundary, []))
         if boundary < message_count:
             compiled.append(conversation_messages[boundary])
     return compiled
+
+
+def _compile_character_depth_prompt(
+    character,
+    char_name: str,
+    user_name: str,
+) -> Optional[dict]:
+    """Compile SillyTavern's ``extensions.depth_prompt`` without changing storage."""
+    raw_extensions = getattr(character, "extensions", None)
+    if isinstance(raw_extensions, str):
+        try:
+            extensions = json.loads(raw_extensions)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    elif isinstance(raw_extensions, dict):
+        extensions = raw_extensions
+    else:
+        return None
+
+    raw_depth_prompt = extensions.get("depth_prompt")
+    if not isinstance(raw_depth_prompt, dict):
+        return None
+
+    prompt = raw_depth_prompt.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+
+    content = prompt.replace("\r\n", "\n").replace("\r", "\n").strip()
+    content = replace_placeholders(content, char_name, user_name)
+    return {
+        "role": normalize_lorebook_role(
+            raw_depth_prompt.get("role", "system")
+        ),
+        "depth": normalize_lorebook_depth(
+            raw_depth_prompt.get("depth", 4)
+        ),
+        "content": content,
+    }
 
 
 def _compile_system_prompt_sections(
@@ -722,10 +777,10 @@ def build_chat_messages(
     status_parts = []
     aff_score = prompt_result.get("affection_score")
     if aff_score is not None:
-        status_parts.append(f"对用户好感度: {aff_score}")
+        status_parts.append(f"角色卡主体对用户的总体好感度: {aff_score}")
     mood = prompt_result.get("current_mood")
     if mood:
-        status_parts.append(f"当前心情: {mood}")
+        status_parts.append(f"当前互动焦点的主导心情: {mood}")
     if status_parts:
         dynamic_context_blocks.append("<current_status>\n" + "\n".join(status_parts) + "\n</current_status>")
 
@@ -766,11 +821,17 @@ def build_chat_messages(
         "content": resolved_user_message,
     }
     conversation_messages.append(current_user_message)
+    character_depth_prompt = _compile_character_depth_prompt(
+        character,
+        char_name,
+        user_name,
+    )
     conversation_messages = _inject_lorebook_at_depth(
         conversation_messages,
         lorebook_res.get("at_depth", []),
         char_name,
         user_name,
+        character_depth_prompt,
     )
 
     # 4.6 普通动态背景保持紧邻当前 user 之前；@ Depth 0 仍可按定义位于 user

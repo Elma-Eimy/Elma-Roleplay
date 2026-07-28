@@ -98,7 +98,7 @@
           <view
             class="tab-item"
             :class="{ 'is-active': activeTab === 'memory' }"
-            @tap="activeTab = 'memory'"
+            @tap="openMemoryArchive"
           >
             <text class="tab-label">记忆</text>
           </view>
@@ -202,30 +202,142 @@
           />
         </view>
 
-        <!-- 记忆按故事线隔离保存，进入具体故事后查看和管理。 -->
+        <!-- 角色记忆导航：先选择故事线，再查看对应记忆。 -->
         <view v-if="activeTab === 'memory'" class="memory-archive">
-          <view class="memory-orbit">
-            <view class="memory-orbit-ring"></view>
-            <view class="memory-orbit-core"></view>
-          </view>
-          <text class="memory-title">记忆随故事生长</text>
-          <text class="memory-description">
-            每条故事线拥有独立的人格状态与长期记忆。进入故事后，可在状态面板中查看和管理。
-          </text>
-          <view class="memory-note">
-            <text class="memory-note-label">当前档案</text>
-            <text class="memory-note-value">
-              {{ sessions.length > 0 ? `已连接 ${sessions.length} 条故事线` : "尚未建立故事记忆" }}
-            </text>
-          </view>
-          <view class="memory-action-group">
-            <view v-if="sessions.length > 0" class="memory-action secondary" @tap="openMemoryModal">
-              <text>查看向量记忆库</text>
-              <text class="memory-action-arrow">→</text>
+          <view class="memory-archive-header">
+            <view class="memory-archive-heading">
+              <text class="memory-archive-kicker">MEMORY ARCHIVE</text>
+              <text class="memory-archive-title">故事记忆档案</text>
+              <text class="memory-archive-description">
+                每条故事线都保存着独立的经历与关系。选择一段故事，查看它记住了什么。
+              </text>
             </view>
-            <view class="memory-action" @tap="openMemoryStory">
-              <text>{{ sessions.length > 0 ? "进入最近故事" : "开启第一段故事" }}</text>
-              <text class="memory-action-arrow">→</text>
+            <view v-if="memoryStoryCount > 0" class="memory-archive-count">
+              <text class="memory-archive-count-number">{{ memoryStoryCount }}</text>
+              <text class="memory-archive-count-label">条故事线</text>
+            </view>
+          </view>
+
+          <view v-if="isMemoryOverviewLoading && !memoryOverviewLoaded" class="memory-navigation-loading">
+            <view class="memory-nav-skeleton featured"></view>
+            <view class="memory-nav-skeleton"></view>
+            <view class="memory-nav-skeleton short"></view>
+          </view>
+
+          <view v-else-if="memoryOverviewFailed" class="memory-archive-empty compact">
+            <text class="memory-empty-title">记忆档案加载失败</text>
+            <text class="memory-empty-description">请检查后端连接后重试。</text>
+            <view class="memory-empty-action" @tap="loadMemoryOverview()">
+              <text>重新加载</text>
+            </view>
+          </view>
+
+          <template v-else-if="recentMemorySession">
+            <view class="memory-section-heading">
+              <text class="memory-section-title">最近活跃</text>
+              <text class="memory-section-caption">从上次停下的地方继续</text>
+            </view>
+
+            <view class="memory-featured-card">
+              <view class="memory-featured-glow"></view>
+              <view class="memory-featured-topline">
+                <view class="memory-status-pill">
+                  <view class="memory-status-dot"></view>
+                  <text>最近故事</text>
+                </view>
+                <text class="memory-story-date">
+                  {{ formatDate(recentMemorySession.lastMessageTime || recentMemorySession.updated_at) }}
+                </text>
+              </view>
+              <text class="memory-featured-title">
+                {{ recentMemorySession.title || "未命名故事" }}
+              </text>
+              <text class="memory-featured-preview">
+                {{ recentMemorySession.lastMessage || "这段故事还没有留下对话记录。" }}
+              </text>
+              <text v-if="recentMemorySession.parent_session_id" class="memory-featured-origin">
+                延续自「{{ getParentSessionTitle(recentMemorySession.parent_session_id) }}」
+              </text>
+              <view class="memory-featured-stats">
+                <text>{{ recentMemorySession.memoryStats.effective_total }} 条有效记忆</text>
+                <text>·</text>
+                <text>{{ recentMemorySession.memoryStats.inherited_active }} 条继承</text>
+              </view>
+              <view class="memory-card-actions">
+                <view class="memory-card-action primary" @tap="openMemoryModal(recentMemorySession)">
+                  <image src="/static/icons/drawer_brain.svg" mode="aspectFit" />
+                  <text>查看记忆</text>
+                </view>
+                <view class="memory-card-action ghost" @tap="resumeSession(recentMemorySession)">
+                  <text>进入故事</text>
+                  <text class="memory-card-action-arrow">→</text>
+                </view>
+              </view>
+            </view>
+
+            <view v-if="otherMemorySessions.length > 0" class="memory-story-section">
+              <view class="memory-section-heading">
+                <text class="memory-section-title">其他故事线</text>
+                <text class="memory-section-caption">记忆沿着每一次选择生长</text>
+              </view>
+
+              <view class="memory-story-list">
+                <view
+                  v-for="session in otherMemorySessions"
+                  :key="session.id"
+                  class="memory-story-row"
+                >
+                  <view class="memory-story-rail">
+                    <view class="memory-story-node"></view>
+                    <view class="memory-story-line"></view>
+                  </view>
+                  <view class="memory-story-card" @tap="openMemoryModal(session)">
+                    <view class="memory-story-card-header">
+                      <view class="memory-story-copy">
+                        <text class="memory-story-title">{{ session.title || "未命名故事" }}</text>
+                        <text class="memory-story-origin">
+                          {{ session.parent_session_id ? `延续自「${getParentSessionTitle(session.parent_session_id)}」` : "独立故事线" }}
+                        </text>
+                      </view>
+                      <view class="memory-story-open">
+                        <image src="/static/icons/drawer_brain.svg" mode="aspectFit" />
+                        <text>查看记忆</text>
+                      </view>
+                    </view>
+                    <text class="memory-story-stats">
+                      {{ session.memoryStats.effective_total }} 条有效记忆
+                      · {{ session.memoryStats.inherited_active }} 条继承
+                    </text>
+                    <text class="memory-story-preview">
+                      {{ session.lastMessage || "这段故事还没有留下对话记录。" }}
+                    </text>
+                    <view class="memory-story-footer">
+                      <text class="memory-story-date">
+                        {{ formatDate(session.lastMessageTime || session.updated_at) }}
+                      </text>
+                      <view class="memory-story-enter" @tap.stop="resumeSession(session)">
+                        <text>进入故事</text>
+                        <text>→</text>
+                      </view>
+                    </view>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </template>
+
+          <view v-else class="memory-archive-empty">
+            <view class="memory-orbit">
+              <view class="memory-orbit-ring"></view>
+              <view class="memory-orbit-core"></view>
+            </view>
+            <text class="memory-empty-title">记忆还在等待第一段故事</text>
+            <text class="memory-empty-description">
+              开始对话后，值得记住的经历与关系会在这里形成档案。
+            </text>
+            <view class="memory-empty-action" @tap="openNewBranchModal">
+              <text>开启第一段故事</text>
+              <text>→</text>
             </view>
           </view>
         </view>
@@ -245,7 +357,9 @@
       v-if="isMemoryModalOpen"
       :isOpen="isMemoryModalOpen"
       :sessionId="activeMemorySessionId"
-      @close="isMemoryModalOpen = false"
+      :contextTitle="selectedMemorySession?.title || ''"
+      localLabel="此故事"
+      @close="closeMemoryModal"
     />
 
     <!-- 新建平行宇宙分支模态框 -->
@@ -271,7 +385,14 @@ import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
 import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl, parseCharacter } from "@/api/characters";
 import type { CharacterDetail } from "@/api/characters";
-import { getSessions, deleteSession, updateSessionTitle, createSession, getSessionHistory } from "@/api/sessions";
+import {
+  getAllSessions,
+  deleteSession,
+  updateSessionTitle,
+  createSession,
+  getCharacterMemoryOverview
+} from "@/api/sessions";
+import type { MemoryStats, SessionSummary } from "@/api/sessions";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
 import { usePersonaStore } from "@/store/personaStore";
@@ -285,20 +406,56 @@ import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const personaStore = usePersonaStore();
 
+interface CharacterSessionItem extends SessionSummary {
+  lastMessage: string;
+  lastMessageTime: string;
+}
+
+interface MemoryStoryItem {
+  id: number;
+  title: string;
+  parent_session_id: number | null;
+  created_at: string;
+  updated_at: string;
+  lastMessage: string;
+  lastMessageTime: string;
+  memoryStats: MemoryStats;
+}
+
 const characterId = ref<number | null>(null);
 const character = ref<CharacterDetail | null>(null);
-const sessions = ref<any[]>([]);
+const sessions = ref<CharacterSessionItem[]>([]);
 const isNewBranchModalOpen = ref(false);
 const isMemoryModalOpen = ref(false);
+const selectedMemorySession = ref<MemoryStoryItem | null>(null);
+const memoryStories = ref<MemoryStoryItem[]>([]);
+const memoryStoryCount = ref(0);
+const recentMemorySessionId = ref<number | null>(null);
+const isMemoryOverviewLoading = ref(false);
+const memoryOverviewLoaded = ref(false);
+const memoryOverviewFailed = ref(false);
 
-const activeMemorySessionId = computed(() => sessions.value[0]?.id || null);
+const recentMemorySession = computed(() => {
+  if (recentMemorySessionId.value === null) return memoryStories.value[0] || null;
+  return (
+    memoryStories.value.find((session) => session.id === recentMemorySessionId.value) ||
+    memoryStories.value[0] ||
+    null
+  );
+});
+const otherMemorySessions = computed(() =>
+  memoryStories.value.filter((session) => session.id !== recentMemorySession.value?.id)
+);
+const activeMemorySessionId = computed(() => selectedMemorySession.value?.id || null);
 
-const openMemoryModal = () => {
-  if (!activeMemorySessionId.value) {
-    uni.showToast({ title: "请先开启一段故事线", icon: "none" });
-    return;
-  }
+const openMemoryModal = (session: MemoryStoryItem) => {
+  selectedMemorySession.value = session;
   isMemoryModalOpen.value = true;
+};
+
+const closeMemoryModal = () => {
+  isMemoryModalOpen.value = false;
+  selectedMemorySession.value = null;
 };
 
 const renamingSessionId = ref<number | null>(null);
@@ -306,6 +463,13 @@ const newSessionTitle = ref("");
 const activeParentSessionId = ref<number | null>(null);
 const activeTab = ref<"profile" | "lorebook" | "memory" | "sessions">("profile");
 const viewMode = ref<"list" | "tree">("tree");
+
+const openMemoryArchive = async () => {
+  activeTab.value = "memory";
+  if (!memoryOverviewLoaded.value) {
+    await loadMemoryOverview();
+  }
+};
 
 const lorebookEntriesCount = ref(0);
 
@@ -345,49 +509,72 @@ onShow(() => {
 
 async function loadCharacterData(id: number) {
   try {
-    const char = await getCharacter(id);
+    const [char, sessionPage] = await Promise.all([
+      getCharacter(id),
+      getAllSessions(id, true)
+    ]);
     character.value = char;
+    sessions.value = sessionPage.sessions.map((session) => ({
+      ...session,
+      lastMessage: session.last_message?.content
+        ? session.last_message.content.replace(/\s+/g, " ").trim()
+        : "",
+      lastMessageTime: session.last_message?.created_at || session.updated_at
+    }));
 
-    const res = await getSessions(id);
-    const sortedSessions = res.sessions;
-    
-    // 获取每个平行宇宙分支会话的最后一条消息预览内容，并对换行符进行空格清洗
-    const decoratedSessions = await Promise.all(
-      sortedSessions.map(async (s) => {
-        try {
-          const hRes = await getSessionHistory(s.id, 1);
-          if (hRes.messages.length > 0) {
-            const lastMsgObj = hRes.messages[hRes.messages.length - 1];
-            const lastMsg = lastMsgObj.content || "";
-            const cleanMsg = lastMsg ? lastMsg.replace(/\s+/g, ' ').trim() : "";
-            return {
-              ...s,
-              lastMessage: cleanMsg,
-              lastMessageTime: lastMsgObj.created_at || s.updated_at
-            };
-          } else {
-            return {
-              ...s,
-              lastMessage: "",
-              lastMessageTime: s.updated_at
-            };
-          }
-        } catch (e) {
-          return { ...s, lastMessage: "", lastMessageTime: s.updated_at };
-        }
-      })
-    );
-
-    // 按最近消息发送时间降序对分支会话进行排序
-    decoratedSessions.sort(
-      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
-    );
-
-    sessions.value = decoratedSessions;
+    if (activeTab.value === "memory") {
+      await loadMemoryOverview();
+    } else {
+      memoryOverviewLoaded.value = false;
+      memoryOverviewFailed.value = false;
+      memoryStories.value = [];
+      memoryStoryCount.value = sessionPage.total;
+      recentMemorySessionId.value = null;
+    }
   } catch (e) {
     console.error("Failed to load character detail", e);
   }
 };
+
+async function loadMemoryOverview() {
+  if (characterId.value === null || isMemoryOverviewLoading.value) return;
+  isMemoryOverviewLoading.value = true;
+  memoryOverviewFailed.value = false;
+  try {
+    const pageSize = 100;
+    let page = await getCharacterMemoryOverview(characterId.value, pageSize, 0);
+    const overviewSessions = [...page.sessions];
+    let nextOffset = page.offset + page.sessions.length;
+
+    while (page.has_more) {
+      page = await getCharacterMemoryOverview(characterId.value, pageSize, nextOffset);
+      overviewSessions.push(...page.sessions);
+      nextOffset = page.offset + page.sessions.length;
+    }
+
+    memoryStories.value = overviewSessions.map((session) => ({
+      id: session.session_id,
+      title: session.title,
+      parent_session_id: session.parent_session_id,
+      created_at: session.created_at,
+      updated_at: session.updated_at,
+      lastMessage: session.last_message?.content
+        ? session.last_message.content.replace(/\s+/g, " ").trim()
+        : "",
+      lastMessageTime: session.last_message?.created_at || session.updated_at,
+      memoryStats: session.memory_stats
+    }));
+    memoryStoryCount.value = page.story_count;
+    recentMemorySessionId.value = page.recent_session_id;
+    memoryOverviewLoaded.value = true;
+  } catch (e) {
+    console.error("Failed to load character memory overview", e);
+    memoryOverviewFailed.value = true;
+    uni.showToast({ title: "加载记忆档案失败", icon: "none" });
+  } finally {
+    isMemoryOverviewLoading.value = false;
+  }
+}
 
 const goBack = () => {
   const pages = getCurrentPages();
@@ -535,15 +722,6 @@ const openNewBranchModal = () => {
   activeParentSessionId.value = null;
   isNewBranchModalOpen.value = true;
 }
-
-const openMemoryStory = () => {
-  const latestSession = sessions.value[0];
-  if (latestSession) {
-    resumeSession(latestSession);
-    return;
-  }
-  openNewBranchModal();
-};
 
 const handleTreeNodeBranch = (session: any) => {
   activeParentSessionId.value = session.id;

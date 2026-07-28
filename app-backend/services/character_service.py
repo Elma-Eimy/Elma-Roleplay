@@ -39,7 +39,18 @@ def update_character(character_id: int, data: dict, db: DBSession) -> dict:
     if character is None:
         raise ValueError("Character not found")
 
+    old_avatar_path = character.avatar_path
     _apply_character_data(character, data)
+    if old_avatar_path and old_avatar_path != character.avatar_path:
+        db.add(
+            OutboxJob(
+                task_type="delete_avatar",
+                payload=json.dumps(
+                    {"file_path": old_avatar_path},
+                    ensure_ascii=False,
+                ),
+            )
+        )
     try:
         db.commit()
         db.refresh(character)
@@ -64,6 +75,7 @@ def delete_character_service(character_id: int, db: DBSession) -> dict:
     if character is None:
         raise ValueError("Character not found")
 
+    avatar_path = character.avatar_path
     session_ids = [
         row[0]
         for row in (
@@ -102,6 +114,16 @@ def delete_character_service(character_id: int, db: DBSession) -> dict:
             payload=json.dumps({"character_id": character_id}),
         )
     )
+    if avatar_path:
+        db.add(
+            OutboxJob(
+                task_type="delete_avatar",
+                payload=json.dumps(
+                    {"file_path": avatar_path},
+                    ensure_ascii=False,
+                ),
+            )
+        )
     if audio_paths:
         db.add(
             OutboxJob(

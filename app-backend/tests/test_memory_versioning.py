@@ -198,11 +198,13 @@ class MemoryVersioningTests(unittest.TestCase):
         response = get_session_memories(
             session_id=self.child_session.id,
             q=None,
+            scope="all",
+            status="all",
             limit=20,
             offset=0,
             db=self.db,
         )
-        by_id = {item["id"]: item for item in response}
+        by_id = {item["id"]: item for item in response["items"]}
         self.assertTrue(by_id[old.id]["is_superseded"])
         self.assertFalse(by_id[new.id]["is_superseded"])
         self.assertEqual(old.id, by_id[new.id]["supersedes_id"])

@@ -1,11 +1,17 @@
 <template>
   <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid }">
-    <!-- 默认使用柔光模式；为后续清晰、柔光、场景三档保留模式类。 -->
     <view
       class="chat-bg"
       :class="`mode-${backgroundMode}`"
       :style="backgroundStyle"
-    ></view>
+    >
+      <image
+        v-if="backgroundMode === 'character' && characterBackgroundUrl"
+        class="chat-scene-image"
+        :src="characterBackgroundUrl"
+        mode="aspectFill"
+      />
+    </view>
 
     <!-- App 端流式传输通信桥梁 (仅 APP-PLUS 环境下有效) -->
     <!-- #ifdef APP-PLUS -->
@@ -57,7 +63,9 @@
       v-if="isStatusPanelOpen"
       :isOpen="isStatusPanelOpen"
       :sessionId="currentSessionId"
+      :background-mode="backgroundMode"
       @close="isStatusPanelOpen = false"
+      @update:background-mode="updateBackgroundMode"
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
       @open-memory-view="isMemoryPanelOpen = true"
@@ -113,9 +121,8 @@ import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { 
   createSession, 
   deleteSession, 
-  getSessions, 
+  getAllSessions,
   updateSessionTitle, 
-  getSessionHistory,
   getCompiledPrompt
 } from "@/api/sessions";
 import ChatHeader from "@/components/chat/ChatHeader.vue";
@@ -163,7 +170,49 @@ const isStatusPanelOpen = ref(false);
 const isMemoryPanelOpen = ref(false);
 const isInitLoading = ref(true);
 const isHistoryLoading = ref(false);
-const backgroundMode = ref<"clear" | "soft" | "scene">("soft");
+type ChatBackgroundMode = "clean" | "character";
+
+const CHAT_BACKGROUND_STORAGE_PREFIX = "chat_background_mode:";
+const backgroundMode = ref<ChatBackgroundMode>("clean");
+
+const getBackgroundStorageKey = (sessionId: number) =>
+  `${CHAT_BACKGROUND_STORAGE_PREFIX}${sessionId}`;
+
+const readBackgroundMode = (sessionId: number): ChatBackgroundMode => {
+  try {
+    return uni.getStorageSync(getBackgroundStorageKey(sessionId)) === "character"
+      ? "character"
+      : "clean";
+  } catch {
+    return "clean";
+  }
+};
+
+const saveBackgroundMode = (
+  sessionId: number,
+  mode: ChatBackgroundMode
+) => {
+  try {
+    uni.setStorageSync(getBackgroundStorageKey(sessionId), mode);
+  } catch (error) {
+    console.warn("[chat.vue] Failed to save chat background preference:", error);
+  }
+};
+
+const clearBackgroundMode = (sessionId: number) => {
+  try {
+    uni.removeStorageSync(getBackgroundStorageKey(sessionId));
+  } catch (error) {
+    console.warn("[chat.vue] Failed to clear chat background preference:", error);
+  }
+};
+
+const updateBackgroundMode = (mode: ChatBackgroundMode) => {
+  backgroundMode.value = mode;
+  if (currentSessionId.value !== null) {
+    saveBackgroundMode(currentSessionId.value, mode);
+  }
+};
 
 // 软键盘高度自适应控制样式
 const inputWrapperStyle = computed(() => {
@@ -216,28 +265,14 @@ const loadSessionsList = async () => {
   if (!personaStore.activeCharacter) return;
   isBranchTreeLoading.value = true;
   try {
-    const res = await getSessions(personaStore.activeCharacter.id);
-    const sortedSessions = res.sessions;
-    const decorated = await Promise.all(
-      sortedSessions.map(async (s) => {
-        try {
-          const hRes = await getSessionHistory(s.id, 1);
-          if (hRes.messages.length > 0) {
-            const lastMsgObj = hRes.messages[hRes.messages.length - 1];
-            const lastMsg = lastMsgObj.content || "";
-            const cleanMsg = lastMsg ? lastMsg.replace(/\s+/g, ' ').trim() : "";
-            return {
-              ...s,
-              lastMessage: cleanMsg,
-              lastMessageTime: lastMsgObj.created_at || s.updated_at
-            };
-          }
-        } catch (e) {}
-        return { ...s, lastMessage: "", lastMessageTime: s.updated_at };
-      })
-    );
-    // 按最后的消息发送时间降序排序
-    decorated.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
+    const res = await getAllSessions(personaStore.activeCharacter.id);
+    const decorated = res.sessions.map((session) => ({
+      ...session,
+      lastMessage: session.last_message?.content
+        ? session.last_message.content.replace(/\s+/g, " ").trim()
+        : "",
+      lastMessageTime: session.last_message?.created_at || session.updated_at
+    }));
     sessionsList.value = decorated;
   } catch (e) {
     console.error("Failed to load sessions for character", e);
@@ -255,6 +290,7 @@ const openBranchTree = async () => {
 const switchSession = async (session: Pick<BranchSession, "id">) => {
   isBranchTreeOpen.value = false;
   currentSessionId.value = session.id;
+  backgroundMode.value = readBackgroundMode(session.id);
   isInitLoading.value = true;
   scrollWithAnimation.value = false;
   
@@ -291,6 +327,12 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
       title: payload.title,
       greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
+    if (activeParentSessionId.value !== null) {
+      saveBackgroundMode(
+        res.session_id,
+        readBackgroundMode(activeParentSessionId.value)
+      );
+    }
     uni.hideLoading();
     isNewBranchModalOpen.value = false;
     // 闪切到新创建的平行宇宙会话
@@ -337,6 +379,7 @@ const handleTreeNodeLongpress = (session: BranchSession) => {
             if (modalRes.confirm) {
               try {
                 await deleteSession(session.id);
+                clearBackgroundMode(session.id);
                 // 如果删除的是当前会话，需要退回到会话列表首页
                 if (session.id === currentSessionId.value) {
                   uni.showToast({ title: '当前会话已删除', icon: 'none' });
@@ -370,6 +413,7 @@ onLoad(async (options) => {
   if (options && options.sessionId) {
     const sId = parseInt(options.sessionId, 10);
     currentSessionId.value = sId;
+    backgroundMode.value = readBackgroundMode(sId);
     
     isInitLoading.value = true;
     scrollWithAnimation.value = false;
@@ -471,6 +515,10 @@ const backgroundStyle = computed(() => {
   };
 });
 
+const characterBackgroundUrl = computed(() =>
+  getAvatarUrl(personaStore.activeCharacter?.avatar_path || "")
+);
+
 
 
 // 删除当前会话
@@ -486,6 +534,7 @@ const deleteCurrentSession = () => {
         try {
           uni.showLoading({ title: '正在删除...' });
           await deleteSession(currentSessionId.value!);
+          clearBackgroundMode(currentSessionId.value!);
           uni.hideLoading();
           isStatusPanelOpen.value = false;
           uni.navigateBack();

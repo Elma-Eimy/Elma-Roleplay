@@ -94,6 +94,37 @@
             </view>
           </view>
 
+          <view class="background-setting">
+            <view class="background-setting-header">
+              <text class="setting-row-label">聊天背景</text>
+              <text class="background-setting-hint">仅此会话 · 本机保存</text>
+            </view>
+            <view class="background-mode-picker">
+              <view
+                class="background-mode-option"
+                :class="{ 'is-active': backgroundMode === 'clean' }"
+                @tap="emit('update:background-mode', 'clean')"
+              >
+                <view class="background-mode-preview preview-clean"></view>
+                <text class="background-mode-label">纯净背景</text>
+              </view>
+              <view
+                class="background-mode-option"
+                :class="{ 'is-active': backgroundMode === 'character' }"
+                @tap="emit('update:background-mode', 'character')"
+              >
+                <view class="background-mode-preview preview-character">
+                  <AvatarImage
+                    class="background-mode-avatar"
+                    :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+                    :lazy-load="false"
+                  />
+                </view>
+                <text class="background-mode-label">角色立绘</text>
+              </view>
+            </view>
+          </view>
+
           <view class="setting-row cursor-pointer" style="margin-top: 20rpx;" @tap="showAdvancedParams = !showAdvancedParams">
             <view class="setting-row-left">
               <image 
@@ -311,6 +342,7 @@ import AvatarImage from "@/components/common/AvatarImage.vue";
 const props = defineProps<{
   isOpen: boolean;
   sessionId: number | null;
+  backgroundMode: "clean" | "character";
 }>();
 
 const emit = defineEmits<{
@@ -319,6 +351,7 @@ const emit = defineEmits<{
   (e: "open-branch-tree"): void;
   (e: "open-memory-view"): void;
   (e: "open-prompt-preview"): void;
+  (e: "update:background-mode", mode: "clean" | "character"): void;
 }>();
 
 const chatStore = useChatStore();
@@ -664,6 +697,98 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
 
 .custom-toggle.is-on .toggle-thumb {
   transform: translateX(40rpx);
+}
+
+.background-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+  margin-top: 20rpx;
+}
+
+.background-setting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.background-setting-hint {
+  color: #8e8e93;
+  font-size: 20rpx;
+}
+
+.background-mode-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12rpx;
+}
+
+.background-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+  padding: 10rpx;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 16rpx;
+  background-color: rgba(0, 0, 0, 0.02);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.background-mode-option:active {
+  transform: scale(0.98);
+}
+
+.background-mode-option.is-active {
+  border-color: rgba(79, 142, 124, 0.45);
+  background-color: rgba(112, 174, 155, 0.11);
+}
+
+.background-mode-preview {
+  position: relative;
+  width: 54rpx;
+  height: 54rpx;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12rpx;
+}
+
+.preview-clean {
+  background: linear-gradient(145deg, #ffffff, #f2f6f3);
+}
+
+.preview-character {
+  background-color: #e9efeb;
+}
+
+.background-mode-avatar {
+  width: 100%;
+  height: 100%;
+}
+
+.preview-character::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: rgba(247, 249, 247, 0.35);
+}
+
+.background-mode-label {
+  overflow: hidden;
+  color: #3a3a3c;
+  font-size: 23rpx;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-mode-option.is-active .background-mode-label {
+  color: #3f7e6d;
 }
 
 /* ===== Drawer Sliders styles ===== */

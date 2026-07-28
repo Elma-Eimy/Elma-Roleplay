@@ -103,6 +103,101 @@ def get_recent_sessions(limit: int, offset: int, db: DBSession) -> dict:
         "total": total,
         "limit": limit,
         "offset": offset,
+        "has_more": offset + len(sessions) < total,
+    }
+
+
+def get_character_sessions(
+    *,
+    character_id: int,
+    include_last_message: bool,
+    limit: int,
+    offset: int,
+    db: DBSession,
+) -> dict:
+    """Return one character's sessions with stable pagination and no N+1 queries."""
+    total = (
+        db.query(func.count(SessionModel.id))
+        .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+        .filter(SessionPersona.character_id == character_id)
+        .scalar()
+        or 0
+    )
+
+    if include_last_message:
+        latest_message = aliased(ChatMessage)
+        latest_message_id = (
+            db.query(ChatMessage.id)
+            .filter(
+                ChatMessage.session_id == SessionModel.id,
+                ChatMessage.is_active.is_(True),
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .correlate(SessionModel)
+            .limit(1)
+            .scalar_subquery()
+        )
+        rows = (
+            db.query(SessionModel, SessionPersona, latest_message)
+            .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+            .outerjoin(latest_message, latest_message.id == latest_message_id)
+            .filter(SessionPersona.character_id == character_id)
+            .order_by(SessionModel.updated_at.desc(), SessionModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+    else:
+        rows = [
+            (session, persona, None)
+            for session, persona in (
+                db.query(SessionModel, SessionPersona)
+                .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+                .filter(SessionPersona.character_id == character_id)
+                .order_by(SessionModel.updated_at.desc(), SessionModel.id.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+        ]
+
+    sessions = []
+    for session, persona, last_message in rows:
+        sessions.append(
+            {
+                "id": session.id,
+                "title": session.title,
+                "parent_session_id": session.parent_session_id,
+                "fork_message_id": session.fork_message_id,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "persona": {
+                    "id": persona.id,
+                    "affection_score": persona.affection_score,
+                    "current_mood": persona.current_mood,
+                },
+                "last_message": (
+                    {
+                        "content": last_message.content,
+                        "created_at": (
+                            last_message.created_at.isoformat()
+                            if last_message.created_at
+                            else None
+                        ),
+                    }
+                    if last_message
+                    else None
+                ),
+            }
+        )
+
+    return {
+        "character_id": character_id,
+        "sessions": sessions,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(sessions) < total,
     }
 
 

@@ -219,8 +219,7 @@ import { onShow } from "@dcloudio/uni-app";
 import { usePersonaStore } from "@/store/personaStore";
 import {
   getRecentSessions,
-  getSessions,
-  getSessionHistory,
+  getAllSessions,
   updateSessionTitle,
   deleteSession,
 } from "@/api/sessions";
@@ -294,13 +293,15 @@ const loadRecentSessions = async () => {
     const allSessions: HomeSession[] = [];
     const promises = personaStore.characterList.map(async (char) => {
       try {
-        const res = await getSessions(char.id);
+        const res = await getAllSessions(char.id);
         const decorated = res.sessions.map((s) => ({
           ...s,
           characterName: char.name,
           characterAvatar: char.avatar_path,
-          lastMessage: "",
-          lastMessageTime: s.updated_at,
+          lastMessage: s.last_message?.content
+            ? s.last_message.content.replace(/\s+/g, " ").trim()
+            : "开启新的聊天...",
+          lastMessageTime: s.last_message?.created_at || s.updated_at,
           unread: false
         }));
         allSessions.push(...decorated);
@@ -309,26 +310,6 @@ const loadRecentSessions = async () => {
       }
     });
     await Promise.all(promises);
-
-    // 获取每个分支会话的最后一条消息内容，并清洗换行与多余空白。
-    const historyPromises = allSessions.map(async (s) => {
-      try {
-        const hRes = await getSessionHistory(s.id, 1);
-        if (hRes.messages.length > 0) {
-          const lastMsg = hRes.messages[hRes.messages.length - 1];
-          const rawMsg = lastMsg.content;
-          s.lastMessage = rawMsg ? rawMsg.replace(/\s+/g, " ").trim() : "";
-          s.lastMessageTime = lastMsg.created_at || s.updated_at;
-        } else {
-          s.lastMessage = "开启新的聊天...";
-          s.lastMessageTime = s.updated_at;
-        }
-      } catch (err) {
-        s.lastMessage = "开启新的聊天...";
-        s.lastMessageTime = s.updated_at;
-      }
-    });
-    await Promise.all(historyPromises);
 
     // 按最近消息发送时间倒序排列。
     allSessions.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());

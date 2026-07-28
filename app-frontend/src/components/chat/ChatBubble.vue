@@ -497,13 +497,13 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 
 /* ===== AI 轻纸片 ===== */
 .ai-bubble {
-  background-color: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background-color: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--app-color-text-primary, #26332e);
-  border: 1px solid rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.56);
   border-top-left-radius: 10rpx;
-  box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.055);
+  box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.04);
 }
 
 /* ===== 用户浅薄荷气泡 ===== */

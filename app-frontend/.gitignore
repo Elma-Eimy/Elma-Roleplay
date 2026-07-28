@@ -21,5 +21,6 @@ dist
 *.sw?
 .npm-cache
 .hbuilderx
+UI_REDESIGN_PLAN.md
 
 unpackage
