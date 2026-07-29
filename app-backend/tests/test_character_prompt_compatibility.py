@@ -285,6 +285,7 @@ class DialogueExampleCompilationTests(unittest.TestCase):
                 "user",
                 "assistant",
                 "system",
+                "system",
                 "user",
                 "system",
             ],
@@ -304,6 +305,21 @@ class DialogueExampleCompilationTests(unittest.TestCase):
                 '<status emotion="平静" affection_change="0"/>'
             ),
             messages[4]["content"],
+        )
+        self.assertIn("【对话示例结束】", messages[5]["content"])
+        self.assertIn("不属于当前故事历史", messages[5]["content"])
+        boundary_index = next(
+            i
+            for i, message in enumerate(messages)
+            if "【对话示例结束】" in message["content"]
+        )
+        self.assertLess(
+            boundary_index,
+            next(
+                i
+                for i, message in enumerate(messages)
+                if message["content"] == "现在开始吧。"
+            ),
         )
         self.assertIn("【对话示例说明】", messages[0]["content"])
 
@@ -360,6 +376,9 @@ class DialogueExampleCompilationTests(unittest.TestCase):
         )
         self.assertIn("【未结构化对话示例】", messages[0]["content"])
         self.assertIn("她说话总是简短而克制。", messages[0]["content"])
+        self.assertNotIn("【对话示例结束】", "\n".join(
+            message["content"] for message in messages
+        ))
 
     def test_explicit_example_macro_prevents_automatic_duplication(self):
         raw_example = "<START>\n{{user}}: 你好\n{{char}}: 晚上好"
@@ -528,8 +547,18 @@ class LorebookPositionCompatibilityTests(unittest.TestCase):
         before_index = next(i for i, content in enumerate(contents) if "世界书前问" in content)
         card_index = next(i for i, content in enumerate(contents) if "卡片问" in content)
         after_index = next(i for i, content in enumerate(contents) if "世界书后问" in content)
+        boundary_index = next(
+            i for i, content in enumerate(contents)
+            if "【对话示例结束】" in content
+        )
+        current_index = next(
+            i for i, content in enumerate(contents)
+            if content == "当前问题"
+        )
         self.assertLess(before_index, card_index)
         self.assertLess(card_index, after_index)
+        self.assertLess(after_index, boundary_index)
+        self.assertLess(boundary_index, current_index)
 
     def test_at_depth_honors_depth_and_message_role(self):
         character = self._character_with_entries(
