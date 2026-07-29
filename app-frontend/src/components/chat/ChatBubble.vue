@@ -2,15 +2,17 @@
   <view 
     v-if="message"
     class="chat-bubble-wrapper" 
-    :class="{ 'is-user': isUser }"
+    :class="{
+      'is-user': isUser,
+      'is-ai-continuation': !isUser && !showAvatar,
+    }"
   >
-    <!-- AI 头像（仅对 AI 显示） -->
-    <image 
-      v-if="!isUser" 
+    <AvatarImage
+      v-if="!isUser && showAvatar"
       class="avatar" 
-      :src="avatarUrl || defaultAvatar" 
-      mode="aspectFill"
+      :src="avatarUrl"
     />
+    <view v-else-if="!isUser" class="avatar-spacer"></view>
 
     <view class="bubble-content-area">
       <!-- AI 姓名标签 -->
@@ -77,11 +79,19 @@
         @contextmenu.prevent.stop=""
       >
         <view class="pager-btn prev" @tap.stop="switchCandidateVersion(-1)">
-          <text class="pager-arrow">◀</text>
+          <text class="pager-arrow">‹</text>
         </view>
-        <text class="pager-text">{{ (message.active_index ?? 0) + 1 }} / {{ message.candidates.length }}</text>
+        <view class="pager-dots">
+          <view
+            v-for="(_, index) in message.candidates"
+            :key="index"
+            class="pager-dot"
+            :class="{ 'is-active': index === (message.active_index ?? 0) }"
+          ></view>
+        </view>
+        <text class="pager-text">{{ (message.active_index ?? 0) + 1 }}/{{ message.candidates.length }}</text>
         <view class="pager-btn next" @tap.stop="switchCandidateVersion(1)">
-          <text class="pager-arrow">▶</text>
+          <text class="pager-arrow">›</text>
         </view>
       </view>
 
@@ -118,23 +128,42 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
 import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import MarkdownIt from "markdown-it";
+import AvatarImage from "@/components/common/AvatarImage.vue";
+
+// 所有消息共享一个解析器。关闭原始 HTML，模型输出只按 Markdown 文本解析。
+const md = new MarkdownIt({
+  html: false,
+  breaks: true,
+  linkify: true,
+});
+
+const STREAM_MARKDOWN_RENDER_DELAY = 48;
 
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const { activeAudioMessageId, playMessageTTS } = useAudioPlayer();
 
-const props = defineProps<{
-  message: ChatMessage;
-  avatarUrl?: string;
-  characterName?: string;
-  showName?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    message: ChatMessage;
+    avatarUrl?: string;
+    characterName?: string;
+    showName?: boolean;
+    showAvatar?: boolean;
+  }>(),
+  {
+    avatarUrl: "",
+    characterName: "",
+    showName: false,
+    showAvatar: true,
+  }
+);
 
 const emit = defineEmits<{
   (e: "longpress-message", message: ChatMessage): void;
@@ -217,7 +246,6 @@ const isUser = computed(() => {
   }
 });
 
-const defaultAvatar = "/static/default-avatar.png";
 
 const hasMeta = computed(() => {
   try {
@@ -226,12 +254,6 @@ const hasMeta = computed(() => {
     console.error("[ChatBubble] hasMeta error:", err);
     return false;
   }
-});
-
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
 });
 
 // 推理思维链内容解析
@@ -313,38 +335,68 @@ const hasThought = computed(() => {
   }
 });
 
-const renderedMarkdown = computed(() => {
+const renderMarkdown = (content: string) => {
+  let html = md.render(content);
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  html = html.replace(/<em>/g, '<em class="md-em">');
+  html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+  return html;
+};
+
+const renderedMarkdown = ref("");
+const renderedThought = ref("");
+let markdownRenderTimer: ReturnType<typeof setTimeout> | null = null;
+
+const updateRenderedMarkdown = () => {
+  if (markdownRenderTimer !== null) {
+    clearTimeout(markdownRenderTimer);
+    markdownRenderTimer = null;
+  }
+
   try {
     const replyContent = parsedContent.value.reply;
-    if (isUser.value || !replyContent) return "";
-    let html = md.render(String(replyContent));
-    html = html.replace(/<p>/g, '<p class="md-p">');
-    html = html.replace(/<em>/g, '<em class="md-em">');
-    html = html.replace(/<strong>/g, '<strong class="md-strong">');
-    // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
-    html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-    html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-    return html;
+    renderedMarkdown.value =
+      !isUser.value && replyContent ? renderMarkdown(String(replyContent)) : "";
+
+    const thoughtContent = parsedContent.value.thought;
+    renderedThought.value = thoughtContent
+      ? renderMarkdown(String(thoughtContent))
+      : "";
   } catch (err) {
     console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
-    return String(props.message?.content || "");
+    renderedMarkdown.value = "";
+    renderedThought.value = "";
   }
-});
+};
 
-const renderedThought = computed(() => {
-  try {
-    const thoughtContent = parsedContent.value.thought;
-    if (!thoughtContent) return "";
-    let html = md.render(String(thoughtContent));
-    html = html.replace(/<p>/g, '<p class="md-p">');
-    html = html.replace(/<em>/g, '<em class="md-em">');
-    html = html.replace(/<strong>/g, '<strong class="md-strong">');
-    html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-    html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-    return html;
-  } catch (err) {
-    console.error("[ChatBubble] renderedThought error:", err, "message:", props.message);
-    return "";
+watch(
+  [
+    () => parsedContent.value.reply,
+    () => parsedContent.value.thought,
+    () => props.message?.status,
+  ],
+  () => {
+    if (props.message?.status === "streaming") {
+      if (markdownRenderTimer === null) {
+        markdownRenderTimer = setTimeout(
+          updateRenderedMarkdown,
+          STREAM_MARKDOWN_RENDER_DELAY
+        );
+      }
+      return;
+    }
+    updateRenderedMarkdown();
+  },
+  { immediate: true }
+);
+
+onUnmounted(() => {
+  if (markdownRenderTimer !== null) {
+    clearTimeout(markdownRenderTimer);
+    markdownRenderTimer = null;
   }
 });
 
@@ -369,11 +421,15 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .chat-bubble-wrapper {
   display: flex;
   width: 100%;
-  padding: 16rpx 36rpx;
-  margin-bottom: 8rpx;
-  gap: 16rpx;
+  padding: 14rpx 32rpx;
+  margin-bottom: 2rpx;
+  gap: 18rpx;
   align-items: flex-start;
-  animation: bubble-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: bubble-fade-in var(--app-motion-slow, 360ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.chat-bubble-wrapper.is-ai-continuation {
+  padding-top: 4rpx;
 }
 
 @keyframes bubble-fade-in {
@@ -393,11 +449,18 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 
 /* ===== 头像样式 ===== */
 .avatar {
-  width: 76rpx;
-  height: 76rpx;
-  border-radius: 32%;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 28rpx;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8rpx 22rpx rgba(45, 72, 62, 0.1);
+  flex-shrink: 0;
+}
+
+.avatar-spacer {
+  width: 72rpx;
+  height: 1px;
   flex-shrink: 0;
 }
 
@@ -405,103 +468,104 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .bubble-content-area {
   display: flex;
   flex-direction: column;
-  max-width: 72%;
+  max-width: calc(100% - 90rpx);
+  min-width: 0;
 }
 
 .is-user .bubble-content-area {
+  max-width: 78%;
   align-items: flex-end;
 }
 
 /* ===== 名字标签 ===== */
 .name-tag {
-  font-size: 22rpx;
-  color: #8e8e93;
-  margin-bottom: 6rpx;
-  margin-left: 8rpx;
-  font-weight: 500;
+  margin-bottom: 8rpx;
+  margin-left: 10rpx;
+  color: var(--app-color-primary-strong, #4f8e7c);
+  font-size: var(--app-font-size-caption, 22rpx);
+  font-weight: 650;
 }
 
 /* ===== 气泡基础样式 ===== */
 .bubble {
-  padding: 20rpx 28rpx;
-  border-radius: 28rpx;
+  padding: 20rpx 26rpx;
+  border-radius: 26rpx;
   position: relative;
   word-break: break-word;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
   touch-action: pan-y; /* 限制垂直滚动，防止与手机端侧滑手势或返回冲突 */
 }
 
-/* ===== AI 气泡（高级白） ===== */
+/* ===== AI 轻纸片 ===== */
 .ai-bubble {
-  background-color: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  color: #1c1c1e;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-top-left-radius: 4rpx;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background-color: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--app-color-text-primary, #26332e);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-top-left-radius: 10rpx;
+  box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.04);
 }
 
-/* ===== 用户气泡（高级黑） ===== */
+/* ===== 用户浅薄荷气泡 ===== */
 .user-bubble {
-  background-color: rgba(28, 28, 30, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-top-right-radius: 4rpx;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  padding: 18rpx 24rpx;
+  background-color: rgba(215, 236, 228, 0.9);
+  color: var(--app-color-text-primary, #26332e);
+  border: 1px solid rgba(112, 174, 155, 0.16);
+  border-top-right-radius: 10rpx;
+  box-shadow: 0 8rpx 24rpx rgba(79, 142, 124, 0.08);
 }
 
 /* ===== 文本渲染样式 ===== */
 .plain-text {
   font-size: 28rpx;
-  line-height: 1.5;
+  line-height: 1.58;
 }
 
 .markdown-content {
   font-size: 28rpx;
-  line-height: 1.6;
+  line-height: 1.72;
 }
 
 .markdown-content :deep(.md-p) {
-  margin: 10rpx 0;
-  line-height: 1.6;
+  margin: 12rpx 0;
+  line-height: 1.72;
 }
 
 .markdown-content :deep(.md-strong) {
-  font-weight: 600;
-  color: #000000;
+  font-weight: 680;
+  color: var(--app-color-text-primary, #26332e);
   padding: 0 4rpx;
 }
 
 .markdown-content :deep(.md-em) {
   font-style: italic;
-  color: #8e8e93; /* 旁白/动作采用更淡雅的灰色 */
+  color: var(--app-color-text-secondary, #7c8983);
   padding: 0 4rpx;
   font-weight: normal;
 }
 
 .markdown-content :deep(.md-dialogue) {
-  color: #1c1c1e; /* 对话更加突出 */
-  font-weight: 550; /* 略微加粗，突出说话内容 */
+  color: var(--app-color-text-primary, #26332e);
+  font-weight: 650;
 }
 
 /* ===== 元数据区域 ===== */
 .meta-area {
   display: flex;
-  gap: 12rpx;
-  margin-top: 10rpx;
-  margin-left: 6rpx;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 8rpx;
+  margin-left: 8rpx;
 }
 
 .meta-tag {
   font-size: 20rpx;
-  padding: 4rpx 14rpx;
+  padding: 3rpx 12rpx;
   border-radius: 40rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  color: #555558;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: rgba(255, 255, 255, 0.5);
+  color: var(--app-color-text-secondary, #7c8983);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .meta-tag.emotion {
@@ -515,16 +579,16 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .meta-tag.affection.positive {
-  color: #1c1c1e;
-  background-color: #ffffff;
-  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border-color: rgba(112, 174, 155, 0.18);
   font-weight: 600;
 }
 
 .meta-tag.affection.negative {
-  color: #ff3b30;
-  background-color: rgba(255, 59, 48, 0.05);
-  border-color: rgba(255, 59, 48, 0.15);
+  color: var(--app-color-danger, #d9655d);
+  background-color: rgba(217, 101, 93, 0.07);
+  border-color: rgba(217, 101, 93, 0.16);
   font-weight: 600;
 }
 
@@ -535,9 +599,9 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .meta-tag.model-used {
-  color: #8e8e93;
-  background-color: rgba(0, 0, 0, 0.01);
-  border-color: rgba(0, 0, 0, 0.03);
+  color: var(--app-color-text-muted, #a4aea9);
+  background-color: transparent;
+  border-color: transparent;
 }
 
 /* ===== TTS Button & Waveform Styles ===== */
@@ -550,9 +614,9 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .tts-btn.is-playing {
-  color: #10b981;
-  border-color: rgba(16, 185, 129, 0.2);
-  background-color: rgba(16, 185, 129, 0.05);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  border-color: rgba(112, 174, 155, 0.2);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .tts-icon {
@@ -577,7 +641,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .wave-bar {
   width: 3rpx;
   height: 6rpx;
-  background-color: #10b981;
+  background-color: var(--app-color-primary, #70ae9b);
   border-radius: 2rpx;
   animation: bounce 0.8s ease-in-out infinite alternate;
 }
@@ -615,24 +679,26 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   width: 8rpx;
   height: 8rpx;
   border-radius: 50%;
-  background-color: rgba(255, 255, 255, 0.6);
-  box-shadow: 16rpx 0 0 0 rgba(255, 255, 255, 0.4), 32rpx 0 0 0 rgba(255, 255, 255, 0.2);
+  background-color: rgba(79, 142, 124, 0.7);
+  box-shadow:
+    16rpx 0 0 0 rgba(79, 142, 124, 0.48),
+    32rpx 0 0 0 rgba(79, 142, 124, 0.28);
   animation: typing 1s infinite linear;
   margin-left: 4rpx;
 }
 
 @keyframes typing {
-  0% { box-shadow: 16rpx 0 0 0 rgba(255, 255, 255, 0.4), 32rpx 0 0 0 rgba(255, 255, 255, 0.2); }
-  33% { box-shadow: 16rpx 0 0 0 rgba(255, 255, 255, 0.6), 32rpx 0 0 0 rgba(255, 255, 255, 0.4); }
-  66% { box-shadow: 16rpx 0 0 0 rgba(255, 255, 255, 0.2), 32rpx 0 0 0 rgba(255, 255, 255, 0.6); }
-  100% { box-shadow: 16rpx 0 0 0 rgba(255, 255, 255, 0.4), 32rpx 0 0 0 rgba(255, 255, 255, 0.2); }
+  0% { box-shadow: 16rpx 0 0 0 rgba(79, 142, 124, 0.48), 32rpx 0 0 0 rgba(79, 142, 124, 0.28); }
+  33% { box-shadow: 16rpx 0 0 0 rgba(79, 142, 124, 0.7), 32rpx 0 0 0 rgba(79, 142, 124, 0.48); }
+  66% { box-shadow: 16rpx 0 0 0 rgba(79, 142, 124, 0.28), 32rpx 0 0 0 rgba(79, 142, 124, 0.7); }
+  100% { box-shadow: 16rpx 0 0 0 rgba(79, 142, 124, 0.48), 32rpx 0 0 0 rgba(79, 142, 124, 0.28); }
 }
 
 .cursor-blink {
   display: inline-block;
   width: 4rpx;
   height: 26rpx;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   vertical-align: middle;
   margin-left: 4rpx;
   animation: blink 1s step-end infinite;
@@ -660,7 +726,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   width: 10rpx;
   height: 10rpx;
   border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: var(--app-color-primary, #70ae9b);
   animation: ai-bounce 1.4s ease-in-out infinite;
 }
 
@@ -685,24 +751,24 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 
 .error-text {
   font-size: 22rpx;
-  color: #ff3b30;
+  color: var(--app-color-danger, #d9655d);
   margin-top: 8rpx;
 }
 
 /* ===== 推理思考容器 ===== */
 .thought-container {
-  background-color: rgba(0, 0, 0, 0.015);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-left: 3px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12rpx;
+  background-color: rgba(247, 249, 247, 0.72);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-left: 4rpx solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
+  border-radius: 16rpx;
   margin-bottom: 20rpx;
   overflow: hidden;
   transition: all 0.2s linear;
 }
 
 .thought-container.is-expanded {
-  background-color: rgba(0, 0, 0, 0.025);
-  border-left-color: #10b981;
+  background-color: rgba(238, 246, 241, 0.82);
+  border-left-color: var(--app-color-primary, #70ae9b);
 }
 
 .thought-header {
@@ -722,34 +788,34 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .brain-spark {
   width: 10rpx;
   height: 10rpx;
-  background-color: #8e8e93;
+  background-color: var(--app-color-text-muted, #a4aea9);
   border-radius: 50%;
 }
 
 .is-expanded .brain-spark {
-  background-color: #10b981;
+  background-color: var(--app-color-primary, #70ae9b);
 }
 
 .thought-title {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
   font-weight: 500;
 }
 
 .is-expanded .thought-title {
-  color: #1c1c1e;
+  color: var(--app-color-primary-strong, #4f8e7c);
   font-weight: 600;
 }
 
 .thought-arrow {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
   transition: transform 0.25s ease;
 }
 
 .thought-arrow.is-up {
   transform: rotate(180deg);
-  color: #1c1c1e;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .thought-body {
@@ -760,7 +826,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .thought-markdown-content {
   font-size: 24rpx;
   line-height: 1.5;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
 }
 
 .thought-markdown-content :deep(.md-p) {
@@ -770,7 +836,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 
 .thought-markdown-content :deep(.md-strong) {
   font-weight: 600;
-  color: #555558;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .thought-markdown-content :deep(.md-em) {
@@ -783,24 +849,23 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   align-items: center;
   justify-content: center;
   align-self: flex-start;
-  gap: 16rpx;
-  margin-top: 10rpx;
-  margin-left: 10rpx;
-  padding: 6rpx 16rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  border-radius: 30rpx;
+  gap: 8rpx;
+  margin-top: 8rpx;
+  margin-left: 8rpx;
+  padding: 2rpx 4rpx;
+  background-color: transparent;
+  border: 0;
   transition: all 0.2s;
   z-index: 10;
 }
 
 .candidate-pager:active {
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: transparent;
 }
 
 .pager-btn {
-  width: 56rpx;
-  height: 56rpx;
+  width: 44rpx;
+  height: 44rpx;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -813,15 +878,37 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .pager-arrow {
-  font-size: 18rpx;
-  color: #8e8e93;
+  font-size: 34rpx;
+  color: var(--app-color-text-muted, #a4aea9);
+  font-weight: 300;
+}
+
+.pager-dots {
+  display: flex;
+  align-items: center;
+  gap: 7rpx;
+}
+
+.pager-dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
+  transition:
+    width var(--app-motion-fast, 160ms) ease,
+    background-color var(--app-motion-fast, 160ms) ease;
+}
+
+.pager-dot.is-active {
+  width: 20rpx;
+  background-color: var(--app-color-primary, #70ae9b);
 }
 
 .pager-text {
-  font-size: 20rpx;
-  color: #8e8e93;
-  font-weight: 600;
-  min-width: 60rpx;
+  font-size: 19rpx;
+  color: var(--app-color-text-muted, #a4aea9);
+  font-weight: 550;
+  min-width: 42rpx;
   text-align: center;
   letter-spacing: 0.5px;
 }

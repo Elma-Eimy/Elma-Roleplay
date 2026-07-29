@@ -1,9 +1,13 @@
 <template>
   <view class="engine-settings-container">
     <!-- 加载配置时的 Loading 卡片 -->
-    <view v-if="isLoading" class="loading-card">
-      <text class="loading-text">正在加载引擎配置...</text>
-    </view>
+    <AppStatusState
+      v-if="isLoading"
+      kind="loading"
+      title="正在加载引擎配置"
+      description="同步模型、记忆与世界书参数。"
+      compact
+    />
 
     <view v-else class="engine-card">
       <!-- 推理模式开关行 -->
@@ -34,8 +38,8 @@
           class="engine-slider"
           :value="Math.round(localSettings.temperature * 10)"
           :min="1" :max="20" :step="1"
-          activeColor="#1c1c1e"
-          backgroundColor="rgba(0,0,0,0.07)"
+          activeColor="#70ae9b"
+          backgroundColor="rgba(38,51,46,0.08)"
           block-color="#ffffff"
           block-size="20"
           @change="(e: any) => localSettings.temperature = e.detail.value / 10"
@@ -97,8 +101,8 @@
             class="engine-slider"
             :value="Math.round(localSettings.top_p * 100)"
             :min="10" :max="100" :step="5"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.top_p = e.detail.value / 100"
@@ -118,8 +122,8 @@
             class="engine-slider"
             :value="Math.round((localSettings.presence_penalty + 2) * 10)"
             :min="0" :max="40" :step="1"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.presence_penalty = (e.detail.value / 10) - 2"
@@ -139,8 +143,8 @@
             class="engine-slider"
             :value="Math.round((localSettings.frequency_penalty + 2) * 10)"
             :min="0" :max="40" :step="1"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.frequency_penalty = (e.detail.value / 10) - 2"
@@ -160,8 +164,8 @@
             class="engine-slider"
             :value="Math.round(localSettings.repetition_penalty * 100)"
             :min="50" :max="200" :step="5"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.repetition_penalty = e.detail.value / 100"
@@ -181,8 +185,8 @@
             class="engine-slider"
             :value="Math.round(localSettings.retrieval_min_importance * 100)"
             :min="0" :max="100" :step="5"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.retrieval_min_importance = e.detail.value / 100"
@@ -202,8 +206,8 @@
             class="engine-slider"
             :value="Math.round(localSettings.retrieval_max_distance * 10)"
             :min="5" :max="30" :step="1"
-            activeColor="#1c1c1e"
-            backgroundColor="rgba(0,0,0,0.07)"
+            activeColor="#70ae9b"
+            backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
             @change="(e: any) => localSettings.retrieval_max_distance = e.detail.value / 10"
@@ -313,6 +317,7 @@
 <script setup lang="ts">
 import { ref, reactive, watch } from "vue";
 import type { AppSettings } from "@/api/settings";
+import AppStatusState from "@/components/common/AppStatusState.vue";
 
 const props = defineProps<{
   settings: AppSettings;
@@ -359,27 +364,11 @@ const save = () => {
   gap: 20rpx;
 }
 
-.loading-card {
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 24rpx;
-  padding: 60rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.loading-text {
-  font-size: 26rpx;
-  color: #8e8e93;
-}
-
 .engine-card {
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: rgba(247, 249, 247, 0.6);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 24rpx;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
 }
 
 .engine-row {
@@ -390,7 +379,7 @@ const save = () => {
 }
 
 .engine-row.border-bottom {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.07));
 }
 
 .engine-row-left {
@@ -408,21 +397,21 @@ const save = () => {
 .engine-param-name {
   font-size: 27rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .engine-param-val {
   font-size: 24rpx;
   font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   padding: 3rpx 14rpx;
   border-radius: 20rpx;
 }
 
 .engine-param-desc {
   font-size: 21rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
   line-height: 1.4;
 }
 
@@ -437,7 +426,7 @@ const save = () => {
   width: 88rpx;
   height: 48rpx;
   border-radius: 24rpx;
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: rgba(124, 137, 131, 0.2);
   position: relative;
   transition: background-color 0.25s ease;
   flex-shrink: 0;
@@ -446,7 +435,7 @@ const save = () => {
 }
 
 .custom-toggle.is-on {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary, #70ae9b);
 }
 
 .toggle-thumb {
@@ -468,7 +457,7 @@ const save = () => {
 /* Save Button */
 .save-engine-btn {
   height: 88rpx;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary, #70ae9b);
   border-radius: 44rpx;
   display: flex;
   align-items: center;
@@ -478,7 +467,7 @@ const save = () => {
 }
 
 .save-engine-btn:active {
-  background-color: #000000;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   transform: scale(0.975);
 }
 
@@ -492,7 +481,7 @@ const save = () => {
 .stepper {
   display: flex;
   align-items: center;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: rgba(124, 137, 131, 0.09);
   border-radius: 40rpx;
   padding: 4rpx;
   flex-shrink: 0;
@@ -508,8 +497,8 @@ const save = () => {
   background-color: #ffffff;
   font-size: 28rpx;
   font-weight: 500;
-  color: #1c1c1e;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  color: var(--app-color-text-primary, #26332e);
+  box-shadow: 0 3rpx 10rpx rgba(45, 72, 62, 0.07);
 }
 
 .step-btn:active {
@@ -521,7 +510,7 @@ const save = () => {
   text-align: center;
   font-size: 24rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 /* ===== Advanced Settings Collapsible ===== */
@@ -530,7 +519,7 @@ const save = () => {
   justify-content: center;
   align-items: center;
   padding: 32rpx 28rpx;
-  background-color: #ffffff;
+  background-color: rgba(247, 249, 247, 0.42);
 }
 
 .advanced-toggle-btn {
@@ -540,8 +529,8 @@ const save = () => {
   gap: 8rpx;
   width: 100%;
   height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.015);
-  border: 1px dashed rgba(0, 0, 0, 0.12);
+  background-color: rgba(255, 255, 255, 0.58);
+  border: 1px dashed rgba(112, 174, 155, 0.32);
   border-radius: 20rpx;
   transition: all 0.2s ease;
   cursor: pointer;
@@ -556,12 +545,12 @@ const save = () => {
 .advanced-toggle-text {
   font-size: 26rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .advanced-toggle-subtext {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #7c8983);
 }
 
 .advanced-chevron {
@@ -578,7 +567,7 @@ const save = () => {
 
 .advanced-section {
   display: none;
-  background-color: rgba(0, 0, 0, 0.005);
+  background-color: rgba(255, 255, 255, 0.3);
 }
 
 .advanced-section.is-show {

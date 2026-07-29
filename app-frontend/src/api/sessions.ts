@@ -27,9 +27,11 @@ export interface SessionSummary {
   id: number;
   title: string;
   parent_session_id: number | null;
+  fork_message_id?: number | null;
   created_at: string;
   updated_at: string;
   persona: PersonaSummary;
+  last_message: Pick<Message, "content" | "created_at"> | null;
 }
 
 export interface SessionDetail {
@@ -40,6 +42,16 @@ export interface SessionDetail {
   updated_at: string;
   persona: PersonaDetail;
   character: CharacterRef;
+}
+
+export interface MessageCandidate {
+  id: number;
+  content: string;
+  reasoning_content?: string | null;
+  emotion_tag: string | null;
+  affection_change: number | null;
+  created_at: string;
+  audio_path?: string | null;
 }
 
 export interface Message {
@@ -53,7 +65,7 @@ export interface Message {
   model_used?: string;
   parent_id?: number | null;
   is_active?: boolean;
-  candidates?: Message[];
+  candidates?: MessageCandidate[];
   active_index?: number;
   audio_path?: string | null;
 }
@@ -70,6 +82,54 @@ export interface MemoryChunk {
   source_message_id?: number | null;
   supersedes_id?: number | null;
   is_superseded?: boolean;
+}
+
+export type MemoryScope = "all" | "local" | "inherited";
+export type MemoryStatus = "active" | "superseded" | "all";
+
+export interface MemoryStats {
+  effective_total: number;
+  local_active: number;
+  inherited_active: number;
+  superseded: number;
+}
+
+export interface GetSessionMemoriesParams {
+  q?: string;
+  scope?: MemoryScope;
+  status?: MemoryStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface GetSessionMemoriesResponse {
+  items: MemoryChunk[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  facets: MemoryStats;
+}
+
+export interface CharacterMemoryOverviewSession {
+  session_id: number;
+  title: string;
+  parent_session_id: number | null;
+  created_at: string;
+  updated_at: string;
+  last_message: Pick<Message, "content" | "created_at"> | null;
+  memory_stats: MemoryStats;
+}
+
+export interface CharacterMemoryOverviewResponse {
+  character_id: number;
+  story_count: number;
+  recent_session_id: number | null;
+  sessions: CharacterMemoryOverviewSession[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 }
 
 export interface CreateSessionParams {
@@ -92,6 +152,23 @@ export interface CreateSessionResponse {
 export interface GetSessionsResponse {
   character_id: number;
   sessions: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface RecentSessionSummary extends SessionSummary {
+  character: CharacterRef;
+  last_message: Pick<Message, "content" | "created_at"> | null;
+}
+
+export interface GetRecentSessionsResponse {
+  sessions: RecentSessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 }
 
 export interface GetHistoryResponse {
@@ -253,28 +330,149 @@ export async function createSession(
  * 列出指定角色的所有会话。
  * GET /sessions?character_id={characterId}
  */
-export async function getSessions(characterId: number): Promise<GetSessionsResponse> {
+export async function getSessions(
+  characterId: number,
+  limit = 50,
+  offset = 0,
+  includeLastMessage = true
+): Promise<GetSessionsResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
-    const filtered = db.sessions.filter((s) => s.character_id === characterId);
+    const filtered = db.sessions
+      .filter((s) => s.character_id === characterId)
+      .sort((a, b) => {
+        const timeDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        return timeDiff || b.id - a.id;
+      });
+    const page = filtered.slice(offset, offset + limit);
     return {
       character_id: characterId,
-      sessions: filtered.map((s) => ({
-        id: s.id,
-        title: s.title,
-        parent_session_id: s.parent_session_id,
-        created_at: s.created_at,
-        updated_at: s.updated_at,
-        persona: {
-          id: s.persona.id,
-          affection_score: s.persona.affection_score,
-          current_mood: s.persona.current_mood,
-        },
-      })),
+      sessions: page.map((s) => {
+        const activeMessages = (db.messages[s.id] || []).filter(
+          (message) => message.is_active !== false
+        );
+        const lastMessage = includeLastMessage
+          ? activeMessages[activeMessages.length - 1] || null
+          : null;
+        return {
+          id: s.id,
+          title: s.title,
+          parent_session_id: s.parent_session_id,
+          fork_message_id: s.fork_message_id || null,
+          created_at: s.created_at,
+          updated_at: s.updated_at,
+          persona: {
+            id: s.persona.id,
+            affection_score: s.persona.affection_score,
+            current_mood: s.persona.current_mood,
+          },
+          last_message: lastMessage
+            ? {
+                content: String(lastMessage.content || ""),
+                created_at: lastMessage.created_at,
+              }
+            : null,
+        };
+      }),
+      total: filtered.length,
+      limit,
+      offset,
+      has_more: offset + page.length < filtered.length,
     };
   }
 
-  return request<GetSessionsResponse>(`/sessions?character_id=${characterId}`);
+  return request<GetSessionsResponse>(
+    `/sessions?character_id=${characterId}&include_last_message=${includeLastMessage}&limit=${limit}&offset=${offset}`
+  );
+}
+
+/**
+ * 获取指定角色的全部会话页，供故事树等需要完整分支关系的界面使用。
+ */
+export async function getAllSessions(
+  characterId: number,
+  includeLastMessage = true
+): Promise<GetSessionsResponse> {
+  const pageSize = 100;
+  let page = await getSessions(characterId, pageSize, 0, includeLastMessage);
+  const sessions = [...page.sessions];
+  let nextOffset = page.offset + page.sessions.length;
+
+  while (page.has_more) {
+    page = await getSessions(characterId, pageSize, nextOffset, includeLastMessage);
+    sessions.push(...page.sessions);
+    nextOffset = page.offset + page.sessions.length;
+  }
+
+  return {
+    character_id: characterId,
+    sessions,
+    total: page.total,
+    limit: sessions.length,
+    offset: 0,
+    has_more: false,
+  };
+}
+
+/**
+ * 获取首页最近会话聚合数据。
+ * 后端应在一次查询中返回角色摘要与最后一条消息，避免首页 N+1 请求。
+ * GET /sessions/recent?limit={limit}&offset={offset}
+ */
+export async function getRecentSessions(
+  limit = 50,
+  offset = 0
+): Promise<GetRecentSessionsResponse> {
+  if (USE_MOCK) {
+    const db = getMockDB();
+    const sessions = db.sessions
+      .map((session) => {
+        const character = db.characters.find((item) => item.id === session.character_id);
+        const messages = db.messages[session.id] || [];
+        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+
+        return {
+          id: session.id,
+          title: session.title,
+          parent_session_id: session.parent_session_id,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          persona: {
+            id: session.persona.id,
+            affection_score: session.persona.affection_score,
+            current_mood: session.persona.current_mood,
+          },
+          character: {
+            id: character?.id ?? session.character_id,
+            name: character?.name ?? "Unknown Character",
+            avatar_path: character?.avatar_path ?? "",
+          },
+          last_message: lastMessage
+            ? {
+                content: String(lastMessage.content || ""),
+                created_at: lastMessage.created_at,
+              }
+            : null,
+        };
+      })
+      .sort((a, b) => {
+        const aTime = a.last_message?.created_at || a.updated_at;
+        const bTime = b.last_message?.created_at || b.updated_at;
+        return new Date(bTime).getTime() - new Date(aTime).getTime();
+      });
+
+    return {
+      sessions: sessions.slice(offset, offset + limit),
+      total: sessions.length,
+      limit,
+      offset,
+      has_more: offset + limit < sessions.length,
+    };
+  }
+
+  return request<GetRecentSessionsResponse>(
+    `/sessions/recent?limit=${limit}&offset=${offset}`
+  );
 }
 
 /**
@@ -629,27 +827,150 @@ export interface CompiledPromptResponse {
  */
 export async function getSessionMemories(
   sessionId: number,
-  limit: number = 20,
-  offset: number = 0,
-  q: string = ""
-): Promise<MemoryChunk[]> {
+  params: GetSessionMemoriesParams = {}
+): Promise<GetSessionMemoriesResponse> {
+  const {
+    q = "",
+    scope = "all",
+    status = "active",
+    limit = 20,
+    offset = 0,
+  } = params;
+
   if (USE_MOCK) {
     const db = getMockDB() as any;
     if (!db.memories) {
       db.memories = {};
     }
-    let list = db.memories[sessionId] || [];
+    const sessionById = new Map<number, any>(
+      (db.sessions || []).map((session: any) => [session.id, session])
+    );
+    const lineageSessionIds: number[] = [];
+    const visited = new Set<number>();
+    let currentSessionId: number | null = sessionId;
+    while (currentSessionId !== null && !visited.has(currentSessionId)) {
+      visited.add(currentSessionId);
+      lineageSessionIds.push(currentSessionId);
+      currentSessionId = sessionById.get(currentSessionId)?.parent_session_id ?? null;
+    }
+
+    let list: MemoryChunk[] = lineageSessionIds.flatMap((visibleSessionId) =>
+      (db.memories[visibleSessionId] || []).map((memory: MemoryChunk) => ({
+        ...memory,
+        is_local: visibleSessionId === sessionId,
+      }))
+    );
+    const supersededIds = new Set<number>(
+      list
+        .map((memory) => memory.supersedes_id)
+        .filter((id): id is number => typeof id === "number")
+    );
+    list = list.map((memory) => ({
+      ...memory,
+      is_superseded: supersededIds.has(memory.id),
+    }));
+
     if (q && q.trim()) {
       const term = q.trim().toLowerCase();
-      list = list.filter((m: any) => m.content.toLowerCase().includes(term));
+      list = list.filter((memory) => memory.content.toLowerCase().includes(term));
     }
-    return list.slice(offset, offset + limit);
+
+    const activeList = list.filter((memory) => !memory.is_superseded);
+    const facets: MemoryStats = {
+      effective_total: activeList.length,
+      local_active: activeList.filter((memory) => memory.is_local).length,
+      inherited_active: activeList.filter((memory) => !memory.is_local).length,
+      superseded: list.filter((memory) => memory.is_superseded).length,
+    };
+
+    if (scope === "local") {
+      list = list.filter((memory) => memory.is_local);
+    } else if (scope === "inherited") {
+      list = list.filter((memory) => !memory.is_local);
+    }
+    if (status === "active") {
+      list = list.filter((memory) => !memory.is_superseded);
+    } else if (status === "superseded") {
+      list = list.filter((memory) => memory.is_superseded);
+    }
+
+    list.sort((a, b) => {
+      const timeDiff =
+        new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      return timeDiff || b.id - a.id;
+    });
+    const items = list.slice(offset, offset + limit);
+    return {
+      items,
+      total: list.length,
+      limit,
+      offset,
+      has_more: offset + items.length < list.length,
+      facets,
+    };
   }
 
-  const queryParam = q && q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "";
-  return request<MemoryChunk[]>(`/sessions/${sessionId}/memories?limit=${limit}&offset=${offset}${queryParam}`, {
-    method: "GET",
-  });
+  const query = [
+    `scope=${scope}`,
+    `status=${status}`,
+    `limit=${limit}`,
+    `offset=${offset}`,
+  ];
+  if (q.trim()) {
+    query.push(`q=${encodeURIComponent(q.trim())}`);
+  }
+  return request<GetSessionMemoriesResponse>(
+    `/sessions/${sessionId}/memories?${query.join("&")}`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * 获取角色下各故事线的记忆统计与最近消息，用于角色详情记忆导航。
+ * GET /characters/{character_id}/memory-overview
+ */
+export async function getCharacterMemoryOverview(
+  characterId: number,
+  limit = 50,
+  offset = 0
+): Promise<CharacterMemoryOverviewResponse> {
+  if (USE_MOCK) {
+    const page = await getSessions(characterId, limit, offset, true);
+    const sessions = await Promise.all(
+      page.sessions.map(async (session) => {
+        const memories = await getSessionMemories(session.id, {
+          scope: "all",
+          status: "active",
+          limit: 1,
+          offset: 0,
+        });
+        return {
+          session_id: session.id,
+          title: session.title,
+          parent_session_id: session.parent_session_id,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          last_message: session.last_message,
+          memory_stats: memories.facets,
+        };
+      })
+    );
+    return {
+      character_id: characterId,
+      story_count: page.total,
+      recent_session_id: sessions[0]?.session_id ?? null,
+      sessions,
+      total: page.total,
+      limit,
+      offset,
+      has_more: page.has_more,
+    };
+  }
+
+  return request<CharacterMemoryOverviewResponse>(
+    `/characters/${characterId}/memory-overview?limit=${limit}&offset=${offset}`,
+    { method: "GET" }
+  );
 }
 
 /**

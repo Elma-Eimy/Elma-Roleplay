@@ -112,8 +112,10 @@ class MainRoleplayPromptTests(unittest.TestCase):
     def test_default_main_prompt_defines_role_and_user_autonomy(self):
         prompt = compile_system_prompt(_character(), None, "小明")
 
-        self.assertIn("你负责扮演 露娜", prompt)
-        self.assertIn("为 小明 写出 露娜 的下一条回复", prompt)
+        self.assertIn("露娜 是当前角色卡或叙事主体的名称", prompt)
+        self.assertIn("角色卡可能定义单一人物", prompt)
+        self.assertIn("也可能定义多个逻辑角色、群像、叙事者、导演或场景主持者", prompt)
+        self.assertIn("不得擅自将其扩展成群像", prompt)
         self.assertIn("不替 小明 决定其台词、思想、情绪或关键行动", prompt)
         self.assertEqual(1, prompt.count("月光城的守夜人。"))
         self.assertEqual(1, prompt.count("冷静而温柔。"))
@@ -140,7 +142,50 @@ class MainRoleplayPromptTests(unittest.TestCase):
             "小明",
         )
 
-        self.assertIn("你负责扮演 露娜", prompt)
+        self.assertIn("露娜 是当前角色卡或叙事主体的名称", prompt)
+
+    def test_single_card_can_define_multiple_logical_roles(self):
+        prompt = compile_system_prompt(
+            _character(
+                name="双生侦探",
+                description=(
+                    "模型同时扮演林夏和林秋。"
+                    "林夏冲动但不知道密室钥匙的来历；"
+                    "林秋冷静并独自保守钥匙的秘密。"
+                ),
+                personality="",
+            ),
+            None,
+            "小明",
+        )
+
+        self.assertIn("双生侦探 是当前角色卡或叙事主体的名称", prompt)
+        self.assertIn("如果角色卡明确授权控制多个角色", prompt)
+        self.assertIn("不得混合不同角色的秘密、认知或人格", prompt)
+        self.assertIn("模型同时扮演林夏和林秋", prompt)
+        self.assertIn("不替 小明 决定", prompt)
+
+    def test_director_card_can_choose_narrative_person_and_multiple_speakers(self):
+        character = _character(
+            name="夜城导演",
+            description="担任第三人称导演，并控制场景内明确列出的所有 NPC。",
+            personality="",
+        )
+        system_prompt = compile_system_prompt(character, None, "小明")
+        output_prompt = compile_post_history_prompt(character, "小明")
+
+        self.assertIn("第一人称、第三人称或混合叙事", system_prompt)
+        self.assertIn("清晰的台词归属", system_prompt)
+        self.assertIn("一个或多个受控角色的台词", output_prompt)
+        self.assertIn("清楚区分发言者", output_prompt)
+        self.assertNotIn("你的第一人称角色扮演回复文本", output_prompt)
+
+    def test_status_contract_remains_single_card_level_state(self):
+        output_prompt = compile_post_history_prompt(_character(), "小明")
+
+        self.assertIn("主要互动焦点角色的主导情绪", output_prompt)
+        self.assertIn("角色卡主体与用户之间的总体关系变化量", output_prompt)
+        self.assertIn("范围在 -5 到 5 之间", output_prompt)
 
     def test_post_history_original_no_longer_duplicates_character_definition(self):
         character = _character(
@@ -240,6 +285,7 @@ class DialogueExampleCompilationTests(unittest.TestCase):
                 "user",
                 "assistant",
                 "system",
+                "system",
                 "user",
                 "system",
             ],
@@ -259,6 +305,21 @@ class DialogueExampleCompilationTests(unittest.TestCase):
                 '<status emotion="平静" affection_change="0"/>'
             ),
             messages[4]["content"],
+        )
+        self.assertIn("【对话示例结束】", messages[5]["content"])
+        self.assertIn("不属于当前故事历史", messages[5]["content"])
+        boundary_index = next(
+            i
+            for i, message in enumerate(messages)
+            if "【对话示例结束】" in message["content"]
+        )
+        self.assertLess(
+            boundary_index,
+            next(
+                i
+                for i, message in enumerate(messages)
+                if message["content"] == "现在开始吧。"
+            ),
         )
         self.assertIn("【对话示例说明】", messages[0]["content"])
 
@@ -315,6 +376,9 @@ class DialogueExampleCompilationTests(unittest.TestCase):
         )
         self.assertIn("【未结构化对话示例】", messages[0]["content"])
         self.assertIn("她说话总是简短而克制。", messages[0]["content"])
+        self.assertNotIn("【对话示例结束】", "\n".join(
+            message["content"] for message in messages
+        ))
 
     def test_explicit_example_macro_prevents_automatic_duplication(self):
         raw_example = "<START>\n{{user}}: 你好\n{{char}}: 晚上好"
@@ -483,8 +547,18 @@ class LorebookPositionCompatibilityTests(unittest.TestCase):
         before_index = next(i for i, content in enumerate(contents) if "世界书前问" in content)
         card_index = next(i for i, content in enumerate(contents) if "卡片问" in content)
         after_index = next(i for i, content in enumerate(contents) if "世界书后问" in content)
+        boundary_index = next(
+            i for i, content in enumerate(contents)
+            if "【对话示例结束】" in content
+        )
+        current_index = next(
+            i for i, content in enumerate(contents)
+            if content == "当前问题"
+        )
         self.assertLess(before_index, card_index)
         self.assertLess(card_index, after_index)
+        self.assertLess(after_index, boundary_index)
+        self.assertLess(boundary_index, current_index)
 
     def test_at_depth_honors_depth_and_message_role(self):
         character = self._character_with_entries(
@@ -652,6 +726,150 @@ class DynamicContextSeparationTests(unittest.TestCase):
         )
 
         self.assertEqual(user_text, messages[-2]["content"])
+
+
+class CharacterDepthPromptCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _build_messages(extensions, recent_history=None):
+        return build_chat_messages(
+            character=_character(
+                scenario="",
+                extensions=json.dumps(extensions, ensure_ascii=False),
+            ),
+            persona=None,
+            recent_history=recent_history or [],
+            user_message="current question",
+            user_nickname="Alice",
+        )
+
+    def test_depth_prompt_honors_depth_role_and_placeholders(self):
+        messages = self._build_messages(
+            {
+                "depth_prompt": {
+                    "prompt": "Keep {{char}} loyal to {{user}}.",
+                    "depth": 2,
+                    "role": "system",
+                }
+            },
+            [
+                {"role": "user", "content": "old question"},
+                {
+                    "role": "assistant",
+                    "content": "old answer",
+                    "emotion_tag": "calm",
+                    "affection_change": 0,
+                },
+            ],
+        )
+
+        old_user_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "old question"
+        )
+        depth_prompt_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "Keep 露娜 loyal to Alice."
+        )
+        old_assistant_index = next(
+            i for i, message in enumerate(messages)
+            if "old answer" in message["content"]
+        )
+
+        self.assertEqual("system", messages[depth_prompt_index]["role"])
+        self.assertLess(old_user_index, depth_prompt_index)
+        self.assertLess(depth_prompt_index, old_assistant_index)
+
+    def test_numeric_role_and_depth_zero_are_supported(self):
+        messages = self._build_messages(
+            {
+                "depth_prompt": {
+                    "prompt": "depth zero",
+                    "depth": "0",
+                    "role": 1,
+                }
+            }
+        )
+
+        current_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "current question"
+        )
+        prompt_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "depth zero"
+        )
+        self.assertEqual("user", messages[prompt_index]["role"])
+        self.assertGreater(prompt_index, current_index)
+        self.assertLess(prompt_index, len(messages) - 1)
+
+    def test_depth_prompt_and_lorebook_share_the_same_depth_boundary(self):
+        messages = self._build_messages(
+            {
+                "depth_prompt": {
+                    "prompt": "character depth prompt",
+                    "depth": 1,
+                    "role": "system",
+                },
+                "character_book": {
+                    "token_budget": 100000,
+                    "entries": [
+                        {
+                            "keys": [],
+                            "content": "lorebook depth entry",
+                            "constant": True,
+                            "position": 4,
+                            "depth": 1,
+                            "role": 0,
+                        }
+                    ],
+                },
+            },
+            [{"role": "user", "content": "old question"}],
+        )
+
+        old_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "old question"
+        )
+        lorebook_index = next(
+            i for i, message in enumerate(messages)
+            if "lorebook depth entry" in message["content"]
+        )
+        depth_prompt_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "character depth prompt"
+        )
+        current_index = next(
+            i for i, message in enumerate(messages)
+            if message["content"] == "current question"
+        )
+
+        self.assertLess(old_index, lorebook_index)
+        self.assertLess(lorebook_index, current_index)
+        self.assertLess(old_index, depth_prompt_index)
+        self.assertLess(depth_prompt_index, current_index)
+
+    def test_missing_or_malformed_depth_prompt_is_ignored(self):
+        invalid_extensions = (
+            {},
+            {"depth_prompt": None},
+            {"depth_prompt": "not an object"},
+            {"depth_prompt": {}},
+            {"depth_prompt": {"prompt": ""}},
+            {"depth_prompt": {"prompt": 123}},
+        )
+
+        for extensions in invalid_extensions:
+            with self.subTest(extensions=extensions):
+                messages = self._build_messages(extensions)
+                self.assertNotIn(
+                    "character_depth_prompt",
+                    "\n".join(message["content"] for message in messages),
+                )
+                self.assertEqual(
+                    ["system", "user", "system"],
+                    [message["role"] for message in messages],
+                )
 
 
 if __name__ == "__main__":

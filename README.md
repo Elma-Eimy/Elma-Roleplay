@@ -14,46 +14,58 @@
 
 ## 核心产品功能模块
 
-### 沉浸式角色对话 (Chat & Roleplay)
-* **气泡式对话流**：支持流式打字输出，气泡对话框内会直接渲染出 AI 角色当前的情绪标签与好感度变动。
-* **SillyTavern 兼容状态指标**：为了兼容 SillyTavern 角色卡规范，对话产生的情绪标签（Emotion Tag）及好感度变动数据会存储在数据库中，支持在界面中以状态指示器形式展示。
-* **配音朗读与过滤 (TTS)**：集成云端语音合成接口，支持自动或手动播放语音。系统会自动剔除文本中星号或括号包裹的物理动作与旁白描述，仅保留角色台词。
+### 1. 清新角色画册与叙事对话 (Story Hub & Narrative Chat)
+* **故事首页 (Story Hub)**：支持查看最近故事列表、角色横廊、快捷发起对话与导入角色卡。
+* **角色画册 (Character Gallery)**：瀑布流与网格形式展示角色卡，方便快速检索与浏览。
+* **柔光叙事聊天 (Soft Narrative Chat)**：气泡对话流支持流式打字输出、思考推理过程（`<reasoning_content>`）展开收起展示，并实时渲染情绪标签与好感度变动。
+* **自定义聊天背景 (Chat Backgrounds)**：支持在纯净浅色背景与角色立绘壁纸模式之间一键切换；立绘背景经过低透明度、柔和微模糊与降饱和处理，搭配气泡毛玻璃效果，提供沉浸且不干扰阅读的视觉体验。设置按会话分支保存并继承。
+* **配音朗读与过滤 (TTS)**：集成云端 MIMO-v2.5-tts 语音合成接口，支持自动/手动播放。系统自动保护声音事件标记（如叹气、笑声），剔除动作与心理描写后仅保留实际台词，并具备本地 LRU 缓存与缺损自愈重建机制。
 
-### 多分支剧情与世界线 (Story Branching & Worldlines)
-* **多候选回复切换 (Candidates)**：同一轮对话支持生成和存储多个 AI 候选回复版本。用户可以通过点击气泡底部的翻页按钮进行切换，在不同的 AI 回复之间自由选择，对应的好感度与音频也会同步更新。
-* **剧情分支分叉 (Fork)**：支持从任意历史消息节点一键分叉出新的子会话。新分支会继承上一代会话的好感度、心情及认知状态，并自动克隆起始消息，确保上下文连贯。
+### 2. 多分支剧情与世界线 (Story Branching & Worldlines)
+* **多候选回复切换 (Swipe Candidates)**：同一轮对话支持生成和存储多个 AI 候选回复版本。用户可在气泡底部轻松切换，对应的好感度、情绪变动及语音音频会同步联动重算与回滚。
+* **剧情分支分叉 (Fork)**：支持从任意历史消息节点一键分叉出新的子会话。持久化保存 `fork_message_id` 分叉边界，继承上一代会话的好感度、心情、认知状态与聊天背景设置，并提供可视化分支树（BranchTreeView）随时切换不同时间线。
 
-### 角色工坊 (Character Studio)
-* **角色卡解析**：支持直接拖拽或上传 SillyTavern 规格的 PNG 角色卡或 JSON 文件，系统能自动清洗 HTML 标签并解析生成结构化角色数据。
-* **完整人设自定义**：支持可视化编辑角色名、头像、核心人设描述、性格特点、开场白、首条消息绑定以及提示词覆盖等参数。
+### 3. 角色工坊与人物档案 (Character Studio & Dossier)
+* **角色卡解析**：支持拖拽或上传 SillyTavern 规格的 PNG（`tEXt/zTXt/iTXt`）角色卡或 JSON 文件，自动解析清洗并提取角色属性。
+* **人物档案 (Character Dossier)**：包含角色基础属性编辑、故事档案管理、专属/公共世界书绑定、按故事线隔离的记忆库导航与关联故事线图表。
 
-### 独立百科世界书 (Lorebooks)
-* **设定集管理**：支持可视化创建、编辑独立世界书（Lorebooks），用于构建角色专属的设定百科库。
-* **触发机制微调**：支持配置激活关键词、常量激活、触发权重、最大扫描深度等触发规则。
-* **多对多绑定**：世界书独立于角色卡存储，可与不同的角色卡进行自由绑定或解绑。
+### 4. 提示词编译与 Token 范围观测 (Prompt Compiler & Token Inspection)
+* **Prompt Caching 深度优化**：
+  - 静态人设与动态背景（世界书、RAG 记忆、图谱三元组）彻底分离。
+  - PHI（Post-History Instructions）真正置底，强化指令控制力。
+  - 支持 SillyTavern `{{original}}` 与 `<START>` 示例分块解析。
+  - 支持 `extensions.depth_prompt`，可按聊天深度灵活注入自定义角色/用户指令。
+  - 结构化 `<reply>/<status>` XML 响应契约约束，支持单角色及多逻辑角色的台词与旁白混合输出。
+* **Token 范围观测**：提供 `/sessions/{session_id}/compile_prompt` 接口，按区段可视化展示编译后的完整 Prompt、字符数估算与 Token 分布（带有日志 `[PROMPT METRICS]` 监控）。
 
-### 记忆与图谱审查 (Memory & Graph Review)
-* **语义记忆管理**：展示系统从历史对话中提纯出的语义记忆碎片（MemoryChunks），支持用户直接手动添加、修改或删除。
-* **知识图谱关系网络**：支持图谱三元组（实体与关系）的后台检索与浏览，辅助复杂关联事实的关联。
-* **Prompt 组装预览**：调试模式下，可以一键获取并预览最近一轮提交给大模型的完整 System Prompt 拼接详情（包含被检索激活的记忆与世界书内容）。
+### 5. 独立百科世界书 (Lorebooks)
+* **SillyTavern 格式深度兼容**：全面支持关键词权重、常量激活、递归扫描以及精确位置语义（`Before/After Char Defs`、`@ Depth` 等）。
+* **逻辑规则微调**：支持 `AND ANY`、`AND ALL`、`NOT ANY`、`NOT ALL` 组合逻辑，支持正则匹配（`/pattern/flags`）与 0-100% 概率触发判定。
+* **AC 自动机引擎**：后端使用 Aho-Corasick 算法进行单轮文本高效匹配，限制扫描深度与 Token 预算。
 
-### 参数控制面板 (Settings Panel)
-* **常用与高级参数调节**：提供便捷的控制面板，支持调整大模型温度（temperature）、上下文携带量、RAG 检索阈值、AC 自动机深度等后端运行时参数，修改后自动持久化。
+### 6. 记忆与知识图谱审查 (Memory & Graph RAG)
+* **按故事线隔离的语义记忆管理**：长期记忆按会话故事线独立保存并支持继承链追溯。记忆管理界面支持服务端精准搜索、基于后端 `facets` 统计的多分类筛选（全部、当前故事、继承、已替代）、手动新增、编辑与删除；记忆卡片展示中文类型、权重、消息来源区间（`source_start_message_id` - `source_message_id`）与版本替代标记（`supersedes_id`）。
+* **人物档案故事记忆导航**：人物档案中的“记忆”区域作为故事线导航入口，提供故事线概览（`/characters/{id}/memory-overview`），选择具体故事线后拉取并打开对应记忆库。
+* **知识图谱关系网络 (Graph RAG)**：支持实体别名（`aliases`）、两层邻接遍历（2-hop）与实体关系检索，避免生成事实冲突。
+* **实时 Prompt 组装预览**：调试模式下可一键预览实际提交给模型的完整 system / user 消息与注入背景。
 
-### 移动端 App 支持 (Mobile App Support)
-* **原生云打包**：前端基于 UniApp 跨平台框架，支持使用 HBuilderX 开发工具直接打包为 Android (.apk) 或 iOS (.ipa) 原生应用，方便在手机上进行便捷、沉浸式的对话体验。
+### 7. 设置与连接中心 (Settings Navigation)
+* 模块化设置卡片，涵盖模型与引擎参数热更新、RAG 检索阈值调整、服务器连接 URL、`X-API-Key` 本地安全凭据管理以及 Mock 数据重置功能。
 
 ---
 
 ## 核心技术与工程特性
 
-* **混合检索记忆管道 (RAG & Graph RAG)**：结合 ChromaDB 语义向量匹配（余弦距离）与 SQLite 事实三元组图谱检索。利用多维打分（余弦相似度 + 重要性评分 + 时间指数衰减）与祖先链递归，提取近期聊天并归纳为角色自我认知。
-* **会话级并发锁**：使用 `asyncio.Lock` 实现单会话串行处理，锁生命周期绑定到 SSE 的流式连接，防止高并发导致的数据库写入乱序。
-* **高速世界书扫描**：后端引入 Aho-Corasick（AC自动机）算法，单轮会话中对世界书关键词进行高效匹配，支持扫描深度限制与 Token 预算截断。
-* **数据库在轨自适应迁移**：启动阶段自动载入 Alembic，自动扫描并将 SQLite (WAL模式) 表升级到最新版本，并在旧数据存在时执行 baseline 自动标记对齐。
-* **异步事务发件箱 (Outbox)**：采用事务型发件箱模式异步消费后台任务（如物理文件删除、向量库清理等），并使用指数退避算法重试，保证 SQLite 提交与外部存储清理的数据一致性。
-* **滚动分页与性能优化**：通过游标 `before_id` 分页拉取历史消息，避免长会话引起的内存与网络暴涨。前端采用初始化滚动锁与渲染微调值，确保打字机流式输出时的置底滚动性能。
-* **多端与跨平台兼容**：Uni-App 前端移除第三方图标库依赖，改用本地静态 SVG 渲染；提供 HTTP 删除端点与 `POST .../delete` 双通道降级以规避移动端网络代理重定向可能引起的 `DELETE` 方法变更为 `GET` 的现象；提供局域网自动探针寻址功能，方便移动真机联调。
+* **服务模块化分包架构**：后端重构为 `conversation`（对话与 Prompt 编译）、`lorebook`（世界书扫描）、`memory`（RAG 与图谱）、`infrastructure`（底层设施与 Outbox Worker）四大核心子包，高内聚低耦合。
+* **上下文化检索查询 (Contextual Retrieval Query)**：RAG 与 Graph RAG 不再仅使用当前用户单句话，而是自动构造“当前问题 + 最近 N 轮有效对话”的有界上下文查询，解决人称代词指代不明与语境脱节问题。
+* **分叉边界隔离保护**：基于 `sessions.fork_message_id` 准确隔离父子分支的时间线，防止未来消息在分支继承中泄漏。
+* **混合检索与精排管道**：支持三维混合打分（余弦相似度 60% + 重要性 20% + 时间衰减 20%），并伴随代际衰减与图谱实体关联召回。
+* **事务型发件箱 (Outbox) 与多维资源安全清理**：SQLite 提交与外部异步清理通过事务发件箱解耦；Worker 具备 5 分钟租约超时自愈与指数退避重试，除处理向量同步与音频回收外，新增 `delete_avatar` 任务处理，实现角色删除或更换头像时无引用废弃文件的安全物理回收。
+* **对话回合事务原子性**：用户消息先入库后触发模型推理，若 Prompt 装配、API 调用或流式传输异常，系统自动回滚并物理删除残留的用户消息，释放会话级 `asyncio.Lock`。
+* **数据库自适应迁移**：启动阶段利用 Alembic 自动将 SQLite (WAL 模式) 数据库升级至最新 `head` 版本，并对旧表执行 baseline 标记对齐。
+* **双通道 HTTP 删除与代理降级避让**：所有物理删除操作除标准 `DELETE` 外，均额外挂载 `POST .../delete` 通道，防止移动网络代理或反向代理在 HTTP 重定向 HTTPS 时将 `DELETE` 方法变更为 `GET`。
+* **静态资源安全与凭据传递**：除 `/assets/avatars/*` 公开资源外，所有接口均使用 `X-API-Key` 请求头传递凭据，严禁长期密钥进入 URL 参数；音频资源仅通过携带凭据的下载接口播放，支持物理文件丢失后的延迟自愈重建。
+* **前端设计系统与优化**：统一 SCSS 语义设计变量、懒加载头像组件（`AvatarImage.vue`）、无缝状态反馈组件（`AppStatusState.vue`），全面适配系统“减少动画”偏好。
 
 ---
 
@@ -62,17 +74,29 @@
 ```text
 /APP
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
-│   ├── core/          # 数据库、配置、会话锁、在轨自适应迁移逻辑
-│   ├── routers/       # 聊天候选分支、会话管理、角色卡管理及系统 API
-│   ├── services/      # 模块化业务服务层 (分包管理：对话/基础架构/世界书/记忆及 TTS)
+│   ├── core/          # 数据库连接、配置定义、会话锁与 Alembic 迁移配置
+│   ├── routers/       # API 路由（chat, sessions, characters, lorebooks, utils）
+│   ├── services/      # 模块化业务服务层 (分包管理)
+│   │   ├── conversation/   # 聊天引擎、Prompt 编译、Token 估算、上下文组装
+│   │   ├── lorebook/       # AC 自动机匹配、世界书解析与引擎
+│   │   ├── memory/         # RAG 向量检索、认知演化、Graph RAG 图谱服务
+│   │   ├── infrastructure/ # LLM 统一适配器、日志记录、Outbox 异步 Worker
+│   │   ├── character_service.py # 角色卡业务服务与受管头像回收
+│   │   ├── parse.py             # SillyTavern 角色卡解析与清洗
+│   │   └── tts_service.py       # 语音前处理与 TTS 合成服务
+│   ├── alembic/       # 数据库迁移脚本
+│   ├── tests/         # 系统单元测试与集成测试套件
 │   └── README.md      # 后端专属详细技术设计与接口文档
-└── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript + UnoCSS)
+└── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript)
     ├── src/
-    │   ├── pages/     # 首页、聊天页、角色卡管理与创建、高级设置页
-    │   ├── components/# 通用动态 UI 组件（NewSessionModal、BranchTreeView 等）
-    │   ├── store/     # Pinia 全局状态与会话/音频播放管理器
-    │   └── api/       # API 客户端与网络拦截器
-    └── README.md      # 前端项目说明文档（含手势/震动反馈等踩坑指引）
+    │   ├── api/       # API 请求客户端、类型定义与 Mock 配置
+    │   ├── components/# 通用 UI 组件（character, chat, common）
+    │   ├── composables/# 组合式函数（音频播放、聊天滚动等）
+    │   ├── pages/     # 故事首页、角色画册/档案、叙事聊天、设置中心
+    │   ├── store/     # Pinia 全局状态（会话、角色、设置）
+    │   ├── App.vue    # 全局语义设计变量与基础样式
+    │   └── uni.scss   # 统一视觉设计 SCSS Token
+    └── README.md      # 前端项目说明文档
 ```
 
 ---
@@ -83,51 +107,80 @@
 graph TD
     %% Frontend Group
     subgraph Frontend [app-frontend: Vue 3 / UniApp]
-        UI[聊天与角色管理 UI 界面]
-        MC[分支剧情线与 Swipe 候选切换]
-        AP[音频播放与声波动效]
+        UI[故事首页 / 角色画册 / 人物档案]
+        CHAT_UI[柔光叙事聊天 & 思考过程 & 聊天背景切换]
+        SWIPE[Swipe 候选回复切换 & 分支树]
+        AUDIO[TTS 音频播放与缓存控制]
     end
 
     %% Backend Group
     subgraph Backend [app-backend: FastAPI Core Engine]
-        API[FastAPI 路由器 / routers]
+        API[FastAPI 路由 / routers]
         LOCK[会话并发锁 / core/locking]
-        CHAT[对话流控与 Prompt 装配 / services/conversation]
-        LORE[AC自动机世界书扫描 / services/lorebook]
-        MEM[RAG与图谱检索服务 / services/memory]
-        OUTBOX[事务性发件箱 Worker / services/infrastructure]
-        TTS[TTS前处理与合成服务 / services/tts_service]
+
+        subgraph ConvPackage [services/conversation]
+            ENGINE[Chat Engine & Turn Service]
+            COMPILER[Prompt Compiler & Depth Prompt 扩展]
+            ESTIMATOR[Token Estimator 范围估算]
+            RETRIEVAL_Q[Contextual Retrieval Query 构建]
+        end
+
+        subgraph LorePackage [services/lorebook]
+            LORE[AC 自动机 & Lorebook Engine]
+        end
+
+        subgraph MemPackage [services/memory]
+            MEM[Memory Manager & 语义卡片]
+            GRAPH[Graph RAG 实体图谱]
+            COG[认知与好感度更新]
+        end
+
+        subgraph InfraPackage [services/infrastructure]
+            LLM_PROV[LLM Provider 统一适配器]
+            OUTBOX[Outbox Worker 异步发件箱]
+        end
+
+        TTS_SVC[services/tts_service.py]
     end
 
     %% Storage Group
     subgraph Storage [持久化存储层]
-        DB[(SQLite WAL: 会话/消息分支/图谱三元组/发件箱任务)]
+        DB[(SQLite WAL: 会话/消息分支/图谱三元组/Outbox任务)]
         VDB[(ChromaDB: 长期记忆向量库)]
         CACHE[本地音频 LRU 缓存]
+        AVATARS[受管头像物理存储]
     end
 
     %% External Services
-    LLM[OpenAI 兼容大模型 / 嵌入接口]
+    LLM[OpenAI 兼容大模型 API]
     MIMO[云端 MIMO TTS API]
 
     %% Relationships
-    UI -->|HTTP / SSE 流| API
-    API -->|会话并发锁控制| LOCK
-    API -->|调用对话与编译服务| CHAT
-    CHAT -->|扫描并注入| LORE
-    CHAT -->|混合召回| MEM
-    CHAT -->|存储对话与产生后台任务| DB
-    CHAT -->|大模型推理/嵌入生成| LLM
-    MEM -->|检索语义向量| VDB
-    MEM -->|递归查询祖先链与实体关系| DB
-    OUTBOX -->|轮询并执行任务| DB
-    OUTBOX -->|异步增删向量| VDB
-    OUTBOX -->|清理缓存文件| CACHE
-    API -->|请求语音合成| TTS
-    TTS -->|清洗文本/保留声效| LLM
-    TTS -->|请求云端TTS服务| MIMO
-    TTS -->|写入或读取缓存| CACHE
-    CACHE -->|静态文件挂载 URL| AP
+    UI -->|HTTP / X-API-Key| API
+    CHAT_UI -->|HTTP / SSE 流| API
+    API -->|并发串行控制| LOCK
+    API -->|调用对话与编译服务| ENGINE
+    ENGINE -->|编译与 Depth Prompt| COMPILER
+    COMPILER -->|评估 Token| ESTIMATOR
+    ENGINE -->|构建有界语境查询| RETRIEVAL_Q
+    COMPILER -->|扫描关键词| LORE
+    RETRIEVAL_Q -->|混合召回| MEM
+    RETRIEVAL_Q -->|2-hop 关系遍历| GRAPH
+    ENGINE -->|认知演化| COG
+    ENGINE -->|存储对话与产生后台任务| DB
+    ENGINE -->|统一模型调用| LLM_PROV
+    LLM_PROV -->|推理/提纯/生成| LLM
+
+    OUTBOX -->|轮询与租约保护| DB
+    OUTBOX -->|幂等同步向量| VDB
+    OUTBOX -->|回收清理无用文件| CACHE
+    OUTBOX -->|安全物理删除废弃头像| AVATARS
+
+    API -->|请求语音合成| TTS_SVC
+    TTS_SVC -->|保留声音事件| LLM_PROV
+    TTS_SVC -->|请求 TTS 服务| MIMO
+    TTS_SVC -->|读写与重建缓存| CACHE
+    CACHE -->|挂载音频 URL| AUDIO
 ```
 
 ---
@@ -165,7 +218,7 @@ graph TD
 
 ## 前端服务开发部署 (app-frontend)
 
-前端基于 Vue 3 + Vite + TypeScript + UniApp + Pinia 架构，支持编译为微信小程序、Android APK、iOS App 以及 H5 网页。
+前端基于 Vue 3 + Vite + TypeScript + UniApp + Pinia 架构，支持编译为 Android APK、iOS App、H5 网页及微信小程序。详见 [app-frontend 专属 README.md](file:///g:/APP/app-frontend/README.md)。
 
 1. **安装依赖**：
    ```bash
@@ -182,16 +235,24 @@ graph TD
    npm run build:h5
    # 微信小程序包
    npm run build:mp-weixin
+   # App Plus 生产构建
+   npx uni build -p app-plus
    ```
 
 ---
 
 ## 自动化测试验证
 
-后端提供了多套自动化与集成测试脚本，在 `app-backend` 目录下运行：
+后端提供了全面的离线与集成自动化测试套件，在 `app-backend` 目录下运行：
 
-1. **完全离线测试**（不需要调用大模型与 ChromaDB）：
+1. **离线单元测试**（不需要访问大模型 API 与 ChromaDB）：
    ```bash
+   # 路由与服务边界测试
+   python tests/test_router_service_boundaries.py
+   # Prompt 兼容性与 Depth Prompt 测试
+   python tests/test_character_prompt_compatibility.py
+   # 世界书触发与位置语义测试
+   python tests/test_lorebook_trigger_compatibility.py
    # 分叉边界隔离测试
    python tests/test_branch_context_boundary.py
    # 短期历史与长期记忆动态交接测试
@@ -200,23 +261,27 @@ graph TD
    python tests/test_contextual_retrieval_query.py
    # 语义记忆卡提取及来源定位测试
    python tests/test_memory_card_extraction.py
-   # 记忆局部替代版本测试
+   # 记忆版本控制与覆盖测试
    python tests/test_memory_versioning.py
-   # 向量故障降级测试
-   python tests/test_memory_manager_offline.py
-   # 启发式 Token 范围统计测试
+   # Graph RAG 图谱遍历与别名规范化测试
+   python tests/test_graph_rag_quality.py
+   # 向量库 Outbox 事务一致性测试
+   python tests/test_vector_outbox_consistency.py
+   # 受管头像物理删除与越界防护测试
+   python -m unittest tests.test_avatar_cleanup -v
+   # Prompt Token 范围估算测试
    python tests/test_prompt_token_estimator.py
    ```
 
-2. **全套集成与单元测试**（需要配置好 API 密钥并保证服务可用）：
+2. **全套集成与闭环测试**（需要配置好 API 密钥并保证网络服务可用）：
    ```bash
+   # 最近会话接口与鉴权测试
+   python tests/test_recent_sessions.py
    # TTS 语音合成与清洗单元测试
    python tests/test_tts_api.py
-   # 世界书独立单元测试
-   python tests/test_lorebook.py
    # 记忆提纯与 RAG 闭环验证
    python tests/test_closed_loop_memory.py
-   # 对话流式锁与异常回滚机制测试
+   # 对话流式锁与异常自动回滚测试
    python tests/test_chat_turn_service.py
    # 全流程 API 时空分支集成测试
    python tests/test_api.py
@@ -226,9 +291,12 @@ graph TD
 
 ## 数据备份与安全说明
 
-* **单人私有化设计**：本项目数据库无多租户物理隔离。如果在公网暴露，请务必设置 `.env` 保护密钥，或在前端之前配置反向代理网关。
+* **单人私有化设计**：本项目数据库无多租户物理隔离。如果在公网暴露，请务必设置 `.env` 保护密钥（`ACCESS_API_KEY`），或在前端之前配置反向代理网关。
 * **数据目录备份**：
   - SQLite 关系数据库文件：位于 `app-backend/data/data.db`。
   - ChromaDB 向量文件夹：位于 `app-backend/data/chroma_data/`。
   - 音频合成缓存文件夹：位于 `app-backend/data/audio_cache/`。
-  - 迁移、备份时请**一并打包保存上述三个 data 内的文件**，即可完整平移所有会话状态、记忆以及音频库。
+  - 受管角色头像文件夹：位于 `app-backend/assets/avatars/`。
+  - 迁移或备份时请**一并打包保存上述数据目录/文件**，即可完整平移所有会话状态、角色图像、记忆以及音频资源。
+
+

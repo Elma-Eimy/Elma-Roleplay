@@ -14,6 +14,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 * **Static Assets & Audio**: 
   - Uploaded avatars: `http://127.0.0.1:8000/assets/avatars/{filename}`
   - Synthesized speech: `http://127.0.0.1:8000/audio/{filename}` (Supports automatic on-demand recovery and rebuilding if the physical file is lost)
+  - Static asset URLs must be public or short-lived signed URLs. Clients must never put the long-lived API key in URL query parameters.
 
 ---
 
@@ -36,6 +37,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 | **POST** | `/characters/create` | Save new character to database |
 | **GET** | `/characters` | Get abbreviated character list |
 | **GET** | `/characters/{character_id}` | Get full details of a specific character |
+| **GET** | `/characters/{character_id}/memory-overview` | Get paginated story memory navigation and statistics |
 | **PUT** | `/characters/{character_id}` | Update settings of an existing character |
 | **DELETE** | `/characters/{character_id}` | Delete character and cascade wipe all sessions/memories |
 | **POST** | `/characters/{character_id}/delete` | Alternative POST method for deletion (to avoid HTTP/HTTPS redirect downgrades) |
@@ -44,7 +46,8 @@ This document describes the HTTP API endpoints provided by the backend for front
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **POST** | `/sessions/create` | Create a new session (fresh or inherited) |
-| **GET** | `/sessions` | List sessions associated with a character |
+| **GET** | `/sessions/recent` | Get paginated recent sessions with character and last-message summaries |
+| **GET** | `/sessions` | List a character's sessions with last-message previews and pagination |
 | **GET** | `/sessions/{session_id}` | Retrieve details of a session and its persona |
 | **GET** | `/sessions/{session_id}/history` | Get inheritance-aware chronological chat history (cursor pagination) |
 | **PUT** | `/sessions/{session_id}/title` | Rename a session's title |
@@ -55,7 +58,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 | **PUT** | `/sessions/messages/{message_id}` | Edit content of a single message |
 | **DELETE** | `/sessions/messages/{message_id}` | Delete a message (undo/rollback dialog state) |
 | **POST** | `/sessions/messages/{message_id}/delete` | Alternative POST method for message deletion |
-| **GET** | `/sessions/{session_id}/memories` | List all vector memories available to this session (including inherited ones) |
+| **GET** | `/sessions/{session_id}/memories` | Filter and page visible memories with branch-aware category statistics |
 | **POST** | `/sessions/{session_id}/memories` | Manually add a custom vector memory to this session |
 | **PUT** | `/sessions/{session_id}/memories/{memory_id}` | Edit a local vector memory (inherited memories are read-only) |
 | **DELETE** | `/sessions/{session_id}/memories/{memory_id}` | Delete a local vector memory (inherited memories are read-only) |
@@ -278,6 +281,46 @@ This document describes the HTTP API endpoints provided by the backend for front
   }
   ```
 
+#### GET `/characters/{character_id}/memory-overview`
+* **Query Parameters**:
+  - `limit`: Page size, `1~100` (default `50`).
+  - `offset`: Pagination offset, at least `0` (default `0`).
+* **Response (200 OK)**:
+  ```json
+  {
+    "character_id": 8,
+    "story_count": 4,
+    "recent_session_id": 21,
+    "sessions": [
+      {
+        "session_id": 21,
+        "title": "雨夜重逢",
+        "parent_session_id": 12,
+        "created_at": "2026-07-26T18:00:00",
+        "updated_at": "2026-07-28T21:30:00",
+        "last_message": {
+          "content": "我们在车站约定下次见面……",
+          "created_at": "2026-07-28T21:30:00"
+        },
+        "memory_stats": {
+          "effective_total": 32,
+          "local_active": 24,
+          "inherited_active": 8,
+          "superseded": 3
+        }
+      }
+    ],
+    "total": 4,
+    "limit": 50,
+    "offset": 0,
+    "has_more": false
+  }
+  ```
+  Sessions are ordered by `updated_at DESC, id DESC`. `recent_session_id` is the
+  first session in that complete ordering, even when the requested page has a nonzero
+  offset. `last_message` includes only active messages. A missing character returns
+  `404`; invalid pagination returns `422`.
+
 #### PUT `/characters/{character_id}`
 * **Request (JSON)**: Same format as `POST /characters/create`.
 * **Response (200 OK)**:
@@ -330,12 +373,47 @@ This document describes the HTTP API endpoints provided by the backend for front
 #### GET `/sessions`
 * **Query Parameters**:
   - `character_id`: Filter sessions by Character ID (Required)
-  - `limit`: Optional pagination limit
-  - `offset`: Optional pagination offset
+  - `include_last_message`: Include the last active message (default `true`).
+  - `limit`: Page size, `1~100` (default `50`).
+  - `offset`: Pagination offset, at least `0` (default `0`).
 * **Response (200 OK)**:
   ```json
   {
     "character_id": 1,
+    "sessions": [
+      {
+        "id": 1,
+        "title": "测试对话 1",
+        "parent_session_id": null,
+        "fork_message_id": null,
+        "created_at": "2026-05-23T16:00:19",
+        "updated_at": "2026-05-23T16:05:00",
+        "persona": {
+          "id": 1,
+          "affection_score": 10,
+          "current_mood": "平静"
+        },
+        "last_message": {
+          "content": "你好呀！",
+          "created_at": "2026-05-23T16:05:00"
+        }
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0,
+    "has_more": false
+  }
+  ```
+
+#### GET `/sessions/recent`
+* **Purpose**: Home-screen aggregate endpoint. The backend should fetch sessions, character summaries, and each session's latest active message in one database query (or a bounded query set) to avoid client-side N+1 requests.
+* **Query Parameters**:
+  - `limit`: Optional pagination limit (frontend default: `50`)
+  - `offset`: Optional pagination offset (default: `0`)
+* **Response (200 OK)**:
+  ```json
+  {
     "sessions": [
       {
         "id": 1,
@@ -347,9 +425,22 @@ This document describes the HTTP API endpoints provided by the backend for front
           "id": 1,
           "affection_score": 10,
           "current_mood": "平静"
+        },
+        "character": {
+          "id": 1,
+          "name": "测试小助手",
+          "avatar_path": "assets/avatars/4a6b2c8d_helper.png"
+        },
+        "last_message": {
+          "content": "你好呀！有什么我可以帮你的吗？",
+          "created_at": "2026-05-23T16:05:00"
         }
       }
-    ]
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0,
+    "has_more": false
   }
   ```
 
@@ -489,27 +580,63 @@ This document describes the HTTP API endpoints provided by the backend for front
 
 #### GET `/sessions/{session_id}/memories`
 * **Query Parameters**:
-  - `q`: Optional search keyword.
-  - `limit`: Pagination limit (default 20).
-  - `offset`: Pagination offset (default 0).
+  - `q`: Optional content keyword, at most 200 characters.
+  - `scope`: `all`, `local`, or `inherited` (default `all`).
+  - `status`: `active`, `superseded`, or `all` (default `active`).
+  - `limit`: Page size, `1~100` (default `20`).
+  - `offset`: Pagination offset, at least `0` (default `0`).
+* **Memory provenance and versioning fields**:
+
+  | Field | Type | Description |
+  | :--- | :--- | :--- |
+  | `source_start_message_id` | `integer \| null` | First message in the smallest continuous source range supporting this memory. `null` for legacy or manually created memories without a chat source. |
+  | `source_message_id` | `integer \| null` | Last message in the source range supporting this memory. The name is retained for database compatibility. |
+  | `supersedes_id` | `integer \| null` | ID of the older memory directly superseded by this memory, or `null` when there is no explicit replacement relationship. |
+  | `is_superseded` | `boolean` | Whether another memory supersedes this memory on the current session's Persona ancestry chain. |
+
 * **Response (200 OK)**:
   ```json
-  [
-    {
-      "id": 1,
-      "content": "昨天用户跟我聊到了 Python Web 开发，我们都觉得 FastAPI 是非常棒的框架。",
-      "memory_type": "fact",
-      "importance_score": 0.85,
-      "is_local": true,
-      "created_at": "2026-05-23T16:00:19",
-      "origin_session_id": 1,
-      "source_start_message_id": 20,
-      "source_message_id": 22,
-      "supersedes_id": null,
-      "is_superseded": false
+  {
+    "items": [
+      {
+        "id": 1,
+        "content": "昨天用户跟我聊到了 Python Web 开发，我们都觉得 FastAPI 是非常棒的框架。",
+        "memory_type": "fact",
+        "importance_score": 0.85,
+        "is_local": true,
+        "created_at": "2026-05-23T16:00:19",
+        "origin_session_id": 1,
+        "source_start_message_id": 20,
+        "source_message_id": 22,
+        "supersedes_id": null,
+        "is_superseded": false
+      }
+    ],
+    "total": 32,
+    "limit": 20,
+    "offset": 0,
+    "has_more": true,
+    "facets": {
+      "effective_total": 32,
+      "local_active": 24,
+      "inherited_active": 8,
+      "superseded": 3
     }
-  ]
+  }
   ```
+  Inheritance scope, keyword search, replacement status, and `total` are all applied
+  before pagination. Results use stable ordering by `created_at DESC, id DESC`.
+  `facets` applies `q`, but is calculated before the current `scope` and `status`
+  filters, so category counts update with search while remaining comparable.
+
+  `effective_total` is `local_active + inherited_active`. `has_more` is true exactly
+  when `offset + items.length < total`. Invalid query values return `422`; a missing
+  Session or Persona returns `404`.
+
+  `is_superseded` is calculated relative to the session in the request. A replacement
+  created on one child branch does not globally invalidate the same old memory on its
+  parent or sibling branches. Superseded records remain stored and are still returned
+  by this endpoint; clients can use `is_superseded` to distinguish them.
 
 #### POST `/sessions/{session_id}/memories`
 * **Request (JSON)**:
@@ -539,6 +666,9 @@ This document describes the HTTP API endpoints provided by the backend for front
     }
   }
   ```
+  Manually created memories have no chat source or automatic replacement relationship,
+  so `source_start_message_id`, `source_message_id`, and `supersedes_id` are `null`,
+  and `is_superseded` is `false`.
 
 #### PUT `/sessions/{session_id}/memories/{memory_id}`
 * **Request (JSON)**:
@@ -548,6 +678,8 @@ This document describes the HTTP API endpoints provided by the backend for front
     "importance_score": 0.8
   }
   ```
+  Manual editing corrects the existing memory in place. It does not create a new
+  replacement version or change the source/version relationship fields.
 * **Response (200 OK)**:
   ```json
   {
@@ -596,12 +728,55 @@ This document describes the HTTP API endpoints provided by the backend for front
       "method": "heuristic_v1",
       "is_exact": false,
       "sections": {
-        "character": {"characters": 8200, "estimated_tokens": 6100, "lower_bound": 4800, "upper_bound": 7600}
+        "character": {
+          "characters": 8200,
+          "estimated_tokens": 6100,
+          "lower_bound": 4800,
+          "upper_bound": 7600
+        },
+        "recent_history": {"characters": 6000, "estimated_tokens": 3900, "lower_bound": 3000, "upper_bound": 5000},
+        "scenario": {"characters": 300, "estimated_tokens": 220, "lower_bound": 150, "upper_bound": 350},
+        "cognition": {"characters": 500, "estimated_tokens": 350, "lower_bound": 250, "upper_bound": 500},
+        "status": {"characters": 120, "estimated_tokens": 90, "lower_bound": 60, "upper_bound": 150},
+        "lorebook": {"characters": 900, "estimated_tokens": 600, "lower_bound": 400, "upper_bound": 850},
+        "long_term_memory": {"characters": 1000, "estimated_tokens": 700, "lower_bound": 500, "upper_bound": 1000},
+        "graph": {"characters": 400, "estimated_tokens": 280, "lower_bound": 190, "upper_bound": 420},
+        "current_user_message": {"characters": 800, "estimated_tokens": 520, "lower_bound": 380, "upper_bound": 750},
+        "other": {"characters": 200, "estimated_tokens": 40, "lower_bound": 30, "upper_bound": 100}
       }
     }
   }
   ```
-  `sections` always includes all documented prompt sections, including zero-valued ones. See `NEW_API.md` for the complete additive contract and estimation caveats.
+* **Token estimate sections**:
+
+  | Section | Content |
+  | :--- | :--- |
+  | `character` | Character definition, output requirements, examples, supplemental rules, and other prompt instructions. |
+  | `recent_history` | Recent and inherited history injected before the current user message. |
+  | `scenario` | Current scenario. |
+  | `cognition` | Persona cognition state. |
+  | `status` | Current mood and affection status. |
+  | `lorebook` | Lorebook content activated for this turn. |
+  | `long_term_memory` | Long-term memory cards recalled for this turn. |
+  | `graph` | Knowledge-graph relationships recalled for this turn. |
+  | `current_user_message` | The latest user message and its fixed heading. |
+  | `other` | Dynamic context framing, section separators, and estimated chat-protocol overhead. |
+
+  `sections` always contains every section above, including zero-valued sections.
+  `estimated_tokens` is a display-oriented midpoint, while `lower_bound` and
+  `upper_bound` intentionally provide a wider likely range. `characters` counts only
+  visible message content; estimated protocol overhead in `other` has no corresponding
+  character count.
+
+  This is an observational heuristic (`method: "heuristic_v1"`): it never truncates or
+  rewrites the compiled prompt. It does not use a model-provider tokenizer and is not
+  suitable for billing calculations, so `is_exact` is always `false`. The actual token
+  count varies with the target model, language mix, special characters, and provider
+  message templates.
+
+  Long-term-memory retrieval used to assemble the prompt excludes memories superseded
+  on the current Persona ancestry chain. The old records remain available through the
+  memories list endpoint.
 
 ---
 

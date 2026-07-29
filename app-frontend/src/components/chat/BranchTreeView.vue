@@ -28,15 +28,20 @@
       </view>
     </view>
     
-    <view v-else class="empty-state">
-      <text class="empty-text">暂无宇宙分支，开启全新平行宇宙！</text>
-    </view>
+    <AppStatusState
+      v-else
+      kind="empty"
+      title="故事线还没有分支"
+      description="从当前故事开启新的选择后，分支会在这里生长。"
+      compact
+    />
   </view>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 import BranchTreeNode from "./BranchTreeNode.vue";
+import AppStatusState from "@/components/common/AppStatusState.vue";
 
 interface Session {
   id: number;
@@ -171,12 +176,12 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 .header-line {
   flex: 1;
   height: 1px;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .header-title {
   font-size: 24rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   font-weight: 600;
   padding: 0 20rpx;
   text-transform: uppercase;
@@ -189,14 +194,4 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   width: 100%;
 }
 
-.empty-state {
-  display: flex;
-  justify-content: center;
-  padding: 120rpx 0;
-}
-
-.empty-text {
-  font-size: 26rpx;
-  color: #8e8e93;
-}
 </style>

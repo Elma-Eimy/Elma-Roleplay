@@ -1,10 +1,11 @@
 import { ref } from "vue";
-import { getBaseUrl, getSavedApiKey } from "@/api/config";
+import { getBaseUrl, getHeaders } from "@/api/config";
 import { generateTTS } from "@/api/chat";
 
 // 全局单例状态，确保整个应用生命周期中只有一个播放实例与播放状态
 const activeAudioMessageId = ref<number | null>(null);
 let innerAudioContext: any = null;
+let activeDownloadTask: UniApp.DownloadTask | null = null;
 
 export function useAudioPlayer() {
   function initAudioContext() {
@@ -34,6 +35,10 @@ export function useAudioPlayer() {
   }
 
   function stopMessageTTS() {
+    if (activeDownloadTask) {
+      activeDownloadTask.abort();
+      activeDownloadTask = null;
+    }
     if (innerAudioContext && activeAudioMessageId.value !== null) {
       innerAudioContext.stop();
       activeAudioMessageId.value = null;
@@ -77,24 +82,23 @@ export function useAudioPlayer() {
     }
 
     if (audioUrl) {
-      let fullUrl = audioUrl.startsWith("http") ? audioUrl : `${getBaseUrl()}${audioUrl}`;
-      
-      // 附加 API Key 凭证以支持安全路由参数校验
-      const apiKey = getSavedApiKey();
-      if (apiKey) {
-        fullUrl += `${fullUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(apiKey)}`;
-      }
-      
-      console.log("Playing audio:", fullUrl);
+      const baseUrl = getBaseUrl().replace(/\/+$/, "");
+      const isAbsoluteUrl = /^https?:\/\//i.test(audioUrl);
+      const fullUrl = isAbsoluteUrl
+        ? audioUrl
+        : `${baseUrl}${audioUrl.startsWith("/") ? "" : "/"}${audioUrl}`;
+      const requiresApiKey =
+        !isAbsoluteUrl || fullUrl.startsWith(`${baseUrl}/`);
       activeAudioMessageId.value = messageId;
 
-      // #ifdef APP-PLUS
-      // 移动端 App 下载到本地临时文件播放，解决原生 MediaPlayer 播放网络流可能失败或被拦截的问题
-      uni.downloadFile({
+      // 先通过可携带认证头的下载请求获取临时文件，避免把 API Key 放入 URL。
+      // 当前后端的 /audio/{filename} 必须使用 X-API-Key 请求头认证。
+      activeDownloadTask = uni.downloadFile({
         url: encodeURI(fullUrl),
+        header: requiresApiKey ? getHeaders() : {},
         success: (res) => {
+          activeDownloadTask = null;
           if (res.statusCode === 200) {
-            console.log("Audio downloaded successfully:", res.tempFilePath);
             // 只有当当前活跃消息仍然是该条消息时才播放（防止下载期间切换或停止了播放）
             if (activeAudioMessageId.value === messageId) {
               innerAudioContext.src = res.tempFilePath;
@@ -109,20 +113,13 @@ export function useAudioPlayer() {
           }
         },
         fail: (err) => {
+          activeDownloadTask = null;
+          if (activeAudioMessageId.value !== messageId) return;
           console.error("Audio download failed:", err);
           uni.showToast({ title: "音频下载失败", icon: "none" });
-          if (activeAudioMessageId.value === messageId) {
-            activeAudioMessageId.value = null;
-          }
+          activeAudioMessageId.value = null;
         }
       });
-      // #endif
-
-      // #ifndef APP-PLUS
-      // H5/小程序等平台直接在线播放
-      innerAudioContext.src = encodeURI(fullUrl);
-      innerAudioContext.play();
-      // #endif
     } else {
       uni.showToast({ title: "未获取到有效的语音文件", icon: "none" });
     }

@@ -142,6 +142,7 @@ class RouterServiceBoundaryTests(unittest.TestCase):
     def test_character_service_owns_create_and_update_mapping(self):
         data = {
             "name": "Created Through Service",
+            "avatar_path": "assets/avatars/before.png",
             "description": "before",
             "first_mes": "hello",
             "tags": ["test"],
@@ -151,6 +152,7 @@ class RouterServiceBoundaryTests(unittest.TestCase):
         created = character_service.create_character(data, self.db)
         character_id = created["character_id"]
         data["name"] = "Updated Through Service"
+        data["avatar_path"] = "assets/avatars/after.png"
         data["description"] = "after"
         updated = character_service.update_character(character_id, data, self.db)
 
@@ -158,8 +160,15 @@ class RouterServiceBoundaryTests(unittest.TestCase):
         self.assertEqual("Updated Through Service", updated["name"])
         self.assertEqual("after", character.description)
         self.assertEqual(["test"], json.loads(character.tags))
+        cleanup_job = self.db.query(OutboxJob).one()
+        self.assertEqual("delete_avatar", cleanup_job.task_type)
+        self.assertEqual(
+            "assets/avatars/before.png",
+            json.loads(cleanup_job.payload)["file_path"],
+        )
 
     def test_character_delete_commits_sql_and_cleanup_jobs_together(self):
+        self.character.avatar_path = "assets/avatars/character.png"
         message = ChatMessage(
             session_id=self.session.id,
             role=MessageRole.assistant,
@@ -177,8 +186,12 @@ class RouterServiceBoundaryTests(unittest.TestCase):
         self.assertIsNone(self.db.get(Session, session_id))
         jobs = self.db.query(OutboxJob).order_by(OutboxJob.id).all()
         self.assertEqual(
-            ["delete_vector_collection", "delete_audio"],
+            ["delete_vector_collection", "delete_avatar", "delete_audio"],
             [job.task_type for job in jobs],
+        )
+        self.assertEqual(
+            "assets/avatars/character.png",
+            json.loads(jobs[1].payload)["file_path"],
         )
         self.assertEqual([session_id], result["session_ids"])
 

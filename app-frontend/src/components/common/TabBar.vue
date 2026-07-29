@@ -9,7 +9,6 @@
       >
         <image 
           class="tab-icon" 
-          style="width: 52rpx; height: 52rpx;"
           :src="activeTab === 'index' ? '/static/icons/tab_session_active.svg' : '/static/icons/tab_session.svg'" 
           mode="aspectFit"
         />
@@ -24,7 +23,6 @@
       >
         <image 
           class="tab-icon" 
-          style="width: 52rpx; height: 52rpx;"
           :src="activeTab === 'character' ? '/static/icons/tab_character_active.svg' : '/static/icons/tab_character.svg'" 
           mode="aspectFit"
         />
@@ -39,7 +37,6 @@
       >
         <image 
           class="tab-icon" 
-          style="width: 52rpx; height: 52rpx;"
           :src="activeTab === 'settings' ? '/static/icons/tab_settings_active.svg' : '/static/icons/tab_settings.svg'" 
           mode="aspectFit"
         />
@@ -50,16 +47,23 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   activeTab: 'index' | 'character' | 'settings';
 }>();
 
 const switchTab = (url: string) => {
+  const targetTab = url.includes('/character/')
+    ? 'character'
+    : url.includes('/settings/')
+      ? 'settings'
+      : 'index';
+
+  if (targetTab === props.activeTab) return;
+
   uni.switchTab({
     url,
-    success: () => {
-      uni.hideTabBar({ animation: false });
-    }
+    // 避免快速重复点击导航时产生未处理的 Promise 拒绝。
+    fail: () => {}
   });
 };
 </script>
@@ -85,11 +89,11 @@ const switchTab = (url: string) => {
   width: 90vw;
   max-width: 600rpx;
   height: 110rpx;
-  background-color: rgba(255, 255, 255, 0.85);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 55rpx;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--app-shadow-raised, 0 20rpx 52rpx rgba(45, 72, 62, 0.12));
   padding: 0 16rpx;
 }
 
@@ -101,8 +105,10 @@ const switchTab = (url: string) => {
   flex: 1;
   height: 100%;
   gap: 4rpx;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  color: #8e8e93;
+  transition:
+    transform var(--app-motion-normal, 0.25s) cubic-bezier(0.16, 1, 0.3, 1),
+    color var(--app-motion-normal, 0.25s);
+  color: var(--app-color-text-secondary, #7c8983);
 }
 
 .tab-item:active {
@@ -110,13 +116,13 @@ const switchTab = (url: string) => {
 }
 
 .tab-item.is-active {
-  color: #1c1c1e;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .tab-icon {
-  width: 44rpx;
-  height: 44rpx;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 52rpx;
+  height: 52rpx;
+  transition: transform var(--app-motion-normal, 0.25s) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tab-item.is-active .tab-icon {

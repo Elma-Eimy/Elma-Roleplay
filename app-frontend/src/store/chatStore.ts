@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed, watch } from "vue";
+import { ref, computed } from "vue";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
@@ -17,6 +17,16 @@ export interface ChatMessage extends Message {
   clientId?: string; // Stable client-side unique ID for DOM rendering
 }
 
+export interface ActiveStreamRequest {
+  requestId: string;
+  placeholderId: string;
+  userMessageTempId?: string;
+  params: ChatRequest;
+  baseUrl: string;
+  apiKey: string;
+  timestamp: number;
+}
+
 export const useChatStore = defineStore("chat", () => {
   // ===== 状态变量 =====
 
@@ -32,6 +42,52 @@ export const useChatStore = defineStore("chat", () => {
   /** 当前流式输出传输中的临时回复文本 */
   const streamingText = ref("");
 
+  const STREAM_UPDATE_INTERVAL = 48;
+  const pendingStreamText = new Map<string, string>();
+  const pendingReasoningText = new Map<string, string>();
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushPendingStreamChunks = () => {
+    if (streamFlushTimer !== null) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+
+    pendingStreamText.forEach((text, tempId) => {
+      const message = messages.value.find((item) => item.tempId === tempId);
+      if (message) {
+        message.content += text;
+        streamingText.value += text;
+      }
+    });
+    pendingReasoningText.forEach((text, tempId) => {
+      const message = messages.value.find((item) => item.tempId === tempId);
+      if (message) {
+        message.reasoning_content = `${message.reasoning_content || ""}${text}`;
+      }
+    });
+
+    pendingStreamText.clear();
+    pendingReasoningText.clear();
+  };
+
+  const scheduleStreamFlush = () => {
+    if (streamFlushTimer !== null) return;
+    streamFlushTimer = setTimeout(
+      flushPendingStreamChunks,
+      STREAM_UPDATE_INTERVAL
+    );
+  };
+
+  const clearPendingStreamChunks = () => {
+    if (streamFlushTimer !== null) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    pendingStreamText.clear();
+    pendingReasoningText.clear();
+  };
+
   /** 从服务端接收到的最新对话元数据 */
   const lastMeta = ref<Omit<ChatResponse, "reply"> | null>(null);
 
@@ -39,15 +95,7 @@ export const useChatStore = defineStore("chat", () => {
   const errorMessage = ref<string | null>(null);
 
   /** 当前活跃的 App 端流式请求（用于 renderjs 通信） */
-  const activeStreamRequest = ref<{
-    requestId: string;
-    placeholderId: string;
-    userMessageTempId?: string;
-    params: ChatRequest;
-    baseUrl: string;
-    apiKey: string;
-    timestamp: number;
-  } | null>(null);
+  const activeStreamRequest = ref<ActiveStreamRequest | null>(null);
 
 
 
@@ -246,47 +294,23 @@ export const useChatStore = defineStore("chat", () => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
         (meta) => {
-          const finalId = (meta as any).assistant_message_id || Date.now();
-          const candidates = (meta as any).candidates || [];
-          const activeIndex = (meta as any).active_index ?? (candidates.length - 1);
-          const finalReasoning = candidates[activeIndex]?.reasoning_content || "";
-          
-          finalizeStream(streamPlaceholderId, {
-            id: finalId,
-            role: "assistant",
-            emotion_tag: meta.emotion_tag,
-            affection_change: meta.affection_change,
-            created_at: new Date().toISOString(),
-            model_used: (meta as any).model_used,
-            parent_id: (meta as any).user_message_id,
-            is_active: true,
-            candidates: (meta as any).candidates,
-            active_index: (meta as any).active_index,
-            reasoning_content: finalReasoning || undefined,
-          });
-          
-          // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
-          personaStore.applyAffectionChange(
-            meta.affection_change,
-            meta.affection_score,
-            meta.emotion_tag
-          );
-          
-          isLoading.value = false;
+          completeStream(streamPlaceholderId, meta);
         },
         (err) => {
-          // 发生异常时回滚占位消息并设置错误状态
-          messages.value = messages.value.filter((m) => m.tempId !== streamPlaceholderId);
-          setError(err.message || "Failed to regenerate AI response");
-          isLoading.value = false;
+          failStream(
+            streamPlaceholderId,
+            err.message || "Failed to regenerate AI response"
+          );
         },
         (rChunk) => {
           appendStreamReasoningChunk(streamPlaceholderId, rChunk);
         }
       );
-    } catch (e: any) {
-      setError(e.message || "An unexpected error occurred");
-      isLoading.value = false;
+    } catch (error) {
+      failStream(
+        streamPlaceholderId,
+        error instanceof Error ? error.message : "An unexpected error occurred"
+      );
     }
     // #endif
   }
@@ -337,60 +361,25 @@ export const useChatStore = defineStore("chat", () => {
           appendStreamChunk(streamPlaceholderId, chunk);
         },
         (meta) => {
-          const finalId = (meta as any).assistant_message_id || Date.now();
-          const candidates = (meta as any).candidates || [];
-          const activeIndex = (meta as any).active_index ?? (candidates.length - 1);
-          const finalReasoning = candidates[activeIndex]?.reasoning_content || "";
-
-          finalizeStream(streamPlaceholderId, {
-            id: finalId,
-            role: "assistant",
-            emotion_tag: meta.emotion_tag,
-            affection_change: meta.affection_change,
-            created_at: new Date().toISOString(),
-            model_used: (meta as any).model_used,
-            parent_id: (meta as any).user_message_id,
-            is_active: true,
-            candidates: (meta as any).candidates,
-            active_index: (meta as any).active_index,
-            reasoning_content: finalReasoning || undefined,
-          });
-          
-          // 用服务器确认的数据替换用户消息的临时 ID/tempId 并归档
-          const userIdx = messages.value.findIndex((m) => m.tempId === tempId);
-          if (userIdx !== -1) {
-            messages.value[userIdx].status = "done";
-            if ((meta as any).user_message_id) {
-              messages.value[userIdx].id = (meta as any).user_message_id;
-            }
-          }
-
-          // 同步好感度分数与当前情绪到 Pinia Persona Store 状态库
-          personaStore.applyAffectionChange(
-            meta.affection_change,
-            meta.affection_score,
-            meta.emotion_tag
-          );
-          
-          isLoading.value = false;
+          completeStream(streamPlaceholderId, meta, tempId);
         },
         (err) => {
-          // 发生异常时回滚占位消息并设置错误状态
-          messages.value = messages.value.filter((m) => m.tempId !== streamPlaceholderId);
-          const userIdx = messages.value.findIndex((m) => m.tempId === tempId);
-          if (userIdx !== -1) {
-            messages.value[userIdx].status = "error";
-          }
-          setError(err.message || "Failed to get AI response");
-          isLoading.value = false;
+          failStream(
+            streamPlaceholderId,
+            err.message || "Failed to get AI response",
+            tempId
+          );
         },
         (rChunk) => {
           appendStreamReasoningChunk(streamPlaceholderId, rChunk);
         }
       );
-    } catch (e: any) {
-      setError(e.message || "An unexpected error occurred");
-      isLoading.value = false;
+    } catch (error) {
+      failStream(
+        streamPlaceholderId,
+        error instanceof Error ? error.message : "An unexpected error occurred",
+        tempId
+      );
     }
     // #endif
   }
@@ -415,6 +404,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 乐观更新：向列表追加一条流式传输专用的 AI 占位消息 */
   function addStreamingPlaceholder(): string {
+    clearPendingStreamChunks();
     const tempId = `stream-${Date.now()}`;
     const clientId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     messages.value.push({
@@ -435,22 +425,22 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 向流式传输中的占位消息追加文本分块 */
   function appendStreamChunk(tempId: string, chunk: string) {
-    const msg = messages.value.find((m) => m.tempId === tempId);
-    if (msg) {
-      msg.content += chunk;
-      streamingText.value += chunk;
-    }
+    if (!chunk) return;
+    pendingStreamText.set(
+      tempId,
+      `${pendingStreamText.get(tempId) || ""}${chunk}`
+    );
+    scheduleStreamFlush();
   }
 
   /** 向流式传输中的占位消息追加思考过程文本分块 */
   function appendStreamReasoningChunk(tempId: string, chunk: string) {
-    const msg = messages.value.find((m) => m.tempId === tempId);
-    if (msg) {
-      if (msg.reasoning_content === undefined || msg.reasoning_content === null) {
-        msg.reasoning_content = "";
-      }
-      msg.reasoning_content += chunk;
-    }
+    if (!chunk) return;
+    pendingReasoningText.set(
+      tempId,
+      `${pendingReasoningText.get(tempId) || ""}${chunk}`
+    );
+    scheduleStreamFlush();
   }
 
   /** 使用服务器最终确认的数据归档流式传输消息 */
@@ -458,6 +448,7 @@ export const useChatStore = defineStore("chat", () => {
     tempId: string,
     serverMessage: Partial<ChatMessage>
   ) {
+    flushPendingStreamChunks();
     const idx = messages.value.findIndex((m) => m.tempId === tempId);
     if (idx !== -1) {
       messages.value[idx] = {
@@ -470,8 +461,80 @@ export const useChatStore = defineStore("chat", () => {
     streamingText.value = "";
   }
 
+  /** 统一处理 H5/小程序流和 App RenderJS 流的成功收尾。 */
+  function completeStream(
+    tempId: string,
+    meta: Partial<Omit<ChatResponse, "reply">>,
+    userMessageTempId?: string
+  ) {
+    const candidates = meta.candidates ?? [];
+    const activeIndex = meta.active_index ?? candidates.length - 1;
+    const activeCandidate = candidates[activeIndex];
+
+    finalizeStream(tempId, {
+      id: meta.assistant_message_id ?? Date.now(),
+      role: "assistant",
+      ...(activeCandidate?.content
+        ? { content: activeCandidate.content }
+        : {}),
+      emotion_tag: meta.emotion_tag ?? null,
+      affection_change: meta.affection_change ?? null,
+      created_at: new Date().toISOString(),
+      model_used: meta.model_used,
+      parent_id: meta.user_message_id,
+      is_active: true,
+      candidates: meta.candidates,
+      active_index: meta.active_index,
+      reasoning_content: activeCandidate?.reasoning_content ?? undefined,
+    });
+
+    if (userMessageTempId) {
+      const userMessage = messages.value.find(
+        (message) => message.tempId === userMessageTempId
+      );
+      if (userMessage) {
+        userMessage.status = "done";
+        if (meta.user_message_id) {
+          userMessage.id = meta.user_message_id;
+        }
+      }
+    }
+
+    if (meta.affection_score !== undefined) {
+      const personaStore = usePersonaStore();
+      personaStore.applyAffectionChange(
+        meta.affection_change ?? 0,
+        meta.affection_score,
+        meta.emotion_tag ?? undefined
+      );
+    }
+
+    isLoading.value = false;
+    activeStreamRequest.value = null;
+  }
+
+  /** 统一回滚流式占位消息并标记对应的乐观用户消息。 */
+  function failStream(
+    tempId: string,
+    message: string,
+    userMessageTempId?: string
+  ) {
+    messages.value = messages.value.filter((item) => item.tempId !== tempId);
+    if (userMessageTempId) {
+      const userMessage = messages.value.find(
+        (item) => item.tempId === userMessageTempId
+      );
+      if (userMessage) {
+        userMessage.status = "error";
+      }
+    }
+    setError(message);
+    activeStreamRequest.value = null;
+  }
+
   /** 设置错误状态信息 */
   function setError(msg: string) {
+    clearPendingStreamChunks();
     errorMessage.value = msg;
     isLoading.value = false;
   }
@@ -498,7 +561,7 @@ export const useChatStore = defineStore("chat", () => {
           targetMsg.emotion_tag = candidate.emotion_tag;
           targetMsg.affection_change = candidate.affection_change;
           targetMsg.created_at = candidate.created_at;
-          targetMsg.audio_path = (candidate as any).audio_path || null;
+          targetMsg.audio_path = candidate.audio_path || null;
           
           const activeIdx = targetMsg.candidates?.findIndex((c) => c.id === targetCandidateId) ?? 0;
           targetMsg.active_index = activeIdx;
@@ -550,6 +613,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    clearPendingStreamChunks();
     const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS();
     activeSessionId.value = null;
@@ -592,6 +656,8 @@ export const useChatStore = defineStore("chat", () => {
     appendStreamChunk,
     appendStreamReasoningChunk,
     finalizeStream,
+    completeStream,
+    failStream,
     switchActiveCandidate,
     loadMoreHistory,
     setError,

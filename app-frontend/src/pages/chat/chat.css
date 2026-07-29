@@ -1,435 +1,68 @@
-/* ===== 页面大容器 ===== */
+/* 聊天页只保留页面级布局；组件样式由各组件自行维护。 */
 .page-container {
   display: flex;
   flex-direction: column;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
-  background-color: #fafafa;
+  min-height: 100dvh;
+  background-color: var(--app-color-background, #f7f9f7);
   position: relative;
   overflow: hidden;
 }
 
-/* 动态角色立绘背景图层（无滤镜干扰，高浓度展现） */
 .chat-bg {
+  --chat-glow-primary: rgba(112, 174, 155, 0.2);
+  --chat-glow-secondary: rgba(139, 184, 220, 0.13);
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
-  background-size: cover;
-  background-position: center;
-  opacity: 0.9; /* 完整曝光，高饱和度立绘展现 */
+  background:
+    radial-gradient(circle at 94% 4%, var(--chat-glow-primary), transparent 38%),
+    radial-gradient(circle at 0% 44%, var(--chat-glow-secondary), transparent 34%),
+    linear-gradient(180deg, #f9fbf9 0%, #f7f9f7 48%, #f6f8f6 100%);
+  opacity: 1;
   pointer-events: none;
   z-index: 0;
+  transition: opacity var(--app-motion-slow, 360ms) ease;
 }
 
-/* 渐变遮罩：使立绘边缘自然过渡到网页/App的底色 (#fafafa) */
+.chat-scene-image {
+  position: absolute;
+  inset: -3%;
+  width: 106%;
+  height: 106%;
+  opacity: 0.8;
+  filter: blur(8rpx) saturate(0.78);
+  transform: scale(1.02);
+}
+
 .chat-bg::after {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
-  background: linear-gradient(
-    to bottom,
-    #fafafa 0%,
-    transparent 12%,
-    transparent 88%,
-    #fafafa 100%
-  );
+  background:
+    linear-gradient(180deg, rgba(247, 249, 247, 0.38), rgba(247, 249, 247, 0.5)),
+    linear-gradient(0deg, rgba(247, 249, 247, 0.9), transparent 22%);
   pointer-events: none;
 }
 
-
-/* ===== 自定义导航栏头部 ===== */
-.custom-header {
-  padding-top: env(safe-area-inset-top, 40rpx);
-  height: calc(env(safe-area-inset-top, 40rpx) + 110rpx);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-left: 36rpx;
-  padding-right: 36rpx;
-  background-color: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  z-index: 50;
+.chat-bg.mode-clean {
+  opacity: 0;
 }
 
-.header-btn {
-  width: 60rpx;
-  height: 60rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.02);
+.chat-bg.mode-character {
+  opacity: 1;
 }
 
-.header-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
-}
-
-.left-btn {
-  margin-left: -10rpx;
-}
-
-.right-btn {
-  margin-right: -10rpx;
-  color: #1c1c1e;
-}
-
-.header-center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.character-name {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8rpx;
-  margin-top: 4rpx;
-}
-
-.status-dot {
-  width: 8rpx;
-  height: 8rpx;
-  background-color: #34c759;
-  border-radius: 50%;
-}
-
-.status-text {
-  font-size: 18rpx;
-  color: #8e8e93;
-  font-weight: 500;
-}
-
-/* ===== 聊天内容滚动区域 ===== */
-.chat-scroll-area {
-  flex: 1;
-  width: 100%;
-  /* H5 端：scroll-view 在 flex 容器内必须有明确高度才能滚动 */
-  height: 0;
-  min-height: 0;
-  overflow: hidden;
-  position: relative;
-  z-index: 1;
-  background-color: transparent !important;
-}
-
-.chat-list-padding {
-  padding: 24rpx 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-
-.empty-chat {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.empty-chat-text {
-  color: #8e8e93;
-  font-size: 26rpx;
-}
-
-/* ===== 底部对话输入区域 ===== */
-.input-area-wrapper {
-  position: relative;
-  z-index: 10;
-  background-color: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  padding: 10rpx 36rpx calc(env(safe-area-inset-bottom, 16rpx) + 14rpx) 36rpx;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.01);
-}
-
-/* ===== 深度思考切换行 ===== */
-.reasoning-toggle-row {
-  display: flex;
-  align-items: center;
-  margin-bottom: 10rpx;
-}
-
-.reasoning-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8rpx;
-  padding: 8rpx 20rpx;
-  border-radius: 40rpx;
-  border: 1.5px solid rgba(0, 0, 0, 0.08);
-  background-color: rgba(0, 0, 0, 0.02);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  cursor: pointer;
-}
-
-.reasoning-toggle-btn:active {
-  transform: scale(0.95);
-}
-
-.reasoning-toggle-btn.is-reasoning {
-  background-color: #1c1c1e;
-  border-color: #1c1c1e;
-}
-
-.reasoning-icon {
-  color: #8e8e93;
-  flex-shrink: 0;
-}
-
-.reasoning-toggle-btn.is-reasoning .reasoning-icon {
-  color: #f5d020;
-}
-
-.reasoning-label {
-  font-size: 22rpx;
-  font-weight: 500;
-  color: #8e8e93;
-  line-height: 1;
-}
-
-.reasoning-toggle-btn.is-reasoning .reasoning-label {
-  color: #ffffff;
-}
-
-.input-area {
-  display: flex;
-  align-items: flex-end;
-  background-color: rgba(0, 0, 0, 0.02);
-  border-radius: 40rpx;
-  padding: 6rpx 6rpx 6rpx 28rpx;
-  border: 1px solid transparent;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.input-area.is-focused {
-  background-color: #ffffff;
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-}
-
-.chat-input {
-  flex: 1;
-  min-height: 48rpx;
-  max-height: 200rpx;
-  padding: 14rpx 0;
-  font-size: 28rpx;
-  color: #1c1c1e;
-  line-height: 1.4;
-  height: auto;
-  overflow-y: auto !important;
-}
-
-.send-btn {
-  width: 68rpx;
-  height: 68rpx;
-  border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.05);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-left: 16rpx;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.send-btn.is-active {
-  background-color: #1c1c1e;
-}
-
-.send-btn.is-active:active {
-  transform: scale(0.92);
-  background-color: #000000;
-}
-
-.send-btn.is-active .send-icon {
-  /* 由于 SVG 经由 <image> 引入时，内部 currentColor 渲染默认会因为外联作用域问题降级为黑色， */
-  /* 我们在这里通过 CSS 滤镜将黑色图像黑白反转为白色，实实现在黑色背景上的优雅对比。 */
-  filter: brightness(0) invert(1);
-}
-
-.send-icon {
-  color: #ffffff;
-}
-
-/* ===== 消息编辑模态框 ===== */
-.modal-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s ease;
-}
-
-.edit-modal {
-  width: 580rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
-  padding: 44rpx 36rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 28rpx;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.modal-title {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  text-align: center;
-}
-
-.edit-textarea {
-  width: 100%;
-  height: 260rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 16rpx;
-  padding: 20rpx 24rpx;
-  font-size: 28rpx;
-  color: #1c1c1e;
-  line-height: 1.5;
-  box-sizing: border-box;
-}
-
-.edit-textarea:focus {
-  border-color: #1c1c1e;
-  background-color: #ffffff;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.modal-btn {
-  flex: 1;
-  height: 80rpx;
-  border-radius: 40rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26rpx;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.modal-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.03);
-  color: #48484a;
-}
-
-.modal-btn.cancel:active {
-  background-color: rgba(0, 0, 0, 0.06);
-}
-
-.modal-btn.save {
-  background-color: #1c1c1e;
-  color: #ffffff;
-}
-
-.modal-btn.save:active {
-  background-color: #000000;
-  transform: scale(0.97);
-}
-
-
-
-/* Custom SVG Icon Styles */
-.back-icon {
-  width: 44rpx;
-  height: 44rpx;
-}
-.info-icon {
-  width: 40rpx;
-  height: 40rpx;
-}
-.reasoning-icon {
-  width: 26rpx;
-  height: 26rpx;
-}
-.setting-row-icon {
-  width: 40rpx;
-  height: 40rpx;
-}
-.send-icon {
-  width: 36rpx;
-  height: 36rpx;
-}
-.close-icon {
-  width: 36rpx;
-  height: 36rpx;
-}
-.btn-icon {
-  width: 32rpx;
-  height: 32rpx;
-}
-.danger-icon {
-  width: 32rpx;
-  height: 32rpx;
-}
-
-/* Fallback Unicode Icon Styles */
-.back-icon-fallback {
-  display: none;
-}
-.info-icon-fallback {
-  display: none;
-}
-.send-icon-fallback {
-  display: none;
-}
-.reasoning-icon-fallback {
-  display: none;
-}
-.close-icon-fallback {
-  display: none;
-}
-.btn-icon-fallback {
-  display: none;
-}
-.danger-icon-fallback {
-  display: none;
-}
-
-/* Android Performance Fallbacks (Disable Frosted Glass) */
-.is-android .custom-header {
-  backdrop-filter: none !important;
-  background-color: #ffffff !important;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02) !important;
-}
-
-.is-android .input-area-wrapper {
-  backdrop-filter: none !important;
-  background-color: #ffffff !important;
-  border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
-}
-
-.is-android .modal-backdrop {
-  backdrop-filter: none !important;
-  background-color: rgba(0, 0, 0, 0.5) !important;
+.is-android .chat-bg {
+  background:
+    radial-gradient(circle at 94% 4%, var(--chat-glow-primary), transparent 38%),
+    linear-gradient(180deg, #f9fbf9 0%, #f7f9f7 100%);
 }
 
 .renderjs-bridge {

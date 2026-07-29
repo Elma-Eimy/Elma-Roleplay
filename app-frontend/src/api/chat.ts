@@ -1,4 +1,5 @@
 import { request, getBaseUrl, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
+import type { MessageCandidate } from "./sessions";
 
 // ===================== 类型定义 =====================
 
@@ -23,7 +24,7 @@ export interface ChatResponse {
   model_used?: string;
   user_message_id?: number;
   assistant_message_id?: number;
-  candidates?: any[];
+  candidates?: MessageCandidate[];
   active_index?: number;
 }
 

@@ -5,6 +5,26 @@ export function useChatScroll() {
   const scrollIntoViewId = ref("");
   const scrollWithAnimation = ref(false);
   const keyboardHeight = ref(0);
+  type TimerHandle = ReturnType<typeof setTimeout>;
+  const timers = new Set<TimerHandle>();
+  let bottomTimer: TimerHandle | null = null;
+  let throttleTimer: TimerHandle | null = null;
+  let isUnmounted = false;
+
+  const schedule = (callback: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      callback();
+    }, delay);
+    timers.add(timer);
+    return timer;
+  };
+
+  const cancelTimer = (timer: TimerHandle | null) => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timers.delete(timer);
+  };
 
   let isAndroid = false;
   // #ifdef APP-PLUS
@@ -13,31 +33,28 @@ export function useChatScroll() {
 
   const scrollToBottom = async () => {
     await nextTick();
-    // 延迟 80ms 确保 DOM 挂载和渲染高度更新后再滚动置底
-    setTimeout(() => {
-      // 强行用随机微调值唤醒 Vue 属性更新，防止计算滞后导致无法置底
-      scrollTop.value = 999999 - Math.random();
-    }, 80);
+    if (isUnmounted) return;
+    cancelTimer(bottomTimer);
+    // 合并同一渲染帧中的多次滚动请求，并通过确定性切换强制更新 scroll-top。
+    bottomTimer = schedule(() => {
+      bottomTimer = null;
+      scrollTop.value = scrollTop.value === 999999 ? 999998 : 999999;
+    }, 16);
   };
 
-  let isScrollThrottled = false;
   const scrollToBottomThrottled = () => {
-    if (isScrollThrottled) return;
-    isScrollThrottled = true;
-    setTimeout(() => {
+    if (throttleTimer !== null) return;
+    throttleTimer = schedule(() => {
+      throttleTimer = null;
       scrollToBottom();
-      isScrollThrottled = false;
-    }, 120);
+    }, 64);
   };
 
   const triggerPhasedScroll = () => {
     scrollToBottom();
-    // 阶段式定时置底，在键盘弹动中平滑触底
-    setTimeout(scrollToBottom, 60);
-    setTimeout(scrollToBottom, 120);
-    setTimeout(scrollToBottom, 200);
-    setTimeout(scrollToBottom, 300);
-    setTimeout(scrollToBottom, 400);
+    // 覆盖键盘动画的中段与结束阶段，避免每次焦点变化创建大量定时器。
+    schedule(scrollToBottom, 120);
+    schedule(scrollToBottom, 260);
   };
 
   // #ifdef APP-PLUS
@@ -58,6 +75,11 @@ export function useChatScroll() {
   });
 
   onUnmounted(() => {
+    isUnmounted = true;
+    timers.forEach((timer) => clearTimeout(timer));
+    timers.clear();
+    bottomTimer = null;
+    throttleTimer = null;
     // #ifdef APP-PLUS
     uni.offKeyboardHeightChange(onKeyboardChange);
     // #endif
@@ -67,9 +89,10 @@ export function useChatScroll() {
   const maintainScrollPosition = async (oldestClientId: string) => {
     scrollWithAnimation.value = false;
     await nextTick();
-    setTimeout(() => {
+    if (isUnmounted) return;
+    schedule(() => {
       scrollIntoViewId.value = oldestClientId;
-      setTimeout(() => {
+      schedule(() => {
         scrollIntoViewId.value = "";
       }, 100);
     }, 50);
