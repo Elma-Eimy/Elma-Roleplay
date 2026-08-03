@@ -3,7 +3,7 @@
 import json
 import re
 from sqlalchemy.orm import Session as DBSession
-from core.models import SessionPersona, ChatMessage, MemoryType
+from core.models import SessionPersona, ChatMessage, MemoryType, MessageRole
 from services.infrastructure.llm_provider import get_llm_provider
 from services.memory.memory_manager import add_memory_chunk, retrieve_memories
 from services.memory.graph_service import upsert_graph_data
@@ -115,9 +115,31 @@ def normalize_extracted_memories(
     return parsed
 
 
+def get_confirmed_message_upper_bound(
+    session_id: int,
+    db: DBSession,
+) -> int | None:
+    """返回当前尚未确认回合的用户消息 ID。
+
+    用户发送下一条消息即表示上一轮 active 候选已确认。因此只有严格早于
+    最新 active 用户消息的内容可以进入长期记忆。
+    """
+    latest_user = (
+        db.query(ChatMessage.id)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == MessageRole.user,
+            ChatMessage.is_active == True,
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    return latest_user[0] if latest_user else None
+
+
 def get_unsummarized_count(session_id: int, db: DBSession) -> int:
     """
-    返回指定 Session 中尚未被记忆提纯处理的消息数量。
+    返回尚未提纯且已经由下一轮用户消息确认的 active 消息数量。
 
     供调用方（如 main.py 的 chat 端点）判断是否需要触发 summarize_and_store_memory。
     """
@@ -128,13 +150,39 @@ def get_unsummarized_count(session_id: int, db: DBSession) -> int:
     if not persona:
         return 0
 
+    confirmed_upper_bound = get_confirmed_message_upper_bound(session_id, db)
+    if confirmed_upper_bound is None:
+        return 0
+
     query = db.query(ChatMessage).filter(
         ChatMessage.session_id == session_id,
-        ChatMessage.is_active == True
+        ChatMessage.is_active == True,
+        ChatMessage.id < confirmed_upper_bound,
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
 
+    return query.count()
+
+
+def get_pending_handoff_count(session_id: int, db: DBSession) -> int:
+    """返回所有尚未提纯的 active 消息数，包括仍待确认的当前回合。
+
+    当前回合不能进入长期记忆，但仍必须留在短期上下文中，直到下一轮确认
+    并完成提纯。
+    """
+    persona = db.query(SessionPersona).filter(
+        SessionPersona.session_id == session_id
+    ).first()
+    if not persona:
+        return 0
+
+    query = db.query(ChatMessage).filter(
+        ChatMessage.session_id == session_id,
+        ChatMessage.is_active == True,
+    )
+    if persona.last_summarized_msg_id is not None:
+        query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
     return query.count()
 
 
@@ -166,7 +214,7 @@ def get_memory_handoff_history_limit(session_id: int, db: DBSession) -> int:
     扩展上限与单次提纯批次大小保持一致。指针推进后会自动恢复常规窗口。
     """
     base_limit = max(1, int(settings.APP_CONTEXT_HISTORY_LIMIT))
-    unsummarized_count = get_unsummarized_count(session_id, db)
+    unsummarized_count = get_pending_handoff_count(session_id, db)
     retained_unsummarized = min(
         unsummarized_count,
         get_memory_extract_batch_size(),
@@ -243,6 +291,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     增量机制：
       - 仅处理 last_summarized_msg_id 之后的消息（避免重复提纯）
+      - 仅处理最新 active 用户消息之前、已经由下一轮确认的消息
       - 成功后更新 last_summarized_msg_id 为最后处理的消息 ID
       - 服务中断重启后，未总结的消息不会丢失
 
@@ -260,10 +309,16 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     persona_id = persona.id
     character_id = persona.character_id
 
-    # Step 2: 只查询尚未总结的消息（增量查询）
+    # Step 2: 只查询尚未总结且已经进入下一轮确认的消息。当前用户消息及其
+    # 候选回复始终留在短期上下文，不能提前进入长期记忆。
+    confirmed_upper_bound = get_confirmed_message_upper_bound(session_id, db)
+    if confirmed_upper_bound is None:
+        return 0
+
     query = db.query(ChatMessage).filter(
         ChatMessage.session_id == session_id,
-        ChatMessage.is_active == True
+        ChatMessage.is_active == True,
+        ChatMessage.id < confirmed_upper_bound,
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)

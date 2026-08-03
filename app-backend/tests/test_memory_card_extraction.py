@@ -90,6 +90,17 @@ class MemoryCardExtractionTests(unittest.TestCase):
             self.messages.append(message)
         self.db.commit()
 
+        # 进入下一轮后，上述消息才成为可提纯的已确认历史；本条边界消息
+        # 自身仍留在短期上下文，不应进入本批提纯。
+        self.confirming_message = ChatMessage(
+            session_id=self.session_id,
+            role=MessageRole.user,
+            content="Please continue.",
+            is_active=True,
+        )
+        self.db.add(self.confirming_message)
+        self.db.commit()
+
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
@@ -235,6 +246,10 @@ class MemoryCardExtractionTests(unittest.TestCase):
         extraction_prompt = provider.generate.call_args.kwargs["messages"][1]["content"]
         for message in self.messages:
             self.assertIn(f"[\u6d88\u606fID={message.id}]", extraction_prompt)
+        self.assertNotIn(
+            f"[\u6d88\u606fID={self.confirming_message.id}]",
+            extraction_prompt,
+        )
 
         self.db.refresh(self.persona)
         self.assertEqual(self.messages[-1].id, self.persona.last_summarized_msg_id)

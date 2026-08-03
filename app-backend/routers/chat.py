@@ -21,7 +21,7 @@ import services.conversation.chat_engine as chat_engine
 import services.conversation.context_assembler as context_assembler
 import services.conversation.chat_turn_service as chat_turn_service
 import services.conversation.message_service as message_service
-import re
+from services.parse import _extract_xml_block, extract_stream_reply_prefix
 from core.locking import get_session_lock
 
 router = APIRouter()
@@ -199,12 +199,9 @@ async def chat_stream(
             accumulated_text = ""
             reply_text = ""
             reasoning_text = ""
-            
-            in_reply_mode = False
-            fallback_mode = False
-            reply_closed = False
-            last_sent_index = 0
             turn_completed = False
+            # 暂留足够长的尾部，避免把尚未接收完整的 XML 标签发送给前端。
+            stream_guard_chars = 24
             
             try:
                 async for chunk in stream:
@@ -219,70 +216,29 @@ async def chat_stream(
                     if not delta:
                         continue
                     accumulated_text += delta
-                    
-                    if not in_reply_mode and not fallback_mode:
-                        match_open = re.search(r'<\s*reply\s*>', accumulated_text, re.IGNORECASE)
-                        if match_open:
-                            in_reply_mode = True
-                            last_sent_index = match_open.end()
-                        elif len(accumulated_text.strip()) >= 40:
-                            fallback_mode = True
-                            last_sent_index = 0
-                    
-                    if in_reply_mode:
-                        match_close = re.search(r'</\s*reply\s*>', accumulated_text, re.IGNORECASE)
-                        if match_close:
-                            close_idx = match_close.start()
-                            chunk_to_send = accumulated_text[last_sent_index:close_idx]
-                            if chunk_to_send:
-                                reply_text += chunk_to_send
-                                yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
-                            in_reply_mode = False
-                            fallback_mode = True
-                            reply_closed = True
-                            last_sent_index = len(accumulated_text)
-                        else:
-                            safe_len = len(accumulated_text) - 12
-                            if safe_len > last_sent_index:
-                                chunk_to_send = accumulated_text[last_sent_index:safe_len]
-                                reply_text += chunk_to_send
-                                yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
-                                last_sent_index = safe_len
-                                
-                    elif fallback_mode:
-                        if not reply_closed:
-                            if last_sent_index < len(accumulated_text):
-                                chunk_to_send = accumulated_text[last_sent_index:]
-                                reply_text += chunk_to_send
-                                yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
-                                last_sent_index = len(accumulated_text)
-                            else:
-                                reply_text += delta
-                                yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
-                                last_sent_index = len(accumulated_text)
 
-                if in_reply_mode:
-                    if len(accumulated_text) > last_sent_index:
-                        chunk_to_send = accumulated_text[last_sent_index:]
-                        reply_text += chunk_to_send
-                        yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
-                elif not reply_closed and not in_reply_mode:
-                    if len(accumulated_text) > last_sent_index:
-                        chunk_to_send = accumulated_text[last_sent_index:]
+                    parsed_so_far = extract_stream_reply_prefix(accumulated_text)
+                    safe_length = max(0, len(parsed_so_far) - stream_guard_chars)
+                    if (
+                        parsed_so_far.startswith(reply_text)
+                        and safe_length > len(reply_text)
+                    ):
+                        chunk_to_send = parsed_so_far[len(reply_text):safe_length]
                         reply_text += chunk_to_send
                         yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
 
-                from services.parse import _extract_xml_block
-                
                 result = _extract_xml_block(accumulated_text)
                 emotion_tag = result["emotion_tag"]
                 affection_change = result["affection_change"]
-                
-                if not reply_text.strip() and result["reply"]:
-                    reply_text = result["reply"]
-                    
-                if not reply_text.strip():
-                    reply_text = "（大模型未生成有效回复）"
+                canonical_reply = result["reply"] or "（大模型未生成有效回复）"
+
+                # 最终完整响应是落库的唯一真源。正常情况下只需发送尚未流出的
+                # 尾部；若上游产生极端格式变化，也不能把流式临时缓冲写入历史。
+                if canonical_reply.startswith(reply_text):
+                    final_chunk = canonical_reply[len(reply_text):]
+                    if final_chunk:
+                        yield f"data: {json.dumps({'chunk': final_chunk}, ensure_ascii=False)}\n\n"
+                reply_text = canonical_reply
 
                 completed = await _complete_turn(
                     turn,

@@ -133,6 +133,7 @@ import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
+import { unwrapWholeMessageFence } from "@/utils/markdown";
 import MarkdownIt from "markdown-it";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
@@ -335,11 +336,17 @@ const hasThought = computed(() => {
   }
 });
 
-const renderMarkdown = (content: string) => {
-  let html = md.render(content);
+const renderMarkdown = (content: string, allowUnclosedFence = false) => {
+  const normalizedContent = unwrapWholeMessageFence(
+    content,
+    allowUnclosedFence
+  );
+  let html = md.render(normalizedContent);
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/<pre>/g, '<pre class="md-pre">');
+  html = html.replace(/<code>/g, '<code class="md-code">');
   // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
   html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
   html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
@@ -358,12 +365,15 @@ const updateRenderedMarkdown = () => {
 
   try {
     const replyContent = parsedContent.value.reply;
+    const isStreaming = props.message?.status === "streaming";
     renderedMarkdown.value =
-      !isUser.value && replyContent ? renderMarkdown(String(replyContent)) : "";
+      !isUser.value && replyContent
+        ? renderMarkdown(String(replyContent), isStreaming)
+        : "";
 
     const thoughtContent = parsedContent.value.thought;
     renderedThought.value = thoughtContent
-      ? renderMarkdown(String(thoughtContent))
+      ? renderMarkdown(String(thoughtContent), isStreaming)
       : "";
   } catch (err) {
     console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
@@ -548,6 +558,24 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 .markdown-content :deep(.md-dialogue) {
   color: var(--app-color-text-primary, #26332e);
   font-weight: 650;
+}
+
+.markdown-content :deep(.md-pre),
+.thought-markdown-content :deep(.md-pre) {
+  max-width: 100%;
+  margin: 12rpx 0;
+  padding: 16rpx 18rpx;
+  overflow-x: auto;
+  border-radius: 14rpx;
+  background-color: rgba(38, 51, 46, 0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-content :deep(.md-code),
+.thought-markdown-content :deep(.md-code) {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
 }
 
 /* ===== 元数据区域 ===== */

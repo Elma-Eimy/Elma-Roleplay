@@ -113,6 +113,21 @@ class RouterServiceBoundaryTests(unittest.TestCase):
         self.assertEqual("happy", self.persona.current_mood)
         self.assertEqual(second.id, result["message_id"])
 
+    def test_switch_candidate_rejects_a_turn_confirmed_by_next_user_message(self):
+        _, _, second = self._add_candidates()
+        self.db.add(
+            ChatMessage(
+                session_id=self.session.id,
+                role=MessageRole.user,
+                content="next turn confirms the previous candidate",
+                is_active=True,
+            )
+        )
+        self.db.commit()
+
+        with self.assertRaises(message_service.CandidateValidationError):
+            message_service.switch_candidate(second.id, self.db)
+
     def test_history_candidates_are_loaded_as_one_grouped_batch(self):
         user, first, second = self._add_candidates()
 

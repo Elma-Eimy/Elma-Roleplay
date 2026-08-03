@@ -183,6 +183,22 @@ def switch_candidate(message_id: int, db: DBSession) -> dict:
         )
 
     session_id = message.session_id
+    latest_user = (
+        db.query(ChatMessage.id)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == MessageRole.user,
+            ChatMessage.is_active.is_(True),
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if latest_user is None or message.parent_id != latest_user[0]:
+        raise CandidateValidationError(
+            "Confirmed candidate groups cannot be switched; fork the session "
+            "to change an earlier turn"
+        )
+
     persona = (
         db.query(SessionPersona)
         .filter(SessionPersona.session_id == session_id)

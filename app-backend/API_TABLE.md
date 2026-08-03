@@ -963,6 +963,11 @@ This document describes the HTTP API endpoints provided by the backend for front
     `data: [DONE]`
 
 #### POST `/chat/switch_candidate`
+
+Only candidates belonging to the latest active user message can be switched.
+Sending the next user message confirms and freezes the previous turn; changing an
+earlier confirmed turn requires creating a session branch.
+
 * **Request (JSON)**:
   ```json
   {

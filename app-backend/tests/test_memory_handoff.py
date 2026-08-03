@@ -163,6 +163,64 @@ class MemoryHandoffTests(unittest.TestCase):
                 ),
             )
 
+    def test_current_candidate_round_is_not_counted_as_confirmed_memory(self):
+        first_user = ChatMessage(
+            session_id=self.session_id,
+            role=MessageRole.user,
+            content="第一轮用户消息",
+            is_active=True,
+        )
+        self.db.add(first_user)
+        self.db.flush()
+        rejected = ChatMessage(
+            session_id=self.session_id,
+            role=MessageRole.assistant,
+            content="未采用候选",
+            parent_id=first_user.id,
+            is_active=False,
+        )
+        selected = ChatMessage(
+            session_id=self.session_id,
+            role=MessageRole.assistant,
+            content="最终采用候选",
+            parent_id=first_user.id,
+            is_active=True,
+        )
+        self.db.add_all([rejected, selected])
+        self.db.commit()
+
+        # 尚未进入下一轮时，当前用户消息和所有候选都不能触发提纯。
+        self.assertEqual(
+            0,
+            memory_extraction_service.get_unsummarized_count(
+                self.session_id, self.db
+            ),
+        )
+        # 短期交接仍保留当前 active 对话，不能因延迟确认而提前淘汰。
+        self.assertEqual(
+            2,
+            memory_extraction_service.get_pending_handoff_count(
+                self.session_id, self.db
+            ),
+        )
+
+        next_user = ChatMessage(
+            session_id=self.session_id,
+            role=MessageRole.user,
+            content="第二轮用户消息",
+            is_active=True,
+        )
+        self.db.add(next_user)
+        self.db.commit()
+
+        # 进入下一轮后，只确认上一轮的 user + 最终 active assistant。
+        self.assertEqual(
+            2,
+            memory_extraction_service.get_unsummarized_count(
+                self.session_id, self.db
+            ),
+        )
+
     def test_context_assembler_uses_handoff_limit_and_regenerate_compensation(self):
         db = MagicMock()
         character = SimpleNamespace(id=2)
