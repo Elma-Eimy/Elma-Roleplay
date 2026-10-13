@@ -97,6 +97,8 @@
       v-if="isNewBranchModalOpen"
       :isOpen="isNewBranchModalOpen"
       :character="personaStore.activeCharacter"
+      :character-id="personaStore.activeCharacter?.id"
+      :character-name="personaStore.characterName"
       @close="isNewBranchModalOpen = false"
       @confirm="startNewBranch"
     />

@@ -88,6 +88,7 @@ const props = defineProps<{
   isOpen: boolean;
   alternateGreetings?: string[];
   characterName?: string;
+  characterId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -117,7 +118,7 @@ watch(() => props.isOpen, (newVal) => {
 const replacePlaceholders = (text: string) => {
   if (!text) return "";
   const charName = props.characterName || "角色";
-  const userName = personaStore.userNickname;
+  const userName = personaStore.nicknameFor(props.characterId);
   return text
     .replace(/\{\{char\}\}/gi, charName)
     .replace(/\{\{user\}\}/gi, userName);

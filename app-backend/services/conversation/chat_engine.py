@@ -29,6 +29,64 @@ def _resolve_model(use_reasoning: Optional[bool]) -> str:
     return settings.ACTIVE_CHAT_MODEL
 
 
+def _uses_sampling_controls(model: str, is_reasoning_active: bool) -> bool:
+    """采样参数只在非推理请求里生效。
+
+    DeepSeek V4 的思考开关由 thinking 参数控制，两个模型默认都在思考。
+    不能因为名字里带 pro 就把 deepseek-v4-pro 当成 OpenAI 的 o 系列模型。
+    """
+    name = model.lower()
+    if "deepseek" in name:
+        return not is_reasoning_active
+    if "o1" in name or "o3" in name or "pro" in name:
+        return False
+    return True
+
+
+def _build_generation_kwargs(
+    *,
+    model: str,
+    messages: list,
+    is_reasoning_active: bool,
+    final_temp: float,
+    final_top_p: float,
+    final_presence: float,
+    final_frequency: float,
+    final_repetition: Optional[float],
+    final_reasoning_effort: Optional[str],
+    stream: bool = False,
+) -> dict:
+    """合并模型调用参数，并为 DeepSeek 显式打开或关闭思考。"""
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": settings.LLM_MAX_TOKENS,
+    }
+    if stream:
+        kwargs["stream"] = True
+
+    if _uses_sampling_controls(model, is_reasoning_active):
+        kwargs["temperature"] = final_temp
+        kwargs["top_p"] = final_top_p
+        kwargs["presence_penalty"] = final_presence
+        kwargs["frequency_penalty"] = final_frequency
+    elif final_reasoning_effort:
+        kwargs["reasoning_effort"] = final_reasoning_effort
+
+    extra_body = {}
+    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
+        extra_body["repetition_penalty"] = final_repetition
+
+    if "deepseek" in model.lower():
+        extra_body["thinking"] = {
+            "type": "enabled" if is_reasoning_active else "disabled"
+        }
+
+    if extra_body:
+        kwargs["extra_body"] = extra_body
+    return kwargs
+
+
 async def generate_reply(
     character,
     messages: list,
@@ -63,32 +121,17 @@ async def generate_reply(
 
     is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
 
-    kwargs = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": settings.LLM_MAX_TOKENS,
-    }
-
-    # 根据模型和推理状态注入参数（推理模型可能不支持 temperature 或者是受限的，且支持 reasoning_effort）
-    if "o1" in model.lower() or "o3" in model.lower() or "pro" in model.lower():
-        if final_reasoning_effort:
-            kwargs["reasoning_effort"] = final_reasoning_effort
-    else:
-        kwargs["temperature"] = final_temp
-        kwargs["top_p"] = final_top_p
-        kwargs["presence_penalty"] = final_presence
-        kwargs["frequency_penalty"] = final_frequency
-
-    extra_body = {}
-    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
-        extra_body["repetition_penalty"] = final_repetition
-
-    # 如果是 DeepSeek 模型且开启了思考，根据文档需要传入 thinking: {"type": "enabled"}
-    if "deepseek" in model.lower() and is_reasoning_active:
-        extra_body["thinking"] = {"type": "enabled"}
-
-    if extra_body:
-        kwargs["extra_body"] = extra_body
+    kwargs = _build_generation_kwargs(
+        model=model,
+        messages=messages,
+        is_reasoning_active=is_reasoning_active,
+        final_temp=final_temp,
+        final_top_p=final_top_p,
+        final_presence=final_presence,
+        final_frequency=final_frequency,
+        final_repetition=final_repetition,
+        final_reasoning_effort=final_reasoning_effort,
+    )
 
     try:
         from services.infrastructure.llm_provider import get_llm_provider
@@ -158,33 +201,18 @@ async def generate_reply_stream(
 
     is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
 
-    kwargs = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": settings.LLM_MAX_TOKENS,
-        "stream": True,
-    }
-
-    # 根据模型和推理状态注入参数（推理模型可能不支持 temperature 或者是受限的，且支持 reasoning_effort）
-    if "o1" in model.lower() or "o3" in model.lower() or "pro" in model.lower():
-        if final_reasoning_effort:
-            kwargs["reasoning_effort"] = final_reasoning_effort
-    else:
-        kwargs["temperature"] = final_temp
-        kwargs["top_p"] = final_top_p
-        kwargs["presence_penalty"] = final_presence
-        kwargs["frequency_penalty"] = final_frequency
-
-    extra_body = {}
-    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
-        extra_body["repetition_penalty"] = final_repetition
-
-    # 如果是 DeepSeek 模型且开启了思考，根据文档需要传入 thinking: {"type": "enabled"}
-    if "deepseek" in model.lower() and is_reasoning_active:
-        extra_body["thinking"] = {"type": "enabled"}
-
-    if extra_body:
-        kwargs["extra_body"] = extra_body
+    kwargs = _build_generation_kwargs(
+        model=model,
+        messages=messages,
+        is_reasoning_active=is_reasoning_active,
+        final_temp=final_temp,
+        final_top_p=final_top_p,
+        final_presence=final_presence,
+        final_frequency=final_frequency,
+        final_repetition=final_repetition,
+        final_reasoning_effort=final_reasoning_effort,
+        stream=True,
+    )
 
     try:
         from services.infrastructure.llm_provider import get_llm_provider

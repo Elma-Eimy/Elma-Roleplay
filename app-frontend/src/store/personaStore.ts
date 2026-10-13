@@ -23,8 +23,32 @@ export const usePersonaStore = defineStore("persona", () => {
   /** 是否正在加载人设状态详情 */
   const isLoadingPersona = ref(false);
 
-  /** 玩家自定义昵称，默认为“用户” */
-  const userNickname = ref(uni.getStorageSync("user_nickname") || "用户");
+  /** 按角色保存的玩家名字。没单独设置过的角色使用「用户」。 */
+  const NICKNAME_STORAGE_KEY = "user_nicknames_by_character";
+  const DEFAULT_NICKNAME = "用户";
+
+  function readNicknameMap(): Record<string, string> {
+    const raw = uni.getStorageSync(NICKNAME_STORAGE_KEY);
+    if (!raw) return {};
+    if (typeof raw === "object") return { ...raw };
+    try {
+      const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  const nicknamesByCharacter = ref<Record<string, string>>(readNicknameMap());
+
+  function nicknameFor(characterId: number | null | undefined): string {
+    if (characterId == null) return DEFAULT_NICKNAME;
+    const saved = nicknamesByCharacter.value[String(characterId)];
+    return saved?.trim() || DEFAULT_NICKNAME;
+  }
+
+  /** 当前角色对应的玩家名字 */
+  const userNickname = computed(() => nicknameFor(activeCharacter.value?.id));
 
   // ===== 计算属性 (Getters) =====
 
@@ -163,13 +187,16 @@ export const usePersonaStore = defineStore("persona", () => {
     }
   }
 
-  /** 更新并持久化玩家自定义昵称 */
-  function updateUserNickname(newName: string) {
+  /** 更新并持久化某个角色眼中的玩家名字 */
+  function updateUserNickname(newName: string, characterId?: number | null) {
+    const id = characterId ?? activeCharacter.value?.id;
     const trimmed = newName.trim();
-    if (trimmed) {
-      userNickname.value = trimmed;
-      uni.setStorageSync("user_nickname", trimmed);
-    }
+    if (id == null || !trimmed) return;
+    nicknamesByCharacter.value = {
+      ...nicknamesByCharacter.value,
+      [String(id)]: trimmed,
+    };
+    uni.setStorageSync(NICKNAME_STORAGE_KEY, nicknamesByCharacter.value);
   }
 
   /** 重置整个 Store 的状态变量 */
@@ -189,6 +216,8 @@ export const usePersonaStore = defineStore("persona", () => {
     isLoadingCharacters,
     isLoadingPersona,
     userNickname,
+    nicknamesByCharacter,
+    nicknameFor,
     // Getters
     hasActiveCharacter,
     characterName,

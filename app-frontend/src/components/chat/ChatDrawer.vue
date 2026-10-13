@@ -60,7 +60,10 @@
                 src="/static/icons/menu_user_plus.svg" 
                 mode="aspectFit" 
               />
-              <text class="setting-row-label">我的昵称</text>
+              <view class="setting-row-copy">
+                <text class="setting-row-label">我的名字</text>
+                <text class="setting-row-hint">只对当前角色生效</text>
+              </view>
             </view>
             <input 
               class="drawer-nickname-input" 
@@ -361,15 +364,16 @@ const chatSettingsStore = useChatSettingsStore();
 const showAdvancedParams = ref(false);
 const userNicknameInput = ref(personaStore.userNickname);
 
-// 监听昵称的变化进行双向绑定
+// 当前角色或该角色的名字变化时，同步输入框
 watch(() => personaStore.userNickname, (newVal) => {
   userNicknameInput.value = newVal;
 });
 
 const saveUserNickname = () => {
   const name = userNicknameInput.value.trim();
-  if (name) {
-    personaStore.updateUserNickname(name);
+  const characterId = personaStore.activeCharacter?.id;
+  if (name && characterId != null) {
+    personaStore.updateUserNickname(name, characterId);
   } else {
     userNicknameInput.value = personaStore.userNickname;
   }
@@ -643,10 +647,22 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
   color: #8e8e93;
 }
 
+.setting-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+}
+
 .setting-row-label {
   font-size: 27rpx;
   font-weight: 500;
   color: #1c1c1e;
+}
+
+.setting-row-hint {
+  font-size: 20rpx;
+  color: #8e8e93;
+  line-height: 1.3;
 }
 
 .drawer-nickname-input {

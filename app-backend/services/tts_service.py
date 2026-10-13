@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import hashlib
 import base64
 import httpx
@@ -9,6 +10,19 @@ from core.config import settings
 class TTSService:
     _instance = None
     _lock = threading.Lock()
+    PREPROCESSOR_VERSION = "2"
+    LONG_TEXT_THRESHOLD = 800
+    MAX_SPOKEN_CHARS = 500
+    PREPROCESS_MAX_TOKENS = 1024
+
+    _ALLOWED_TTS_TAGS = {
+        "开心", "悲伤", "愤怒", "恐惧", "惊讶", "兴奋", "委屈", "平静",
+        "冷漠", "怅然", "欣慰", "无奈", "愧疚", "释然", "温柔", "高冷",
+        "活泼", "严肃", "慵懒", "俏皮", "深沉", "疲惫", "撒娇", "紧张",
+        "害怕", "激动", "颤抖", "吸气", "深呼吸", "叹气", "长叹一口气",
+        "喘息", "轻笑", "大笑", "笑声", "哭声", "抽泣", "呜呜", "小声",
+        "低声", "低沉", "语速加快", "提高音量", "唱歌", "sing",
+    }
 
     def __init__(self):
         self.client = None
@@ -111,227 +125,238 @@ class TTSService:
             return ""
         return re.sub(r'<\s*style\s*>(.*?)</\s*style\s*>', r'[\1]', text, flags=re.IGNORECASE)
 
+    def _build_preprocess_messages(
+        self,
+        text: str,
+        character_name: str = None,
+        force_compress: bool = False,
+    ) -> list[dict]:
+        target = (
+            f"目标发音人是 {character_name}，只保留 {character_name} 说出口的内容，"
+            "删除其他角色台词。"
+            if character_name
+            else "只保留主要说话人或当前 AI 角色说出口的内容。"
+        )
+        is_long = len(text) > self.LONG_TEXT_THRESHOLD
+        mode = "强制压缩" if force_compress else ("长文本压缩" if is_long else "短文本提取")
+        length_rule = (
+            f"输出 spoken_text 不得超过 {self.MAX_SPOKEN_CHARS} 个字符。"
+            "保留人名、地点、数字、承诺、警告、问题、结论和剧情关键事实；"
+            "合并重复表达，删除铺垫和不影响含义的细节，并保持角色直接说话的口吻。"
+            if is_long or force_compress
+            else "尽量保留原台词，不要无故改写或总结。"
+        )
+        system_prompt = f"""你是角色扮演文本的 TTS 台词提炼器。当前模式：{mode}。
+
+规则：
+1. {target}
+2. 删除纯物理动作、心理活动、场景叙述、说话人前缀和未发音的说明。
+3. 保持目标台词原本使用的语言，不要翻译；中英文混合台词也保持原语言分布。
+4. {length_rule}
+5. 可在 spoken_text 中使用少量方括号情绪或声音标签，例如 [温柔]、[叹气]、[冷漠，低沉]；不要把动作描写伪装成标签。
+6. 如果输入没有任何可发音台词，status 必须为 no_speech，spoken_text 必须为空。
+7. 只能返回一个 JSON 对象，不要输出 Markdown 或解释：
+{{"status":"ok|no_speech","spoken_text":"...","was_compressed":true|false}}
+"""
+        user_prompt = f"""示例（短文本）：
+输入：*她轻轻笑了笑* “你终于来啦。”
+输出：{{"status":"ok","spoken_text":"[温柔，轻笑]你终于来啦。","was_compressed":false}}
+
+示例（只有旁白）：
+输入：她走到窗前，把信放在桌上，然后沉默地离开。
+输出：{{"status":"no_speech","spoken_text":"","was_compressed":false}}
+
+示例（长文本压缩）：
+输入：我今天去了旧城区，见到了管理员……（重复解释经过）……仓库钥匙还在北门值班室。所以明天千万不要独自过去，一定等我一起行动。
+输出：{{"status":"ok","spoken_text":"[认真，严肃]仓库钥匙还在北门值班室。明天不要独自过去，等我一起行动。","was_compressed":true}}
+
+待处理输入：
+{text}
+"""
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    def _model_kwargs(self, model: str) -> dict:
+        kwargs = {
+            "temperature": 0.1,
+            "max_tokens": self.PREPROCESS_MAX_TOKENS,
+        }
+        if "deepseek" in model.lower():
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        return kwargs
+
+    def _normalize_control_tags(self, text: str) -> str:
+        def normalize(match):
+            raw = match.group(1).strip()
+            parts = [
+                part for part in re.split(r"[，,、\s]+", raw) if part
+            ]
+            if parts and all(part in self._ALLOWED_TTS_TAGS for part in parts):
+                return f"[{', '.join(parts)}]"
+            return ""
+
+        return re.sub(r"\[([^\]]+)\]", normalize, text)
+
+    def _sanitize_spoken_text(self, text: str) -> str:
+        if not text:
+            return ""
+        text = self._normalize_style_tags(text)
+        text = re.sub(
+            r"^(?:输出|处理后|转换后|结果|整理后|规范文本|预处理结果|预处理后|清洗后)[:：\s]*",
+            "",
+            text.strip(),
+        )
+        text = re.sub(
+            r"(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|［[^］]+］|"
+            r"\{[^}]+\}|｛[^｝]+｝)",
+            "",
+            text,
+        )
+        text = self._normalize_control_tags(text)
+        return re.sub(r"\s+", " ", text).strip().strip("` ")
+
+    def _parse_preprocess_response(self, response, source_text: str) -> str:
+        choice = response.choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason and finish_reason != "stop":
+            raise ValueError(f"TTS 预处理响应未完整结束: {finish_reason}")
+
+        content = (getattr(choice.message, "content", None) or "").strip()
+        if not content:
+            raise ValueError("TTS 预处理模型返回空正文")
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content).strip()
+
+        payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise ValueError("TTS 预处理结果不是 JSON 对象")
+        status = payload.get("status")
+        if status == "no_speech":
+            return ""
+        if status != "ok" or not isinstance(payload.get("spoken_text"), str):
+            raise ValueError("TTS 预处理结果缺少有效 status/spoken_text")
+
+        spoken_text = self._sanitize_spoken_text(payload["spoken_text"])
+        if not spoken_text:
+            raise ValueError("TTS 预处理结果清洗后为空")
+        if (
+            len(source_text) > self.LONG_TEXT_THRESHOLD
+            and len(spoken_text) > self.MAX_SPOKEN_CHARS
+        ):
+            raise ValueError(
+                f"TTS 长文本未有效压缩: {len(spoken_text)} > "
+                f"{self.MAX_SPOKEN_CHARS}"
+            )
+        return spoken_text
+
+    def _truncate_spoken_text(self, text: str) -> str:
+        if len(text) <= self.MAX_SPOKEN_CHARS:
+            return text
+        prefix = text[:self.MAX_SPOKEN_CHARS]
+        cut = max(
+            prefix.rfind(mark)
+            for mark in ("。", "！", "？", ".", "!", "?", ";", "；")
+        )
+        if cut >= self.MAX_SPOKEN_CHARS // 2:
+            prefix = prefix[:cut + 1]
+        return prefix.rstrip() + "…"
+
+    def _safe_fallback_extract(
+        self,
+        text: str,
+        character_name: str = None,
+    ) -> str:
+        candidates = []
+        quote_pattern = re.compile(
+            r'“([^”]+)”|「([^」]+)」|『([^』]+)』|"([^"\r\n]+)"'
+        )
+        if character_name:
+            speaker_pattern = re.compile(
+                rf"(?im)^\s*{re.escape(character_name)}\s*[:：]\s*(.+)$"
+            )
+            for match in speaker_pattern.finditer(text):
+                value = match.group(1).strip()
+                quoted = [
+                    next((group for group in item.groups() if group), "").strip()
+                    for item in quote_pattern.finditer(value)
+                ]
+                for spoken in quoted or [value]:
+                    if spoken and spoken not in candidates:
+                        candidates.append(spoken)
+
+        if not candidates:
+            for match in quote_pattern.finditer(text):
+                value = next(
+                    (group for group in match.groups() if group), ""
+                ).strip()
+                if value and value not in candidates:
+                    candidates.append(value)
+
+        if candidates:
+            return self._truncate_spoken_text(
+                self._sanitize_spoken_text(" ".join(candidates))
+            )
+        if len(text) <= self.LONG_TEXT_THRESHOLD:
+            return self._sanitize_spoken_text(
+                self.preprocess_roleplay_text_rules(text)
+            )
+        return ""
+
     async def preprocess_roleplay_text_llm(self, text: str, character_name: str = None) -> str:
-        """
-        至臻 LLM 预处理器：
-        使用快速的大模型（如 deepseek-v4-flash）进行语义分析，剔除纯物理动作/旁白/场景叙述，
-        提取情感、语气和发声事件并转化为 MiMo v2.5 官方支持的 [风格/情绪/动作] 方括号控制标签，并合理嵌入到台词对白的不同位置。
-        """
+        """异步提取 TTS 台词；长文本压缩，失败时安全降级。"""
         if not text or not text.strip():
             return ""
 
         from services.infrastructure.llm_provider import get_llm_provider
-        from core.config import settings
-
-        target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
-
-        system_prompt = (
-            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和多人对话的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
-            "处理规则：\n"
-            f"1. {target_info}\n"
-            "   - 必须绝对剔除所有的纯物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
-            "   - 台词中原本就包含的口语语气发音词（例如“唉”、“哼”、“呜呜”、“哈哈”、“嘿”、“呀”、“啊”、“哦”等），绝对不能删除，必须在台词原样中保留！\n"
-            "   - 如果有其他角色的台词（如“Reina: '...'”），而目标不是该角色，必须将其彻底舍弃。\n"
-            "2. 在提取出的台词开头添加整体的情绪/风格标签，格式为 [风格] 待合成内容。支持同时设置多种风格，将多个风格置于同一个方括号内，如 [温柔 怅然] 或 [冷漠，低沉]。\n"
-            "   推荐基础情绪风格：开心/悲伤/愤怒/恐惧/惊讶/兴奋/委屈/平静/冷漠/怅然/欣慰/无奈/愧疚/释然/温柔/高冷/活泼/严肃/慵懒/俏皮/深沉等。\n"
-            "3. 如果台词中包含多种不同的心情、语气转变或声音特效，支持在文本的中间或任意位置插入细粒度方括号控制标签，格式为 [音频标签]。\n"
-            "   推荐细粒度标签：吸气/深呼吸/叹气/长叹一口气/喘息/紧张/害怕/激动/疲惫/撒娇/颤抖/轻笑/大笑/抽泣/呜呜/小声/语速加快/提高音量等。\n"
-            "   （如需体验唱歌，必须在歌词前加上 [唱歌] 或 [sing] 标签）。\n"
-            "4. 保证输出连贯，只包含提取出的台词与相应的 [风格/控制] 方括号标签。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。"
-        )
-
-        user_content = (
-            "示例 1：\n"
-            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
-            "输出：[悲伤，叹气]唉，今天在学校真的好累啊。[开心，轻笑]不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
-            "示例 2：\n"
-            "输入：*她咬了紧下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
-            "输出：[委屈，吸气]\"你...你昨天怎么没来找我嘛...\"\n\n"
-            "示例 3：\n"
-            "输入：我没事。（叹了口气）只是有点累了。\n"
-            "输出：[温柔，疲惫]我没事。[长叹一口气]只是有点累了。\n\n"
-            "示例 4：\n"
-            "输入：【摸摸头】别伤心了，有我在呢。\n"
-            "输出：[温柔]别伤心了，有我在呢。\n\n"
-            "示例 5：\n"
-            "输入：她微微一笑说道：“你终于来啦。”\n"
-            "输出：[温柔，轻笑]“你终于来啦。”\n\n"
-            "示例 6（目标角色为 Vera）：\n"
-            "输入：Reina Kuroda sat behind a desk. Reina: \"Volkov movement near the eastern ports.\"\n"
-            "Now, Vera stood in the shadow. She drew her sidearm and pointed it directly at your chest.\n"
-            "Vera: \"This is the first time we work together. So listen carefully.\"\n"
-            "Her voice was low, unhurried.\n"
-            "Vera: \"Do not slow me down. Be useful, or I will kill you myself.\"\n"
-            "输出：[高冷，严肃]“This is the first time we work together. So listen carefully。”[冷漠，低沉]“Do not slow me down. Be useful, or I will kill you myself。”\n\n"
-            f"输入：{text}\n"
-            "输出："
-        )
-
-        try:
-            model = settings.CHAT_MODEL_NON_REASONING
-            provider = get_llm_provider()
-            response = await provider.generate_async(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content}
-                ],
-                temperature=0.3,
-                max_tokens=1024
-            )
-            result = response.choices[0].message.content.strip()
-            if result.startswith("```"):
-                result = re.sub(r"^```[a-zA-Z]*\n|```$", "", result).strip()
-            
-            # 兼容性处理：如果大模型依然输出了 <style>xxx</style>，转换为 [xxx] 格式
-            result = self._normalize_style_tags(result)
-            
-            # Post-processing 双重清理过滤：
-            # 1. 移去 "输出："、"处理后：" 等前缀词
-            result = re.sub(r'^(?:输出|处理后|转换后|结果|整理后|规范文本|预处理结果|预处理后|清洗后)[:：\s]*', '', result)
-            result = re.sub(r'^.*?如下[:：\s]*', '', result, flags=re.IGNORECASE)
-            
-            # 2. 规范化：统一把所有的（风格/发声）或 (风格/发声) 转换为 [风格/发声]
-            def normalize_brackets(match):
-                content = next((g for g in match.groups() if g is not None), "").strip()
-                if content and len(content) <= 12:
-                    return f"[{content}]"
-                return match.group(0)
-            
-            result = re.sub(r'(?:（([^）]+)）|\(([^)]+)\)|［([^］]+)］|【([^】]+)】)', normalize_brackets, result)
-            
-            # 3. 提取并保护所有的方括号控制标签，用占位符替换以防被强力清理规则过滤
-            tags = []
-            def protect_tag(match):
-                tags.append(match.group(0))
-                return f"___TAG_{len(tags)-1}___"
-            
-            result_protected = re.sub(r'\[([^\]]+)\]', protect_tag, result)
-
-            # 4. 强力防漏：剔除任何可能残留的 *动作* 以及非标签的肢体叙述（不匹配被保护的方括号，只剔除多余的圆括号、花括号、方头括号等）
-            result_cleaned = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result_protected)
-            
-            # 5. 还原所有的方括号控制标签
-            for i, tag in enumerate(tags):
-                result_cleaned = result_cleaned.replace(f"___TAG_{i}___", tag)
-            
-            result = re.sub(r'\s+', ' ', result_cleaned).strip()
-            return result
-        except Exception as e:
-            import traceback
-            print(f"[WARN] LLM 预处理失败，回退使用正则规则预处理器。详细报错原因:")
-            traceback.print_exc()
-            return self.preprocess_roleplay_text_rules(text)
+        model = settings.CHAT_MODEL_NON_REASONING
+        provider = get_llm_provider()
+        errors = []
+        for force_compress in (False, True):
+            try:
+                response = await provider.generate_async(
+                    model=model,
+                    messages=self._build_preprocess_messages(
+                        text, character_name, force_compress
+                    ),
+                    **self._model_kwargs(model),
+                )
+                return self._parse_preprocess_response(response, text)
+            except Exception as exc:
+                errors.append(str(exc))
+                # 只有模型返回了可重试的格式/质量问题才再次调用；网络或供应商
+                # 故障直接进入本地安全回退，避免等待两次超时。
+                if not isinstance(exc, ValueError):
+                    break
+        print(f"[WARN] TTS LLM 预处理失败，使用安全台词提取: {'; '.join(errors)}")
+        return self._safe_fallback_extract(text, character_name)
 
     def preprocess_roleplay_text_llm_sync(self, text: str, character_name: str = None) -> str:
-        """
-        同步LLM 预处理器，供同步接口或测试调用。
-        """
+        """同步提取 TTS 台词；与异步路径共用提示词、解析和回退规则。"""
         if not text or not text.strip():
             return ""
 
         from services.infrastructure.llm_provider import get_llm_provider
-        from core.config import settings
-
-        target_info = f"当前目标发音人是：【{character_name}】。你必须仅提取【{character_name}】说出口的台词对白，把它们转换为规范的语音合成文本，并剔除其他角色的台词以及所有旁白叙述。" if character_name else "当前你需要提取主要说话人（或AI角色本身）说出口的台词对白，并把它们转换为规范的语音合成文本，剔除旁白和动作描述。"
-
-        system_prompt = (
-            "你是一个角色扮演对话的语音合成文本预处理器。你的任务是把一段混杂了动作描写、心理描写、场景叙述和多人对话的文本，整理并转换成专门用于小米 MiMo 语音合成（TTS）的规范文本。\n\n"
-            "处理规则：\n"
-            f"1. {target_info}\n"
-            "   - 必须绝对剔除所有的纯物理动作、心理活动、场景叙述和对话前缀（例如：“她微微一笑说道：‘你好呀。’”中的“她微微一笑说道：”；或者“我走过去坐下。今天天气真好。”中的“我走过去坐下。”都必须被剔除）。\n"
-            "   - 台词中原本就包含的口语语气发音词（例如“唉”、“哼”、“呜呜”、“哈哈”、“嘿”、“呀”、“啊”、“哦”等），绝对不能删除，必须在台词原样中保留！\n"
-            "   - 如果有其他角色的台词（如“Reina: '...'”），而目标不是该角色，必须将其彻底舍弃。\n"
-            "2. 在提取出的台词开头添加整体的情绪/风格标签，格式为 [风格] 待合成内容。支持同时设置多种风格，将多个风格置于同一个方括号内，如 [温柔 怅然] 或 [冷漠，低沉]。\n"
-            "   推荐基础情绪风格：开心/悲伤/愤怒/恐惧/惊讶/兴奋/委屈/平静/冷漠/怅然/欣慰/无奈/愧疚/释然/温柔/高冷/活泼/严肃/慵懒/俏皮/深沉等。\n"
-            "3. 如果台词中包含多种不同的心情、语气转变或声音特效，支持在文本的中间或任意位置插入细粒度方括号控制标签，格式为 [音频标签]。\n"
-            "   推荐细粒度标签：吸气/深呼吸/叹气/长叹一口气/喘息/紧张/害怕/激动/疲惫/撒娇/颤抖/轻笑/大笑/抽泣/呜呜/小声/语速加快/提高音量等。\n"
-            "   （如需体验唱歌，必须在歌词前加上 [唱歌] 或 [sing] 标签）。\n"
-            "4. 保证输出连贯，只包含提取出的台词与相应的 [风格/控制] 方括号标签。不要添加任何其他解释、说明或 Markdown 代码块包裹（如 ```）。"
-        )
-
-        user_content = (
-            "示例 1：\n"
-            "输入：*叹了口气，有些伤心地低下头* 唉，今天在学校真的好累啊。 *轻声笑了笑* 不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n"
-            "输出：[悲伤，叹气]唉，今天在学校真的好累啊。[开心，轻笑]不过，只要一见到你，我所有的疲惫就全部烟消云散啦！\n\n"
-            "示例 2：\n"
-            "输入：*她咬了玩下唇，有些委屈地撒娇* \"你...你昨天怎么没来找我嘛...\" *拉扯着你的衣袖*\n"
-            "输出：[委屈，吸气]\"你...你昨天怎么没来找我嘛...\"\n\n"
-            "示例 3：\n"
-            "输入：我没事。（叹了口气）只是有点累了。\n"
-            "输出：[温柔，疲惫]我没事。[长叹一口气]只是有点累了。\n\n"
-            "示例 4：\n"
-            "输入：【摸摸头】别伤心了，有我在呢。\n"
-            "输出：[温柔]别伤心了，有我在呢。\n\n"
-            "示例 5：\n"
-            "输入：她微微一笑说道：“你终于来啦。”\n"
-            "输出：[温柔，轻笑]“你终于来啦。”\n\n"
-            "示例 6（目标角色为 Vera）：\n"
-            "输入：Reina Kuroda sat behind a desk. Reina: \"Volkov movement near the eastern ports.\"\n"
-            "Now, Vera stood in the shadow. She drew her sidearm and pointed it directly at your chest.\n"
-            "Vera: \"This is the first time we work together. So listen carefully.\"\n"
-            "Her voice was low, unhurried.\n"
-            "Vera: \"Do not slow me down. Be useful, or I will kill you myself.\"\n"
-            "输出：[高冷，严肃]“This is the first time we work together. So listen carefully。”[冷漠，低沉]“Do not slow me down. Be useful, or I will kill you myself。”\n\n"
-            f"输入：{text}\n"
-            "输出："
-        )
-
-        try:
-            model = settings.CHAT_MODEL_NON_REASONING
-            provider = get_llm_provider()
-            response = provider.generate(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content}
-                ],
-                temperature=0.3,
-                max_tokens=1024
-            )
-            result = response.choices[0].message.content.strip()
-            if result.startswith("```"):
-                result = re.sub(r"^```[a-zA-Z]*\n|```$", "", result).strip()
-            
-            # 兼容性处理：如果大模型依然输出了 <style>xxx</style>，转换为 [xxx] 格式
-            result = self._normalize_style_tags(result)
-            
-            # Post-processing 双重清理过滤：
-            # 1. 移去 "输出："、"处理后：" 等前缀词
-            result = re.sub(r'^(?:输出|处理后|转换后|结果|整理后|规范文本|预处理结果|预处理后|清洗后)[:：\s]*', '', result)
-            result = re.sub(r'^.*?如下[:：\s]*', '', result, flags=re.IGNORECASE)
-            
-            # 2. 规范化：统一把所有的（风格/发声）或 (风格/发声) 转换为 [风格/发声]
-            def normalize_brackets(match):
-                content = next((g for g in match.groups() if g is not None), "").strip()
-                if content and len(content) <= 12:
-                    return f"[{content}]"
-                return match.group(0)
-            
-            result = re.sub(r'(?:（([^）]+)）|\(([^)]+)\)|［([^］]+)］|【([^】]+)】)', normalize_brackets, result)
-            
-            # 3. 提取并保护所有的方括号控制标签，用占位符替换以防被强力清理规则过滤
-            tags = []
-            def protect_tag(match):
-                tags.append(match.group(0))
-                return f"___TAG_{len(tags)-1}___"
-            
-            result_protected = re.sub(r'\[([^\]]+)\]', protect_tag, result)
-
-            # 4. 强力防漏：剔除任何可能残留的 *动作* 以及非标签的肢体叙述（不匹配被保护的方括号，只剔除多余的圆括号、花括号、方头括号等）
-            result_cleaned = re.sub(r'(?:\*[^*]+\*|（[^）]+）|\([^)]+\)|【[^】]+】|［[^］]+］|\{[^\}]+\}|｛[^｝]+｝)', '', result_protected)
-            
-            # 5. 还原所有的方括号控制标签
-            for i, tag in enumerate(tags):
-                result_cleaned = result_cleaned.replace(f"___TAG_{i}___", tag)
-            
-            result = re.sub(r'\s+', ' ', result_cleaned).strip()
-            return result
-        except Exception as e:
-            import traceback
-            print(f"[WARN] (同步) LLM 预处理失败，回退使用正则规则预处理器。详细报错原因:")
-            traceback.print_exc()
-            return self.preprocess_roleplay_text_rules(text)
+        model = settings.CHAT_MODEL_NON_REASONING
+        provider = get_llm_provider()
+        errors = []
+        for force_compress in (False, True):
+            try:
+                response = provider.generate(
+                    model=model,
+                    messages=self._build_preprocess_messages(
+                        text, character_name, force_compress
+                    ),
+                    **self._model_kwargs(model),
+                )
+                return self._parse_preprocess_response(response, text)
+            except Exception as exc:
+                errors.append(str(exc))
+                if not isinstance(exc, ValueError):
+                    break
+        print(f"[WARN] (同步) TTS LLM 预处理失败，使用安全台词提取: {'; '.join(errors)}")
+        return self._safe_fallback_extract(text, character_name)
 
     @classmethod
     def get_instance(cls):
@@ -375,8 +400,11 @@ class TTSService:
             text = db_message.content
             is_message_bound = True
 
-            # 命名为：msg_{message_id}_{voice}_{speed:.2f}.mp3
-            filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
+            # 预处理器升级时自动使用新缓存，避免继续播放旧版原文音频。
+            filename = (
+                f"msg_{message_id}_p{self.PREPROCESSOR_VERSION}_"
+                f"{voice}_{speed:.2f}.mp3"
+            )
             filepath = os.path.join(cache_dir, filename)
 
             # 尝试获取说话的角色名字以过滤旁白
@@ -388,7 +416,10 @@ class TTSService:
                 print(f"[WARN] 获取角色名称失败: {e}")
 
             # 检查数据库中是否存在 audio_path 且为 mp3 文件，且物理文件确实存在
-            if db_message.audio_path and db_message.audio_path.endswith(".mp3"):
+            if (
+                db_message.audio_path
+                and os.path.basename(db_message.audio_path) == filename
+            ):
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
@@ -404,7 +435,10 @@ class TTSService:
         if not is_message_bound:
             # 普通文本模式：用原始 text 直接算 MD5
             # 注意：此处用 text 而不是 text_clean，能够 100% 避免重复播放时的 LLM 耗时及哈希抖动
-            hash_input = f"{text.strip()}_{voice}_{speed:.2f}"
+            hash_input = (
+                f"p{self.PREPROCESSOR_VERSION}_"
+                f"{text.strip()}_{voice}_{speed:.2f}"
+            )
             md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
             filename = f"{md5_hash}.mp3"
             filepath = os.path.join(cache_dir, filename)
@@ -421,7 +455,7 @@ class TTSService:
         # 文本清洗与规范化 (只在缓存未命中时才触发，极其节省 LLM API 开销和时间！)
         text_clean = await self.preprocess_roleplay_text_llm(text, character_name=character_name)
         if not text_clean or not text_clean.strip():
-            text_clean = text.strip()
+            raise ValueError("未检测到可安全合成的目标角色台词。")
 
         # 缓存未命中，调用云端 MIMO API
         url = f"{settings.TTS_MIMO_BASE_URL}/chat/completions"
@@ -525,7 +559,10 @@ class TTSService:
             text = db_message.content
             is_message_bound = True
 
-            filename = f"msg_{message_id}_{voice}_{speed:.2f}.mp3"
+            filename = (
+                f"msg_{message_id}_p{self.PREPROCESSOR_VERSION}_"
+                f"{voice}_{speed:.2f}.mp3"
+            )
             filepath = os.path.join(cache_dir, filename)
 
             # 尝试获取说话的角色名字以过滤旁白
@@ -536,7 +573,10 @@ class TTSService:
             except Exception as e:
                 print(f"[WARN] 获取角色名称失败: {e}")
 
-            if db_message.audio_path and db_message.audio_path.endswith(".mp3"):
+            if (
+                db_message.audio_path
+                and os.path.basename(db_message.audio_path) == filename
+            ):
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
@@ -549,7 +589,10 @@ class TTSService:
                 raise ValueError("合成文本不能为空。")
 
         if not is_message_bound:
-            hash_input = f"{text.strip()}_{voice}_{speed:.2f}"
+            hash_input = (
+                f"p{self.PREPROCESSOR_VERSION}_"
+                f"{text.strip()}_{voice}_{speed:.2f}"
+            )
             md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
             filename = f"{md5_hash}.mp3"
             filepath = os.path.join(cache_dir, filename)
@@ -563,7 +606,7 @@ class TTSService:
 
         text_clean = self.preprocess_roleplay_text_llm_sync(text, character_name=character_name)
         if not text_clean or not text_clean.strip():
-            text_clean = text.strip()
+            raise ValueError("未检测到可安全合成的目标角色台词。")
 
         url = f"{settings.TTS_MIMO_BASE_URL}/chat/completions"
         headers = {

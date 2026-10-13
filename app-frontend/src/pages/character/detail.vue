@@ -367,6 +367,7 @@
       v-model:isOpen="isNewBranchModalOpen" 
       :alternateGreetings="(character?.extensions?.alternate_greetings as string[] | undefined)"
       :characterName="character?.name"
+      :characterId="characterId"
       @confirm="startNewBranch"
     />
 

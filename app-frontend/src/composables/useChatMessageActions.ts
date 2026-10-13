@@ -15,6 +15,7 @@ export function useChatMessageActions(
   const { playMessageTTS } = useAudioPlayer();
   const editingMessageId = ref<number | null>(null);
   const editMessageContent = ref("");
+  let isMessageActionSheetOpen = false;
 
   const cancelEdit = () => {
     editingMessageId.value = null;
@@ -92,7 +93,7 @@ export function useChatMessageActions(
   };
 
   const onMessageLongPress = (message: ChatMessage) => {
-    if (!message?.id) return;
+    if (!message?.id || isMessageActionSheetOpen) return;
 
     const itemList = ["复制内容"];
     if (message.role === "assistant") {
@@ -107,30 +108,39 @@ export function useChatMessageActions(
     }
     itemList.push("删除此消息");
 
-    uni.showActionSheet({
-      itemList,
-      success: (result) => {
-        const action = itemList[result.tapIndex];
-        if (action === "复制内容") {
-          uni.setClipboardData({
-            data: message.content,
-            success: () =>
-              uni.showToast({ title: "复制成功", icon: "none" }),
-          });
-        } else if (action === "朗读消息") {
-          void playMessageTTS(message);
-        } else if (action === "编辑消息") {
-          editingMessageId.value = message.id;
-          editMessageContent.value = message.content;
-        } else if (action === "创建分支（多宇宙）") {
-          createBranchFromMessage(message);
-        } else if (action === "删除此消息") {
-          deleteMessage(message);
-        } else if (action === "重新生成回复") {
-          void regenerateLatestReply();
-        }
-      },
-    });
+    isMessageActionSheetOpen = true;
+    try {
+      uni.showActionSheet({
+        itemList,
+        success: (result) => {
+          const action = itemList[result.tapIndex];
+          if (action === "复制内容") {
+            uni.setClipboardData({
+              data: message.content,
+              success: () =>
+                uni.showToast({ title: "复制成功", icon: "none" }),
+            });
+          } else if (action === "朗读消息") {
+            void playMessageTTS(message);
+          } else if (action === "编辑消息") {
+            editingMessageId.value = message.id;
+            editMessageContent.value = message.content;
+          } else if (action === "创建分支（多宇宙）") {
+            createBranchFromMessage(message);
+          } else if (action === "删除此消息") {
+            deleteMessage(message);
+          } else if (action === "重新生成回复") {
+            void regenerateLatestReply();
+          }
+        },
+        complete: () => {
+          isMessageActionSheetOpen = false;
+        },
+      });
+    } catch (error) {
+      isMessageActionSheetOpen = false;
+      throw error;
+    }
   };
 
   return {

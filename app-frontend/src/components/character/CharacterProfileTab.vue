@@ -109,7 +109,7 @@ const md = new MarkdownIt({
 const replacePlaceholders = (text: string) => {
   if (!text) return "";
   const charName = props.character?.name || "角色";
-  const userName = personaStore.userNickname;
+  const userName = personaStore.nicknameFor(props.character?.id);
   return text
     .replace(/\{\{char\}\}/gi, charName)
     .replace(/\{\{user\}\}/gi, userName);

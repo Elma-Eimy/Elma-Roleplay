@@ -133,7 +133,7 @@ import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
-import { unwrapWholeMessageFence } from "@/utils/markdown";
+import { renderRoleplayStateBlock } from "@/utils/markdown";
 import MarkdownIt from "markdown-it";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
@@ -143,6 +143,10 @@ const md = new MarkdownIt({
   breaks: true,
   linkify: true,
 });
+
+// 角色卡会使用任意 fence 标签承载人物状态；统一忽略标签并渲染为状态卡。
+md.renderer.rules.fence = (tokens, index) =>
+  renderRoleplayStateBlock(tokens[index].content);
 
 const STREAM_MARKDOWN_RENDER_DELAY = 48;
 
@@ -170,11 +174,20 @@ const emit = defineEmits<{
   (e: "longpress-message", message: ChatMessage): void;
 }>();
 
+// 部分移动端 WebView 会为同一次长按先后派发 longpress 和 contextmenu。
+// 在气泡这一层合并它们，避免重复震动和重复打开操作菜单。
+const LONG_PRESS_DEDUPE_WINDOW = 1000;
+let lastLongPressAt = 0;
+
 const handleLongPress = (e?: Event) => {
   // 阻止 H5 平台上浏览器原生的右键菜单
   if (e) e.preventDefault?.();
   // 仅允许在发送完成或发送失败的消息上执行操作
   if (props.message?.status !== 'sending' && props.message?.status !== 'streaming') {
+    const now = Date.now();
+    if (now - lastLongPressAt < LONG_PRESS_DEDUPE_WINDOW) return;
+    lastLongPressAt = now;
+
     // vibrateShort（短震动）仅在原生 App 平台可用，H5 平台下直接忽略该调用
     try {
       uni.vibrateShort({
@@ -336,12 +349,8 @@ const hasThought = computed(() => {
   }
 });
 
-const renderMarkdown = (content: string, allowUnclosedFence = false) => {
-  const normalizedContent = unwrapWholeMessageFence(
-    content,
-    allowUnclosedFence
-  );
-  let html = md.render(normalizedContent);
+const renderMarkdown = (content: string) => {
+  let html = md.render(content);
   html = html.replace(/<p>/g, '<p class="md-p">');
   html = html.replace(/<em>/g, '<em class="md-em">');
   html = html.replace(/<strong>/g, '<strong class="md-strong">');
@@ -365,15 +374,14 @@ const updateRenderedMarkdown = () => {
 
   try {
     const replyContent = parsedContent.value.reply;
-    const isStreaming = props.message?.status === "streaming";
     renderedMarkdown.value =
       !isUser.value && replyContent
-        ? renderMarkdown(String(replyContent), isStreaming)
+        ? renderMarkdown(String(replyContent))
         : "";
 
     const thoughtContent = parsedContent.value.thought;
     renderedThought.value = thoughtContent
-      ? renderMarkdown(String(thoughtContent), isStreaming)
+      ? renderMarkdown(String(thoughtContent))
       : "";
   } catch (err) {
     console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
@@ -560,22 +568,86 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   font-weight: 650;
 }
 
-.markdown-content :deep(.md-pre),
-.thought-markdown-content :deep(.md-pre) {
+.markdown-content :deep(.md-status-card),
+.thought-markdown-content :deep(.md-status-card) {
   max-width: 100%;
-  margin: 12rpx 0;
-  padding: 16rpx 18rpx;
-  overflow-x: auto;
-  border-radius: 14rpx;
-  background-color: rgba(38, 51, 46, 0.06);
-  white-space: pre-wrap;
+  margin: 16rpx 0;
+  overflow: hidden;
+  border: 1px solid rgba(112, 174, 155, 0.2);
+  border-left: 5rpx solid var(--app-color-primary, #70ae9b);
+  border-radius: 16rpx;
+  background-color: rgba(228, 241, 235, 0.58);
   word-break: break-word;
 }
 
-.markdown-content :deep(.md-code),
-.thought-markdown-content :deep(.md-code) {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.9em;
+.markdown-content :deep(.md-status-header),
+.thought-markdown-content :deep(.md-status-header) {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  padding: 12rpx 18rpx;
+  border-bottom: 1px solid rgba(112, 174, 155, 0.13);
+  background-color: rgba(255, 255, 255, 0.32);
+}
+
+.markdown-content :deep(.md-status-dot),
+.thought-markdown-content :deep(.md-status-dot) {
+  width: 10rpx;
+  height: 10rpx;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--app-color-primary, #70ae9b);
+  box-shadow: 0 0 0 6rpx rgba(112, 174, 155, 0.12);
+}
+
+.markdown-content :deep(.md-status-title),
+.thought-markdown-content :deep(.md-status-title) {
+  color: var(--app-color-primary-strong, #4f8e7c);
+  font-size: 21rpx;
+  font-weight: 650;
+  letter-spacing: 1rpx;
+}
+
+.markdown-content :deep(.md-status-body),
+.thought-markdown-content :deep(.md-status-body) {
+  padding: 14rpx 18rpx 16rpx;
+}
+
+.markdown-content :deep(.md-status-row),
+.thought-markdown-content :deep(.md-status-row) {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+  padding: 4rpx 0;
+  line-height: 1.55;
+}
+
+.markdown-content :deep(.md-status-key),
+.thought-markdown-content :deep(.md-status-key) {
+  min-width: 112rpx;
+  flex-shrink: 0;
+  color: var(--app-color-text-secondary, #7c8983);
+  font-size: 23rpx;
+  font-weight: 600;
+}
+
+.markdown-content :deep(.md-status-value),
+.thought-markdown-content :deep(.md-status-value),
+.markdown-content :deep(.md-status-line),
+.thought-markdown-content :deep(.md-status-line) {
+  color: var(--app-color-text-primary, #26332e);
+  font-size: 24rpx;
+  line-height: 1.55;
+}
+
+.markdown-content :deep(.md-status-line),
+.thought-markdown-content :deep(.md-status-line) {
+  padding: 4rpx 0;
+}
+
+.markdown-content :deep(.md-status-spacer),
+.thought-markdown-content :deep(.md-status-spacer) {
+  height: 8rpx;
 }
 
 /* ===== 元数据区域 ===== */

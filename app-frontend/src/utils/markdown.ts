@@ -1,28 +1,43 @@
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 /**
- * Some character cards instruct the model to wrap its entire conversational
- * reply in an unlabelled Markdown fence. Treat that outer fence as transport
- * formatting, while leaving labelled and inline code blocks untouched.
+ * Render every fenced section as role-play state data. The fence info string
+ * is deliberately ignored because character-card authors use arbitrary tags.
  */
-export const unwrapWholeMessageFence = (
-  content: string,
-  allowUnclosedFence = false
-): string => {
-  const opening = content.match(
-    /^[\t ]*(?:\r?\n[\t ]*)*(`{3,})[\t ]*(?:\r?\n|$)/
-  );
+export const renderRoleplayStateBlock = (content: string): string => {
+  const lines = content.replace(/(?:\r?\n)$/, "").split(/\r?\n/);
+  const renderedLines = lines
+    .map((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) return '<div class="md-status-spacer"></div>';
 
-  if (!opening) return content;
+      const fieldMatch = line.match(/^(.{1,24}?)[：:]\s*(.*)$/);
+      if (fieldMatch) {
+        return [
+          '<div class="md-status-row">',
+          `<span class="md-status-key">${escapeHtml(fieldMatch[1].trim())}</span>`,
+          `<span class="md-status-value">${escapeHtml(fieldMatch[2])}</span>`,
+          "</div>",
+        ].join("");
+      }
 
-  const fence = opening[1];
-  const body = content.slice(opening[0].length);
-  const closing = new RegExp(
-    `(?:\\r?\\n)?[\\t ]*${fence}[\\t ]*(?:\\r?\\n[\\t ]*)*$`
-  );
-  const closingMatch = closing.exec(body);
+      return `<div class="md-status-line">${escapeHtml(line)}</div>`;
+    })
+    .join("");
 
-  if (closingMatch) {
-    return body.slice(0, closingMatch.index);
-  }
-
-  return allowUnclosedFence ? body : content;
+  return [
+    '<div class="md-status-card">',
+    '<div class="md-status-header">',
+    '<span class="md-status-dot"></span>',
+    '<span class="md-status-title">角色状态</span>',
+    "</div>",
+    `<div class="md-status-body">${renderedLines}</div>`,
+    "</div>",
+  ].join("");
 };
