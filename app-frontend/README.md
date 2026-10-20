@@ -169,7 +169,7 @@ npx uni build -p app-plus
 
 ```text
 src/
-├── api/                    # 请求封装、接口类型、运行时连接与 Mock 数据
+├── api/                    # 按领域拆分的请求封装、运行时连接与 mock/ 离线实现
 ├── components/
 │   ├── character/          # 人物档案与角色世界书
 │   ├── chat/               # 消息、输入框、抽屉、记忆与故事分支
@@ -181,12 +181,15 @@ src/
 │   ├── chat/               # 叙事聊天页
 │   └── settings/           # 设置与世界书管理
 ├── store/                  # Pinia 状态仓库
+├── types/                  # 会话、消息、记忆、提示词与流式桥接的共享类型
 ├── App.vue                 # 全局语义变量、基础样式与动效降级
 ├── pages.json              # 页面与原生 TabBar 配置
 └── uni.scss                # uni-app 与应用级 SCSS 变量
 ```
 
 ## 跨端注意事项
+
+API 的模块边界与兼容入口见 [API 模块约定](src/api/README.md)。
 
 - App 端选择角色卡时使用相册中的原始 PNG，以免系统压缩破坏卡片元数据；H5 等平台可选择 PNG 或 JSON。
 - 三端流式协议由 `utils/chatStreamProtocol.ts` 统一解析。App 使用独立的 `ChatStreamBridge.vue` 和 `api/transports/appStream.ts` 进行 renderjs/XHR 桥接，通过实例方法回传事件，请求头传递 `X-API-Key`；页面不再直接解析流式响应。

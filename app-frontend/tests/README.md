@@ -13,6 +13,7 @@ npm run type-check
 - `app-stream.test.cjs`：App XHR 分块与收尾、HTTP/协议/网络错误、取消与旧连接回调隔离、桥接实例隔离，以及逻辑层同步失效和终态去重。
 - `entry-case.test.cjs`：入口文件与导入的精确大小写。
 - `session-lifecycle.test.cjs`：历史请求乱序、分页失效、切换会话后的旧回调，以及人物详情的异步隔离。
+- `session-api.test.cjs`：领域拆分后的请求方法、路径、参数与兼容导出；完整会话分页、错误传递，以及离线分支继承、消息候选和记忆筛选/修改。
 - `helpers/load-ts.cjs`：内存加载实际 TypeScript 源码，以替身注入网络和平台接口。Store 使用实际 Vue/Pinia；测试加载器只筛选本次涉及的条件编译块。
 
 这些测试不模拟完整的 uni-app 编译器或手机运行环境。修改跨端网络逻辑后，还需要执行：

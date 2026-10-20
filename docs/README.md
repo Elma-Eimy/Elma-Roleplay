@@ -15,6 +15,7 @@
 | [后端测试指南](../app-backend/tests/README.md) | 按领域运行自动回归、临时工作区隔离和手动场景 |
 | [后端维护工具](../app-backend/scripts/README.md) | 数据诊断、会话查询和显式重置命令 |
 | [前端说明](../app-frontend/README.md) | 客户端开发、多端构建、运行时连接与页面组织 |
+| [前端 API 模块](../app-frontend/src/api/README.md) | 会话、消息、记忆、提示词、共享类型与离线实现的边界 |
 | [前端回归检查](../app-frontend/tests/README.md) | 流式解析、请求取消、会话隔离与跨端构建验证 |
 
 ## 目录约定
