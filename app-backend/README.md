@@ -1,5 +1,7 @@
 # AI Roleplay Backend Engine
 
+[项目说明](../README.md) · [共享 API](../API_TABLE.md) · [文档索引](../docs/README.md)
+
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  
 > 支持角色深度模拟、长期记忆 RAG 检索、树状分支会话管理、认知与好感度动态演化、多模态 TTS 音频生成以及多候选回复分支机制。
 
@@ -9,7 +11,7 @@
 
 - [技术栈](#技术栈)
 - [核心特性](#核心特性)
-- [近期记忆与上下文增强](#近期记忆与上下文增强2026-07)
+- [记忆与上下文机制](#记忆与上下文机制)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [API 参考](#api-参考)
@@ -56,7 +58,7 @@
 - **下一轮确认**：用户发送下一条消息后，上一轮最终 active 候选即被视为已确认并冻结；修改更早的剧情应创建会话分支，而不是原地切换已经进入长期记忆流程的历史候选。
 - **元数据绑定**：每个候选回复版本在数据库中独立绑定其情绪标签（`emotion_tag`）、好感度变动（`affection_change`）以及生成的音频路径（`audio_path`）。切换候选回复时，好感度和情绪指标会自动联动回滚并重算，实现“音画同步、多版本安全切换”。
 
-### 3. 语音合成（TTS）与 LRU 缓存机制
+### 3. 语音合成（TTS）与本地缓存
 
 - **情感与声音事件**：接入云端 MIMO-v2.5-tts API，支持“开心、悲伤、愤怒、温柔、悄悄话、唱歌”等情感，以及“（叹气）、（笑声）、（哭声）、（咳嗽）、[inhale]（吸气）”等声音事件。
 - **文本前处理**：
@@ -64,12 +66,12 @@
   - **结构化质量门槛**：辅助模型关闭 thinking，并返回区分 `ok` 与 `no_speech` 的 JSON。截断、空正文、非法结构或长文本未压缩会触发一次强化重试，不能再把失败结果直接发送给 TTS。
   - **声音标签白名单**：只保留受支持的情绪与声音控制标签，动作描述和未知方括号内容不会伪装成音频指令。
   - **安全规则退避**：连续两次 LLM 处理失败时，只保守提取明确引号内或目标角色名前缀后的台词；超长且无法确认说话内容的文本返回“无可安全合成台词”，绝不回退整段原文。
-- **LRU 缓存与重建**：
+- **本地缓存与重建**：
   - 生成的文件缓存于本地（`data/audio_cache`）。
   - **预处理版本隔离**：缓存键包含 TTS 预处理器版本；提炼规则升级后不会继续命中旧版原文音频。
-  - **缓存重建**：播放请求到达时，如果本地物理文件不存在但数据库中有记录，会自动触发重新合成，避免播放失败。
-  - **LRU 清理**：由后台线程监控缓存文件总数，超限时自动清理较旧的音频。
-- **音频托管**：通过自定义 `/audio/{filename}` 路由提供音频文件；客户端需要先用携带 `X-API-Key` 请求头的下载请求取得临时文件，再交给播放器播放。该路由同时负责缓存文件丢失后的延迟自愈重建，不接受 URL 查询参数中的长期密钥。
+  - **缓存重建**：再次调用 `POST /utils/tts` 并传入 `message_id` 时，会检查绑定文件是否存在，缺失则重新合成；直接下载缺失文件的限制见根目录 API 文档。
+  - **容量清理**：合成完成后启动后台线程检查 MP3 数量，超限时按文件修改时间（mtime）删除最旧的文件；缓存命中不刷新该时间，因此不是严格的 LRU。
+- **音频托管**：通过 `/audio/{filename}` 路由下载文件，请求需携带 `X-API-Key`。当前恢复分支仍使用旧文件名格式，不能恢复缺失的 `p2` 版本文件；需重新请求 TTS。长期密钥不接受通过 URL 查询参数传递。
 
 ### 4. 数据库自动迁移升级与 Alembic 机制
 
@@ -94,7 +96,7 @@
 - 进阶祖先链检索：使用单次 SQLite CTE 递归查询，避免 RAG 检索时出现多轮 N+1 查询。
 - **三维混合打分精排**：**余弦相似度（60%）+ 内容重要性（20%）+ 时间衰减（20%）**，对父辈及祖先会话条目额外施加代际惩罚权重。
 - **图谱关联召回**：与 **Graph RAG** 关系提取相匹配，召回时混合查询数据库事实三元组，获得更精准的事实一致性上下文。
-- 检索权重、半衰期、候选倍数等参数均可在 `config.yaml` 中调整；其中标记为动态可调的参数还可通过 API 热更新，无需重启。
+- 检索权重、半衰期、候选倍数等参数可在 `config.yaml` 中调整。HTTP 热更新仅接受 `schemas.SettingsUpdate` 声明的字段，不能仅凭配置 Schema 的 `dynamic` 标记判断是否对外开放。
 
 ### 8. 会话继承树（分叉剧情线）
 
@@ -150,7 +152,7 @@
 
 ---
 
-## 近期记忆与上下文增强（2026-07）
+## 记忆与上下文机制
 
 本轮维护重点解决了分支时间线泄漏、短长期记忆交接空档、检索查询脱离语境，以及长期记忆切片过碎的问题。当前完整链路如下：
 
@@ -225,7 +227,7 @@
 - 默认检索在当前 Persona 继承链内隐藏已被替代的旧卡。子分支替代祖先记忆不会修改祖先记录，因此父分支和兄弟分支仍可继续使用原记忆。
 - 检索侧只直接去除规范化后完全相同的内容；“喜欢/不喜欢”“已经/尚未”等高字面相似但语义相反的记忆不会再被字符相似度误删。
 - 这里只实现面向 Prompt 的轻量替代关系，不引入当前/历史/计划/取消状态机、事实槽位、有效时间或复杂历史查询。
-- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 字段见 `API_TABLE.md`。
+- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 字段见根目录的 [API 总表](../API_TABLE.md)，记忆规则详见 [记忆模块 API](../docs/api/MEMORY_API.md)。
 
 ### 6. 向量 Outbox、故障降级与离线回归
 
@@ -263,6 +265,12 @@
 
 ## 快速开始
 
+以下命令均在仓库的 `app-backend/` 目录中执行。从仓库根目录进入：
+
+```bash
+cd app-backend
+```
+
 ### 1. 安装依赖
 
 ```bash
@@ -277,7 +285,7 @@ pip install -r requirements.txt
 
 ### 2. 配置环境变量
 
-在项目根目录创建 `.env` 文件：
+在后端目录 `app-backend/` 中创建 `.env` 文件（不是仓库根目录）：
 
 ```dotenv
 # 对话模型的 API Key
@@ -377,26 +385,27 @@ tts:
   model: "mimo-v2.5-tts"                       # 合成模型
   default_voice: "冰糖"                        # 默认角色音色
   cache_dir: "data/audio_cache"                # 音频缓存本地文件夹
-  max_cache_files: 500                         # LRU 缓存淘汰的最大文件数
+  max_cache_files: 500                         # 按修改时间清理缓存的最大文件数
 ```
 
 ### 动态可调参数（通过 `PUT /utils/settings` 无需重启）
+
+以下列表以 `schemas.SettingsUpdate` 为准。检索打分权重、祖先权重、去重阈值和图谱阈值目前不属于 HTTP 更新接口的字段，应修改 YAML 后重启。
 
 `temperature` · `max_tokens` · `reasoning_mode` · `context_history_limit` ·  
 `memory_handoff_margin` · `retrieval_top_k` · `retrieval_context_turns` ·
 `retrieval_query_max_chars` · `retrieval_min_importance` · `retrieval_max_distance` ·
 `lorebook_scan_depth` · `lorebook_token_budget` · `lorebook_max_recursive_passes` ·  
 `cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier` ·  
-`retrieval_weight_similarity` · `retrieval_weight_importance` · `retrieval_weight_time` ·
-`retrieval_ancestor_weight` · `dedup_write_threshold` · `graph_min_importance` ·
-`graph_max_relations` ·
 `top_p` · `presence_penalty` · `frequency_penalty` · `repetition_penalty` · `reasoning_effort`
 
 ---
 
 ## API 参考
 
-> 除公开静态头像 `/assets/avatars/*` 外，所有接口在 `.env` 中设置 `ACCESS_API_KEY` 后都需在请求头中携带 `X-API-Key: <your_key>`。
+完整请求、响应和前后端契约统一维护在根目录的 [API 总表](../API_TABLE.md)，记忆筛选、继承和故事导航规则见 [记忆模块 API](../docs/api/MEMORY_API.md)。
+
+> 业务 API 在 `.env` 中设置 `ACCESS_API_KEY` 后需携带 `X-API-Key: <your_key>`。静态头像 `/assets/avatars/*` 公开访问；内置 `/docs`、`/redoc` 和 `/openapi.json` 目前也未受该依赖保护。
 >
 > 不再支持通过 `?api_key=` 或 `?token=` 传递长期密钥，避免密钥进入访问日志、浏览器历史或 Referer。
 >
@@ -408,68 +417,7 @@ tts:
 - **音频**：后端返回 `/audio/{filename}` 相对 URL。该资源不是公开静态文件，客户端必须使用带 `X-API-Key` 请求头的下载请求获取临时文件后播放。
 - **外部绝对 URL**：后端若返回外部绝对资源 URL，该 URL 必须本身公开或为短期签名地址，客户端不会向外部域名发送本后端的长期 API Key。
 
-### 系统工具
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/` | 服务健康检查 |
-| POST | `/upload/avatar` | 上传头像（PNG/JPG/WEBP；大小上限由 `app.max_card_size_mb` 控制，当前为 10 MB） |
-| GET | `/utils/settings` | 获取当前运行时配置 |
-| PUT | `/utils/settings` | 热更新配置并持久化到 `config.yaml` |
-| POST | `/utils/tts` | 文本转语音合成接口（返回合成音频的挂载 URL） |
-| GET | `/audio/{filename}` | 使用 `X-API-Key` 请求头下载/播放音频（支持文件丢失后的在线延迟自愈重建） |
-
-### 角色卡管理 `/characters`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/characters/parse` | 解析 PNG/JSON 角色卡，返回结构化数据（不入库） |
-| POST | `/characters/create` | 将角色数据存入数据库 |
-| GET | `/characters` | 获取所有角色简要列表 |
-| GET | `/characters/{character_id}` | 获取角色完整设定 |
-| GET | `/characters/{character_id}/memory-overview` | 分页获取故事记忆导航、最后消息和分支级统计 |
-| PUT | `/characters/{character_id}` | 更新角色设定 |
-| DELETE / POST | `/characters/{character_id}` 或 `/characters/{character_id}/delete` | 级联删除角色与所有会话，并通过 Outbox 异步清理 ChromaDB 集合、对话音频和不再被引用的受管头像（POST 用于兼容客户端） |
-
-### 会话管理 `/sessions`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/sessions/create` | 新建会话（指定 `parent_session_id` 则继承分叉） |
-| GET | `/sessions` | 分页查询角色会话，并可批量返回最后一条有效消息 |
-| GET | `/sessions/{session_id}` | 获取会话详情（含 Persona 完整状态） |
-| GET | `/sessions/{session_id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
-| PUT | `/sessions/{session_id}/title` | 修改会话标题 |
-| DELETE / POST | `/sessions/{session_id}` 或 `/sessions/{session_id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于避让) |
-| POST | `/sessions/{session_id}/trigger_summary` | 手动触发记忆提纯 |
-| POST | `/sessions/{session_id}/trigger_cognition` | 手动触发认知状态更新 |
-| PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
-| DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
-| GET | `/sessions/{session_id}/memories` | 服务端筛选并分页返回当前故事的记忆、总数和分类统计 |
-| POST | `/sessions/{session_id}/memories` | 手动写入当前会话的专属向量记忆 |
-| PUT | `/sessions/{session_id}/memories/{memory_id}` | 修改当前会话的本地专属向量记忆（继承只读） |
-| DELETE | `/sessions/{session_id}/memories/{memory_id}` | 删除当前会话的本地专属向量记忆（继承只读） |
-| GET | `/sessions/{session_id}/compile_prompt` | 调试端点：预览/编译最近一次大模型 Prompt 组装 |
-
-### 世界书管理 `/lorebooks`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/lorebooks/import` | 导入并解析 SillyTavern 格式的世界书 JSON 文件 |
-| GET | `/lorebooks` | 查询系统中所有独立世界书列表 |
-| GET | `/lorebooks/{lorebook_id}` | 获取单个世界书详情（包含所有条目） |
-| PUT | `/lorebooks/{lorebook_id}` | 编辑更新世界书属性和条目 |
-| DELETE / POST | `/lorebooks/{lorebook_id}` 或 `/lorebooks/{lorebook_id}/delete` | 删除指定世界书及其所有绑定关系 (POST 用于避让) |
-| POST | `/lorebooks/characters/{character_id}/bind/{lorebook_id}` | 将指定世界书绑定到角色卡上 |
-| POST | `/lorebooks/characters/{character_id}/unbind/{lorebook_id}` | 将指定世界书与角色卡解绑 |
-
-### 对话核心 `/chat`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/chat` | 非流式对话（等待完整回复） |
-| POST | `/chat/stream` | SSE 流式对话（逐 chunk 推送） |
-| POST | `/chat/switch_candidate` | 设定当前活跃的消息候选版本（切换 active_index 并联动好感度） |
+各业务端点的路径、分页参数、请求和响应示例统一见 [API 总表](../API_TABLE.md)，本页不再重复维护接口表。
 
 ---
 
@@ -524,6 +472,7 @@ app-backend/
 │   │   ├── memory_extraction_service.py # 长期记忆提取、剪裁与来源范围限制服务
 │   │   ├── memory_manager.py # RAG 检索粗排与精排计算、记忆库接口层外观模式（Facade）
 │   │   ├── persona_lineage.py # Persona 继承树追溯与分支 turn 计算服务
+│   │   ├── session_memory_query_service.py # 记忆分页、分类统计与角色故事导航
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
 │   ├── parse.py             # SillyTavern 角色卡解析与清洗
@@ -662,6 +611,6 @@ Alembic 迁移机制与命令行也受到完全支持。加载 `alembic/env.py` 
 
 - **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
 - **密钥传输边界**：长期 `ACCESS_API_KEY` 只允许放在 `X-API-Key` 请求头中，禁止拼接到头像、音频或其他 URL。生产环境还必须启用 HTTPS，避免请求头在传输途中被窃听。
-- **自愈缓存策略**：本地音频缓存目录（`data/audio_cache/`）可以根据需要进行手动清理或重命名。系统带有自愈模式，如果物理文件丢失但数据库有路径，它会在用户下一次触发朗读时默默发起被动重建，完全不影响系统运行。
+- **缺失音频恢复**：重新请求 `POST /utils/tts` 并传入原 `message_id`、音色和语速可重新生成。直接下载缺失的版本化文件目前返回 `404`，不能承诺透明恢复；详见根目录 API 文档。
 - **历史分页性能**：通过 `/sessions/{id}/history` 查询历史记录时，参数 `before_id` 可作为分页游标，强烈建议前端在聊天页初始化时分步拉取（如每次获取 50 条），并在滚动触顶时按需往前拉取，避免长会话引起的内存暴涨。
-- **移动端与 Nginx 兼容（DELETE 降级避让）**：为防范移动原生客户端及 Nginx 反向代理层在 HTTP 强跳转 HTTPS 时自动将 `DELETE` 重定向并降级为 `GET` 的现象，所有的物理删除接口均已挂载 `DELETE` 和 `POST .../delete` 双通道路径。移动端开发或联调时推荐统一走 `POST .../delete` 通道。
+- **删除接口兼容**：角色、会话、消息和世界书删除提供 `DELETE` 与 `POST .../delete` 两种路径。记忆删除目前只有 `DELETE /sessions/{session_id}/memories/{memory_id}`，没有 POST 别名。

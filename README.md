@@ -2,6 +2,10 @@
 
 这是一个基于大模型的 AI 角色扮演（AI Roleplay）全栈应用程序。项目由前端多端应用（Vue 3 + UniApp + TypeScript）与后端服务（FastAPI + SQLAlchemy + SQLite + ChromaDB）组成，主要面向单用户私有化部署设计。
 
+[API 总表](API_TABLE.md) · [更新日志](CHANGELOG.md) · [文档索引](docs/README.md) · [后端说明](app-backend/README.md) · [前端说明](app-frontend/README.md)
+
+前后端在本仓库中统一管理，共享接口文档只维护一份。运行与构建命令分别在对应组件目录执行。
+
 ---
 
 ## 项目初衷与应用场景
@@ -19,7 +23,7 @@
 * **角色画册 (Character Gallery)**：瀑布流与网格形式展示角色卡，方便快速检索与浏览。
 * **柔光叙事聊天 (Soft Narrative Chat)**：气泡对话流支持流式打字输出、思考推理过程（`<reasoning_content>`）展开收起展示，并实时渲染情绪标签与好感度变动。
 * **自定义聊天背景 (Chat Backgrounds)**：支持在纯净浅色背景与角色立绘壁纸模式之间一键切换；立绘背景经过低透明度、柔和微模糊与降饱和处理，搭配气泡毛玻璃效果，提供沉浸且不干扰阅读的视觉体验。设置按会话分支保存并继承。
-* **配音朗读与过滤 (TTS)**：集成云端 MIMO-v2.5-tts 语音合成接口，支持自动/手动播放。系统自动保护声音事件标记（如叹气、笑声），剔除动作与心理描写后仅保留实际台词，并具备本地 LRU 缓存与缺损自愈重建机制。
+* **配音朗读与过滤 (TTS)**：集成云端 MIMO-v2.5-tts 语音合成接口，支持自动/手动播放。系统自动保护声音事件标记（如叹气、笑声），剔除动作与心理描写后仅保留实际台词，并具备本地音频缓存；文件缺失时可重新请求 TTS 生成，直接下载的恢复限制见 API 文档。
 
 ### 2. 多分支剧情与世界线 (Story Branching & Worldlines)
 * **多候选回复切换 (Swipe Candidates)**：同一轮对话支持生成和存储多个 AI 候选回复版本。用户可在气泡底部轻松切换，对应的好感度、情绪变动及语音音频会同步联动重算与回滚。
@@ -63,8 +67,8 @@
 * **事务型发件箱 (Outbox) 与多维资源安全清理**：SQLite 提交与外部异步清理通过事务发件箱解耦；Worker 具备 5 分钟租约超时自愈与指数退避重试，除处理向量同步与音频回收外，新增 `delete_avatar` 任务处理，实现角色删除或更换头像时无引用废弃文件的安全物理回收。
 * **对话回合事务原子性**：用户消息先入库后触发模型推理，若 Prompt 装配、API 调用或流式传输异常，系统自动回滚并物理删除残留的用户消息，释放会话级 `asyncio.Lock`。
 * **数据库自适应迁移**：启动阶段利用 Alembic 自动将 SQLite (WAL 模式) 数据库升级至最新 `head` 版本，并对旧表执行 baseline 标记对齐。
-* **双通道 HTTP 删除与代理降级避让**：所有物理删除操作除标准 `DELETE` 外，均额外挂载 `POST .../delete` 通道，防止移动网络代理或反向代理在 HTTP 重定向 HTTPS 时将 `DELETE` 方法变更为 `GET`。
-* **静态资源安全与凭据传递**：除 `/assets/avatars/*` 公开资源外，所有接口均使用 `X-API-Key` 请求头传递凭据，严禁长期密钥进入 URL 参数；音频资源仅通过携带凭据的下载接口播放，支持物理文件丢失后的延迟自愈重建。
+* **删除接口兼容**：角色、会话、消息和世界书删除同时提供 `DELETE` 和 `POST .../delete`；记忆删除目前仅提供 `DELETE`。
+* **静态资源与凭据传递**：配置访问密钥后，业务 API 使用 `X-API-Key` 请求头传递凭据，长期密钥不放入 URL；头像公开访问，内置 API 文档页面目前也公开。音频资源通过携带凭据的下载接口播放；缺失的版本化音频需重新请求 TTS。
 * **前端设计系统与优化**：统一 SCSS 语义设计变量、懒加载头像组件（`AvatarImage.vue`）、无缝状态反馈组件（`AppStatusState.vue`），全面适配系统“减少动画”偏好。
 
 ---
@@ -73,6 +77,13 @@
 
 ```text
 /APP
+├── README.md         # 全栈项目入口与部署概览
+├── API_TABLE.md      # 前后端共享 HTTP 接口总表
+├── CHANGELOG.md      # 统一更新日志
+├── docs/
+│   ├── README.md     # 文档导航与维护约定
+│   ├── api/          # 模块接口补充规范（MEMORY_API.md）
+│   └── local/        # 本地草稿与参考副本（Git 忽略）
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
 │   ├── core/          # 数据库连接、配置定义、会话锁与 Alembic 迁移配置
 │   ├── routers/       # API 路由（chat, sessions, characters, lorebooks, utils）
@@ -86,7 +97,7 @@
 │   │   └── tts_service.py       # 语音前处理与 TTS 合成服务
 │   ├── alembic/       # 数据库迁移脚本
 │   ├── tests/         # 系统单元测试与集成测试套件
-│   └── README.md      # 后端专属详细技术设计与接口文档
+│   └── README.md      # 后端环境、配置、模块与测试说明
 └── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript)
     ├── src/
     │   ├── api/       # API 请求客户端、类型定义与 Mock 配置
@@ -94,7 +105,7 @@
     │   ├── composables/# 组合式函数（音频播放、聊天滚动等）
     │   ├── pages/     # 故事首页、角色画册/档案、叙事聊天、设置中心
     │   ├── store/     # Pinia 全局状态（会话、角色、设置）
-    │   ├── App.vue    # 全局语义设计变量与基础样式
+    │   ├── APP.vue    # 全局语义设计变量与基础样式
     │   └── uni.scss   # 统一视觉设计 SCSS Token
     └── README.md      # 前端项目说明文档
 ```
@@ -147,7 +158,7 @@ graph TD
     subgraph Storage [持久化存储层]
         DB[(SQLite WAL: 会话/消息分支/图谱三元组/Outbox任务)]
         VDB[(ChromaDB: 长期记忆向量库)]
-        CACHE[本地音频 LRU 缓存]
+        CACHE[本地音频缓存]
         AVATARS[受管头像物理存储]
     end
 
@@ -187,7 +198,7 @@ graph TD
 
 ## 后端服务快速部署 (app-backend)
 
-请参阅 [app-backend 专属 README.md](file:///g:/APP/app-backend/README.md) 获取更详细的环境配置、大模型接口定义及后台任务细节。
+请参阅 [app-backend 专属 README.md](app-backend/README.md) 获取更详细的环境配置与后台任务细节；前后端共享的接口契约见 [API 总表](API_TABLE.md)。
 
 1. **安装环境依赖**（推荐 Python 3.10+）：
    ```bash
@@ -218,7 +229,7 @@ graph TD
 
 ## 前端服务开发部署 (app-frontend)
 
-前端基于 Vue 3 + Vite + TypeScript + UniApp + Pinia 架构，支持编译为 Android APK、iOS App、H5 网页及微信小程序。详见 [app-frontend 专属 README.md](file:///g:/APP/app-frontend/README.md)。
+前端基于 Vue 3 + Vite + TypeScript + UniApp + Pinia 架构，支持编译为 Android APK、iOS App、H5 网页及微信小程序。详见 [app-frontend 专属 README.md](app-frontend/README.md)。
 
 1. **安装依赖**：
    ```bash

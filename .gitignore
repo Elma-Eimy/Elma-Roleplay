@@ -1,0 +1,11 @@
+# Historical combined checkout; active development happens at this repository root.
+/APP-backup/
+
+# Local Python test caches.
+**/.pytest_cache/
+
+# Personal drafts and third-party reference copies remain local.
+/docs/local/
+
+# Machine-specific frontend deployment settings.
+/app-frontend/.env.production

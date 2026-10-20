@@ -1,5 +1,7 @@
 # AI Roleplay Frontend
 
+[项目说明](../README.md) · [共享 API](../API_TABLE.md) · [文档索引](../docs/README.md)
+
 面向手机端的跨平台 AI 角色扮演客户端，基于 Vue 3、uni-app、Vite、Pinia 和 TypeScript 构建，可运行于 Android/iOS App、H5 与微信小程序。
 
 界面采用“清新角色画册 + 柔光叙事聊天”的视觉方向：首页用于继续故事，角色库用于浏览人物，聊天页聚焦长篇阅读，人物详情则以档案、世界、记忆和故事线组织内容。
@@ -63,7 +65,7 @@
 | markdown-it | 安全 Markdown 渲染 |
 | vue-tsc | Vue 单文件组件类型检查 |
 
-项目当前使用组件内 CSS 与 `src/App.vue`、`src/uni.scss` 中的语义设计变量，没有启用 UnoCSS。
+项目当前使用组件内 CSS 与 `src/APP.vue`、`src/uni.scss` 中的语义设计变量，没有启用 UnoCSS。
 
 ## 快速开始
 
@@ -76,6 +78,12 @@
 - 微信小程序预览需要微信开发者工具
 
 ### 安装依赖
+
+以下命令均在仓库的 `app-frontend/` 目录中执行。从仓库根目录进入：
+
+```bash
+cd app-frontend
+```
 
 ```bash
 npm install
@@ -118,7 +126,7 @@ VITE_API_BASE_URL=http://192.168.1.100:8000
 
 应用内保存的地址优先于环境变量。如果后端配置了访问控制，请在同一区域填写对应的 `X-API-Key`；地址和密钥保存在当前设备的 uni-app 本地存储中。
 
-完整接口约定见 [`API_TABLE.md`](API_TABLE.md)。
+完整接口约定见根目录的 [API 总表](../API_TABLE.md)，记忆筛选与故事导航的详细语义见 [记忆模块 API](../docs/api/MEMORY_API.md)。
 
 ### Mock 模式
 
@@ -168,7 +176,7 @@ src/
 │   ├── chat/               # 叙事聊天页
 │   └── settings/           # 设置与世界书管理
 ├── store/                  # Pinia 状态仓库
-├── App.vue                 # 全局语义变量、基础样式与动效降级
+├── APP.vue                 # 全局语义变量、基础样式与动效降级
 ├── pages.json              # 页面与原生 TabBar 配置
 └── uni.scss                # uni-app 与应用级 SCSS 变量
 ```

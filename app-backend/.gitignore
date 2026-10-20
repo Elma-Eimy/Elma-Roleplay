@@ -26,7 +26,5 @@ data.db-shm
 data.db-wal
 
 # 9. 其他
-spec_v2.md
 llm_debug.log
 scratch
-docs/

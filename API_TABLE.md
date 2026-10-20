@@ -2,18 +2,27 @@
 
 This document describes the HTTP API endpoints provided by the backend for frontend integration.
 
+This is the shared API reference for both `app-backend` and `app-frontend`.
+See [Memory API details](docs/api/MEMORY_API.md) for memory filtering, statistics,
+inheritance and story navigation rules, and the [documentation index](docs/README.md)
+for component setup instructions. Configuration paths such as `.env` and
+`config.yaml` in this reference are relative to `app-backend/`.
+
+Reviewed against local routes and schemas on 2026-10-20. Response examples are
+illustrative; configurable values depend on the running backend.
+
 ## 📌 Global Specifications
 
 * **Base URL**: `http://127.0.0.1:8000`
 * **Content-Type**: `application/json` (except file uploads)
-* **Authentication**: All endpoints require the `X-API-Key` header when `ACCESS_API_KEY` is configured in `.env`.
+* **Authentication**: Business API endpoints require the `X-API-Key` header when `ACCESS_API_KEY` is configured in `.env`. Public avatar files under `/assets/avatars/` are exempt; the built-in `/docs`, `/redoc`, and `/openapi.json` pages are also currently public.
   - Header: `X-API-Key: <your-secret>`
   - If `ACCESS_API_KEY` is empty (local dev), the header can be omitted.
   - Missing or wrong key returns `403 Forbidden`.
-* **CORS**: Enabled for `GET`, `POST`, `PUT`, `DELETE` methods and all headers.
+* **CORS**: Enabled for `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS` methods and all headers.
 * **Static Assets & Audio**: 
   - Uploaded avatars: `http://127.0.0.1:8000/assets/avatars/{filename}`
-  - Synthesized speech: `http://127.0.0.1:8000/audio/{filename}` (Supports automatic on-demand recovery and rebuilding if the physical file is lost)
+  - Synthesized speech: `http://127.0.0.1:8000/audio/{filename}` (requires the authentication header; see cache recovery limitations below)
   - Static asset URLs must be public or short-lived signed URLs. Clients must never put the long-lived API key in URL query parameters.
 
 ---
@@ -28,7 +37,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 | **GET** | `/utils/settings` | Retrieve active customizable dialogue and retrieval settings |
 | **PUT** | `/utils/settings` | Update customizable dialogue and retrieval settings (instant & persistent) |
 | **POST** | `/utils/tts` | Synthesize speech from text (returns audio URL) |
-| **GET** | `/audio/{filename}` | Download/play synthesized audio file (with self-healing) |
+| **GET** | `/audio/{filename}` | Download/play synthesized audio file; missing files may require a new TTS request |
 
 ### 2. Character Blueprint Management (`/characters`)
 | Method | Endpoint | Description |
@@ -99,7 +108,7 @@ This document describes the HTTP API endpoints provided by the backend for front
 
 #### POST `/upload/avatar`
 * **Request**: `multipart/form-data`
-  - `file`: Binary image file (PNG/JPG/WEBP, ≤5MB)
+  - `file`: Binary image file (PNG/JPG/JPEG/WEBP). Size is limited by `app.max_card_size_mb` in `config.yaml` (schema default: 10 MB); larger uploads return `413`.
 * **Response (200 OK)**:
   ```json
   {
@@ -136,6 +145,7 @@ This document describes the HTTP API endpoints provided by the backend for front
   ```
 
 #### PUT `/utils/settings`
+* **Supported fields**: Only fields declared by `app-backend/schemas.py::SettingsUpdate` are accepted. Retrieval scoring weights, ancestor weight, deduplication threshold, and graph thresholds are not exposed by this HTTP API; edit YAML and restart for those settings. `memory_handoff_margin` is accepted by PUT but is not currently included in the GET response.
 * **Request (JSON)**: *(All fields optional)*
   ```json
   {
@@ -173,13 +183,13 @@ This document describes the HTTP API endpoints provided by the backend for front
 * **Response (200 OK)**:
   ```json
   {
-    "audio_url": "/audio/msg_12_冰糖_1.0.mp3"
+    "audio_url": "/audio/msg_12_p2_冰糖_1.00.mp3"
   }
   ```
 
 #### GET `/audio/{filename}`
 * **Response (200 OK)**: Binary audio stream (typically MP3/WAV format).
-  - *Note*: If the file doesn't exist on disk but corresponds to an existing database message ID in the name, the system will trigger a self-healing process to rebuild the audio file on the fly before returning it.
+  - *Current limitation*: The download route only recognizes legacy `msg_{id}_{voice}_{speed}.mp3` names for recovery, while the TTS service now generates `msg_{id}_p2_{voice}_{speed}.mp3`. Missing versioned files therefore return `404` on direct download. Request `POST /utils/tts` with the original `message_id` and matching voice/speed to regenerate the file and use the returned URL. Plain-text hash files cannot be regenerated from the download URL alone.
 
 ---
 
@@ -409,8 +419,8 @@ This document describes the HTTP API endpoints provided by the backend for front
 #### GET `/sessions/recent`
 * **Purpose**: Home-screen aggregate endpoint. The backend should fetch sessions, character summaries, and each session's latest active message in one database query (or a bounded query set) to avoid client-side N+1 requests.
 * **Query Parameters**:
-  - `limit`: Optional pagination limit (frontend default: `50`)
-  - `offset`: Optional pagination offset (default: `0`)
+  - `limit`: Page size, `1~100` (backend default: `50`).
+  - `offset`: Pagination offset, at least `0` (default: `0`).
 * **Response (200 OK)**:
   ```json
   {
@@ -635,8 +645,8 @@ This document describes the HTTP API endpoints provided by the backend for front
 
   `is_superseded` is calculated relative to the session in the request. A replacement
   created on one child branch does not globally invalidate the same old memory on its
-  parent or sibling branches. Superseded records remain stored and are still returned
-  by this endpoint; clients can use `is_superseded` to distinguish them.
+  parent or sibling branches. Superseded records remain stored, but are excluded by
+  the default `status=active`. Use `status=superseded` or `status=all` to retrieve them.
 
 #### POST `/sessions/{session_id}/memories`
 * **Request (JSON)**:
