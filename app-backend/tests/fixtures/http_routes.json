@@ -85,6 +85,14 @@
   ],
   [
     "POST",
+    "/characters/translate"
+  ],
+  [
+    "POST",
+    "/characters/translation-cache"
+  ],
+  [
+    "POST",
     "/characters/{character_id}/delete"
   ],
   [

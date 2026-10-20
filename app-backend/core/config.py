@@ -15,6 +15,7 @@ CONFIG_SCHEMA = {
         # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
         "default_chat_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_DEFAULT_CHAT_MODEL"},
         "model_profiles": {"type": list, "default": [], "dynamic": True, "attr": "LLM_MODEL_PROFILES"},
+        "translation_model": {"type": str, "default": "deepseek-flash", "dynamic": True, "attr": "LLM_TRANSLATION_MODEL"},
         "memory_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_MEMORY_THINKING_MODE"},
         "memory_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_MEMORY_REASONING_EFFORT"},
         "tts_preprocess_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TTS_PREPROCESS_MODEL"},

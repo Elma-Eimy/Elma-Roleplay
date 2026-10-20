@@ -22,6 +22,11 @@ class SessionCreate(BaseModel):
     greeting_index: Optional[int] = None
     start_message_id: Optional[int] = None
 
+
+class CharacterTranslationRequest(BaseModel):
+    card: CharacterCreate
+    force: bool = False
+
 class SessionTitleUpdate(BaseModel):
     title: str
 
@@ -67,6 +72,7 @@ class ModelProfile(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
+    translation_model: Optional[str] = Field(None, min_length=1, max_length=200)
     default_chat_model: Optional[str] = Field(None, min_length=1, max_length=200)
     model_profiles: Optional[list[ModelProfile]] = Field(None, max_length=100)
     memory_model: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -76,7 +82,7 @@ class SettingsUpdate(BaseModel):
     tts_thinking_mode: Optional[Literal["enabled", "disabled"]] = None
     tts_reasoning_effort: Optional[str] = None
 
-    @field_validator("default_chat_model", "memory_model", "tts_preprocess_model")
+    @field_validator("default_chat_model", "memory_model", "tts_preprocess_model", "translation_model")
     @classmethod
     def valid_model_id(cls, value):
         if value is not None and not value.strip():

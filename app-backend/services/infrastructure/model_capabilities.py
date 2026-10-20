@@ -21,7 +21,8 @@ def model_capability(model: str, config=settings) -> dict:
 
 def model_catalog(config=settings) -> list[dict]:
     models = [config.LLM_DEFAULT_CHAT_MODEL, config.CHAT_MODEL_REASONING,
-              config.CHAT_MODEL_NON_REASONING, config.LLM_MEMORY_MODEL, config.LLM_TTS_PREPROCESS_MODEL]
+              config.CHAT_MODEL_NON_REASONING, config.LLM_MEMORY_MODEL, config.LLM_TTS_PREPROCESS_MODEL,
+              config.LLM_TRANSLATION_MODEL]
     models.extend(item['id'] for item in config.LLM_MODEL_PROFILES if isinstance(item, dict) and isinstance(item.get('id'), str))
     return [model_capability(model, config) for model in dict.fromkeys(models) if model]
 

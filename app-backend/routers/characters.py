@@ -7,7 +7,8 @@ from services.media.character_card_import import import_character_card
 import services.character_service as character_service
 import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
-from schemas import CharacterCreate
+from schemas import CharacterCreate, CharacterTranslationRequest
+import services.character_translation_service as translation_service
 import json
 import os
 
@@ -53,6 +54,24 @@ def parse_character(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse character: {str(e)}")
+
+@router.post("/translation-cache")
+def get_translation_cache(request: CharacterTranslationRequest, db: Session = Depends(get_db)):
+    """仅查询已保存的阅读译文，不调用模型。"""
+    try:
+        return {"translation": translation_service.cached_translation(request.card.model_dump(), db)}
+    except translation_service.TranslationError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.post("/translate")
+async def translate_character(request: CharacterTranslationRequest, db: Session = Depends(get_db)):
+    """手动生成独立的中文阅读版本，支持尚未导入的角色卡。"""
+    try:
+        return {"translation": await translation_service.translate_card(request.card.model_dump(), db, request.force)}
+    except translation_service.TranslationError as exc:
+        raise HTTPException(502, detail=str(exc)) from exc
+
 
 @router.post("/create")
 def create_character(character_data: CharacterCreate, db: Session = Depends(get_db)):

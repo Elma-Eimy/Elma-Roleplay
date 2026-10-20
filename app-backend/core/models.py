@@ -18,6 +18,16 @@ import enum
 Base = declarative_base()
 
 
+class CharacterTranslation(Base):
+    """供阅读的内容缓存，与角色设定、会话和 Prompt 完全分离。"""
+    __tablename__ = "character_translations"
+    source_hash = Column(String(64), primary_key=True)
+    source = Column(Text, nullable=False)
+    translation = Column(Text, nullable=False)
+    model = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+
 # ──────────────────────────────────────────────
 # Enum 定义
 # ──────────────────────────────────────────────

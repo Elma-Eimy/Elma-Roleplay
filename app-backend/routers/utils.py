@@ -63,6 +63,7 @@ def get_settings():
         "default_chat_model": settings.LLM_DEFAULT_CHAT_MODEL,
         "model_profiles": settings.LLM_MODEL_PROFILES,
         "model_catalog": model_catalog(),
+        "translation_model": settings.LLM_TRANSLATION_MODEL,
         "memory_model": settings.LLM_MEMORY_MODEL,
         "memory_thinking_mode": settings.LLM_MEMORY_THINKING_MODE,
         "memory_reasoning_effort": settings.LLM_MEMORY_REASONING_EFFORT,
