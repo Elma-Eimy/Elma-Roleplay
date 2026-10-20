@@ -65,7 +65,7 @@
 - **情感与声音事件**：接入云端 MIMO-v2.5-tts API，支持“开心、悲伤、愤怒、温柔、悄悄话、唱歌”等情感，以及“（叹气）、（笑声）、（哭声）、（咳嗽）、[inhale]（吸气）”等声音事件。
 - **文本前处理**：
   - **短文本提取、长文本压缩**：使用快速模型（如 `deepseek-v4-flash`）过滤非发音的物理动作、心理活动、场景叙述、其他角色台词和对话前缀。800 字符以内尽量保留原台词；更长输入会保留关键事实和角色口吻，并压缩为最多 500 字符的可播报文本。
-  - **结构化质量门槛**：辅助模型关闭 thinking，并返回区分 `ok` 与 `no_speech` 的 JSON。截断、空正文、非法结构或长文本未压缩会触发一次强化重试，不能再把失败结果直接发送给 TTS。
+  - **结构化质量门槛**：辅助模型默认关闭 thinking（可独立配置），并返回区分 `ok` 与 `no_speech` 的 JSON。截断、空正文、非法结构或长文本未压缩会触发一次强化重试，不能再把失败结果直接发送给 TTS。
   - **声音标签白名单**：只保留受支持的情绪与声音控制标签，动作描述和未知方括号内容不会伪装成音频指令。
   - **安全规则退避**：连续两次 LLM 处理失败时，只保守提取明确引号内或目标角色名前缀后的台词；超长且无法确认说话内容的文本返回“无可安全合成台词”，绝不回退整段原文。
 - **本地缓存与重建**：
@@ -323,8 +323,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ```yaml
 llm:
-  chat_model: deepseek-v4-pro                  # 主（思考）模型
-  non_reasoning_chat_model: deepseek-v4-flash  # 快速（非思考）模型，兼用于 TTS 文本预处理
+  default_chat_model: deepseek-flash           # 默认模型，与思考开关独立
+  chat_model: deepseek-v4-pro                  # 旧客户端思考模型槽
+  non_reasoning_chat_model: deepseek-v4-flash  # 旧客户端非思考模型槽
+  model_profiles: []                          # id / label / adapter
+  memory_thinking_mode: disabled
+  memory_reasoning_effort: high
+  tts_preprocess_model: deepseek-flash
+  tts_thinking_mode: disabled
+  tts_reasoning_effort: high
   memory_model: deepseek-v4-flash              # 记忆提纯专用模型
   embedding_model: doubao-embedding-vision-251215
   chat_base_url: https://api.deepseek.com/v1
@@ -332,7 +339,7 @@ llm:
   temperature: 0.7
   memory_temperature: 0.3
   max_tokens: 4096
-  reasoning_mode: false                        # true → 默认使用思考模型
+  reasoning_mode: false                        # 默认模型的思考开关，不再切换模型
   timeout: 60                                  # LLM 请求超时秒数
   top_p: 1.0
   presence_penalty: 0.0

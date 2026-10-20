@@ -12,12 +12,20 @@ load_dotenv(os.path.join(parent_dir, ".env"))
 # 作用: 只要在这里新增配置项，系统在启动时就会自动为用户的 config.yaml 补齐默认值，并动态绑定为类属性，实现“零修改升级”
 CONFIG_SCHEMA = {
     "llm": {
-        # 默认对话模型（带推理思考能力），用于主聊天端点聊天回复
+        # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
+        "default_chat_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_DEFAULT_CHAT_MODEL"},
+        "model_profiles": {"type": list, "default": [], "dynamic": True, "attr": "LLM_MODEL_PROFILES"},
+        "memory_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_MEMORY_THINKING_MODE"},
+        "memory_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_MEMORY_REASONING_EFFORT"},
+        "tts_preprocess_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TTS_PREPROCESS_MODEL"},
+        "tts_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_TTS_THINKING_MODE"},
+        "tts_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_TTS_REASONING_EFFORT"},
+        # 旧客户端 use_reasoning=True 使用的模型槽
         "chat_model": {"type": str, "default": "gpt-3.5-turbo", "dynamic": False, "attr": "CHAT_MODEL_REASONING"},
-        # 快速非推理对话模型，用于 TTS 预处理文本分析、记忆提取等辅助大模型调用
+        # 旧客户端 use_reasoning=False 使用的模型槽，同时作为旧配置 TTS 初始值
         "non_reasoning_chat_model": {"type": str, "default": "", "dynamic": False, "attr": "CHAT_MODEL_NON_REASONING"},
         # 专门用于记忆提取、归纳与归并的大模型模型标识
-        "memory_model": {"type": str, "default": "", "dynamic": False, "attr": "LLM_MEMORY_MODEL"},
+        "memory_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_MEMORY_MODEL"},
         # 向量嵌入大模型模型标识，用于生成记忆与世界书的向量特征值
         "embedding_model": {"type": str, "default": "text-embedding-ada-002", "dynamic": False, "attr": "LLM_EMBEDDING_MODEL"},
         # OpenAI 兼容聊天接口的基础 URL
@@ -147,6 +155,12 @@ class Settings:
     def migrate_and_bind_config(self):
         """对比 Schema，自动合并缺失配置项，并动态绑定为类属性"""
         has_updates = False
+        llm = self.config.setdefault("llm", {})
+        if not llm.get("default_chat_model"):
+            raw_mode = llm.get("reasoning_mode", False)
+            reasoning = raw_mode.lower() in ("true", "1", "yes") if isinstance(raw_mode, str) else bool(raw_mode)
+            llm["default_chat_model"] = (llm.get("chat_model") if reasoning else llm.get("non_reasoning_chat_model")) or llm.get("chat_model") or "gpt-3.5-turbo"
+            has_updates = True
         
         for namespace, items in CONFIG_SCHEMA.items():
             ns_dict = self.config.setdefault(namespace, {})
@@ -219,18 +233,16 @@ class Settings:
         if not getattr(self, "LLM_MEMORY_MODEL", ""):
             self.LLM_MEMORY_MODEL = getattr(self, "CHAT_MODEL_REASONING", "")
 
-        # 激活的默认对话模型选取
-        if getattr(self, "LLM_REASONING_MODE", False):
-            self.ACTIVE_CHAT_MODEL = getattr(self, "CHAT_MODEL_REASONING", "")
-        else:
-            self.ACTIVE_CHAT_MODEL = getattr(self, "CHAT_MODEL_NON_REASONING", "")
+        if not self.LLM_TTS_PREPROCESS_MODEL:
+            self.LLM_TTS_PREPROCESS_MODEL = self.CHAT_MODEL_NON_REASONING
+        self.ACTIVE_CHAT_MODEL = self.LLM_DEFAULT_CHAT_MODEL
 
     def update_and_persist(self, updates: dict):
         """动态更新运行时配置，并回写持久化到 config.yaml (零 Hardcode)"""
         updated = False
         
         for field, value in updates.items():
-            if value is None:
+            if value is None and field != "reasoning_effort":
                 continue
             
             # 在 Schema 中动态检索字段定义

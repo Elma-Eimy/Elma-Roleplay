@@ -37,6 +37,11 @@ async def _prepare_turn_and_messages(request: ChatRequest, db: Session):
             is_regenerate=request.is_regenerate,
         )
 
+    from services.infrastructure.model_capabilities import resolve_selection
+    try:
+        resolve_selection(request.model, request.thinking_mode, request.use_reasoning, request.reasoning_effort)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         turn = await run_in_threadpool(run_prepare)
     except chat_turn_service.ChatTurnError as exc:
@@ -106,6 +111,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 character=turn.character,
                 messages=messages,
                 use_reasoning=request.use_reasoning,
+                model=request.model,
+                thinking_mode=request.thinking_mode,
                 temperature=request.temperature,
                 top_p=request.top_p,
                 presence_penalty=request.presence_penalty,
@@ -181,6 +188,8 @@ async def chat_stream(
                     character=turn.character,
                     messages=messages,
                     use_reasoning=request.use_reasoning,
+                model=request.model,
+                thinking_mode=request.thinking_mode,
                     temperature=request.temperature,
                     top_p=request.top_p,
                     presence_penalty=request.presence_penalty,

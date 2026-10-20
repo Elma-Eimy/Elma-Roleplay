@@ -86,6 +86,8 @@ illustrative; configurable values depend on the running backend.
 | **POST** | `/lorebooks/characters/{character_id}/unbind/{lorebook_id}` | Unbind a lorebook from a character |
 
 ### 5. Conversations & Inference (`/chat`)
+
+Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/MODEL_SELECTION.md).
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **POST** | `/chat` | Submit message, run RAG, compile prompt, write response (blocking) |
@@ -118,6 +120,8 @@ illustrative; configurable values depend on the running backend.
   ```
 
 #### GET `/utils/settings`
+* Also returns `default_chat_model`, `model_profiles` (editable `{id,label,adapter}` entries), `model_catalog` (read-only `{id,label,adapter,thinking,efforts}` capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`.
+* `thinking` is `toggle`, `always`, or `unsupported`. Adapters: `compatible`, `deepseek`, `reasoning`. The catalog is configured locally; it does not query providers.
 * **Response (200 OK)**:
   ```json
   {
@@ -145,6 +149,8 @@ illustrative; configurable values depend on the running backend.
   ```
 
 #### PUT `/utils/settings`
+* Accepts the additional GET fields above except read-only `model_catalog`. Auxiliary thinking modes are `enabled`/`disabled`; effort is a supported string. `reasoning_effort: null` resets the global effort to the provider default. Model IDs must be nonblank and profile IDs unique.
+* `reasoning_mode` controls thinking independently of `default_chat_model`. Invalid model/thinking/effort combinations return `400` before persistence; malformed fields return `422`.
 * **Supported fields**: Only fields declared by `app-backend/schemas.py::SettingsUpdate` are accepted. Retrieval scoring weights, ancestor weight, deduplication threshold, and graph thresholds are not exposed by this HTTP API; edit YAML and restart for those settings. `memory_handoff_margin` is accepted by PUT but is not currently included in the GET response.
 * **Request (JSON)**: *(All fields optional)*
   ```json
@@ -921,13 +927,18 @@ illustrative; configurable values depend on the running backend.
 
 ### 5. Conversations & Inference (`/chat`)
 
+Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/MODEL_SELECTION.md).
+
 #### POST `/chat`
 * **Request (JSON)**:
   ```json
   {
     "session_id": 1,
     "user_message": "你好呀，爱丽丝",
-    "use_reasoning": null,      // Optional: true, false or null (follows config reasoning_mode)
+    "model": "deepseek-flash",  // Optional: independent model; omitted = global default
+    "thinking_mode": "enabled", // Optional: inherit / enabled / disabled
+    "reasoning_effort": "max", // Optional: inherits global effort when omitted
+    "use_reasoning": null,      // Legacy clients only: selects old reasoning/non-reasoning slots
     "is_regenerate": false,     // Optional: set true to regenerate the assistant response of the current turn
     "user_nickname": "用户",    // Optional: user nickname injected into the prompt
     "temperature": null,        // Optional parameter overrides

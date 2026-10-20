@@ -37,7 +37,7 @@ class TTSPreprocessingTests(unittest.TestCase):
         )
 
         with patch(
-            "services.tts_service.settings.CHAT_MODEL_NON_REASONING",
+            "services.tts_service.settings.LLM_TTS_PREPROCESS_MODEL",
             "deepseek-test-model",
         ), patch(
             "services.infrastructure.llm_provider.get_llm_provider",

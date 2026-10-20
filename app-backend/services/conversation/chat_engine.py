@@ -15,6 +15,7 @@ from typing import Optional
 
 from core.config import settings
 from services.parse import _extract_xml_block
+from services.infrastructure.model_capabilities import ModelSelection, generation_controls, resolve_selection, model_capability
 from services.infrastructure.llm_logger import log_llm_stream_wrapper_async
 
 
@@ -30,17 +31,7 @@ def _resolve_model(use_reasoning: Optional[bool]) -> str:
 
 
 def _uses_sampling_controls(model: str, is_reasoning_active: bool) -> bool:
-    """采样参数只在非推理请求里生效。
-
-    DeepSeek V4 的思考开关由 thinking 参数控制，两个模型默认都在思考。
-    不能因为名字里带 pro 就把 deepseek-v4-pro 当成 OpenAI 的 o 系列模型。
-    """
-    name = model.lower()
-    if "deepseek" in name:
-        return not is_reasoning_active
-    if "o1" in name or "o3" in name or "pro" in name:
-        return False
-    return True
+    return not is_reasoning_active and model_capability(model)['thinking'] != 'always'
 
 
 def _build_generation_kwargs(
@@ -65,26 +56,13 @@ def _build_generation_kwargs(
     if stream:
         kwargs["stream"] = True
 
-    if _uses_sampling_controls(model, is_reasoning_active):
-        kwargs["temperature"] = final_temp
-        kwargs["top_p"] = final_top_p
-        kwargs["presence_penalty"] = final_presence
-        kwargs["frequency_penalty"] = final_frequency
-    elif final_reasoning_effort:
-        kwargs["reasoning_effort"] = final_reasoning_effort
-
-    extra_body = {}
-    if final_repetition is not None and abs(final_repetition - 1.0) > 1e-5:
-        extra_body["repetition_penalty"] = final_repetition
-
-    if "deepseek" in model.lower():
-        extra_body["thinking"] = {
-            "type": "enabled" if is_reasoning_active else "disabled"
-        }
-
-    if extra_body:
-        kwargs["extra_body"] = extra_body
+    kwargs.update(generation_controls(
+        ModelSelection(model, is_reasoning_active, final_reasoning_effort if is_reasoning_active else None),
+        temperature=final_temp, top_p=final_top_p, presence_penalty=final_presence,
+        frequency_penalty=final_frequency, repetition_penalty=final_repetition,
+    ))
     return kwargs
+
 
 
 async def generate_reply(
@@ -97,11 +75,12 @@ async def generate_reply(
     frequency_penalty: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
     reasoning_effort: Optional[str] = None,
+    model: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
 ) -> dict:
     """
     接收已编译装配完毕的 messages 列表与角色设定，调度大模型同步获取回复。
     """
-    model = _resolve_model(use_reasoning)
 
     # 1. 解析角色专属配置
     ext = {}
@@ -119,7 +98,12 @@ async def generate_reply(
     final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
     final_reasoning_effort = reasoning_effort if reasoning_effort is not None else ext.get("reasoning_effort", settings.LLM_REASONING_EFFORT)
 
-    is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
+    if (model is not None or thinking_mode is not None) and reasoning_effort in (None, "inherit"):
+        final_reasoning_effort = settings.LLM_REASONING_EFFORT
+    selection = resolve_selection(model, thinking_mode, use_reasoning, final_reasoning_effort)
+    model = selection.model
+    is_reasoning_active = selection.thinking
+    final_reasoning_effort = selection.effort
 
     kwargs = _build_generation_kwargs(
         model=model,
@@ -177,11 +161,12 @@ async def generate_reply_stream(
     frequency_penalty: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
     reasoning_effort: Optional[str] = None,
+    model: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
 ):
     """
     接收已编译装配完毕的 messages 列表与角色设定，调度大模型异步获取流式回复。
     """
-    model = _resolve_model(use_reasoning)
 
     # 1. 解析角色专属配置
     ext = {}
@@ -199,7 +184,12 @@ async def generate_reply_stream(
     final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
     final_reasoning_effort = reasoning_effort if reasoning_effort is not None else ext.get("reasoning_effort", settings.LLM_REASONING_EFFORT)
 
-    is_reasoning_active = use_reasoning if use_reasoning is not None else settings.LLM_REASONING_MODE
+    if (model is not None or thinking_mode is not None) and reasoning_effort in (None, "inherit"):
+        final_reasoning_effort = settings.LLM_REASONING_EFFORT
+    selection = resolve_selection(model, thinking_mode, use_reasoning, final_reasoning_effort)
+    model = selection.model
+    is_reasoning_active = selection.thinking
+    final_reasoning_effort = selection.effort
 
     kwargs = _build_generation_kwargs(
         model=model,

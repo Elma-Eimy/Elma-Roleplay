@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 
 from core.config import settings
+from services.infrastructure.model_capabilities import auxiliary_controls
 from core.models import ChatMessage, SessionPersona
 from services.infrastructure.llm_provider import get_llm_provider
 
@@ -84,7 +85,7 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=settings.LLM_MEMORY_TEMPERATURE,
+            **auxiliary_controls("memory", settings.LLM_MEMORY_TEMPERATURE),
         )
         new_cognition = response.choices[0].message.content.strip()
 

@@ -58,7 +58,17 @@ def upload_avatar(file: UploadFile = File(...)):
 @router.get("/utils/settings")
 def get_settings():
     """获取当前允许由前端动态修改的对话与检索参数值。"""
+    from services.infrastructure.model_capabilities import model_catalog
     return {
+        "default_chat_model": settings.LLM_DEFAULT_CHAT_MODEL,
+        "model_profiles": settings.LLM_MODEL_PROFILES,
+        "model_catalog": model_catalog(),
+        "memory_model": settings.LLM_MEMORY_MODEL,
+        "memory_thinking_mode": settings.LLM_MEMORY_THINKING_MODE,
+        "memory_reasoning_effort": settings.LLM_MEMORY_REASONING_EFFORT,
+        "tts_preprocess_model": settings.LLM_TTS_PREPROCESS_MODEL,
+        "tts_thinking_mode": settings.LLM_TTS_THINKING_MODE,
+        "tts_reasoning_effort": settings.LLM_TTS_REASONING_EFFORT,
         "temperature": settings.LLM_TEMPERATURE,
         "reasoning_mode": settings.LLM_REASONING_MODE,
         "context_history_limit": settings.APP_CONTEXT_HISTORY_LIMIT,
@@ -90,11 +100,15 @@ def update_settings(request: SettingsUpdate):
         return {"message": "No settings to update", "updated": {}}
     
     try:
+        from services.infrastructure.model_capabilities import validate_settings_updates
+        validate_settings_updates(updates)
         settings.update_and_persist(updates)
         return {
             "message": "Settings updated and persisted successfully",
             "updated": updates
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
 

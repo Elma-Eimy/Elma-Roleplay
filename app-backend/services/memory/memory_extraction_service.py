@@ -9,6 +9,7 @@ from services.memory.memory_manager import add_memory_chunk, retrieve_memories
 from services.memory.graph_service import upsert_graph_data
 import services.memory.cognition_service as cognition_service
 from core.config import settings
+from services.infrastructure.model_capabilities import auxiliary_controls
 
 
 _MEMORY_MAX_CARDS_PER_BATCH = 8
@@ -257,7 +258,7 @@ same 时 resolved_content 使用已有记忆；replace 时输出一条可独立�
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.0,
+            **auxiliary_controls("memory", 0.0),
         )
         content = response.choices[0].message.content.strip()
         if content.startswith("```json"):
@@ -425,7 +426,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请提取以下对话中的重要记忆与图谱三元组：\n{chat_text}"},
             ],
-            temperature=settings.LLM_MEMORY_TEMPERATURE,
+            **auxiliary_controls("memory", settings.LLM_MEMORY_TEMPERATURE),
         )
 
         content = response.choices[0].message.content.strip()

@@ -9,6 +9,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from core.config import Settings, CONFIG_SCHEMA
 
 class TestConfigSystem(unittest.TestCase):
+    def test_legacy_model_choice_is_migrated_once_and_survives_thinking_changes(self):
+        from unittest.mock import patch
+        original = {"llm": {"chat_model": "deepseek-v4-pro", "non_reasoning_chat_model": "deepseek-v4-flash", "reasoning_mode": False}}
+        with patch.object(Settings, '_load_yaml_config', return_value=original), patch.object(Settings, '_save_yaml_config'):
+            migrated = Settings()
+            self.assertEqual(migrated.LLM_DEFAULT_CHAT_MODEL, 'deepseek-v4-flash')
+            migrated.update_and_persist({'reasoning_mode': True})
+            self.assertEqual(migrated.ACTIVE_CHAT_MODEL, 'deepseek-v4-flash')
+            migrated.migrate_and_bind_config()
+            self.assertEqual(migrated.LLM_DEFAULT_CHAT_MODEL, 'deepseek-v4-flash')
+
     def setUp(self):
         self.test_yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "test_config_temp.yaml")
         # Ensure clean state
