@@ -4,6 +4,7 @@ import type { ModelProfile, ModelCapability } from "@/types/generation";
 // ===================== 类型定义 =====================
 
 export interface AppSettings {
+  translation_model: string;
   default_chat_model: string;
   model_profiles: ModelProfile[];
   model_catalog: ModelCapability[];
@@ -43,6 +44,7 @@ export interface UpdateSettingsResponse {
 // ===================== 默认设定值 =====================
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  translation_model: "deepseek-flash",
   default_chat_model: "",
   model_profiles: [],
   model_catalog: [],

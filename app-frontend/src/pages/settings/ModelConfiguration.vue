@@ -83,8 +83,14 @@
         {{ showAuxiliary ? "收起" : "展开" }}辅助任务模型</button
       ><view v-if="showAuxiliary" class="auxiliary-settings"
         ><text class="configuration-intro"
-          >记忆提取、认知更新和语音文本整理使用独立设置，不随聊天中的模型切换。</text
+          >角色卡翻译、记忆与认知、语音文本整理使用独立设置，不随聊天中的模型切换。</text
         >
+        <text class="configuration-intro">角色卡中文阅读模型</text>
+        <picker :range="catalog" range-key="label" :value="translationModelIndex" @change="selectTranslationModel">
+          <view class="translation-model">{{ settings.translation_model }} · 点击切换</view>
+        </picker>
+        <text class="configuration-intro">默认 DeepSeek Flash；译文独立保存，不改变聊天设定。</text>
+        <view class="auxiliary-divider"></view>
         <GenerationPicker
           model-label="记忆与认知模型"
           :model="settings.memory_model"
@@ -134,6 +140,11 @@ const emit = defineEmits<{
   (event: "change", value: Partial<AppSettings>): void;
 }>();
 const catalog = computed(() => configuredCatalog(props.settings));
+const translationModelIndex = computed(() => Math.max(0, catalog.value.findIndex(item => item.id === props.settings.translation_model)));
+function selectTranslationModel(event: { detail: { value: string | number } }) {
+  const model = catalog.value[Number(event.detail.value)];
+  if (model) emit('change', { translation_model: model.id });
+}
 const showProfiles = ref(false);
 const showAuxiliary = ref(false);
 const newId = ref("");
@@ -185,6 +196,7 @@ function addProfile() {
 </script>
 
 <style scoped>
+.translation-model { padding: 20rpx; border-radius: 16rpx; font-size: 26rpx; background: var(--app-color-primary-soft, #e4f1eb); color: var(--app-color-text-primary, #26332e); }
 .model-configuration {
   padding: 28rpx;
   display: flex;

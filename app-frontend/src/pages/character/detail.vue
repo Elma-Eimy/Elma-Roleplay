@@ -47,8 +47,9 @@
         <view class="char-header-section">
           <text class="archive-eyebrow">CHARACTER FILE</text>
           <text class="char-name">{{ character.name }}</text>
+          <CharacterTranslationBar :available="!!translation" :busy="translating" :language="language" :error="translationError" @language="selectLanguage" @translate="translate" />
           <text class="char-summary">
-            {{ plainCardText(character.scenario || character.description).slice(0, 220) || "这位角色还没有留下档案摘要。" }}
+            {{ plainCardText(readingCard?.scenario || readingCard?.description).slice(0, 220) || "这位角色还没有留下档案摘要。" }}
           </text>
           <text v-if="getCardMetadata(character).creator" class="card-author">作者 · {{ getCardMetadata(character).creator }}{{ getCardMetadata(character).version ? " · 版本 " + getCardMetadata(character).version : "" }}</text>
           <view class="tag-row" v-if="character.personality || (character.tags && character.tags.length > 0)">
@@ -194,6 +195,7 @@
         <CharacterProfileTab 
           v-if="activeTab === 'profile'" 
           :character="character" 
+          :reading-character="readingCard || character"
         />
 
         <!-- Tab 3: 专属与绑定世界书列表 -->
@@ -408,6 +410,8 @@ import { usePersonaStore } from "@/store/personaStore";
 import CharacterImportSheet from "@/components/character/CharacterImportSheet.vue";
 import { plainCardText, getCardMetadata, getCardGreetings } from "@/utils/characterCard";
 import CharacterProfileTab from "@/components/character/CharacterProfileTab.vue";
+import CharacterTranslationBar from "@/components/character/CharacterTranslationBar.vue";
+import { useCharacterTranslation } from "@/composables/useCharacterTranslation";
 import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vue";
 import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 
@@ -435,6 +439,7 @@ interface MemoryStoryItem {
 
 const characterId = ref<number | null>(null);
 const character = ref<CharacterDetail | null>(null);
+const { translation, language, selectLanguage, translating, error: translationError, readingCard, translate } = useCharacterTranslation(() => character.value);
 const sessions = ref<CharacterSessionItem[]>([]);
 const isNewBranchModalOpen = ref(false);
 const isMemoryModalOpen = ref(false);
@@ -496,8 +501,8 @@ const getParentSessionTitle = (parentId: number | null) => {
 };
 
 const personalityTags = computed(() => {
-  if (!character.value?.personality) return [];
-  return character.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
+  if (!readingCard.value?.personality) return [];
+  return readingCard.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
 });
 
 const getAffectionClass = (score: number | undefined | null) => {

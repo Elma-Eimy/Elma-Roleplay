@@ -42,7 +42,7 @@
       <view v-if="expanded.greetings" class="section-content"
         ><CharacterGreetings
           v-model="selectedGreeting"
-          :first-mes="character.first_mes"
+          :first-mes="reading.first_mes"
           :alternates="greetings"
           :character-name="character.name"
           :user-name="personaStore.nicknameFor(character.id)"
@@ -53,12 +53,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
-import type { CharacterDetail } from "@/api/characters";
+import type { CharacterBase, CharacterDetail } from "@/api/characters";
 import { usePersonaStore } from "@/store/personaStore";
 import { getCardGreetings, getCardMetadata } from "@/utils/characterCard";
 import CharacterCardText from "./CharacterCardText.vue";
 import CharacterGreetings from "./CharacterGreetings.vue";
-const props = defineProps<{ character: CharacterDetail }>();
+const props = defineProps<{ character: CharacterDetail; readingCharacter?: CharacterBase }>();
+const reading = computed(() => props.readingCharacter || props.character);
 const personaStore = usePersonaStore();
 const expanded = ref<Record<string, boolean>>({ description: true });
 const selectedGreeting = ref<number | null>(null);
@@ -70,42 +71,42 @@ watch(
   },
 );
 const metadata = computed(() => getCardMetadata(props.character));
-const greetings = computed(() => getCardGreetings(props.character));
+const greetings = computed(() => getCardGreetings(reading.value));
 const sections = computed(() =>
   [
     {
       key: "creator_notes",
       title: "作者说明",
       caption: "使用建议与创作备注，不作为角色台词",
-      content: props.character.creator_notes,
+      content: reading.value.creator_notes,
       source: false,
     },
     {
       key: "description",
       title: "人物背景",
       caption: "身份、经历与人物设定",
-      content: props.character.description,
+      content: reading.value.description,
       source: false,
     },
     {
       key: "personality",
       title: "性格特征",
       caption: "人物的性情与表达习惯",
-      content: props.character.personality,
+      content: reading.value.personality,
       source: false,
     },
     {
       key: "scenario",
       title: "故事场景",
       caption: "这段故事发生的环境",
-      content: props.character.scenario,
+      content: reading.value.scenario,
       source: false,
     },
     {
       key: "mes_example",
       title: "对话示例",
       caption: "保留作者的示例格式与占位符",
-      content: props.character.mes_example,
+      content: reading.value.mes_example,
       source: true,
     },
     {

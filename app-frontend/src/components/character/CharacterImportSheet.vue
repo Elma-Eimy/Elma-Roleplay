@@ -83,6 +83,7 @@
                 ></view
               >
             </view>
+            <CharacterTranslationBar :available="!!translation" :busy="translating" :language="language" :error="translationError" @language="selectLanguage" @translate="translate" />
             <view class="preview-counts"
               ><view
                 ><text>{{ greetings.length + 1 }}</text
@@ -144,14 +145,14 @@
               >
               <button v-if="(card.tags?.length || 0) > 8" class="preview-tag-toggle" @tap="showAllTags = !showAllTags">{{ showAllTags ? '收起标签' : '查看全部 ' + card.tags?.length + ' 个标签' }}</button>
               <text class="content-label">人物背景</text
-              ><CharacterCardText :content="card.description" />
+              ><CharacterCardText :content="readingCard?.description" />
               <template v-if="card.personality"
                 ><text class="content-label">性格</text
-                ><CharacterCardText :content="card.personality"
+                ><CharacterCardText :content="readingCard?.personality"
               /></template>
               <template v-if="card.scenario"
                 ><text class="content-label">故事场景</text
-                ><CharacterCardText :content="card.scenario"
+                ><CharacterCardText :content="readingCard?.scenario"
               /></template>
               <text
                 v-if="
@@ -164,16 +165,20 @@
             <CharacterGreetings
               v-else-if="tab === 'greetings'"
               v-model="greetingIndex"
-              :first-mes="card.first_mes"
+              :first-mes="readingCard?.first_mes"
               :alternates="greetings"
               :character-name="card.name"
             />
             <view v-else-if="tab === 'notes'" class="preview-panel"
               ><text class="content-label">作者说明 · 使用建议</text
               ><CharacterCardText
-                :content="card.creator_notes"
+                :content="readingCard?.creator_notes"
                 empty-text="作者没有附加使用说明。"
             /></view>
+            <view v-else-if="tab === 'examples'" class="preview-panel">
+              <text class="content-label">对话示例</text>
+              <CharacterCardText :content="readingCard?.mes_example" source empty-text="这张卡没有对话示例。" />
+            </view>
             <view v-else class="preview-panel"
               ><text class="file-tip"
                 >内嵌世界书会随角色保存，可在人物档案的「世界」页查看。条目按各自的启用和触发条件参与对话。</text
@@ -234,6 +239,8 @@ import { ref, computed, watch, onBeforeUnmount } from "vue";
 import type { CharacterBase } from "@/api/characters";
 import { getAvatarUrl } from "@/api/characters";
 import { useCharacterCardImport } from "@/composables/useCharacterCardImport";
+import { useCharacterTranslation } from "@/composables/useCharacterTranslation";
+import CharacterTranslationBar from "./CharacterTranslationBar.vue";
 import { chooseCharacterCard } from "@/utils/chooseCharacterCard";
 import {
   getCardGreetings,
@@ -256,6 +263,7 @@ const emit = defineEmits<{
   (event: "apply", card: CharacterBase): void;
 }>();
 const { card, loading, error, reset, load } = useCharacterCardImport();
+const { translation, language, selectLanguage, translating, error: translationError, readingCard, translate } = useCharacterTranslation(() => props.isOpen ? card.value : null);
 const picking = ref(false);
 const fileName = ref("");
 const mode = ref<CardImportMode>("replace");
@@ -267,12 +275,13 @@ const tabs = [
   { key: "profile", label: "人物设定" },
   { key: "greetings", label: "故事开场" },
   { key: "notes", label: "作者说明" },
+  { key: "examples", label: "对话示例" },
   { key: "world", label: "内嵌世界" },
 ];
 const metadata = computed(() =>
   getCardMetadata(card.value || { name: "", description: "" }),
 );
-const greetings = computed(() => getCardGreetings(card.value || {}));
+const greetings = computed(() => getCardGreetings(readingCard.value || {}));
 const entries = computed(() =>
   card.value ? getEmbeddedEntries(card.value) : [],
 );
