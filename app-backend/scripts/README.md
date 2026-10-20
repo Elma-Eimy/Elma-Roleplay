@@ -5,6 +5,7 @@
 | 命令 | 用途 |
 | --- | --- |
 | `python -m scripts.query_db` | 查看当前配置的 SQLite 和 ChromaDB 数据概览 |
+| `python -m scripts.export_character_card <PNG路径> <输出文件夹>` | 无损导出 PNG 内每个有效 chara JSON，不连接数据库、不覆盖已有输出 |
 | `python -m scripts.query_session_messages 12 15` | 查看会话 12 的最近 15 条消息 |
 | `python -m scripts.clear_db` | 清空当前配置的 SQLite/ChromaDB 数据，并用 Alembic 重建 SQLite |
 

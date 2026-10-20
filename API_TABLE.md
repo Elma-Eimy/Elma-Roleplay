@@ -198,6 +198,8 @@ illustrative; configurable values depend on the running backend.
 #### POST `/characters/parse`
 * **Request**: `multipart/form-data`
   - `file`: PNG Character Card containing SillyTavern metadata (tEXt/zTXt/iTXt) or standard JSON config file.
+* **Storage**: Parsing does not create a database record. Valid PNGs are retained as content-addressed avatars; identical uploads reuse the same path. Clients should use the returned `avatar_path` without uploading the image again. JSON uploads and failed parses are temporary and leave no avatar file. With multiple valid `chara` chunks, the first is used. See [character card compatibility](docs/CHARACTER_CARDS.md).
+* **Metadata**: `data.extensions.ai_roleplay_card` preserves `creator`, `character_version`, `spec` and `spec_version` when supplied by the card. `extensions.alternate_greetings` and `extensions.character_book` remain the persisted opening and embedded-lorebook fields. Clients preview the parsed data before applying it.
 * **Response (200 OK)**:
   ```json
   {
@@ -220,6 +222,7 @@ illustrative; configurable values depend on the running backend.
   ```
 
 #### POST `/characters/create`
+* **Duplicate handling**: The response includes `created: true` for a new record, or `created: false` with the existing `character_id` and `name` for an existing exact name. The latter does not apply the submitted settings. Clients must prompt the user instead of silently opening a story with the old card.
 * **Request (JSON)**:
   ```json
   {

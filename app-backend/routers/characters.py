@@ -3,15 +3,13 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
-from services.parse import parse_character_card
+from services.media.character_card_import import import_character_card
 import services.character_service as character_service
 import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
 from schemas import CharacterCreate
 import json
 import os
-import shutil
-import uuid
 
 router = APIRouter()
 
@@ -41,29 +39,14 @@ def parse_character(file: UploadFile = File(...)):
 
     try:
         # 校验文件大小
-        content = file.file.read()
+        content = file.file.read(MAX_CARD_SIZE_BYTES + 1)
         if len(content) > MAX_CARD_SIZE_BYTES:
             raise HTTPException(
                 status_code=413,
                 detail=f"文件过大，最大允许 {MAX_CARD_SIZE_BYTES // 1024 // 1024} MB。"
             )
 
-        filename = os.path.basename(file.filename or "card.png")
-        if not filename:
-            filename = "card.png"
-        # 加 UUID 短码前缀，防止同名角色卡相互覆盖
-        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-
-        card_data = parse_character_card(file_path)
-
-        avatar_path = file_path if ext == ".png" else ""
-        if avatar_path:
-            # 统一使用正斜杠以适配 Web/URL 访问路径
-            avatar_path = avatar_path.replace("\\", "/")
-        card_data["avatar_path"] = avatar_path
+        card_data = import_character_card(content, ext, UPLOAD_DIR)
 
         return {"message": "Character parsed successfully", "data": card_data}
     except HTTPException:
