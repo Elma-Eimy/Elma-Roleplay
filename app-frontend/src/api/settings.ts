@@ -1,8 +1,19 @@
 import { request } from "./config";
+import type { ModelProfile, ModelCapability } from "@/types/generation";
 
 // ===================== 类型定义 =====================
 
 export interface AppSettings {
+  default_chat_model: string;
+  model_profiles: ModelProfile[];
+  model_catalog: ModelCapability[];
+  reasoning_effort: string | null;
+  memory_model: string;
+  memory_thinking_mode: "enabled" | "disabled";
+  memory_reasoning_effort: string;
+  tts_preprocess_model: string;
+  tts_thinking_mode: "enabled" | "disabled";
+  tts_reasoning_effort: string;
   temperature: number;
   reasoning_mode: boolean;
   context_history_limit: number;
@@ -32,6 +43,16 @@ export interface UpdateSettingsResponse {
 // ===================== 默认设定值 =====================
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  default_chat_model: "",
+  model_profiles: [],
+  model_catalog: [],
+  reasoning_effort: null,
+  memory_model: "",
+  memory_thinking_mode: "disabled",
+  memory_reasoning_effort: "high",
+  tts_preprocess_model: "",
+  tts_thinking_mode: "disabled",
+  tts_reasoning_effort: "high",
   temperature: 0.7,
   reasoning_mode: false,
   context_history_limit: 15,
@@ -58,7 +79,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
  * GET /utils/settings
  */
 export async function getSettings(): Promise<AppSettings> {
-  return request<AppSettings>("/utils/settings");
+  const settings = await request<AppSettings>("/utils/settings");
+  return { ...DEFAULT_SETTINGS, ...settings };
 }
 
 /**

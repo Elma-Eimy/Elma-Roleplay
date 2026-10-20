@@ -39,15 +39,18 @@
     <ChatComposer
       v-model="inputText"
       :use-reasoning="chatSettingsStore.useReasoning"
+      :model-summary="chatSettingsStore.modelSummary"
       :is-focused="isInputFocused"
       :is-android="isAndroid"
       :keyboard-height="keyboardHeight"
       :wrapper-style="inputWrapperStyle"
-      @update:use-reasoning="chatSettingsStore.useReasoning = $event"
+      @open-model-settings="isModelSettingsOpen = true"
       @focus-change="isInputFocused = $event"
       @line-change="scrollToBottom"
       @send="onSend"
     />
+
+    <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
 
     <EditMessageModal
       v-model="editMessageContent"
@@ -120,7 +123,7 @@
 import ChatStreamBridge from "@/components/chat/ChatStreamBridge.vue";
 // #endif
 import { ref, computed, watch } from "vue";
-import { onLoad, onUnload } from "@dcloudio/uni-app";
+import { onLoad, onUnload, onShow } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
@@ -133,6 +136,7 @@ import {
 } from "@/api/sessions";
 import ChatHeader from "@/components/chat/ChatHeader.vue";
 import ChatMessageList from "@/components/chat/ChatMessageList.vue";
+import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import ChatComposer from "@/components/chat/ChatComposer.vue";
 import EditMessageModal from "@/components/chat/EditMessageModal.vue";
 import ChatDrawer from "@/components/chat/ChatDrawer.vue";
@@ -151,6 +155,8 @@ import type { BranchSession } from "@/types/chat";
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const isModelSettingsOpen = ref(false);
+onShow(() => { void chatSettingsStore.refreshModels(); });
 const {
   scrollTop,
   scrollIntoViewId,
@@ -334,6 +340,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
       greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
     if (activeParentSessionId.value !== null) {
+      chatSettingsStore.inheritSession(activeParentSessionId.value, res.session_id);
       saveBackgroundMode(
         res.session_id,
         readBackgroundMode(activeParentSessionId.value)
@@ -386,6 +393,7 @@ const handleTreeNodeLongpress = (session: BranchSession) => {
               try {
                 await deleteSession(session.id);
                 clearBackgroundMode(session.id);
+                chatSettingsStore.removeSession(session.id);
                 // 如果删除的是当前会话，需要退回到会话列表首页
                 if (session.id === currentSessionId.value) {
                   uni.showToast({ title: '当前会话已删除', icon: 'none' });
@@ -542,6 +550,7 @@ const deleteCurrentSession = () => {
           uni.showLoading({ title: '正在删除...' });
           await deleteSession(currentSessionId.value!);
           clearBackgroundMode(currentSessionId.value!);
+          chatSettingsStore.removeSession(currentSessionId.value!);
           uni.hideLoading();
           isStatusPanelOpen.value = false;
           uni.navigateBack();

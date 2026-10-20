@@ -132,6 +132,7 @@ export const useChatStore = defineStore("chat", () => {
     // 加载会话历史时重置当前自定义参数，以保证使用后端新会话的默认值
     const settingsStore = useChatSettingsStore();
     settingsStore.clearParameters();
+    settingsStore.activateSession(sessionId);
 
     try {
       const res = await getSessionHistory(sessionId);
@@ -147,6 +148,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 手动设置活跃会话并清空已有的历史消息记录 */
   function setActiveSession(sessionId: number) {
+    useChatSettingsStore().activateSession(sessionId);
     invalidateRequests();
     activeSessionId.value = sessionId;
     messages.value = [];
@@ -302,7 +304,7 @@ export const useChatStore = defineStore("chat", () => {
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: lastUserMsg.content,
-      use_reasoning: settingsStore.useReasoning,
+      ...settingsStore.requestGeneration(sessionId),
       is_regenerate: true,
       user_nickname: personaStore.userNickname,
       temperature: settingsStore.temperature ?? undefined,
@@ -345,7 +347,7 @@ export const useChatStore = defineStore("chat", () => {
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: text,
-      use_reasoning: settingsStore.useReasoning,
+      ...settingsStore.requestGeneration(sessionId),
       user_nickname: personaStore.userNickname,
       temperature: settingsStore.temperature ?? undefined,
       top_p: settingsStore.top_p ?? undefined,

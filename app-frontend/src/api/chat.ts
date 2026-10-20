@@ -7,6 +7,9 @@ import type { MessageCandidate } from "./sessions";
 // ===================== 类型定义 =====================
 
 export interface ChatRequest {
+  model?: string;
+  thinking_mode?: "inherit" | "enabled" | "disabled";
+  reasoning_effort?: string;
   session_id: number;
   user_message: string;
   use_reasoning?: boolean;

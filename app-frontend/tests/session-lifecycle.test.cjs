@@ -16,7 +16,7 @@ function chatFixture(history, stream = async () => {}) {
     "@/api/config": {},
     "./personaStore": { usePersonaStore: () => ({ userNickname: "用户", applyAffectionChange: (...args) => personaUpdates.push(args) }) },
     "@/composables/useAudioPlayer": { useAudioPlayer: () => ({ stopMessageTTS() {} }) },
-    "./chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, $reset() {}, useReasoning: false }) },
+    "./chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, activateSession() {}, requestGeneration() { return { thinking_mode: "inherit" }; }, $reset() {}, useReasoning: false }) },
   } });
   return { store: load("store/chatStore.ts").useChatStore(), personaUpdates };
 }

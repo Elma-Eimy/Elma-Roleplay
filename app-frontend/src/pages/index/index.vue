@@ -214,6 +214,7 @@
 </template>
 
 <script setup lang="ts">
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { computed, ref } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { usePersonaStore } from "@/store/personaStore";
@@ -424,6 +425,7 @@ const onSessionLongPress = (session: HomeSession) => {
             if (mRes.confirm) {
               try {
                 await deleteSession(session.id);
+                useChatSettingsStore().removeSession(session.id);
                 await loadRecentSessions();
                 uni.showToast({ title: '删除成功', icon: 'success' });
               } catch (e: any) {

@@ -403,6 +403,7 @@ import {
 import type { MemoryStats, SessionSummary } from "@/api/sessions";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { usePersonaStore } from "@/store/personaStore";
 import CharacterImportSheet from "@/components/character/CharacterImportSheet.vue";
 import { plainCardText, getCardMetadata, getCardGreetings } from "@/utils/characterCard";
@@ -682,6 +683,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
       title: payload.title,
       greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
+    if (activeParentSessionId.value !== null) useChatSettingsStore().inheritSession(activeParentSessionId.value, res.session_id);
     uni.hideLoading();
     uni.navigateTo({
       url: `/pages/chat/chat?sessionId=${res.session_id}`
@@ -720,6 +722,7 @@ const onSessionLongPress = (session: any) => {
             if (mRes.confirm && charId !== null) {
               try {
                 await deleteSession(session.id);
+                useChatSettingsStore().removeSession(session.id);
                 await loadCharacterData(charId);
                 uni.showToast({ title: '删除成功', icon: 'success' });
               } catch (e: any) {
