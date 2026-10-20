@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Literal
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session as DBSession
 
-from core.models import Character, MemoryChunk, Session, SessionPersona
+from core.models import (Character, MemoryChunk, Session, SessionPersona,
+                         MemoryConsolidationScope, MemoryConsolidationSource)
 from services.conversation import session_service
 from services.memory.persona_lineage import get_ancestor_persona_ids
+from services.memory.memory_visibility import memory_view, memory_source_bound
 
 
 MemoryScope = Literal["all", "local", "inherited"]
@@ -39,14 +41,8 @@ def serialize_memory_item(
         "source_message_id": chunk.source_message_id,
         "supersedes_id": chunk.supersedes_id,
         "is_superseded": bool(is_superseded),
+        "consolidation_id": chunk.consolidation_id,
     }
-
-
-def _visible_superseded_ids_subquery(persona_ids: list[int]):
-    return select(MemoryChunk.supersedes_id).where(
-        MemoryChunk.persona_id.in_(persona_ids),
-        MemoryChunk.supersedes_id.is_not(None),
-    )
 
 
 def query_session_memories(
@@ -67,10 +63,10 @@ def query_session_memories(
     current_persona_id = session.persona.id
     ancestor_ids = get_ancestor_persona_ids(current_persona_id, db)
     inherited_ids = [persona_id for persona_id in ancestor_ids if persona_id != current_persona_id]
-    superseded_ids = _visible_superseded_ids_subquery(ancestor_ids)
+    visible_filter, superseded_ids = memory_view(current_persona_id, db)
 
     search_text = q.strip() if q else ""
-    visible_filters = [MemoryChunk.persona_id.in_(ancestor_ids)]
+    visible_filters = [visible_filter]
     if search_text:
         visible_filters.append(MemoryChunk.content.contains(search_text))
 
@@ -170,6 +166,9 @@ def _memory_stats_from_loaded_rows(
     current_persona_id: int,
     personas_by_id: dict[int, SessionPersona],
     memories_by_persona: dict[int, list[MemoryChunk]],
+    sessions_by_id: dict[int, Session],
+    scopes_by_persona: dict[int, set[int]],
+    sources_by_summary: dict[int, set[int]],
 ) -> dict:
     lineage_ids = []
     visited = set()
@@ -182,16 +181,30 @@ def _memory_stats_from_loaded_rows(
             break
         persona_id = persona.parent_persona_id
 
-    visible_memories = [
-        memory
-        for lineage_id in lineage_ids
-        for memory in memories_by_persona.get(lineage_id, ())
-    ]
+    visible_memories = []
+    for index, lineage_id in enumerate(lineage_ids):
+        child = sessions_by_id.get(personas_by_id[lineage_ids[index - 1]].session_id) if index else None
+        boundary = child.fork_message_id if child else None
+        for memory in memories_by_persona.get(lineage_id, ()):
+            source_bound = memory_source_bound(memory)
+            if index and source_bound is not None and (boundary is None or source_bound > boundary):
+                continue
+            visible_memories.append(memory)
+    visible_ids = {memory.id for memory in visible_memories}
+    scoped_batches = scopes_by_persona.get(current_persona_id, set())
+    visible_memories = [memory for memory in visible_memories if memory.consolidation_id is None or (
+        memory.consolidation_id in scoped_batches
+        and len(sources_by_summary.get(memory.id, set())) >= 2
+        and sources_by_summary[memory.id] <= visible_ids
+    )]
     superseded_ids = {
         memory.supersedes_id
         for memory in visible_memories
         if memory.supersedes_id is not None
     }
+    superseded_ids.update(source_id for memory in visible_memories
+                          if memory.consolidation_id is not None
+                          for source_id in sources_by_summary.get(memory.id, set()))
     local_active = sum(
         memory.persona_id == current_persona_id and memory.id not in superseded_ids
         for memory in visible_memories
@@ -254,6 +267,18 @@ def get_character_memory_overview(
     for memory in memories:
         memories_by_persona[memory.persona_id].append(memory)
 
+    # 固定次数批量加载，避免角色故事数量增长时产生逐故事查询。
+    sessions_by_id = {row.id: row for row in db.query(Session).filter(
+        Session.id.in_([persona.session_id for persona in all_personas])).all()}
+    scopes_by_persona: dict[int, set[int]] = defaultdict(set)
+    for row in db.query(MemoryConsolidationScope).filter(
+        MemoryConsolidationScope.persona_id.in_(relevant_persona_ids)).all():
+        scopes_by_persona[row.persona_id].add(row.consolidation_id)
+    sources_by_summary: dict[int, set[int]] = defaultdict(set)
+    for row in db.query(MemoryConsolidationSource).filter(
+        MemoryConsolidationSource.summary_id.in_([m.id for m in memories if m.consolidation_id is not None])).all():
+        sources_by_summary[row.summary_id].add(row.source_id)
+
     recent_session_id = (
         db.query(Session.id)
         .join(SessionPersona, SessionPersona.session_id == Session.id)
@@ -276,6 +301,9 @@ def get_character_memory_overview(
                     current_persona_id=item["persona"]["id"],
                     personas_by_id=personas_by_id,
                     memories_by_persona=memories_by_persona,
+                    sessions_by_id=sessions_by_id,
+                    scopes_by_persona=scopes_by_persona,
+                    sources_by_summary=sources_by_summary,
                 ),
             }
         )

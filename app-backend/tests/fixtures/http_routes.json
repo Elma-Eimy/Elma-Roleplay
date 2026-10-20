@@ -73,6 +73,10 @@
   ],
   [
     "GET",
+    "/sessions/{session_id}/memory-consolidations"
+  ],
+  [
+    "GET",
     "/utils/settings"
   ],
   [
@@ -138,6 +142,18 @@
   [
     "POST",
     "/sessions/{session_id}/memories"
+  ],
+  [
+    "POST",
+    "/sessions/{session_id}/memory-consolidations/preview"
+  ],
+  [
+    "POST",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/apply"
+  ],
+  [
+    "POST",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/undo"
   ],
   [
     "POST",

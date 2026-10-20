@@ -17,6 +17,7 @@ from core.database import get_db
 from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
+from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
@@ -25,6 +26,7 @@ import services.conversation.session_service as session_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
+import services.memory.memory_consolidation_service as memory_consolidation_service
 router = APIRouter()
 
 
@@ -354,6 +356,8 @@ def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdate
         }
     except session_memory_service.InheritedMemoryMutationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.ProtectedMemoryMutationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except session_memory_service.SessionMemoryNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -365,9 +369,42 @@ def delete_session_memory(session_id: int, memory_id: int, db: Session = Depends
         session_memory_service.delete_memory(session_id, memory_id, db)
     except session_memory_service.InheritedMemoryMutationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.ProtectedMemoryMutationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except session_memory_service.SessionMemoryNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"message": "Memory deleted successfully", "memory_id": memory_id}
+
+
+def _consolidation_response(action, *args):
+    try:
+        return action(*args)
+    except session_memory_service.SessionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except memory_consolidation_service.ConsolidationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except memory_consolidation_service.ConsolidationModelError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/{session_id}/memory-consolidations")
+def list_memory_consolidations(session_id: int, limit: int = Query(10, ge=1, le=20), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.list_batches, session_id, db, limit, offset)
+
+
+@router.post("/{session_id}/memory-consolidations/preview")
+def preview_memory_consolidation(session_id: int, request: MemoryConsolidationPreviewRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.preview, session_id, request.after_id, db)
+
+
+@router.post("/{session_id}/memory-consolidations/{batch_id}/apply")
+def apply_memory_consolidation(session_id: int, batch_id: int, request: MemoryConsolidationApplyRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.apply, session_id, batch_id, request.group_ids, db)
+
+
+@router.post("/{session_id}/memory-consolidations/{batch_id}/undo")
+def undo_memory_consolidation(session_id: int, batch_id: int, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.undo, session_id, batch_id, db)
 
 
 @router.get("/{session_id}/compile_prompt")

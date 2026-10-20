@@ -184,3 +184,18 @@ class MemoryUpdateRequest(BaseModel):
     importance_score: float
 
 
+class MemoryConsolidationPreviewRequest(BaseModel):
+    after_id: int = Field(0, ge=0)
+
+
+class MemoryConsolidationApplyRequest(BaseModel):
+    group_ids: list[int] = Field(min_length=1, max_length=12)
+
+    @field_validator("group_ids")
+    @classmethod
+    def valid_groups(cls, value):
+        if any(i < 0 for i in value) or len(set(value)) != len(value):
+            raise ValueError("整理分组编号必须非负且不重复")
+        return value
+
+

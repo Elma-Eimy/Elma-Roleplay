@@ -119,7 +119,8 @@ def add_memory_chunk(
     db: DBSession,
     source_start_message_id: Optional[int] = None,
     supersedes_id: Optional[int] = None,
-    auto_commit: bool = True
+    auto_commit: bool = True,
+    source_message_id_bound: Optional[int] = None,
 ) -> MemoryChunk:
     """创建记忆，并在同一 SQLite 事务内登记向量同步任务。"""
     chunk = MemoryChunk(
@@ -129,6 +130,7 @@ def add_memory_chunk(
         importance_score=importance_score,
         origin_session_id=origin_session_id,
         source_message_id=source_message_id,
+        source_message_id_bound=source_message_id_bound if source_message_id_bound is not None else source_message_id,
         source_start_message_id=source_start_message_id,
         supersedes_id=supersedes_id,
     )
@@ -282,6 +284,26 @@ def retrieve_memories(
     # Bug8修复：加 max(1, ...) 防止配置异常时 n_results=0 导致 ChromaDB 报错
     fetch_k = max(1, top_k * settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER)
 
+    query_options = {}
+    authoritative = None
+    if isinstance(db, DBSession):
+        from services.memory.memory_visibility import memory_view
+        visible_filter, hidden_ids = memory_view(persona_id, db)
+        superseded_ids = hidden_ids
+        rows = db.query(MemoryChunk.id, MemoryChunk.chroma_doc_id).filter(
+            visible_filter,
+            MemoryChunk.id.not_in(hidden_ids),
+            MemoryChunk.importance_score >= min_importance,
+        ).all()
+        authoritative = {row.id: None for row in rows}
+        if not authoritative:
+            return []
+        # 在向量粗排前限定 SQLite 有效 ID，避免原卡、旧版本挤占召回位置。
+        query_options["ids"] = [row.chroma_doc_id for row in rows if row.chroma_doc_id]
+        if not query_options["ids"]:
+            return []
+        fetch_k = min(fetch_k, len(query_options["ids"]))
+
     # Step 3: 单次查询 (粗排)
     try:
         results = collection.query(
@@ -289,6 +311,7 @@ def retrieve_memories(
             n_results=fetch_k,
             where=where_filter,
             include=["documents", "metadatas", "distances"],
+            **query_options,
         )
     except Exception as e:
         print(f"==========================================")
@@ -311,6 +334,14 @@ def retrieve_memories(
     dists = results["distances"][0] if results.get("distances") else [0.0] * len(docs)
     ids = results["ids"][0] if results.get("ids") else [""] * len(docs)
 
+    if authoritative is not None:
+        candidate_ids = {
+            int(cid[4:]) for cid in ids
+            if cid.startswith("mem_") and cid[4:].isdigit() and int(cid[4:]) in authoritative
+        }
+        # 只加载粗排命中的少量正文，避免记忆量大时每轮读取整个记忆库。
+        authoritative = {row.id: row for row in db.query(MemoryChunk).filter(MemoryChunk.id.in_(candidate_ids)).all()}
+
     for doc, meta, dist, cid in zip(docs, metas, dists, ids):
         # 叠加向量相似度距离阈值过滤，防止召回无关的多余内容
         if max_distance == 0:
@@ -330,6 +361,18 @@ def retrieve_memories(
                 pass
         if chunk_id in superseded_ids:
             continue
+
+        if authoritative is not None:
+            chunk = authoritative.get(chunk_id)
+            if chunk is None:
+                continue
+            # Outbox 尚未完成更新时，正文和权重仍以 SQLite 为准。
+            doc = chunk.content
+            meta = _build_chroma_metadata(
+                chunk.persona_id, chunk.memory_type, chunk.importance_score,
+                chunk.origin_session_id, chunk.created_at, chunk.source_message_id,
+                chunk.source_start_message_id,
+            )
 
         imp_score = float(meta.get("importance_score", 0.5))
         
@@ -515,6 +558,7 @@ def update_memory_chunk(
         chunk.source_start_message_id = source_start_message_id
     if source_message_id is not None:
         chunk.source_message_id = source_message_id
+        chunk.source_message_id_bound = source_message_id
     if not chunk.chroma_doc_id:
         chunk.chroma_doc_id = f"mem_{chunk.id}"
     db.flush()

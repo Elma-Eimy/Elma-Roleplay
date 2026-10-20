@@ -503,6 +503,11 @@ def create_session_service(
             )
             db.add(first_message)
 
+    if parent_session_id:
+        from services.memory.memory_visibility import inherit_consolidation_scope
+        db.flush()
+        inherit_consolidation_scope(parent_persona.id, persona.id, db)
+
     db.commit()
     db.refresh(session)
 
