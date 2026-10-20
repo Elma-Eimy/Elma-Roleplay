@@ -482,31 +482,18 @@ app-backend/
 ├── alembic.ini              # Alembic 数据库迁移配置文件
 ├── alembic/                 # Alembic 数据库迁移版本控制目录
 │
-├── tests/                   # 系统单元测试与集成测试套件目录
-│   ├── test_config.py       # 动态配置参数加载单元测试
-│   ├── test_alembic_cli.py  # Alembic CLI 直接执行与递归导入回归测试
-│   ├── test_delete_candidate.py # 消息候选版本删除好感度回滚单元测试
-│   ├── test_independent_lorebook.py # 独立世界书绑定与扫描单元测试
-│   ├── test_lorebook.py     # 世界书引擎匹配与预算裁剪单元测试
-│   ├── test_lorebook_trigger_compatibility.py # 世界书过滤逻辑、正则与概率兼容测试
-│   ├── test_memory_deduplication.py # 记忆替代与多级继承集成测试
-│   ├── test_branching_start_message.py # 剧情线分叉首条消息克隆绑定测试
-│   ├── test_branch_context_boundary.py # 分叉点持久化与父分支未来消息隔离测试
-│   ├── test_memory_handoff.py # 短期上下文与长期记忆动态交接测试
-│   ├── test_contextual_retrieval_query.py # 上下文化检索、边界与预算测试
-│   ├── test_memory_card_extraction.py # 完整记忆卡、来源范围与失败回滚测试
-│   ├── test_memory_versioning.py # same/replace/coexist、分支局部替代与否定词回归测试
-│   ├── manual_deepseek_memory_quality.py # 仅调用聊天模型的人工提纯质量样例
-│   ├── test_memory_manager_offline.py # 向量故障降级与已知缺陷诊断测试
-│   ├── test_graph_rag.py    # 知识图谱 Graph RAG 增强检索测试
-│   ├── test_graph_rag_quality.py # 别名、分支覆盖、真实 2-hop 与枢纽抑制离线测试
-│   ├── test_outbox.py       # 发件箱模式任务消费与退避重试单元测试
-│   ├── test_avatar_cleanup.py # 受管头像删除、共享引用、越界防护与幂等清理测试
-│   ├── test_parse.py        # SillyTavern V1/V2 角色卡解析与清洗单元测试
-│   ├── test_character_prompt_compatibility.py # Prompt DSL、Depth Prompt、单卡多逻辑角色与 Main RP Prompt 兼容测试
-│   ├── test_tts_api.py      # TTS 预处理过滤及云端合成测试
-│   ├── test_closed_loop_memory.py # 记忆提纯与 RAG 闭环流程测试
-│   └── test_api.py          # 路由树与会话剧情重连集成测试
+├── tests/                   # 按职责分组的自动回归与手动场景
+│   ├── __main__.py          # python -m tests：临时工作区运行入口
+│   ├── README.md            # 测试指南与新增约定
+│   ├── api/                 # 接口、鉴权与路由服务边界
+│   ├── conversation/        # Prompt、分叉、对话回合和上下文
+│   ├── memory/              # 提纯、版本、检索与图谱
+│   ├── infrastructure/      # 迁移、资源清理、Embedding 与 Outbox
+│   ├── core/                # 配置系统
+│   ├── lorebook/            # 世界书规则
+│   ├── parsing/             # 回复解析
+│   ├── tts/                 # 语音文本预处理
+│   └── manual/              # 显式运行的旧式场景与真实服务抽查
 │
 └── data/
     ├── data.db              # SQLite 关系型数据库文件 (WAL 模式)
@@ -518,92 +505,19 @@ app-backend/
 
 ## 测试
 
-所有单元测试和集成测试均存放于 `tests/` 目录下，在运行测试前请确保已激活虚拟环境。
-
-Windows 开发环境可以直接使用项目虚拟环境解释器运行完全离线测试（不依赖外部大模型及向量数据库）：
-
-```powershell
-.\venv\Scripts\python.exe .\tests\test_branch_context_boundary.py      # 分叉边界持久化与未来消息隔离测试
-.\venv\Scripts\python.exe .\tests\test_memory_handoff.py              # 短短期上下文与长期记忆动态交接测试
-.\venv\Scripts\python.exe .\tests\test_contextual_retrieval_query.py   # 上下文化检索查询生成与边界测试
-.\venv\Scripts\python.exe .\tests\test_memory_card_extraction.py       # 语义记忆卡提取及来源定位测试
-.\venv\Scripts\python.exe .\tests\test_memory_versioning.py            # same/replace/coexist 分支局部替代关系测试
-.\venv\Scripts\python.exe .\tests\test_memory_manager_offline.py       # 向量数据库不可用时降级退避与冷处理测试
-.\venv\Scripts\python.exe -m unittest tests.test_vector_outbox_consistency -v # SQLite-Chroma 一致性测试
-.\venv\Scripts\python.exe -m unittest tests.test_alembic_cli -v        # Alembic 启动与命令行冲突避免测试
-.\venv\Scripts\python.exe .\tests\test_prompt_token_estimator.py       # 启发式 Token 估算器与块分析测试
-.\venv\Scripts\python.exe .\tests\test_character_prompt_compatibility.py # 角色卡 Prompt DSL 与 Main RP Prompt 兼容测试
-.\venv\Scripts\python.exe -m unittest tests.test_avatar_cleanup -v       # 受管头像生命周期与安全删除测试
-.\venv\Scripts\python.exe -m unittest discover -s tests -p 'test_lorebook_trigger_compatibility.py' -v # 世界书触发语义兼容测试
-.\venv\Scripts\python.exe .\tests\test_router_service_boundaries.py    # 路由层参数与异常处理的边界单元测试
-```
-
-这些测试不会调用真实对话模型或向量模型，提供稳定的离线持续回归验证。
-
-如果运行全套集成与单元测试，请在终端（激活环境后）执行对应的脚本：
+在后端目录使用当前虚拟环境运行：
 
 ```bash
-# 1. 动态配置参数加载与热更新单元测试
-python tests/test_config.py
-
-# 2. 消息候选版本（Swipe）切换与删除好感度/心情回滚测试
-python tests/test_delete_candidate.py
-
-# 3. 独立世界书（Lorebook）加载与角色绑定测试
-python tests/test_independent_lorebook.py
-
-# 4. 世界书关键词匹配、深度扫描与 Token 限制裁剪测试
-python tests/test_lorebook.py
-
-# 5. 记忆合并替代与跨分支继承的图谱/向量召回集成测试
-python tests/test_memory_deduplication.py
-
-# 6. 分剧情线分叉起点克隆绑定首条消息测试
-python tests/test_branching_start_message.py
-
-# 7. 知识图谱 Graph RAG 两邻接点召回与合并重叠实体测试
-python tests/test_graph_rag.py
-
-# 8. 知识图谱图论相关特性（别名处理、COW 关系折叠、枢纽抑制）测试
-python tests/test_graph_rag_quality.py
-
-# 9. 发件箱 outbox_worker 异常断电租约锁与指数退避重试测试
-python tests/test_outbox.py
-
-# 10. SillyTavern V1/V2 角色卡解析、元数据解码与 HTML 清洗测试
-python tests/test_parse.py
-
-# 11. TTS 前处理（动作过滤、声效保留）及云端合成模拟测试
-python tests/test_tts_api.py
-
-# 12. 记忆提纯触发、认知更新迭代与 RAG 结合的闭环流程测试
-python tests/test_closed_loop_memory.py
-
-# 13. 对话流式接口中途异常、断开导致的消息事务性物理回滚与释放锁测试
-python tests/test_chat_turn_service.py
-
-# 14. 向量嵌入失败下的容错和空值响应退避策略测试
-python tests/test_embedding_failure_policy.py
-
-# 15. 路由树挂载、级联删除重连与会话继承树完整性集成测试
-python tests/test_api.py
+python -m tests
+python -m tests --group memory
+python -m tests --group conversation --pattern test_branch_context_boundary.py
 ```
 
-需要人工抽查真实大模型对于记忆提取身份解析、卡片颗粒度生成的质量时，可运行：
+Windows 未激活环境时使用 `.\venv\Scripts\python.exe -m tests`。
 
-```powershell
-.\venv\Scripts\python.exe .\tests\manual_deepseek_memory_quality.py
-```
+入口会创建临时工作区、临时数据库和服务配置，再执行自动回归；不会复制日常开发的密钥或数据。需要真实模型、持久数据库或本地角色卡的场景保留在 `tests/manual/`，不参与默认发现。
 
-该脚本调用配置中的记忆提取大模型，但会使用内存 Mock 屏蔽向量与图谱写入，因此不依赖真实 ChromaDB 服务。
-
-Alembic 迁移机制与命令行也受到完全支持。加载 `alembic/env.py` 时会自动识别命令行环境并临时屏蔽 `database.py` 的应用级自动升级副作用，确保无循环：
-
-```powershell
-.\venv\Scripts\python.exe -m alembic heads
-.\venv\Scripts\python.exe -m alembic current
-.\venv\Scripts\python.exe -m alembic upgrade head
-```
+目录职责、调试方式和手动脚本的使用边界统一维护在 [测试指南](tests/README.md)。
 
 ---
 

@@ -254,49 +254,14 @@ graph TD
 
 ## 自动化测试验证
 
-后端提供了全面的离线与集成自动化测试套件，在 `app-backend` 目录下运行：
+后端测试按职责分组，手动场景脚本单独存放。进入后端目录，使用已安装依赖的 Python 环境运行：
 
-1. **离线单元测试**（不需要访问大模型 API 与 ChromaDB）：
-   ```bash
-   # 路由与服务边界测试
-   python tests/test_router_service_boundaries.py
-   # Prompt 兼容性与 Depth Prompt 测试
-   python tests/test_character_prompt_compatibility.py
-   # 世界书触发与位置语义测试
-   python tests/test_lorebook_trigger_compatibility.py
-   # 分叉边界隔离测试
-   python tests/test_branch_context_boundary.py
-   # 短期历史与长期记忆动态交接测试
-   python tests/test_memory_handoff.py
-   # 上下文化检索查询生成测试
-   python tests/test_contextual_retrieval_query.py
-   # 语义记忆卡提取及来源定位测试
-   python tests/test_memory_card_extraction.py
-   # 记忆版本控制与覆盖测试
-   python tests/test_memory_versioning.py
-   # Graph RAG 图谱遍历与别名规范化测试
-   python tests/test_graph_rag_quality.py
-   # 向量库 Outbox 事务一致性测试
-   python tests/test_vector_outbox_consistency.py
-   # 受管头像物理删除与越界防护测试
-   python -m unittest tests.test_avatar_cleanup -v
-   # Prompt Token 范围估算测试
-   python tests/test_prompt_token_estimator.py
-   ```
+```bash
+cd app-backend
+python -m tests
+```
 
-2. **全套集成与闭环测试**（需要配置好 API 密钥并保证网络服务可用）：
-   ```bash
-   # 最近会话接口与鉴权测试
-   python tests/test_recent_sessions.py
-   # TTS 语音合成与清洗单元测试
-   python tests/test_tts_api.py
-   # 记忆提纯与 RAG 闭环验证
-   python tests/test_closed_loop_memory.py
-   # 对话流式锁与异常自动回滚测试
-   python tests/test_chat_turn_service.py
-   # 全流程 API 时空分支集成测试
-   python tests/test_api.py
-   ```
+统一入口在临时工作区中运行自动回归，使用临时配置和数据。按领域执行、单模块调试及手动场景的说明见 [后端测试指南](app-backend/tests/README.md)。
 
 ---
 
