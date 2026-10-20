@@ -24,11 +24,12 @@
           </view>
           <view class="import-text-container">
             <text class="import-title">导入角色卡</text>
-            <text class="import-desc">支持 PNG 图片角色卡或 JSON 配置文件</text>
+            <text class="import-desc">预览设定、作者说明与开场白，再确认导入</text>
           </view>
-          <text class="import-badge">快捷导入</text>
+          <text class="import-badge">预览导入</text>
         </view>
 
+        <view v-if="importedName" class="import-result"><text>已导入「{{ importedName }}」</text><text>{{ alternateGreetings.length + 1 }} 个开场 · {{ embeddedEntries.length }} 条内嵌世界设定 · 保存后生效</text></view>
         <!-- 头像与基础信息形成完整区块 -->
         <view class="form-card identity-card">
           <view class="section-heading-row">
@@ -62,12 +63,12 @@
 
           <view class="form-group">
             <text class="label">人物背景</text>
-            <textarea class="textarea" auto-height v-model="form.description" placeholder="写下角色的身份、经历与核心性格..." :maxlength="-1"></textarea>
+            <textarea class="textarea card-editor-textarea" v-model="form.description" placeholder="写下角色的身份、经历与核心性格..." :maxlength="-1"></textarea>
           </view>
 
           <view class="form-group">
             <text class="label">开场白</text>
-            <textarea class="textarea-small" auto-height v-model="form.first_mes" placeholder="新故事开始时，角色主动说出的第一句话..." :maxlength="-1"></textarea>
+            <textarea class="textarea-small card-editor-textarea" v-model="form.first_mes" placeholder="新故事开始时，角色主动说出的第一句话..." :maxlength="-1"></textarea>
           </view>
         </view>
 
@@ -124,11 +125,20 @@
               </view>
               <view class="form-group">
                 <text class="label">对话句式示例</text>
-                <textarea class="textarea" auto-height v-model="form.mes_example" placeholder="用几段示例强化角色的表达风格。" :maxlength="-1"></textarea>
+                <textarea class="textarea card-editor-textarea" v-model="form.mes_example" placeholder="用几段示例强化角色的表达风格。" :maxlength="-1"></textarea>
               </view>
             </view>
           </view>
 
+          <view class="advanced-panel">
+            <view class="advanced-toggle" @tap="toggleAdvancedSection('openings')"><view class="advanced-copy"><text class="advanced-text">故事开场与内嵌世界</text><text class="advanced-summary">{{ alternateGreetings.length + 1 }} 个开场 · {{ embeddedEntries.length }} 条世界设定</text></view><text>{{ advancedSections.openings ? '−' : '＋' }}</text></view>
+            <view v-if="advancedSections.openings" class="advanced-section">
+              <CharacterGreetings v-model="selectedGreetingIndex" :first-mes="form.first_mes" :alternates="alternateGreetings" :character-name="form.name || '角色'" />
+              <view class="form-group greeting-editor"><text class="label">编辑{{ selectedGreetingIndex === null ? '默认开场' : '当前备用开场' }}</text><textarea class="textarea greeting-textarea" v-model="selectedGreetingText" :maxlength="-1" /></view>
+              <view class="greeting-actions"><button size="mini" @tap="addGreeting">新增备用开场</button><button v-if="selectedGreetingIndex !== null" size="mini" @tap="removeGreeting">删除当前备用开场</button></view>
+              <text v-if="embeddedEntries.length" class="label-hint">{{ embeddedEntries.length }} 条内嵌世界设定已保留，保存后可在人物档案的「世界」页查看。</text>
+            </view>
+          </view>
           <view class="advanced-panel">
             <view class="advanced-toggle" @tap="toggleAdvancedSection('system')">
               <view class="advanced-copy">
@@ -147,7 +157,7 @@
             <view class="advanced-section" v-if="advancedSections.system">
               <view class="form-group">
                 <text class="label">创作者备忘录</text>
-                <textarea class="textarea-small" auto-height v-model="form.creator_notes" placeholder="记录创作说明或使用提示..." :maxlength="-1"></textarea>
+                <textarea class="textarea notes-textarea" v-model="form.creator_notes" placeholder="记录创作说明或使用提示..." :maxlength="-1"></textarea>
               </view>
               <view class="form-group">
                 <text class="label">系统设定覆盖</text>
@@ -165,39 +175,46 @@
       </view>
     </scroll-view>
 
-    <!-- 底部操作栏 -->
     <view class="footer">
-      <view 
-        class="save-btn" 
-        :class="{ 'is-disabled': !isFormValid }"
-        @tap="saveCharacter"
-      >
-        <text class="save-text">{{ isEditMode ? '保存修改' : '保存并开启对话' }}</text>
-      </view>
+      <button v-if="!isEditMode" class="library-save" :disabled="!isFormValid || isSaving" @tap="saveCharacter(null)">存入画册</button>
+      <button class="save-btn" :disabled="!isFormValid || isSaving" @tap="isEditMode ? saveCharacter(null) : isStoryPickerOpen = true"><text class="save-text">{{ isSaving ? '正在保存…' : isEditMode ? '保存修改' : '保存并开启故事' }}</text></button>
     </view>
+    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="{ ...form, avatar_path: avatarPreview }" @apply="applyImportedCard" />
+    <NewSessionModal v-model:isOpen="isStoryPickerOpen" :character-name="form.name" :first-mes="form.first_mes" :alternate-greetings="alternateGreetings" @confirm="saveCharacter" />
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
-import { uploadAvatar, parseCharacter, createCharacter, updateCharacter, getAvatarUrl, getCharacter } from "@/api/characters";
+import { uploadAvatar, createCharacter, updateCharacter, getAvatarUrl, getCharacter } from "@/api/characters";
 import type { CharacterBase } from "@/api/characters";
 import { createSession } from "@/api/sessions";
 import { usePersonaStore } from "@/store/personaStore";
 import AvatarImage from "@/components/common/AvatarImage.vue";
+import CharacterImportSheet from "@/components/character/CharacterImportSheet.vue";
+import CharacterGreetings from "@/components/character/CharacterGreetings.vue";
+import NewSessionModal from "@/components/common/NewSessionModal.vue";
+import { getCardGreetings, getEmbeddedEntries, cardImportError } from "@/utils/characterCard";
 const personaStore = usePersonaStore();
-type AdvancedSectionKey = "identity" | "dialogue" | "system";
+type AdvancedSectionKey = "identity" | "dialogue" | "system" | "openings";
 
 const advancedSections = ref<Record<AdvancedSectionKey, boolean>>({
   identity: false,
   dialogue: false,
   system: false,
+  openings: false,
 });
 const avatarPreview = ref<string>("");
 const isEditMode = ref(false);
 const editingCharId = ref<number | null>(null);
 const isDataLoaded = ref(true);
+const isImportOpen = ref(false);
+const isStoryPickerOpen = ref(false);
+const isSaving = ref(false);
+const importedName = ref("");
+const savedNewCharacterId = ref<number | null>(null);
+const selectedGreetingIndex = ref<number | null>(null);
 
 const form = ref<CharacterBase>({
   name: "",
@@ -212,11 +229,22 @@ const form = ref<CharacterBase>({
   tags: [],
 });
 
-const isFormValid = computed(() => {
-  return form.value.name.trim() !== "" && 
-         form.value.description.trim() !== "" && 
-         form.value.first_mes?.trim() !== "";
+const isFormValid = computed(() => Boolean(form.value.name.trim() && form.value.description.trim() && form.value.first_mes?.trim()));
+const alternateGreetings = computed(() => getCardGreetings(form.value));
+const embeddedEntries = computed(() => getEmbeddedEntries(form.value));
+const selectedGreetingText = computed({
+  get: () => selectedGreetingIndex.value === null ? form.value.first_mes || "" : alternateGreetings.value[selectedGreetingIndex.value] || "",
+  set: (text: string) => {
+    if (selectedGreetingIndex.value === null) form.value.first_mes = text;
+    else { const values = [...alternateGreetings.value]; values[selectedGreetingIndex.value] = text; form.value.extensions = { ...form.value.extensions, alternate_greetings: values }; }
+  },
 });
+const addGreeting = () => { const values = [...alternateGreetings.value, ""]; form.value.extensions = { ...form.value.extensions, alternate_greetings: values }; selectedGreetingIndex.value = values.length - 1; };
+const removeGreeting = () => {
+  const index = selectedGreetingIndex.value; if (index === null) return;
+  uni.showModal({ title: "删除备用开场？", content: "仅从角色设定移除，已有故事中的消息会保留。保存后生效。", success: result => { if (result.confirm) { const values = [...alternateGreetings.value]; values.splice(index, 1); form.value.extensions = { ...form.value.extensions, alternate_greetings: values }; selectedGreetingIndex.value = null; } } });
+};
+const applyImportedCard = (card: CharacterBase) => { form.value = card; avatarPreview.value = card.avatar_path || ""; importedName.value = card.name; selectedGreetingIndex.value = null; isImportOpen.value = false; };
 
 const identitySummary = computed(() => {
   const count = Number(Boolean(form.value.personality?.trim())) + Number(Boolean(form.value.tags?.length));
@@ -249,6 +277,7 @@ const updateTags = (event: any) => {
 };
 
 onLoad(async (options) => {
+  if (options?.import === "1") isImportOpen.value = true;
   if (options && options.id) {
     const id = parseInt(options.id, 10);
     isEditMode.value = true;
@@ -322,140 +351,39 @@ const chooseAvatar = () => {
   });
 };
 
-const importCharacterCard = () => {
-  const proceedWithImport = () => {
-    // #ifdef APP-PLUS
-    // 手机 App 平台：由于不支持 uni.chooseFile，使用 uni.chooseImage 从相册选择 PNG 角色卡
-    // 指定 sizeType: ['original']（原图）以防止图片被系统压缩导致 EXIF/iTXt 元数据丢失
-    uni.chooseImage({
-      count: 1,
-      sizeType: ['original'],
-      sourceType: ['album'],
-      success: async (res) => {
-        uni.showLoading({ title: '正在解析角色卡...' });
-        try {
-          const tempFilePath = res.tempFilePaths[0];
-          const parseRes = await parseCharacter(tempFilePath);
-          form.value = {
-            ...form.value,
-            ...parseRes.data
-          };
+const importCharacterCard = () => { isImportOpen.value = true; };
           
-          // 自动作为头像图片上传并填充预览
-          try {
-            const uploadRes = await uploadAvatar(tempFilePath);
-            avatarPreview.value = uploadRes.avatar_path;
-          } catch (uploadErr) {
-            console.error("Auto avatar upload failed", uploadErr);
-          }
-          
-          uni.showToast({ title: '解析并导入成功', icon: 'success' });
-        } catch (e) {
-          console.error("Parsing failed", e);
-          uni.showToast({ title: '解析失败，请检查格式', icon: 'none' });
-        } finally {
-          uni.hideLoading();
-        }
-      },
-      fail: (err) => {
-        console.log("选择图片取消或失败", err);
-      }
-    });
-    // #endif
-
-    // #ifndef APP-PLUS
-    // 非 App 平台（H5网页等）：使用 uni.chooseFile 以同时支持选择 PNG 图片和 JSON 配置文件
-    uni.chooseFile({
-      count: 1,
-      type: "all",
-      extension: [".png", ".json"],
-      success: async (res) => {
-        uni.showLoading({ title: '正在解析角色卡...' });
-        try {
-          const tempFilePath = res.tempFilePaths[0];
-          const parseRes = await parseCharacter(tempFilePath);
-          form.value = {
-            ...form.value,
-            ...parseRes.data
-          };
-          
-          // 如果用户选择的是 PNG 格式的角色卡，自动作为其头像图片上传并填充预览
-          if (tempFilePath.toLowerCase().endsWith('.png')) {
-            try {
-              const uploadRes = await uploadAvatar(tempFilePath);
-              avatarPreview.value = uploadRes.avatar_path;
-            } catch (uploadErr) {
-              console.error("Auto avatar upload failed", uploadErr);
-            }
-          } else {
-            avatarPreview.value = parseRes.data.avatar_path || "";
-          }
-          
-          uni.showToast({ title: '解析并导入成功', icon: 'success' });
-        } catch (e) {
-          console.error("Parsing failed", e);
-          uni.showToast({ title: '解析失败，请检查格式', icon: 'none' });
-        } finally {
-          uni.hideLoading();
-        }
-      },
-      fail: (err) => {
-        console.log("选择文件取消或失败", err);
-      }
-    });
-    // #endif
-  };
-
-  if (isEditMode.value) {
-    uni.showModal({
-      title: "确认导入",
-      content: "导入新角色卡将覆盖当前编辑框中的所有人设内容，确定继续吗？",
-      success: (modalRes) => {
-        if (modalRes.confirm) {
-          proceedWithImport();
-        }
-      }
-    });
-  } else {
-    proceedWithImport();
-  }
-};
-
-const saveCharacter = async () => {
-  if (!isFormValid.value) return;
-  
+const saveCharacter = async (story: { title: string; greeting_index: number | null } | null) => {
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
-    uni.showLoading({ title: '正在保存人设...' });
-    const characterData = {
-      ...form.value,
-      avatar_path: avatarPreview.value
-    };
-
+    uni.showLoading({ title: '正在保存角色…' });
+    const characterData = { ...form.value, avatar_path: avatarPreview.value };
     if (isEditMode.value && editingCharId.value !== null) {
       await updateCharacter(editingCharId.value, characterData);
       await personaStore.loadCharacters();
       uni.hideLoading();
-      uni.showToast({ title: '修改已保存', icon: 'success' });
-      setTimeout(() => {
-        uni.navigateBack();
-      }, 1000);
+      uni.navigateBack();
     } else {
-      const res = await createCharacter(characterData);
-      const sessionRes = await createSession({
-        character_id: res.character_id,
-        title: "新会话"
-      });
+      let id = savedNewCharacterId.value;
+      if (id === null) {
+        const response = await createCharacter(characterData);
+        if (response.created === false) {
+          uni.hideLoading();
+          uni.showModal({ title: "画册中已有同名角色", content: "本次导入尚未保存。可以修改姓名后新建，或打开已有档案，从那里导入更新。", confirmText: "打开档案", cancelText: "继续编辑", success: result => { if (result.confirm) uni.navigateTo({ url: `/pages/character/detail?id=${response.character_id}` }); } });
+          return;
+        }
+        id = response.character_id; savedNewCharacterId.value = id;
+      } else await updateCharacter(id, characterData);
       await personaStore.loadCharacters();
-      uni.hideLoading();
-      uni.redirectTo({
-        url: `/pages/chat/chat?sessionId=${sessionRes.session_id}`
-      });
+      if (story) {
+        const session = await createSession({ character_id: id, title: story.title, greeting_index: story.greeting_index === null ? undefined : story.greeting_index });
+        uni.redirectTo({ url: `/pages/chat/chat?sessionId=${session.session_id}` });
+      } else uni.redirectTo({ url: `/pages/character/detail?id=${id}` });
     }
-  } catch (e) {
-    uni.hideLoading();
-    uni.showToast({ title: '保存失败', icon: 'none' });
-    console.error(e);
-  }
+  } catch (failure) {
+    uni.showModal({ title: savedNewCharacterId.value !== null ? "角色已保存，后续操作未完成" : "保存未完成", content: cardImportError(failure) + (savedNewCharacterId.value !== null ? " 可以重试，或点击存入画册查看角色。" : ""), showCancel: false });
+  } finally { uni.hideLoading(); isSaving.value = false; }
 };
 </script>
 
@@ -918,4 +846,21 @@ const saveCharacter = async () => {
 .advanced-icon-fallback {
   display: none;
 }
+</style>
+
+<style scoped>
+.import-result { display: flex; flex-direction: column; gap: 10rpx; padding: 24rpx; margin-bottom: 24rpx; border-radius: 20rpx; background: #edf6f0; color: #4f7560; font-size: 25rpx; }
+.import-result text:last-child { font-size: 22rpx; color: #7c8983; }
+.footer { display: flex; gap: 18rpx; }
+.save-btn { margin: 0; flex: 1; padding: 0 20rpx; }
+.library-save { margin: 0; padding: 0 24rpx; font-size: 25rpx; color: #4f8e7c; background: #eef4ef; border-radius: 20rpx; display: flex; align-items: center; }
+.save-btn[disabled] { opacity: .45; }
+.greeting-editor { margin-top: 28rpx; }
+.greeting-textarea, .notes-textarea { height: 360rpx; overflow-y: auto; }
+.greeting-actions { display: flex; flex-wrap: wrap; gap: 16rpx; margin: 20rpx 0; }
+.greeting-actions button { margin: 0; font-size: 23rpx; color: #4f8e7c; }
+</style>
+
+<style scoped>
+.card-editor-textarea { height: 320rpx; }
 </style>

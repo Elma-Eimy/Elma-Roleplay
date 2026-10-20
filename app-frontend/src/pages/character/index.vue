@@ -9,6 +9,7 @@
 
     <scroll-view scroll-y class="character-scroll" @scrolltolower="loadNextPage">
       <view class="gallery-content">
+        <view class="gallery-toolbar"><text class="gallery-toolbar-label">你收藏的故事主角</text><button size="mini" @tap="goToImport">导入角色卡</button></view>
         <view v-if="isInitialLoading" class="gallery-skeleton">
           <view
             v-for="index in 6"
@@ -42,7 +43,7 @@
               </view>
               <text class="character-name">{{ char.name || "未命名角色" }}</text>
               <text class="character-description">
-                {{ char.description?.trim() || "这位角色还没有留下介绍。" }}
+                {{ plainCardText(char.description).slice(0, 120) || "这位角色还没有留下介绍。" }}
               </text>
             </view>
           </view>
@@ -99,6 +100,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { plainCardText } from "@/utils/characterCard";
 import { onShow } from "@dcloudio/uni-app";
 import { usePersonaStore } from "@/store/personaStore";
 import TabBar from "@/components/common/TabBar.vue";
@@ -157,7 +159,7 @@ const goToCreate = () => {
 
 const goToImport = () => {
   uni.navigateTo({
-    url: "/pages/character/create"
+    url: "/pages/character/create?import=1"
   });
 };
 
@@ -465,4 +467,10 @@ const onCharacterLongPress = (char: CharacterSummary) => {
     transform: rotate(360deg);
   }
 }
+</style>
+
+<style scoped>
+.gallery-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20rpx; margin-bottom: 24rpx; }
+.gallery-toolbar-label { font-size: 24rpx; color: var(--app-color-text-secondary, #7c8983); }
+.gallery-toolbar button { margin: 0; padding: 0 24rpx; border-radius: 40rpx; background: #edf4ef; color: #4f8e7c; font-size: 24rpx; }
 </style>

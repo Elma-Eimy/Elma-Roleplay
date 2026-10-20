@@ -396,7 +396,7 @@ const goToCreateCharacter = () => {
 
 const goToImportCharacter = () => {
   uni.navigateTo({
-    url: "/pages/character/create"
+    url: "/pages/character/create?import=1"
   });
 };
 

@@ -43,6 +43,7 @@ export interface CreateCharacterResponse {
   message: string;
   character_id: number;
   name: string;
+  created?: boolean;
 }
 
 export interface UpdateCharacterResponse {
@@ -204,6 +205,8 @@ export async function createCharacter(
 ): Promise<CreateCharacterResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
+    const existing = db.characters.find(character => character.name === data.name);
+    if (existing) return { message: "同名角色已存在", character_id: existing.id, name: existing.name, created: false };
     const newChar = {
       id: Date.now(),
       ...data,
@@ -213,6 +216,7 @@ export async function createCharacter(
     setMockDB(db);
     return {
       message: "Character created successfully (Mock)",
+      created: true,
       character_id: newChar.id,
       name: newChar.name,
     };

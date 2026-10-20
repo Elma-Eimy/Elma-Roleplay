@@ -95,7 +95,9 @@
     <NewSessionModal
       v-if="isNewBranchModalOpen"
       :isOpen="isNewBranchModalOpen"
-      :character="personaStore.activeCharacter"
+      :show-greetings="activeParentSessionId === null"
+      :first-mes="personaStore.activeCharacter?.first_mes"
+      :alternate-greetings="(personaStore.activeCharacter?.extensions?.alternate_greetings as string[] | undefined)"
       :character-id="personaStore.activeCharacter?.id"
       :character-name="personaStore.characterName"
       @close="isNewBranchModalOpen = false"
