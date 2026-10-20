@@ -12,6 +12,7 @@ export interface MemoryChunk {
   source_message_id?: number | null;
   supersedes_id?: number | null;
   is_superseded?: boolean;
+  consolidation_id?: number | null;
 }
 
 export type MemoryScope = "all" | "local" | "inherited";
@@ -89,4 +90,35 @@ export interface MemoryUpdateResponse {
 export interface MemoryDeleteResponse {
   message: string;
   memory_id: number;
+}
+
+export interface ConsolidationSource {
+  id: number;
+  content: string;
+  memory_type: string;
+  importance_score: number;
+  source_start_message_id: number | null;
+  source_message_id: number | null;
+}
+
+export interface MemoryConsolidation {
+  id: number;
+  status: "preview" | "applied" | "undone";
+  created_at: string | null;
+  sources: ConsolidationSource[];
+  groups: { id: number; kind: "duplicate" | "event"; source_ids: number[]; content: string; reason: string }[];
+  selected_group_ids: number[];
+  results: { id: number; content: string }[];
+  scanned_count: number;
+  remaining_count: number;
+  has_more: boolean;
+  next_after_id: number;
+}
+
+export interface MemoryConsolidationHistory {
+  items: MemoryConsolidation[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
 }

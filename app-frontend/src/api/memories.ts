@@ -8,6 +8,8 @@ import type {
   MemoryCreateResponse,
   MemoryUpdateResponse,
   MemoryDeleteResponse,
+  MemoryConsolidation,
+  MemoryConsolidationHistory,
 } from "../types/memories";
 
 /**
@@ -130,4 +132,27 @@ export async function deleteSessionMemory(
   return request<MemoryDeleteResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
     method: "DELETE",
   });
+}
+export async function getMemoryConsolidations(sessionId: number, offset = 0): Promise<MemoryConsolidationHistory> {
+  if (USE_MOCK) return { items: [], total: 0, offset, limit: 10, has_more: false };
+  return request(`/sessions/${sessionId}/memory-consolidations?limit=10&offset=${offset}`, { method: "GET" });
+}
+
+export async function previewMemoryConsolidation(sessionId: number, afterId = 0): Promise<MemoryConsolidation> {
+  if (USE_MOCK) throw new Error("离线模式不支持模型整理，请连接后端后使用");
+  return request(`/sessions/${sessionId}/memory-consolidations/preview`, {
+    method: "POST", body: JSON.stringify({ after_id: afterId }), timeout: 180000,
+  });
+}
+
+export async function applyMemoryConsolidation(sessionId: number, batchId: number, groupIds: number[]): Promise<MemoryConsolidation> {
+  if (USE_MOCK) throw new Error("离线模式不支持应用整理");
+  return request(`/sessions/${sessionId}/memory-consolidations/${batchId}/apply`, {
+    method: "POST", body: JSON.stringify({ group_ids: groupIds }),
+  });
+}
+
+export async function undoMemoryConsolidation(sessionId: number, batchId: number): Promise<MemoryConsolidation> {
+  if (USE_MOCK) throw new Error("离线模式不支持撤销整理");
+  return request(`/sessions/${sessionId}/memory-consolidations/${batchId}/undo`, { method: "POST" });
 }
