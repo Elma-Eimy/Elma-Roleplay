@@ -1,49 +1,6 @@
 import { ref, watch } from "vue";
 import { useChatStore } from "@/store/chatStore";
-import type { ActiveStreamRequest } from "@/store/chatStore";
-import type { ChatResponse } from "@/api/chat";
-import type { MessageCandidate } from "@/api/sessions";
-
-type StreamMeta = Partial<Omit<ChatResponse, "reply">> & {
-  candidates?: MessageCandidate[];
-};
-
-type StreamPayload =
-  | {
-      type: "chunk";
-      requestId: string;
-      placeholderId: string;
-      chunk: string;
-    }
-  | {
-      type: "reasoning_chunk";
-      requestId: string;
-      placeholderId: string;
-      reasoning_chunk: string;
-    }
-  | {
-      type: "done";
-      requestId: string;
-      placeholderId: string;
-      userMessageTempId?: string;
-      meta?: StreamMeta;
-    }
-  | {
-      type: "error";
-      requestId: string;
-      placeholderId: string;
-      userMessageTempId?: string;
-      error?: string;
-    }
-  | {
-      type: "log";
-      level?: "error" | "warn" | "info";
-      message?: string;
-    };
-
-export interface StreamBridgeEvent {
-  detail?: StreamPayload;
-}
+import type { ActiveStreamRequest, StreamBridgeEvent } from "@/types/chatStream";
 
 export function useChatStreamBridge() {
   const chatStore = useChatStore();
@@ -58,7 +15,7 @@ export function useChatStreamBridge() {
         : null;
       currentStreamRequestId.value = request?.requestId ?? null;
     },
-    { deep: true, immediate: true }
+    { deep: true, immediate: true, flush: "sync" }
   );
 
   const resetStreamBridge = () => {
@@ -72,7 +29,7 @@ export function useChatStreamBridge() {
 
     if (
       payload.type !== "log" &&
-      payload.requestId !== currentStreamRequestId.value
+      (!currentStreamRequestId.value || payload.requestId !== currentStreamRequestId.value)
     ) {
       console.warn(
         `[chat stream] Ignored orphaned ${payload.type} event due to request ID mismatch.`
@@ -94,6 +51,7 @@ export function useChatStreamBridge() {
     }
 
     if (payload.type === "done") {
+      resetStreamBridge();
       const meta = payload.meta ?? {};
       chatStore.completeStream(
         payload.placeholderId,
@@ -104,6 +62,7 @@ export function useChatStreamBridge() {
     }
 
     if (payload.type === "error") {
+      resetStreamBridge();
       const errorMessage = payload.error || "Failed to get AI response";
       chatStore.failStream(
         payload.placeholderId,

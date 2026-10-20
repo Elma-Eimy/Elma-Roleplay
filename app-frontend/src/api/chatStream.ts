@@ -1,14 +1,9 @@
 import { createCancellation } from "../utils/cancellation";
 import type { Cancellation } from "../utils/cancellation";
-import { createSSEParser, createUtf8Decoder } from "../utils/sse";
-import type { ChatRequest, ChatResponse } from "./chat";
-
-interface StreamCallbacks {
-  chunk: (text: string) => void;
-  reasoning?: (text: string) => void;
-  done: (meta: Omit<ChatResponse, "reply">) => void;
-  error: (error: Error) => void;
-}
+import { createUtf8Decoder } from "../utils/sse";
+import { createChatStreamProtocol } from "../utils/chatStreamProtocol";
+import type { StreamCallbacks } from "../utils/chatStreamProtocol";
+import type { ChatRequest } from "./chat";
 
 export async function receiveChatStream(
   url: string,
@@ -18,36 +13,17 @@ export async function receiveChatStream(
   cancellation: Cancellation = createCancellation()
 ): Promise<void> {
   if (cancellation.cancelled) return;
-  let terminal = false;
-  const fail = (error: unknown) => {
-    if (terminal || cancellation.cancelled) return;
-    terminal = true;
-    callbacks.error(error instanceof Error ? error : new Error(String(error)));
-  };
-  const parser = createSSEParser((raw) => {
-    if (terminal || cancellation.cancelled || raw.trim() === "[DONE]") return;
-    const payload = JSON.parse(raw);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      throw new Error("Invalid SSE response");
-    }
-    if (payload.error !== undefined) fail(new Error(String(payload.error)));
-    else if (typeof payload.chunk === "string") callbacks.chunk(payload.chunk);
-    else if (typeof payload.reasoning_chunk === "string") callbacks.reasoning?.(payload.reasoning_chunk);
-    else {
-      terminal = true;
-      callbacks.done(payload);
-    }
-  });
+  const protocol = createChatStreamProtocol(callbacks, () => cancellation.cancelled);
+  const fail = protocol.fail;
   const decoder = createUtf8Decoder();
   const feed = (data: string | ArrayBuffer | Uint8Array) => {
-    if (terminal || cancellation.cancelled) return;
-    parser.push(typeof data === "string" ? data : decoder.push(data instanceof Uint8Array ? data : new Uint8Array(data)));
+    if (protocol.finished || cancellation.cancelled) return;
+    protocol.push(typeof data === "string" ? data : decoder.push(data instanceof Uint8Array ? data : new Uint8Array(data)));
   };
   const finish = () => {
     if (cancellation.cancelled) return;
-    parser.push(decoder.finish());
-    parser.finish();
-    if (!terminal) fail(new Error("连接已结束，但未收到完整回复，请重试"));
+    protocol.push(decoder.finish());
+    protocol.finish();
   };
 
   // #ifdef H5
@@ -67,7 +43,7 @@ export async function receiveChatStream(
       feed(await response.text());
     } else {
       reader = response.body.getReader();
-      while (!cancellation.cancelled && !terminal) {
+      while (!cancellation.cancelled && !protocol.finished) {
         const { done, value } = await reader.read();
         if (done) break;
         feed(value);
@@ -116,7 +92,7 @@ export async function receiveChatStream(
         onChunkReceived?: (callback: (response: { data: ArrayBuffer }) => void) => void;
       };
       chunkTask.onChunkReceived?.((response) => {
-        if (cancellation.cancelled || terminal) return;
+        if (cancellation.cancelled || protocol.finished) return;
         receivedChunks = true;
         try { feed(response.data); }
         catch (error) { fail(error); task?.abort(); close(); }

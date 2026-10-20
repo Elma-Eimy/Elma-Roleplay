@@ -5,7 +5,7 @@ declare module "vue" {
   interface ComponentCustomOptions extends Hooks {}
 
   interface ComponentCustomProperties {
-    /** uni-app RenderJS module exposed to chat.vue templates. */
+    /** uni-app RenderJS module exposed to ChatStreamBridge.vue templates. */
     stream: {
       onStreamRequestChange: (...args: unknown[]) => void;
     };

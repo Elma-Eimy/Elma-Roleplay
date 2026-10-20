@@ -1,3 +1,4 @@
+import type { ActiveStreamRequest } from "@/types/chatStream";
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
@@ -19,15 +20,6 @@ export interface ChatMessage extends Message {
   clientId?: string; // Stable client-side unique ID for DOM rendering
 }
 
-export interface ActiveStreamRequest {
-  requestId: string;
-  placeholderId: string;
-  userMessageTempId?: string;
-  params: ChatRequest;
-  baseUrl: string;
-  apiKey: string;
-  timestamp: number;
-}
 
 export const useChatStore = defineStore("chat", () => {
   let sessionVersion = 0;

@@ -189,7 +189,7 @@ src/
 ## 跨端注意事项
 
 - App 端选择角色卡时使用相册中的原始 PNG，以免系统压缩破坏卡片元数据；H5 等平台可选择 PNG 或 JSON。
-- App 端流式响应通过 renderjs/XHR 桥接，并继续使用请求头传递 `X-API-Key`。
+- 三端流式协议由 `utils/chatStreamProtocol.ts` 统一解析。App 使用独立的 `ChatStreamBridge.vue` 和 `api/transports/appStream.ts` 进行 renderjs/XHR 桥接，通过实例方法回传事件，请求头传递 `X-API-Key`；页面不再直接解析流式响应。
 - Android 聊天页使用 `adjustResize` 适配软键盘；iOS 通过键盘高度监听补偿输入区。
 - 音频资源属于受保护接口时，同样通过请求头携带 `X-API-Key`。
 - 自定义 TabBar 会隐藏 uni-app 原生 TabBar，页面底部布局需要保留安全区和导航高度。
