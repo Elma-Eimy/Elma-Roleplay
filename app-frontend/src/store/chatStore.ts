@@ -8,6 +8,8 @@ import { getBaseUrl, getSavedApiKey } from "@/api/config";
 import { usePersonaStore } from "./personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatSettingsStore } from "./chatSettingsStore";
+import { createCancellation } from "@/utils/cancellation";
+import type { Cancellation } from "@/utils/cancellation";
 
 export type MessageStatus = "sending" | "streaming" | "done" | "error";
 
@@ -28,6 +30,17 @@ export interface ActiveStreamRequest {
 }
 
 export const useChatStore = defineStore("chat", () => {
+  let sessionVersion = 0;
+  let streamCancellation: Cancellation | null = null;
+
+  function invalidateRequests() {
+    sessionVersion++;
+    streamCancellation?.cancel();
+    streamCancellation = null;
+    activeStreamRequest.value = null;
+    clearPendingStreamChunks();
+    streamingText.value = "";
+  }
   // ===== 状态变量 =====
 
   /** 当前活跃的会话 ID */
@@ -115,6 +128,8 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 设置当前活跃会话并从后端加载其历史记录 */
   async function loadHistory(sessionId: number) {
+    invalidateRequests();
+    const version = sessionVersion;
     activeSessionId.value = sessionId;
     messages.value = [];
     errorMessage.value = null;
@@ -128,20 +143,24 @@ export const useChatStore = defineStore("chat", () => {
 
     try {
       const res = await getSessionHistory(sessionId);
+      if (version !== sessionVersion) return;
       setHistory(res.messages);
     } catch (e: any) {
+      if (version !== sessionVersion) return;
       setError(e.message || "Failed to load chat history");
     } finally {
-      isLoading.value = false;
+      if (version === sessionVersion) isLoading.value = false;
     }
   }
 
   /** 手动设置活跃会话并清空已有的历史消息记录 */
   function setActiveSession(sessionId: number) {
+    invalidateRequests();
     activeSessionId.value = sessionId;
     messages.value = [];
     errorMessage.value = null;
     lastMeta.value = null;
+    isLoading.value = false;
   }
 
   /** 将历史消息记录加载至本地 store 中 */
@@ -237,9 +256,36 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function receiveCurrentStream(params: ChatRequest, placeholderId: string, userTempId?: string) {
+    const version = sessionVersion;
+    const cancellation = createCancellation();
+    streamCancellation = cancellation;
+    const current = () => version === sessionVersion && !cancellation.cancelled;
+    try {
+      await sendMessageStream(
+        params,
+        (chunk) => { if (current()) appendStreamChunk(placeholderId, chunk); },
+        (meta) => {
+          if (!current()) return;
+          streamCancellation = null;
+          completeStream(placeholderId, meta, userTempId);
+        },
+        (error) => {
+          if (!current()) return;
+          streamCancellation = null;
+          failStream(placeholderId, error.message || "获取回复失败", userTempId);
+        },
+        (chunk) => { if (current()) appendStreamReasoningChunk(placeholderId, chunk); },
+        cancellation
+      );
+    } catch (error) {
+      if (current()) failStream(placeholderId, error instanceof Error ? error.message : String(error), userTempId);
+    }
+  }
+
   /** 重新生成最后一次 AI 回复（支持无感重发，避免出现双重用户气泡的 Bug） */
   async function regenerateChatMessage(sessionId: number) {
-    if (isLoading.value) return;
+    if (isLoading.value || activeSessionId.value !== sessionId) return;
     
     const personaStore = usePersonaStore();
     
@@ -287,37 +333,13 @@ export const useChatStore = defineStore("chat", () => {
     // #endif
 
     // #ifndef APP-PLUS
-    try {
-      await sendMessageStream(
-        requestParams,
-        (chunk) => {
-          appendStreamChunk(streamPlaceholderId, chunk);
-        },
-        (meta) => {
-          completeStream(streamPlaceholderId, meta);
-        },
-        (err) => {
-          failStream(
-            streamPlaceholderId,
-            err.message || "Failed to regenerate AI response"
-          );
-        },
-        (rChunk) => {
-          appendStreamReasoningChunk(streamPlaceholderId, rChunk);
-        }
-      );
-    } catch (error) {
-      failStream(
-        streamPlaceholderId,
-        error instanceof Error ? error.message : "An unexpected error occurred"
-      );
-    }
+    await receiveCurrentStream(requestParams, streamPlaceholderId);
     // #endif
   }
 
   /** 发送一条新消息并处理流式返回的分块数据 */
   async function sendChatMessage(sessionId: number, text: string) {
-    if (isLoading.value) return;
+    if (isLoading.value || activeSessionId.value !== sessionId) return;
     
     const personaStore = usePersonaStore();
     
@@ -354,33 +376,7 @@ export const useChatStore = defineStore("chat", () => {
     // #endif
 
     // #ifndef APP-PLUS
-    try {
-      await sendMessageStream(
-        requestParams,
-        (chunk) => {
-          appendStreamChunk(streamPlaceholderId, chunk);
-        },
-        (meta) => {
-          completeStream(streamPlaceholderId, meta, tempId);
-        },
-        (err) => {
-          failStream(
-            streamPlaceholderId,
-            err.message || "Failed to get AI response",
-            tempId
-          );
-        },
-        (rChunk) => {
-          appendStreamReasoningChunk(streamPlaceholderId, rChunk);
-        }
-      );
-    } catch (error) {
-      failStream(
-        streamPlaceholderId,
-        error instanceof Error ? error.message : "An unexpected error occurred",
-        tempId
-      );
-    }
+    await receiveCurrentStream(requestParams, streamPlaceholderId, tempId);
     // #endif
   }
 
@@ -425,6 +421,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 向流式传输中的占位消息追加文本分块 */
   function appendStreamChunk(tempId: string, chunk: string) {
+    if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
     if (!chunk) return;
     pendingStreamText.set(
       tempId,
@@ -435,6 +432,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 向流式传输中的占位消息追加思考过程文本分块 */
   function appendStreamReasoningChunk(tempId: string, chunk: string) {
+    if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
     if (!chunk) return;
     pendingReasoningText.set(
       tempId,
@@ -467,6 +465,7 @@ export const useChatStore = defineStore("chat", () => {
     meta: Partial<Omit<ChatResponse, "reply">>,
     userMessageTempId?: string
   ) {
+    if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
     const candidates = meta.candidates ?? [];
     const activeIndex = meta.active_index ?? candidates.length - 1;
     const activeCandidate = candidates[activeIndex];
@@ -519,6 +518,7 @@ export const useChatStore = defineStore("chat", () => {
     message: string,
     userMessageTempId?: string
   ) {
+    if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
     messages.value = messages.value.filter((item) => item.tempId !== tempId);
     if (userMessageTempId) {
       const userMessage = messages.value.find(
@@ -589,10 +589,13 @@ export const useChatStore = defineStore("chat", () => {
     if (validMessages.length === 0) return false;
     
     const oldestMsgId = validMessages[0].id;
+    const version = sessionVersion;
+    const sessionId = activeSessionId.value;
     isLoading.value = true;
     
     try {
-      const res = await getSessionHistory(activeSessionId.value, 50, oldestMsgId);
+      const res = await getSessionHistory(sessionId, 50, oldestMsgId);
+      if (version !== sessionVersion) return false;
       if (res.messages && res.messages.length > 0) {
         const newMsgs = res.messages.map((m) => ({
           ...m,
@@ -606,13 +609,14 @@ export const useChatStore = defineStore("chat", () => {
     } catch (e: any) {
       console.error("Failed to load more chat history", e);
     } finally {
-      isLoading.value = false;
+      if (version === sessionVersion) isLoading.value = false;
     }
     return false;
   }
 
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    invalidateRequests();
     clearPendingStreamChunks();
     const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS();

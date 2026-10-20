@@ -143,7 +143,7 @@ export const USE_MOCK = false;
 回归检查范围和跨端验证方法见 [前端测试说明](tests/README.md)。
 
 ```bash
-# 流式解析与跨端传输回归
+# 网络、流式解析与会话状态回归
 npm test
 
 # 类型检查

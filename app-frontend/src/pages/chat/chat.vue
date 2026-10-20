@@ -445,6 +445,7 @@ onLoad(async (options) => {
 onUnload(() => {
   console.log("[chat.vue] onUnload page - resetting chatStore");
   chatStore.$reset();
+  personaStore.cancelSessionLoad();
   resetStreamBridge();
 });
 

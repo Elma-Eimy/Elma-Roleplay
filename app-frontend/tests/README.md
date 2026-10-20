@@ -11,6 +11,7 @@ npm run type-check
 
 - `stream.test.cjs`：跨字节 UTF-8、SSE 帧边界、错误与截断响应、H5 取消、小程序分块与整包接收、取消请求及禁止重复 POST。
 - `entry-case.test.cjs`：入口文件与导入的精确大小写。
+- `session-lifecycle.test.cjs`：历史请求乱序、分页失效、切换会话后的旧回调，以及人物详情的异步隔离。
 - `helpers/load-ts.cjs`：内存加载实际 TypeScript 源码，以替身注入网络和平台接口。Store 使用实际 Vue/Pinia；测试加载器只筛选本次涉及的条件编译块。
 
 这些测试不模拟完整的 uni-app 编译器或手机运行环境。修改跨端网络逻辑后，还需要执行：
