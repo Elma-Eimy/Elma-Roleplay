@@ -65,7 +65,7 @@
 | markdown-it | 安全 Markdown 渲染 |
 | vue-tsc | Vue 单文件组件类型检查 |
 
-项目当前使用组件内 CSS 与 `src/APP.vue`、`src/uni.scss` 中的语义设计变量，没有启用 UnoCSS。
+项目当前使用组件内 CSS 与 `src/App.vue`、`src/uni.scss` 中的语义设计变量，没有启用 UnoCSS。
 
 ## 快速开始
 
@@ -140,7 +140,12 @@ export const USE_MOCK = false;
 
 ## 常用命令
 
+回归检查范围和跨端验证方法见 [前端测试说明](tests/README.md)。
+
 ```bash
+# 流式解析与跨端传输回归
+npm test
+
 # 类型检查
 npm run type-check
 
@@ -176,7 +181,7 @@ src/
 │   ├── chat/               # 叙事聊天页
 │   └── settings/           # 设置与世界书管理
 ├── store/                  # Pinia 状态仓库
-├── APP.vue                 # 全局语义变量、基础样式与动效降级
+├── App.vue                 # 全局语义变量、基础样式与动效降级
 ├── pages.json              # 页面与原生 TabBar 配置
 └── uni.scss                # uni-app 与应用级 SCSS 变量
 ```

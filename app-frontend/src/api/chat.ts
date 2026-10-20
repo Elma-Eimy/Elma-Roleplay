@@ -1,3 +1,6 @@
+import { receiveChatStream } from "./chatStream";
+import { createCancellation } from "../utils/cancellation";
+import type { Cancellation } from "../utils/cancellation";
 import { request, getBaseUrl, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
 import type { MessageCandidate } from "./sessions";
 
@@ -96,11 +99,10 @@ export async function sendMessage(params: ChatRequest): Promise<ChatResponse> {
   });
 }
 
-// ===================== SSE 流式传输（未来后端支持 / 当前客户端模拟） =====================
+// ===================== SSE 流式传输 =====================
 
 /**
- * /chat 的 SSE 流式版本 — 用于未来的后端流式传输支持。
- * 将使用 EventSource / fetch 异步读取 ReadableStream 来流式获取来自服务端的 Token。
+ * 读取 /chat/stream；H5 使用 fetch，小程序使用 uni.request。
  *
  * @param params - session_id 和 user_message
  * @param onChunk - 接收到每个流式文本分块时的回调函数
@@ -112,8 +114,10 @@ export async function sendMessageStream(
   onChunk: (text: string) => void,
   onDone: (meta: Omit<ChatResponse, "reply">) => void,
   onError: (err: Error) => void,
-  onReasoningChunk?: (text: string) => void
+  onReasoningChunk?: (text: string) => void,
+  cancellation: Cancellation = createCancellation()
 ): Promise<void> {
+  if (cancellation.cancelled) return;
   if (USE_MOCK) {
     try {
       const db = getMockDB();
@@ -150,11 +154,13 @@ export async function sendMessageStream(
       // 使用定时器模拟流式文本输出
       let index = 0;
       const interval = setInterval(() => {
+        if (cancellation.cancelled) return;
         if (index < responseText.length) {
           onChunk(responseText[index]);
           index++;
         } else {
           clearInterval(interval);
+          unsubscribe();
 
           const affection_change = 1;
           const emotion_tag = "Happy";
@@ -213,244 +219,20 @@ export async function sendMessageStream(
           });
         }
       }, 30);
+      const unsubscribe = cancellation.onCancel(() => clearInterval(interval));
     } catch (e) {
       onError(e instanceof Error ? e : new Error(String(e)));
     }
     return;
   }
 
-  // Helper function to decode UTF-8 bytes to string cross-platform
-  const decodeUtf8 = (uint8: Uint8Array): string => {
-    if (typeof TextDecoder !== "undefined") {
-      return new TextDecoder("utf-8").decode(uint8);
-    }
-    try {
-      return decodeURIComponent(escape(String.fromCharCode.apply(null, Array.from(uint8))));
-    } catch (e) {
-      let str = "";
-      for (let i = 0; i < uint8.length; i++) {
-        str += String.fromCharCode(uint8[i]);
-      }
-      return str;
-    }
-  };
-
-  // #ifdef APP-PLUS
-  try {
-    let hasFailedOrAborted = false;
-    const requestTask = uni.request({
-      url: `${getBaseUrl()}/chat/stream`,
-      method: "POST",
-      header: getHeaders({ "Content-Type": "application/json" }),
-      data: params,
-      enableChunkTransfer: true,
-      success: (res) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          if (!hasFailedOrAborted) {
-            hasFailedOrAborted = true;
-            onError(new Error(`服务器响应失败，状态码 ${res.statusCode}`));
-          }
-        }
-      },
-      fail: (err) => {
-        if (hasFailedOrAborted) return;
-        hasFailedOrAborted = true;
-        triggerFallback();
-      }
-    });
-
-    const triggerFallback = () => {
-      uni.request({
-        url: `${getBaseUrl()}/chat`,
-        method: "POST",
-        header: getHeaders({ "Content-Type": "application/json" }),
-        data: params,
-        success: (fallbackRes: any) => {
-          if (fallbackRes.statusCode >= 200 && fallbackRes.statusCode < 300) {
-            onChunk(fallbackRes.data.reply);
-            onDone({
-              emotion_tag: fallbackRes.data.emotion_tag,
-              affection_change: fallbackRes.data.affection_change,
-              affection_score: fallbackRes.data.affection_score,
-              model_used: fallbackRes.data.model_used,
-              user_message_id: fallbackRes.data.user_message_id,
-              assistant_message_id: fallbackRes.data.assistant_message_id,
-              candidates: fallbackRes.data.candidates,
-              active_index: fallbackRes.data.active_index
-            });
-          } else {
-            onError(new Error("网络请求失败"));
-          }
-        },
-        fail: (fallbackErr) => {
-          onError(new Error(fallbackErr.errMsg || "网络请求失败"));
-        }
-      });
-    };
-
-    if (requestTask && typeof (requestTask as any).onChunkReceived === "function") {
-      let buffer = "";
-      (requestTask as any).onChunkReceived((res: any) => {
-        try {
-          if (!res || !res.data) return;
-          
-          let chunkText = "";
-          if (res.data instanceof ArrayBuffer) {
-            const uint8 = new Uint8Array(res.data);
-            chunkText = decodeUtf8(uint8);
-          } else if (typeof res.data === "string") {
-            chunkText = res.data;
-          } else {
-            chunkText = String(res.data);
-          }
-
-          buffer += chunkText;
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const raw = line.slice(6).trim();
-              if (raw === "[DONE]") {
-                continue;
-              }
-              try {
-                const parsed = JSON.parse(raw);
-                if (parsed.chunk) {
-                  onChunk(parsed.chunk);
-                } else if (parsed.reasoning_chunk) {
-                  if (onReasoningChunk) {
-                    onReasoningChunk(parsed.reasoning_chunk);
-                  }
-                } else {
-                  onDone(parsed as Omit<ChatResponse, "reply">);
-                }
-              } catch {
-                onChunk(raw);
-              }
-            }
-          }
-        } catch (innerErr) {
-          console.error("Error parsing chunks:", innerErr);
-        }
-      });
-    } else {
-      hasFailedOrAborted = true;
-      try { requestTask.abort(); } catch (_) {}
-      triggerFallback();
-    }
-  } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
-  }
-  // #endif
-
-  // #ifndef APP-PLUS
-  try {
-    const response = await fetch(`${getBaseUrl()}/chat/stream`, {
-      method: "POST",
-      headers: getHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(params),
-    });
-
-    if (!response.ok) {
-      throw new Error(`SSE connection failed: ${response.status}`);
-    }
-
-    if (!response.body || typeof response.body.getReader !== "function") {
-      // Fallback: Read the entire response as text if streaming body is unsupported (e.g. mobile WebViews or polyfills)
-      const text = await response.text();
-      const lines = text.split("\n");
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") {
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.chunk) {
-              onChunk(parsed.chunk);
-            } else if (parsed.reasoning_chunk) {
-              if (onReasoningChunk) {
-                onReasoningChunk(parsed.reasoning_chunk);
-              }
-            } else {
-              onDone(parsed as Omit<ChatResponse, "reply">);
-            }
-          } catch {
-            onChunk(raw);
-          }
-        }
-      }
-      return;
-    }
-
-    const reader = response.body.getReader();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        if (buffer.trim()) {
-          const lines = buffer.split("\n");
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const raw = line.slice(6).trim();
-              if (raw === "[DONE]") {
-                continue;
-              }
-              try {
-                const parsed = JSON.parse(raw);
-                if (parsed.chunk) {
-                  onChunk(parsed.chunk);
-                } else if (parsed.reasoning_chunk) {
-                  if (onReasoningChunk) {
-                    onReasoningChunk(parsed.reasoning_chunk);
-                  }
-                } else {
-                  onDone(parsed as Omit<ChatResponse, "reply">);
-                }
-              } catch {
-                onChunk(raw);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      const chunkText = decodeUtf8(value);
-      buffer += chunkText;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") {
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.chunk) {
-              onChunk(parsed.chunk);
-            } else if (parsed.reasoning_chunk) {
-              if (onReasoningChunk) {
-                onReasoningChunk(parsed.reasoning_chunk);
-              }
-            } else {
-              onDone(parsed as Omit<ChatResponse, "reply">);
-            }
-          } catch {
-            onChunk(raw);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
-  }
-  // #endif
+  await receiveChatStream(
+    `${getBaseUrl()}/chat/stream`,
+    getHeaders({ "Content-Type": "application/json" }),
+    params,
+    { chunk: onChunk, done: onDone, error: onError, reasoning: onReasoningChunk },
+    cancellation
+  );
 }
 
 /**
