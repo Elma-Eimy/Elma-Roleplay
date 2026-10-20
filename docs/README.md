@@ -7,11 +7,13 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目说明](../README.md) | 产品功能、全栈架构、开发与部署入口 |
+| [后端架构](ARCHITECTURE.md) | 应用装配、生命周期、模块边界和维护约定 |
 | [HTTP API](../API_TABLE.md) | 前后端共享的接口总表、请求与响应格式 |
 | [记忆模块 API](api/MEMORY_API.md) | 记忆筛选、统计、继承与角色故事导航的详细契约 |
 | [更新日志](../CHANGELOG.md) | 前后端功能和工程变更记录 |
 | [后端说明](../app-backend/README.md) | Python 环境、服务配置、后端模块与测试 |
 | [后端测试指南](../app-backend/tests/README.md) | 按领域运行自动回归、临时工作区隔离和手动场景 |
+| [后端维护工具](../app-backend/scripts/README.md) | 数据诊断、会话查询和显式重置命令 |
 | [前端说明](../app-frontend/README.md) | 客户端开发、多端构建、运行时连接与页面组织 |
 
 ## 目录约定

@@ -1,13 +1,13 @@
 """
 数据库诊断脚本 — 查看 SQLite 和 ChromaDB 中的数据概览
 
-用法：python query_db.py
+用法：python -m scripts.query_db
 """
 
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.database import SessionLocal
 from core import models

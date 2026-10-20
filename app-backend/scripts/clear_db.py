@@ -4,7 +4,7 @@ import os
 import shutil
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from alembic import command
 from alembic.config import Config

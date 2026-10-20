@@ -30,7 +30,7 @@ def main():
     )
     with tempfile.TemporaryDirectory(prefix="ai-roleplay-tests-") as temporary:
         workspace = Path(temporary)
-        for name in ("core", "routers", "services", "alembic", "tests"):
+        for name in ("application", "core", "routers", "services", "scripts", "alembic", "tests"):
             shutil.copytree(
                 backend / name,
                 workspace / name,

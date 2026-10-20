@@ -2,6 +2,8 @@
 
 [项目说明](../README.md) · [共享 API](../API_TABLE.md) · [文档索引](../docs/README.md)
 
+后端职责边界见 [架构说明](../docs/ARCHITECTURE.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
+
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  
 > 支持角色深度模拟、长期记忆 RAG 检索、树状分支会话管理、认知与好感度动态演化、多模态 TTS 音频生成以及多候选回复分支机制。
 
@@ -75,7 +77,7 @@
 
 ### 4. 数据库自动迁移升级与 Alembic 机制
 
-- **启动期自适应升级**：FastAPI 执行 startup 回调时，会显式调用 `core/database.py` 中的 `run_migrations()`，使用 Alembic 扫描并自动应用所有新迁移升级（通过 `command.upgrade` 直达 `head` 版本）。单纯导入数据库模块不会触发迁移。
+- **启动期自适应升级**：`application/lifecycle.py` 的 lifespan 启动阶段显式调用 `core/database.py` 中的 `run_migrations()`，使用 Alembic 自动应用新迁移至 `head`。单纯导入数据库模块不会触发迁移。
 - **Baseline 自动对齐**：若检测到已存在 `chat_messages` 但没有 `alembic_version`，系统会自动执行 baseline revision 的 stamp 标记，以确保向后兼容与升级的平滑。
 
 ### 5. 游标滚动分页历史消息 API
@@ -372,7 +374,7 @@ app:
 
   # 安全与限制
   cors_origins:
-    - "*"                                      # 预留的 CORS 配置；当前 main.py 仍允许所有 Origin
+    - "*"                                      # 预留的 CORS 配置；当前应用工厂仍允许所有 Origin
   max_card_size_mb: 10
 
   # 历史消息拉取
@@ -425,16 +427,23 @@ tts:
 
 ```
 app-backend/
-├── main.py                  # 启动入口，路由注册，CORS
+├── main.py                  # ASGI 入口：app = create_app()
 ├── config.yaml              # 非敏感运行时配置
 ├── .env                     # 敏感密钥（不提交）
 ├── requirements.txt
-├── query_db.py              # 数据库诊断工具
-├── clear_db.py              # 数据库重置清理脚本
+├── application/
+│   ├── factory.py           # 应用、CORS、静态资源与路由装配
+│   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   └── banner.py            # 启动地址提示
+├── scripts/
+│   ├── README.md            # 显式维护命令说明
+│   ├── query_db.py          # 数据库概览
+│   ├── query_session_messages.py # 会话消息查询
+│   └── clear_db.py          # 数据重置（保留原有终端确认）
 │
 ├── core/
 │   ├── models.py            # SQLAlchemy ORM 模型定义
-│   ├── database.py          # 数据库连接、Session 工厂与 Alembic 迁移执行函数（由 main.py startup 调用）
+│   ├── database.py          # 数据库连接、Session 工厂与迁移函数（由 lifespan 调用）
 │   ├── config.py            # Settings 类，加载 .env + config.yaml
 │   ├── auth.py              # X-API-Key 鉴权依赖
 │   ├── locking.py           # 会话级 asyncio.Lock 锁管理
@@ -445,9 +454,12 @@ app-backend/
 │   ├── sessions.py          # /sessions 端点（分页历史、消息/记忆管理、调试等）
 │   ├── characters.py        # /characters 端点
 │   ├── lorebooks.py         # /lorebooks 端点（导入、详情、编辑、绑定等）
+│   ├── audio.py             # 受鉴权保护的音频下载
 │   └── utils.py             # /upload/avatar 与 /utils/tts 端点
 │
 ├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
+│   ├── media/
+│   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
 │   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
 │   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）

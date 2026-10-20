@@ -85,6 +85,8 @@
 │   ├── api/          # 模块接口补充规范（MEMORY_API.md）
 │   └── local/        # 本地草稿与参考副本（Git 忽略）
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
+│   ├── main.py       # ASGI 入口
+│   ├── application/  # 应用工厂、生命周期与启动提示
 │   ├── core/          # 数据库连接、配置定义、会话锁与 Alembic 迁移配置
 │   ├── routers/       # API 路由（chat, sessions, characters, lorebooks, utils）
 │   ├── services/      # 模块化业务服务层 (分包管理)
@@ -97,6 +99,7 @@
 │   │   └── tts_service.py       # 语音前处理与 TTS 合成服务
 │   ├── alembic/       # 数据库迁移脚本
 │   ├── tests/         # 系统单元测试与集成测试套件
+│   ├── scripts/       # 数据诊断、会话查询与重置工具
 │   └── README.md      # 后端环境、配置、模块与测试说明
 └── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript)
     ├── src/
