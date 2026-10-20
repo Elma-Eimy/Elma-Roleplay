@@ -14,11 +14,18 @@
 
         <!-- ① 角色卡片面板 -->
         <view class="char-card">
-          <AvatarImage
-            class="char-card-avatar"
-            :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
-            :lazy-load="false"
-          />
+          <button
+            class="char-card-avatar-link"
+            :aria-label="`查看${personaStore.characterName}的人物档案`"
+            :disabled="!personaStore.activeCharacter?.id || personaStore.isLoadingPersona || isOpeningProfile"
+            @tap.stop="openCharacterProfile"
+          >
+            <AvatarImage
+              class="char-card-avatar"
+              :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+              :lazy-load="false"
+            />
+          </button>
           <view class="char-card-info">
             <text class="char-card-name">{{ personaStore.characterName }}</text>
             <view class="mood-badge">
@@ -347,6 +354,20 @@ const emit = defineEmits<{
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const isOpeningProfile = ref(false);
+
+const openCharacterProfile = () => {
+  const characterId = personaStore.activeCharacter?.id;
+  if (!characterId || personaStore.isLoadingPersona || isOpeningProfile.value) return;
+  isOpeningProfile.value = true;
+  // 压入页面栈，保留原聊天页及其草稿；档案页 navigateBack 返回此处。
+  uni.navigateTo({
+    url: `/pages/character/detail?id=${characterId}`,
+    success: () => emit("close"),
+    fail: () => uni.showToast({ title: "无法打开人物档案，请重试", icon: "none" }),
+    complete: () => { isOpeningProfile.value = false; },
+  });
+};
 
 const showAdvancedParams = ref(false);
 const userNicknameInput = ref(personaStore.userNickname);
@@ -488,6 +509,20 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
   margin: 0 20rpx 28rpx 20rpx;
   border-radius: 24rpx;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.char-card-avatar-link {
+  display: flex;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.char-card-avatar-link::after {
+  border: 0;
 }
 
 .char-card-avatar {
