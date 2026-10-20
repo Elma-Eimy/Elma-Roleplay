@@ -47,9 +47,10 @@
 | `created_at` | ISO 8601 string | 是 | 创建时间 |
 | `origin_session_id` | integer | 是 | 记忆最初产生的会话 |
 | `source_start_message_id` | integer | 是 | 来源消息范围起点 |
-| `source_message_id` | integer | 是 | 来源消息范围终点 |
+| `source_message_id` | integer | 是 | 来源消息范围终点的外键引用；消息删除后可置空 |
 | `supersedes_id` | integer | 是 | 当前记忆直接替代的前一版本 |
-| `is_superseded` | boolean | 否 | 在当前 Persona 继承链中是否已被替代 |
+| `is_superseded` | boolean | 否 | 在当前故事中是否已被版本替代或整理结果收起 |
+| `consolidation_id` | integer | 是 | 整理产物所属记录；普通原卡为 null |
 
 ### 2.2 MemoryStats
 
@@ -69,7 +70,7 @@
 | `local_active` | 属于当前 Persona，且在当前继承链中未被替代 |
 | `inherited_active` | 属于祖先 Persona，且在当前继承链中未被替代 |
 | `effective_total` | `local_active + inherited_active` |
-| `superseded` | 当前继承链可见、但已被链上新版本替代的旧记忆 |
+| `superseded` | 当前故事可见、但已被版本替代或已选整理结果收起的原卡（两者取并集） |
 
 ## 3. 会话记忆列表
 
@@ -100,7 +101,7 @@
 | 值 | 定义 |
 | --- | --- |
 | `active` | 当前继承链中未被替代的有效记忆 |
-| `superseded` | 当前继承链中已被新版本替代的旧记忆 |
+| `superseded` | 当前故事中已被新版本替代或整理收起的历史原卡 |
 | `all` | 有效与已替代记忆 |
 
 ### 前端分类映射
@@ -110,7 +111,7 @@
 | 全部 | `all` | `active` |
 | 当前故事／此故事 | `local` | `active` |
 | 继承 | `inherited` | `active` |
-| 已替代 | `all` | `superseded` |
+| 历史原卡 | `all` | `superseded` |
 
 ### Response `200 OK`
 
@@ -187,6 +188,51 @@ ORDER BY created_at DESC, id DESC
 | `404` | Session、Persona 或 Memory 不存在 |
 
 创建、更新或删除成功后，前端必须重新加载当前分类第一页，不能只依赖本地数组推算 `total/facets`。
+
+有关联有效整理的来源卡与所有整理产物不允许直接编辑、删除，返回 `409`。应先撤销整理再修改原卡；已有子故事实际可见的整理组仍引用的来源继续只读，避免破坏其整理依据。仅有旧版遗留关联、但因来源边界而不可见的整理组不锁住原卡。同一批中各组按实际可见性分别判断。整理不会修改图谱、认知、消息、好感度或音频。
+
+### 可预览的存量记忆整理
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/sessions/{session_id}/memory-consolidations` | 当前故事整理记录，含来源快照、建议和结果；`limit=10`（1–20）、`offset=0`（≥0） |
+| POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0 }`，按原卡 ID 升序扫描最多 80 张 |
+| POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/apply` | 请求 `{ "group_ids": [0] }`，应用指定建议 |
+| POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | 无请求体，撤销本次整理对当前故事的影响 |
+
+预览只扫描当前 Persona 的有效普通原卡，不含继承卡、已被替代/整理收起的原卡和整理产物。每次模型输入有界；每批最多 12 组、每组 2–12 张、各组来源不重叠、类型相同。仅支持 `duplicate`（重复内容）和 `event`（同一次事件，来源必须全为 event），不处理矛盾、时态变化或不同事件的主题归纳。建议正文 4–500 字符，理由 1–160 字符。模型是否正确保留语义仍需用户审阅。
+
+整理记录结构：
+
+```json
+{
+  "id": 1,
+  "status": "preview",
+  "created_at": "2026-10-20T12:00:00",
+  "scanned_count": 2,
+  "remaining_count": 2,
+  "has_more": false,
+  "next_after_id": 102,
+  "sources": [{"id": 101, "content": "原卡正文", "memory_type": "event", "importance_score": 0.7, "source_start_message_id": 20, "source_message_id": 22, "supersedes_id": null}],
+  "groups": [{"id": 0, "kind": "event", "source_ids": [101, 102], "content": "整理正文", "reason": "同一次事件的互补细节"}],
+  "selected_group_ids": [],
+  "results": []
+}
+```
+
+`sources` 实际包含本批全部扫描卡片（示例省略第二张）；`remaining_count` 是请求游标之后待检原卡总数，`scanned_count` 是本批检查数。`has_more` 为真时将 `next_after_id` 传给下一批预览。继续检查不会自动应用前一批建议。GET 按 ID 倒序返回 `{ "items": [整理记录], "total": 12, "limit": 10, "offset": 0, "has_more": true }`；三个 POST 直接返回整理记录。历史分页不会删除旧记录，较早的已应用整理仍可重新打开和撤销。第一版按卡片顺序分批，不在批间做语义聚类，因此可能漏掉相距很远的重复卡。
+
+预览会持久化建议和完整来源快照，不创建新记忆或向量任务。应用仅接收分组编号，正文始终来自已保存建议；在 `BEGIN IMMEDIATE` 事务内校验来源内容、类型、权重、消息范围、版本与有效性，再原子写入整理产物、多来源关系、当前故事快照和向量 Outbox。结果权重取来源最大值，来源范围取起止包络，精确依据仍以来源关联/快照为准。
+
+状态为 `preview → applied → undone`；同一份预览只能应用一次，未选组保持原样，想调整选择应重新预览。同分组的重复应用、重复撤销幂等。应用后的原卡仍留在 SQLite 和向量库，并进入“历史原卡”分类。撤销保留整理产物与记录，恢复当前故事原卡；已建立的子故事保持其分叉时快照。整理结果若在当前故事可见范围内已有后续版本，撤销返回 `409`，避免恢复过时信息；仅子故事独有的后续版本不阻止父故事撤销。
+
+分叉复制父故事当时启用且至少有一组在子故事可见的整理记录关联，后续父故事应用/撤销互不传播；既有故事不追溯继承新增整理。任何包含当前分叉消息边界之后来源的结果都不可见，也不屏蔽原卡。正常记忆列表与检索同样过滤祖先的未来来源消息；旧数据缺少可靠分叉边界时不继承具有来源上界的祖先卡。
+
+SQLite 内部字段 `source_message_id_bound` 保存非外键的来源消息上界，不增加 HTTP 响应字段。原消息删除使 `source_message_id` 置空时，上界仍保留，不能将该卡当作手动无来源记忆继承。新整理产物取各原卡持久上界的最大值，即使整理前消息已经删除也不能缩小边界。真正无消息来源的手动卡继续按原规则继承。旧库升级先回填现存消息引用，再利用已有整理预览的来源快照和关联恢复可确定的丢失上界；已经丢失且没有任何快照留存的旧来源无法凭空恢复。
+
+错误：故事或本地记录不存在为 `404`；请求模型不合法为 `422`；来源变化、记录状态冲突、对话生成中应用/撤销为 `409`；模型失败或建议格式/来源不合法为 `502`。失败不改动原卡。预览请求较慢或客户端断连后，可重新查询记录确定是否完成；应用网络异常时也先查询记录，不重新生成整份预览来重试应用。
+
+ChromaDB 只作为索引：召回前用 SQLite 有效 ID 限定查询范围，旧向量不会绕过整理和分支边界；正文与权重仍从 SQLite 命中卡加载。新整理产物经 Outbox 异步建立索引，尚未同步完成期间可能暂时无法召回；撤销无需等待向量删除。离线 Mock 返回空整理记录，并明确拒绝生成、应用和撤销，不模拟在线模型结论。
 
 ## 5. 角色记忆导航
 

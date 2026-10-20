@@ -11,6 +11,7 @@ npm run type-check
 
 - `character-card.test.cjs`：导入关闭/换卡后的旧响应隔离、字段替换与空项补充、第三方扩展保留、开场原始索引及三端文件选择。
 - `character-translation.test.cjs`：中英文阅读切换、原卡及隐藏 Prompt 隔离、手动翻译、缓存与生成竞态、换卡失效、失败保留译文和在线 API / 离线 Mock 边界。
+- `memory-consolidation.test.cjs`：手动预览、逐组选择、应用/撤销刷新、重复点击保护、分批游标、关闭/换故事/换服务器的旧响应隔离，以及整理请求和离线边界。
 
 - `stream.test.cjs`：跨字节 UTF-8、SSE 帧边界、错误与截断响应、H5 取消、小程序分块与整包接收、取消请求及禁止重复 POST。
 - `app-stream.test.cjs`：App XHR 分块与收尾、HTTP/协议/网络错误、取消与旧连接回调隔离、桥接实例隔离，以及逻辑层同步失效和终态去重。

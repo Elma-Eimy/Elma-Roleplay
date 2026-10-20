@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | `sessions.ts` | 创建、列表、分支、详情、标题、删除与认知更新 | `../types/sessions.ts` | `mock/sessions.ts` |
 | `messages.ts` | 历史分页、消息编辑/删除与候选切换 | `../types/messages.ts` | `mock/messages.ts` |
-| `memories.ts` | 记忆提纯、列表筛选、角色概览与记忆增删改 | `../types/memories.ts` | `mock/memories.ts` |
+| `memories.ts` | 记忆提纯、列表筛选、角色概览、增删改与整理预览/应用/撤销 | `../types/memories.ts` | `mock/memories.ts`；模型整理明确不支持 |
 | `prompts.ts` | 编译提示词预览与 Token 估算结果 | `../types/prompts.ts` | `mock/prompts.ts` |
 
 `sessions.ts` 为已有调用方保留消息、记忆、提示词函数及相关类型的兼容导出。新增代码直接从对应领域模块导入函数，从 `types/` 导入类型：

@@ -646,7 +646,8 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   | `source_start_message_id` | `integer \| null` | First message in the smallest continuous source range supporting this memory. `null` for legacy or manually created memories without a chat source. |
   | `source_message_id` | `integer \| null` | Last message in the source range supporting this memory. The name is retained for database compatibility. |
   | `supersedes_id` | `integer \| null` | ID of the older memory directly superseded by this memory, or `null` when there is no explicit replacement relationship. |
-  | `is_superseded` | `boolean` | Whether another memory supersedes this memory on the current session's Persona ancestry chain. |
+  | `is_superseded` | `boolean` | Whether this original card is hidden by a visible replacement or applied consolidation in the current story. |
+  | `consolidation_id` | `integer \| null` | Consolidation record producing this card; ordinary originals use `null`. |
 
 * **Response (200 OK)**:
   ```json
@@ -757,6 +758,25 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
     "memory_id": 5
   }
   ```
+
+#### Memory consolidation (`/sessions/{session_id}/memory-consolidations`)
+
+| Method | Path suffix | Request | Response |
+| --- | --- | --- | --- |
+| GET | (none) | `limit=10` (1–20), `offset=0` (≥0) | `{ "items": [Consolidation], "total": 12, "limit": 10, "offset": 0, "has_more": true }`, local records in descending ID order |
+| POST | `/preview` | `{ "after_id": 0 }`, integer ≥ 0 | `Consolidation` |
+| POST | `/{batch_id}/apply` | `{ "group_ids": [0] }`, 1–12 distinct non-negative indices | `Consolidation` |
+| POST | `/{batch_id}/undo` | None | `Consolidation` |
+
+`Consolidation` contains `id`, `status` (`preview/applied/undone`), `created_at`, `sources` (original-card snapshots), `groups` (`id`, `kind: duplicate/event`, `source_ids`, `content`, `reason`), `selected_group_ids`, `results` (`id`, `content`), `scanned_count`, `remaining_count`, `has_more`, and `next_after_id`.
+
+Each preview scans at most 80 active local original cards in ID order. Inherited cards and consolidation outputs are excluded. Preview persists suggestions without changing memories; apply accepts only saved group indices, atomically revalidates unchanged sources, preserves originals, creates derived cards/source links/story scope, and queues vector Outbox tasks. Repeating the same apply/undo is idempotent. Selected originals enter the existing `superseded` category (UI: 历史原卡); active counts and retrieval use the same story view. Filters still run before pagination.
+
+Forks copy enabled consolidation scopes with at least one group visible at creation and respect source-message cutoffs; later parent apply/undo does not change existing children. Sources referenced by actually visible consolidation groups and derived outputs are read-only (`409` for ordinary edit/delete); invisible legacy scope associations do not lock originals. Undo restores originals only in the current story and retains referenced outputs for existing forks. Subsequent replacements visible in the current story block undo with `409`; child-only replacements do not prevent parent undo. Graph/cognition/message state is unchanged.
+
+Source-message foreign-key references may become `null` after deletion. An internal persistent source upper bound still enforces branch isolation for original cards and derived summaries; HTTP response fields are unchanged. Upgrade restores known cutoffs from existing references and saved consolidation snapshots where available. Truly manual cards without message provenance retain their inheritance behavior.
+
+Errors: `404` for missing story/local record; `422` for invalid request; `409` for changed sources, conflicting state or apply/undo during generation; `502` for failed/invalid model suggestions. Full payload/lifecycle rules: [Memory API](docs/api/MEMORY_API.md#可预览的存量记忆整理). New vectors synchronize asynchronously; recall may temporarily omit results until Outbox upsert completes.
 
 #### GET `/sessions/{session_id}/compile_prompt`
 * **Query Parameters**:
