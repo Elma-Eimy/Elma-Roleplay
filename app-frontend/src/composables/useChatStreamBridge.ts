@@ -64,12 +64,11 @@ export function useChatStreamBridge() {
     if (payload.type === "error") {
       resetStreamBridge();
       const errorMessage = payload.error || "Failed to get AI response";
-      chatStore.failStream(
+      void chatStore.handleStreamError(
         payload.placeholderId,
         errorMessage,
         payload.userMessageTempId
       );
-      uni.showToast({ title: payload.error || "获取回复失败", icon: "none" });
       return;
     }
 

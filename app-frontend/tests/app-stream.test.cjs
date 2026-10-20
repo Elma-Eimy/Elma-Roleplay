@@ -102,7 +102,7 @@ test("logic bridge invalidates synchronously on session changes and accepts a te
   const store = reactive({ activeStreamRequest: request(),
     appendStreamChunk: (...args) => calls.push(args),
     completeStream: (...args) => calls.push(args),
-    failStream: (...args) => calls.push(args) });
+    handleStreamError: (...args) => calls.push(args) });
   const load = createLoader({ mocks: { "@/store/chatStore": { useChatStore: () => store } },
     globals: { uni: { showToast: v => toast.push(v) } } });
   const scope = effectScope();
@@ -112,7 +112,7 @@ test("logic bridge invalidates synchronously on session changes and accepts a te
   assert.equal(toast.length, 0);
   bridge.onBridgeMessage({ detail: { ...request("b"), type: "error", error: "new" } });
   bridge.onBridgeMessage({ detail: { ...request("b"), type: "error", error: "duplicate" } });
-  assert.equal(calls.length, 1); assert.equal(toast.length, 1);
+  assert.equal(calls.length, 1); assert.equal(toast.length, 0);
   store.activeStreamRequest = null;
   bridge.onBridgeMessage({ detail: { ...request("b"), type: "chunk", chunk: "late" } });
   assert.equal(calls.length, 1);

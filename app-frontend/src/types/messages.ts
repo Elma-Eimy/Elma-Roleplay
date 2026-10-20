@@ -27,6 +27,7 @@ export interface Message {
 export interface GetHistoryResponse {
   session_id: number;
   messages: Message[];
+  is_generating?: boolean;
 }
 
 export interface UpdateMessageResponse {

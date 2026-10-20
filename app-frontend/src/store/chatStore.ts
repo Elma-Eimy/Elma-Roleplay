@@ -24,9 +24,13 @@ export interface ChatMessage extends Message {
 export const useChatStore = defineStore("chat", () => {
   let sessionVersion = 0;
   let streamCancellation: Cancellation | null = null;
+  const streamBaselines = new Map<string, number>();
+  const recoveringStreams = new Set<string>();
 
   function invalidateRequests() {
     sessionVersion++;
+    streamBaselines.clear();
+    recoveringStreams.clear();
     streamCancellation?.cancel();
     streamCancellation = null;
     activeStreamRequest.value = null;
@@ -118,6 +122,112 @@ export const useChatStore = defineStore("chat", () => {
 
   // ===== 操作方法 (Actions) =====
 
+  interface PollPendingOptions {
+    placeholderId?: string;
+    userMessageTempId?: string;
+    fallbackErrorMessage?: string;
+    afterMessageId?: number;
+  }
+
+  function latestPersistedMessageId() {
+    return messages.value.reduce((latest, message) => Math.max(
+      latest, message.id > 0 ? message.id : 0,
+      ...(message.candidates?.map((candidate) => candidate.id) ?? [])
+    ), 0);
+  }
+
+  /** 只读历史恢复；服务端仍在生成时持续等待，不重新提交聊天请求。 */
+  async function pollPendingGeneration(
+    sessionId: number,
+    version: number,
+    options: PollPendingOptions = {}
+  ) {
+    const MAX_NETWORK_ERRORS = 15;
+    let networkErrors = 0;
+    const current = () => version === sessionVersion && activeSessionId.value === sessionId &&
+      (!options.placeholderId || messages.value.some((message) =>
+        message.tempId === options.placeholderId && message.status === "streaming"));
+
+    while (current()) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      if (!current()) return;
+      try {
+        const result = await getSessionHistory(sessionId);
+        if (!current()) return;
+        networkErrors = 0;
+        if (result.is_generating) continue;
+
+        const lastMessage = result.messages[result.messages.length - 1];
+        const completed = lastMessage?.role === "assistant" &&
+          (options.afterMessageId === undefined || lastMessage.id > options.afterMessageId);
+        clearPendingStreamChunks();
+        streamingText.value = "";
+        activeStreamRequest.value = null;
+        if (completed) {
+          setHistory(result.messages);
+          isLoading.value = false;
+          errorMessage.value = null;
+          if (options.placeholderId) streamBaselines.delete(options.placeholderId);
+          void usePersonaStore().loadSessionDetail(sessionId);
+        } else if (options.placeholderId) {
+          // 本地提交失败时保留用户原话；重新生成失败则恢复原来的候选。
+          const failedUserMessage = options.userMessageTempId
+            ? messages.value.find((message) => message.tempId === options.userMessageTempId)
+            : undefined;
+          setHistory(result.messages);
+          if (failedUserMessage) appendMessage({ ...failedUserMessage, status: "error" });
+          streamBaselines.delete(options.placeholderId);
+          setError(options.fallbackErrorMessage || "回复生成失败，请重试");
+        } else {
+          // 返回会话后以后端历史为准，移除被 abort 删除的用户消息。
+          setHistory(result.messages);
+          setError("回复生成失败，请重试");
+        }
+        return;
+      } catch (error) {
+        if (!current()) return;
+        console.warn("[chatStore] Failed to recover generation", error);
+        if (++networkErrors < MAX_NETWORK_ERRORS) continue;
+        const message = "暂时无法确认回复状态，请恢复网络后重新进入会话查看";
+        if (options.placeholderId) {
+          failStream(options.placeholderId, message, options.userMessageTempId);
+        } else {
+          messages.value = messages.value.filter((item) => item.status !== "streaming");
+          setError(message);
+        }
+        return;
+      }
+    }
+  }
+
+  /** H5、小程序和 App 共用断连恢复，使用发送前的消息边界排除旧回复。 */
+  async function handleStreamError(
+    placeholderId: string,
+    error: Error | string,
+    userMessageTempId?: string
+  ) {
+    const sessionId = activeSessionId.value;
+    if (sessionId === null || recoveringStreams.has(placeholderId) ||
+        !messages.value.some((message) => message.tempId === placeholderId && message.status === "streaming")) return;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (/\b(?:401|403|404|422)\b/.test(errorMessage)) {
+      failStream(placeholderId, errorMessage, userMessageTempId);
+      return;
+    }
+    const version = sessionVersion;
+    recoveringStreams.add(placeholderId);
+    try {
+      await pollPendingGeneration(sessionId, version, {
+        placeholderId,
+        userMessageTempId,
+        fallbackErrorMessage: errorMessage,
+        afterMessageId: streamBaselines.get(placeholderId) ?? latestPersistedMessageId(),
+      });
+    } finally {
+      recoveringStreams.delete(placeholderId);
+    }
+  }
+
   /** 设置当前活跃会话并从后端加载其历史记录 */
   async function loadHistory(sessionId: number) {
     invalidateRequests();
@@ -134,15 +244,22 @@ export const useChatStore = defineStore("chat", () => {
     settingsStore.clearParameters();
     settingsStore.activateSession(sessionId);
 
+    let isStillGenerating = false;
     try {
       const res = await getSessionHistory(sessionId);
       if (version !== sessionVersion) return;
       setHistory(res.messages);
+
+      if (res.is_generating) {
+        isStillGenerating = true;
+        const placeholderId = addStreamingPlaceholder();
+        void pollPendingGeneration(sessionId, version, { placeholderId });
+      }
     } catch (e: any) {
       if (version !== sessionVersion) return;
       setError(e.message || "Failed to load chat history");
     } finally {
-      if (version === sessionVersion) isLoading.value = false;
+      if (version === sessionVersion && !isStillGenerating) isLoading.value = false;
     }
   }
 
@@ -267,13 +384,13 @@ export const useChatStore = defineStore("chat", () => {
         (error) => {
           if (!current()) return;
           streamCancellation = null;
-          failStream(placeholderId, error.message || "获取回复失败", userTempId);
+          void handleStreamError(placeholderId, error, userTempId);
         },
         (chunk) => { if (current()) appendStreamReasoningChunk(placeholderId, chunk); },
         cancellation
       );
     } catch (error) {
-      if (current()) failStream(placeholderId, error instanceof Error ? error.message : String(error), userTempId);
+      if (current()) void handleStreamError(placeholderId, error instanceof Error ? error : String(error), userTempId);
     }
   }
 
@@ -290,6 +407,8 @@ export const useChatStore = defineStore("chat", () => {
     isLoading.value = true;
     clearError();
 
+    const afterMessageId = latestPersistedMessageId();
+
     // 2. 如果当前最后一条消息是 AI 的回复，直接从本地消息缓存中移出
     //（后端在 /chat 接口收到 is_regenerate: true 时会自动物理删除最新的 AI 消息，这里无需调用 apiDeleteMessage，防止发生“双重删除”导致上一条回复也被删掉的 Bug）
     const lastMsg = messages.value[messages.value.length - 1];
@@ -299,6 +418,7 @@ export const useChatStore = defineStore("chat", () => {
 
     // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
     const streamPlaceholderId = addStreamingPlaceholder();
+    streamBaselines.set(streamPlaceholderId, afterMessageId);
 
     const settingsStore = useChatSettingsStore();
     const requestParams: ChatRequest = { 
@@ -395,7 +515,9 @@ export const useChatStore = defineStore("chat", () => {
   /** 乐观更新：向列表追加一条流式传输专用的 AI 占位消息 */
   function addStreamingPlaceholder(): string {
     clearPendingStreamChunks();
+    const afterMessageId = latestPersistedMessageId();
     const tempId = `stream-${Date.now()}`;
+    streamBaselines.set(tempId, afterMessageId);
     const clientId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     messages.value.push({
       id: -Date.now() - 1,
@@ -460,6 +582,7 @@ export const useChatStore = defineStore("chat", () => {
     userMessageTempId?: string
   ) {
     if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
+    streamBaselines.delete(tempId);
     const candidates = meta.candidates ?? [];
     const activeIndex = meta.active_index ?? candidates.length - 1;
     const activeCandidate = candidates[activeIndex];
@@ -513,6 +636,7 @@ export const useChatStore = defineStore("chat", () => {
     userMessageTempId?: string
   ) {
     if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
+    streamBaselines.delete(tempId);
     messages.value = messages.value.filter((item) => item.tempId !== tempId);
     if (userMessageTempId) {
       const userMessage = messages.value.find(
@@ -656,6 +780,7 @@ export const useChatStore = defineStore("chat", () => {
     finalizeStream,
     completeStream,
     failStream,
+    handleStreamError,
     switchActiveCandidate,
     loadMoreHistory,
     setError,

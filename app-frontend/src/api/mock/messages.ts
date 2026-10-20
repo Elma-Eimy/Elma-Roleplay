@@ -21,6 +21,7 @@ export async function getSessionHistory(
   return {
     session_id: sessionId,
     messages: msgs.slice(-limit),
+    is_generating: false,
   };
 }
 
