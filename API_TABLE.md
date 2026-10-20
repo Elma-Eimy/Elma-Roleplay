@@ -521,9 +521,11 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
         ],
         "active_index": 0
       }
-    ]
+    ],
+    "is_generating": false
   }
   ```
+  *(Note: `is_generating` is `true` if this session is generating when the history read begins or ends. Generation finishing during the read may conservatively return `true`; fetch history again until it becomes `false` to obtain the final messages.)*
 
 #### PUT `/sessions/{session_id}/title`
 * **Request (JSON)**:
@@ -975,6 +977,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 
 #### POST `/chat/stream`
 * **Request (JSON)**: Same structure as `POST /chat`.
+* **Disconnection & Background Persistence**: The model generation and database persistence lifecycle is decoupled from the HTTP transport connection. If the client disconnects or leaves the session during streaming, the background worker continues to consume the stream, persists the final assistant message and affection updates, and releases the session lock once complete.
 * **Response (SSE Stream)**: `text/event-stream`
   - Yields reasoning/thinking steps (if reasoning is active):
     `data: {"reasoning_chunk": "爱丽丝听到用户的问候，决定开心地回应。"}`

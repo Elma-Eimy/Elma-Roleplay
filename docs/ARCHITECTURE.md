@@ -8,7 +8,7 @@ main.py
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
             ├─ 启动：Alembic 升级 → 创建 Outbox 任务 → 启动提示
-            └─ 关闭：取消并等待本应用创建的 Outbox 任务
+            └─ 关闭：取消并等待 Outbox 任务 → 清理后台对话 Worker
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 维护命令 → scripts/ → core/ 与基础设施客户端
@@ -42,6 +42,8 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 ## 后台任务
 
 Outbox 任务保存在 `app.state.outbox_task` 中，由创建它的 lifespan 管理。关闭时取消并等待任务退出，不再靠应用入口修改 Worker 的全局开关。未完成的持久任务沿用 Outbox 原有租约与幂等重试机制。
+
+后台流式对话在客户端断连后继续生成与落库；lifespan 关闭时调用对话任务清理入口。写库与失败清理延迟响应取消，等待正在运行的线程结束后再关闭数据库会话、释放会话锁，避免同一 Session 被保存和回滚并发访问。
 
 ## 兼容与验证
 
