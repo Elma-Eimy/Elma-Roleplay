@@ -47,7 +47,7 @@ Outbox 任务保存在 `app.state.outbox_task` 中，由创建它的 lifespan �
 
 ## 兼容与验证
 
-- HTTP 路由保持既有 43 组方法和路径，快照位于 `app-backend/tests/fixtures/http_routes.json`。
+- HTTP 路由契约快照位于 `app-backend/tests/fixtures/http_routes.json`，新增接口需同步更新。
 - 音频鉴权和当前恢复行为保持原样；缺失 `p2` 文件的限制仍见 [API 总表](../API_TABLE.md)。
 - 测试入口和范围见 [测试指南](../app-backend/tests/README.md)，维护命令见 [工具说明](../app-backend/scripts/README.md)。
 - 每次移动代码都同步修改导入、测试临时副本的复制范围和文档，运行 `python -m tests` 后再继续下一层调整。

@@ -38,6 +38,8 @@
 
 ## 核心特性
 
+角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 默认为 `deepseek-flash`。使用流程和范围见 [角色卡双版本阅读](../docs/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
+
 ### 1. 优化 Prompt Caching 的提示词设计
 
 - **角色数量中立的 Main RP Prompt**：`{{char}}` 表示当前角色卡或叙事主体，不机械推断卡内逻辑角色数量。单角色卡不会被擅自扩展成群像；单卡若明确声明多个角色、Narrator、Director 或场景主持职责，则允许在同一 assistant 回复中呈现多个受控角色，并要求分别维持身份、目标、知识边界、秘密、人格和语言风格。

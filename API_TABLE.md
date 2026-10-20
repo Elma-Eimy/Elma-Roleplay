@@ -43,6 +43,8 @@ illustrative; configurable values depend on the running backend.
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **POST** | `/characters/parse` | Parse character card (PNG/JSON) without saving |
+| **POST** | `/characters/translation-cache` | Read an existing Chinese reading copy without invoking a model |
+| **POST** | `/characters/translate` | Translate reading fields and cache the Chinese copy separately |
 | **POST** | `/characters/create` | Save new character to database |
 | **GET** | `/characters` | Get abbreviated character list |
 | **GET** | `/characters/{character_id}` | Get full details of a specific character |
@@ -120,6 +122,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   ```
 
 #### GET `/utils/settings`
+* Also returns `translation_model` (default `deepseek-flash`), independently selectable for character reading translations. It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
 * Also returns `default_chat_model`, `model_profiles` (editable `{id,label,adapter}` entries), `model_catalog` (read-only `{id,label,adapter,thinking,efforts}` capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`.
 * `thinking` is `toggle`, `always`, or `unsupported`. Adapters: `compatible`, `deepseek`, `reasoning`. The catalog is configured locally; it does not query providers.
 * **Response (200 OK)**:
@@ -149,6 +152,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   ```
 
 #### PUT `/utils/settings`
+* `translation_model` accepts a nonblank model ID (up to 200 characters), independently of chat, memory and TTS settings.
 * Accepts the additional GET fields above except read-only `model_catalog`. Auxiliary thinking modes are `enabled`/`disabled`; effort is a supported string. `reasoning_effort: null` resets the global effort to the provider default. Model IDs must be nonblank and profile IDs unique.
 * `reasoning_mode` controls thinking independently of `default_chat_model`. Invalid model/thinking/effort combinations return `400` before persistence; malformed fields return `422`.
 * **Supported fields**: Only fields declared by `app-backend/schemas.py::SettingsUpdate` are accepted. Retrieval scoring weights, ancestor weight, deduplication threshold, and graph thresholds are not exposed by this HTTP API; edit YAML and restart for those settings. `memory_handoff_margin` is accepted by PUT but is not currently included in the GET response.
@@ -226,6 +230,35 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
     }
   }
   ```
+
+#### POST `/characters/translation-cache`
+* **Request (JSON)**: `{ "card": { "name": "Traveler", "description": "English background", "first_mes": "Hello {{user}}", "extensions": { "alternate_greetings": ["", "Another greeting"] } } }`.
+* `card` accepts the same source fields as character creation; only `description`, `personality`, `scenario`, `first_mes`, `mes_example`, `creator_notes`, and `extensions.alternate_greetings` form the cache key. Unknown/non-string alternate items normalize to empty strings without shifting indexes.
+* **Response (200)**: `{ "translation": null }` on a miss; on a hit returns the same translation object as `/characters/translate`. This endpoint never invokes a model or creates a character. Reading content above 120,000 characters returns `400`.
+
+#### POST `/characters/translate`
+* **Request (JSON)**: Same `card` object as cache lookup, with optional `force: true` to regenerate an existing copy (default `false`). No saved character ID is required.
+* **Response (200)**:
+  ```json
+  {
+    "translation": {
+      "source_hash": "sha256-of-versioned-reading-source",
+      "model": "deepseek-flash",
+      "created_at": "2026-10-20T12:00:00",
+      "fields": {
+        "description": "中文背景",
+        "personality": "",
+        "scenario": "",
+        "first_mes": "你好 {{user}}",
+        "mes_example": "",
+        "creator_notes": "",
+        "alternate_greetings": ["", "另一个开场"]
+      }
+    }
+  }
+  ```
+* Uses `translation_model` and the existing chat provider connection. Long cards are segmented; the complete result is committed to SQLite atomically. Invalid/truncated model output, changed placeholders or translation service failures return `502`; the original card and previous successful cache are retained. Invalid request shapes return `422`.
+* Translations are reading-only: no character, worldbook, prompt, greeting index or chat message is updated. Name, tags and hidden prompt fields remain in the original language. Cache entries survive character deletion and may be reused after reimporting the same content.
 
 #### POST `/characters/create`
 * **Duplicate handling**: The response includes `created: true` for a new record, or `created: false` with the existing `character_id` and `name` for an existing exact name. The latter does not apply the submitted settings. Clients must prompt the user instead of silently opening a story with the old card.
