@@ -20,7 +20,7 @@ from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCrea
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
-from core.locking import cleanup_session_lock
+from core.locking import cleanup_session_lock, is_session_locked
 import services.conversation.session_service as session_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
@@ -117,15 +117,19 @@ def get_session_history(
     db: Session = Depends(get_db),
 ):
     """获取会话的聊天历史"""
+    # 状态先于历史读取；生成在查询期间结束时，保守要求客户端再读取一次，
+    # 避免把旧历史与刚释放的锁组合成“已完成”的响应。
+    was_generating = is_session_locked(session_id)
     session = db.get(models.Session, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # 动态应用配置文件的默认拉取值与上限控制
-    fetch_limit = limit if limit is not None else settings.APP_HISTORY_FETCH_DEFAULT
+    fetch_limit = limit if (isinstance(limit, int) and limit is not None) else settings.APP_HISTORY_FETCH_DEFAULT
     fetch_limit = min(fetch_limit, settings.APP_HISTORY_FETCH_MAX)
 
-    messages = session_service.get_session_history_with_inheritance(session_id, db, fetch_limit, before_id)
+    fetch_before_id = before_id if isinstance(before_id, int) else None
+    messages = session_service.get_session_history_with_inheritance(session_id, db, fetch_limit, fetch_before_id)
     candidate_groups = session_service.get_candidates_by_parent(
         session_id,
         [
@@ -180,6 +184,7 @@ def get_session_history(
     return {
         "session_id": session_id,
         "messages": session_history,
+        "is_generating": was_generating or is_session_locked(session_id),
     }
 
 

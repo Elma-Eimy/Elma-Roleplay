@@ -38,3 +38,9 @@ def cleanup_session_lock(session_id: int) -> None:
     应在 safe_delete_session / delete_character 完成后调用。
     """
     _session_locks.pop(session_id, None)
+
+
+def is_session_locked(session_id: int) -> bool:
+    """检查指定会话当前是否正在持有锁（如正在进行流式生成）。"""
+    lock = _session_locks.get(session_id)
+    return lock.locked() if lock else False

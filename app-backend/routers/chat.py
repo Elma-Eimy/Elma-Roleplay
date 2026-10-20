@@ -15,7 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from core.database import get_db
+from typing import Optional, Set
+from core.database import SessionLocal, get_db
+import services.conversation.session_service as session_service
 from schemas import ChatRequest, SwitchCandidateRequest
 import services.conversation.chat_engine as chat_engine
 import services.conversation.context_assembler as context_assembler
@@ -160,6 +162,162 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         lock.release()
 
 
+_background_stream_tasks: Set[asyncio.Task] = set()
+
+
+async def _finish_stream_operation(task: asyncio.Task):
+    """延迟外部取消，直到数据库操作或清理结束，禁止并发访问同一 Session。"""
+    cancelled = False
+    while True:
+        try:
+            return await asyncio.shield(task), cancelled
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancelled = True
+
+
+async def _run_stream_worker(
+    turn: chat_turn_service.ChatTurn,
+    stream,
+    model: str,
+    queue: asyncio.Queue,
+    lock: asyncio.Lock,
+    session_id: int,
+    persona_id: int,
+    user_message_id: int,
+    old_reply_id: Optional[int],
+    is_regenerate: bool,
+):
+    """
+    后台大模型流式生成与落库 Worker。
+    与客户端 HTTP/SSE 连接生命周期解耦：
+    即使客户端断开连接，此任务仍会在后台将回复拉取完整并持久化到 SQLite 中，
+    避免用户中途退出导致回合被意外回滚与消息丢失。
+    """
+    task_db = SessionLocal()
+    accumulated_text = ""
+    reply_text = ""
+    reasoning_text = ""
+    turn_completed = False
+    stream_guard_chars = 24
+
+    try:
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            reasoning_delta = getattr(chunk.choices[0].delta, "reasoning_content", None) or ""
+
+            if reasoning_delta:
+                reasoning_text += reasoning_delta
+                await queue.put({"type": "reasoning", "data": reasoning_delta})
+                continue
+
+            if not delta:
+                continue
+            accumulated_text += delta
+
+            parsed_so_far = extract_stream_reply_prefix(accumulated_text)
+            safe_length = max(0, len(parsed_so_far) - stream_guard_chars)
+            if (
+                parsed_so_far.startswith(reply_text)
+                and safe_length > len(reply_text)
+            ):
+                chunk_to_send = parsed_so_far[len(reply_text):safe_length]
+                reply_text += chunk_to_send
+                await queue.put({"type": "chunk", "data": chunk_to_send})
+
+        result = _extract_xml_block(accumulated_text)
+        emotion_tag = result["emotion_tag"]
+        affection_change = result["affection_change"]
+        canonical_reply = result["reply"] or "（大模型未生成有效回复）"
+
+        if canonical_reply.startswith(reply_text):
+            final_chunk = canonical_reply[len(reply_text):]
+            if final_chunk:
+                await queue.put({"type": "chunk", "data": final_chunk})
+        reply_text = canonical_reply
+
+        # 使用独立的 task_db 原子保存助手回复与状态更新
+        save_task = asyncio.create_task(run_in_threadpool(
+            session_service.save_chat_response,
+            session_id=session_id,
+            persona_id=persona_id,
+            user_msg_id=user_message_id,
+            reply_text=reply_text,
+            reasoning_content=reasoning_text,
+            emotion_tag=emotion_tag,
+            affection_change=affection_change,
+            is_regenerate=is_regenerate,
+            old_reply_id=old_reply_id,
+            db=task_db,
+        ))
+        saved, cancelled = await _finish_stream_operation(save_task)
+        assistant_id, affection_score, candidates = saved
+        turn_completed = True
+        if cancelled:
+            raise asyncio.CancelledError()
+
+        # 触发后台提纯与认知更新（独立任务）
+        asyncio.create_task(
+            run_in_threadpool(
+                chat_turn_service.run_post_turn_maintenance,
+                session_id,
+                persona_id,
+            )
+        )
+
+        meta_payload = {
+            "emotion_tag": emotion_tag,
+            "affection_change": affection_change,
+            "affection_score": affection_score,
+            "model_used": model,
+            "user_message_id": user_message_id,
+            "assistant_message_id": assistant_id,
+            "candidates": candidates,
+            "active_index": len(candidates) - 1,
+        }
+        await queue.put({"type": "meta", "data": meta_payload})
+
+    except asyncio.CancelledError:
+        # 服务关闭、重载或显式取消时捕获 CancelledError
+        print(f"[INFO] 流式 Worker 任务被取消 (session_id={session_id})")
+        raise
+    except Exception as exc:
+        print(f"[ERROR] 发生流生成或持久化错误: {exc}")
+        try:
+            await queue.put({"type": "error", "error": str(exc)})
+        except Exception:
+            pass
+    finally:
+        async def cleanup():
+            try:
+                if not turn_completed:
+                    await run_in_threadpool(chat_turn_service.abort_chat_turn, turn, task_db)
+            except Exception as abort_err:
+                print(f"[WARN] 失败清理回合时异常: {abort_err}")
+            finally:
+                try:
+                    task_db.close()
+                finally:
+                    lock.release()
+                    queue.put_nowait(None)
+
+        await _finish_stream_operation(asyncio.create_task(cleanup()))
+
+
+async def cancel_all_stream_tasks(timeout: float = 5.0) -> None:
+    """取消所有正在运行的后台流式 Worker 并等待其回滚清理完毕，供服务关闭阶段调用。"""
+    tasks = [t for t in _background_stream_tasks if not t.done()]
+    if not tasks:
+        return
+    for t in tasks:
+        t.cancel()
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout)
+    except asyncio.TimeoutError:
+        print(f"[WARN] 取消后台流式任务超时 ({timeout}s)")
+
+
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -188,8 +346,8 @@ async def chat_stream(
                     character=turn.character,
                     messages=messages,
                     use_reasoning=request.use_reasoning,
-                model=request.model,
-                thinking_mode=request.thinking_mode,
+                    model=request.model,
+                    thinking_mode=request.thinking_mode,
                     temperature=request.temperature,
                     top_p=request.top_p,
                     presence_penalty=request.presence_penalty,
@@ -204,86 +362,45 @@ async def chat_stream(
                 await _abort_turn(turn, db)
             raise
 
+        queue: asyncio.Queue = asyncio.Queue()
+
+        # 启动独立于客户端连接的后台 Worker 任务，并将会话锁释放权移交 Worker
+        worker_task = asyncio.create_task(
+            _run_stream_worker(
+                turn=turn,
+                stream=stream,
+                model=model,
+                queue=queue,
+                lock=lock,
+                session_id=session_id,
+                persona_id=turn.persona.id,
+                user_message_id=turn.user_message.id,
+                old_reply_id=turn.old_reply.id if turn.old_reply else None,
+                is_regenerate=turn.is_regenerate,
+            )
+        )
+        _background_stream_tasks.add(worker_task)
+        worker_task.add_done_callback(_background_stream_tasks.discard)
+
         async def event_generator():
-            accumulated_text = ""
-            reply_text = ""
-            reasoning_text = ""
-            turn_completed = False
-            # 暂留足够长的尾部，避免把尚未接收完整的 XML 标签发送给前端。
-            stream_guard_chars = 24
-            
             try:
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta.content or ""
-                    reasoning_delta = getattr(chunk.choices[0].delta, "reasoning_content", None) or ""
-                    
-                    if reasoning_delta:
-                        reasoning_text += reasoning_delta
-                        yield f"data: {json.dumps({'reasoning_chunk': reasoning_delta}, ensure_ascii=False)}\n\n"
-                        continue
-
-                    if not delta:
-                        continue
-                    accumulated_text += delta
-
-                    parsed_so_far = extract_stream_reply_prefix(accumulated_text)
-                    safe_length = max(0, len(parsed_so_far) - stream_guard_chars)
-                    if (
-                        parsed_so_far.startswith(reply_text)
-                        and safe_length > len(reply_text)
-                    ):
-                        chunk_to_send = parsed_so_far[len(reply_text):safe_length]
-                        reply_text += chunk_to_send
-                        yield f"data: {json.dumps({'chunk': chunk_to_send}, ensure_ascii=False)}\n\n"
-
-                result = _extract_xml_block(accumulated_text)
-                emotion_tag = result["emotion_tag"]
-                affection_change = result["affection_change"]
-                canonical_reply = result["reply"] or "（大模型未生成有效回复）"
-
-                # 最终完整响应是落库的唯一真源。正常情况下只需发送尚未流出的
-                # 尾部；若上游产生极端格式变化，也不能把流式临时缓冲写入历史。
-                if canonical_reply.startswith(reply_text):
-                    final_chunk = canonical_reply[len(reply_text):]
-                    if final_chunk:
-                        yield f"data: {json.dumps({'chunk': final_chunk}, ensure_ascii=False)}\n\n"
-                reply_text = canonical_reply
-
-                completed = await _complete_turn(
-                    turn,
-                    db,
-                    reply_text,
-                    reasoning_text,
-                    emotion_tag,
-                    affection_change,
-                )
-                turn_completed = True
- 
-                background_tasks.add_task(
-                    chat_turn_service.run_post_turn_maintenance,
-                    session_id,
-                    turn.persona.id,
-                )
- 
-                meta_payload = {
-                    "emotion_tag": emotion_tag,
-                    "affection_change": affection_change,
-                    "affection_score": completed.affection_score,
-                    "model_used": model,
-                    "user_message_id": turn.user_message.id,
-                    "assistant_message_id": completed.assistant_message_id,
-                    "candidates": completed.candidates,
-                    "active_index": len(completed.candidates) - 1,
-                }
-                yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
-
-            except Exception as generator_err:
-                print(f"[ERROR] 发生流生成错误: {generator_err}")
-                yield f"data: {json.dumps({'error': str(generator_err)}, ensure_ascii=False)}\n\n"
-            finally:
-                if not turn_completed:
-                    await _abort_turn(turn, db)
-                lock.release()
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        break
+                    event_type = event.get("type")
+                    if event_type == "chunk":
+                        yield f"data: {json.dumps({'chunk': event['data']}, ensure_ascii=False)}\n\n"
+                    elif event_type == "reasoning":
+                        yield f"data: {json.dumps({'reasoning_chunk': event['data']}, ensure_ascii=False)}\n\n"
+                    elif event_type == "meta":
+                        yield f"data: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+                    elif event_type == "error":
+                        yield f"data: {json.dumps({'error': event['error']}, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                # 客户端断开连接（如用户返回上一页、退出会话等）
+                # 消费端直接优雅退出，后台 Worker 继续拉取并持久化数据
+                pass
 
         return StreamingResponse(
             event_generator(),
@@ -298,6 +415,7 @@ async def chat_stream(
     except Exception as e:
         lock.release()
         raise e
+
 
 
 @router.post("/switch_candidate")

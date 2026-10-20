@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from application.banner import print_startup_banner
 from core.database import run_migrations
 from services.infrastructure.outbox_worker import run_outbox_worker
+from routers.chat import cancel_all_stream_tasks
 
 
 @asynccontextmanager
@@ -23,3 +24,6 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await task
         print("[SHUTDOWN] Stopped background outbox worker.")
+        # 服务关闭或重载时，清理所有正在运行的后台流式 Worker，确保事务安全回滚
+        await cancel_all_stream_tasks()
+        print("[SHUTDOWN] Cleaned up active chat stream workers.")
