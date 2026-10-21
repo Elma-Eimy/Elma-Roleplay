@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "name": "虚构故事记忆整理验收 v1",
+  "cases": [
+    {
+      "id": "duplicate_preference", "title": "重复偏好：草莓蛋糕",
+      "cards": [{"key":"a","type":"fact","content":"用户最喜欢的甜点是草莓蛋糕。"},{"key":"b","type":"fact","content":"用户提到自己最喜欢草莓蛋糕这种甜点。"},{"key":"c","type":"fact","content":"用户对花生过敏。"}],
+      "allowed_groups": [["a","b"]],
+      "replay_groups": [{"kind":"duplicate","source_keys":["a","b"],"content":"用户最喜欢的甜点是草莓蛋糕。","reason":"同一甜点偏好的重复表达。"}],
+      "facts": [{"description":"最喜欢草莓蛋糕","anchors":[["最喜欢"],["草莓蛋糕"]]},{"description":"花生过敏必须独立保留","anchors":[["花生"],["过敏"]]}],
+      "questions": [{"text":"用户最喜欢什么甜点？","fact_indices":[0]},{"text":"用户对什么过敏？","fact_indices":[1]}]
+    },
+    {
+      "id": "station_event", "title": "同一次相遇：借伞与约定",
+      "cards": [{"key":"a","type":"event","content":"用户和林墨在雨夜的南站相遇。"},{"key":"b","type":"event","content":"那次南站相遇时，林墨把伞借给用户。"},{"key":"c","type":"event","content":"那次南站相遇后，林墨答应下周五陪用户一起回家。"}],
+      "allowed_groups": [["a","b","c"]],
+      "replay_groups": [{"kind":"event","source_keys":["a","b","c"],"content":"用户和林墨在雨夜的南站相遇，林墨把伞借给用户，并答应下周五陪用户一起回家。","reason":"同一次相遇的地点、经过和后续约定。"}],
+      "facts": [{"description":"雨夜在南站相遇","anchors":[["雨夜"],["南站"]]},{"description":"林墨借伞给用户","anchors":[["林墨"],["伞"],["用户"]]},{"description":"下周五陪用户回家的承诺","anchors":[["下周五"],["回家"],["答应","承诺"]]}],
+      "questions": [{"text":"我们在哪里相遇？","fact_indices":[0]},{"text":"林墨答应下周五做什么？","fact_indices":[2]}]
+    },
+    {
+      "id": "negation", "title": "否定：喜欢与不喜欢不能合并",
+      "cards": [{"key":"a","type":"fact","content":"林墨喜欢别人叫他的名字。"},{"key":"b","type":"fact","content":"林墨不喜欢别人叫他的全名。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"喜欢被叫名字","anchors":[["喜欢"],["名字"]]},{"description":"不喜欢被叫全名","anchors":[["不喜欢"],["全名"]]}],
+      "questions": [{"text":"林墨不喜欢别人怎么称呼他？","fact_indices":[1]}]
+    },
+    {
+      "id": "plan_vs_done", "title": "时态：计划与已经发生",
+      "cards": [{"key":"a","type":"event","content":"用户计划下个月搬去杭州，目前还没有搬家。"},{"key":"b","type":"event","content":"林墨已经搬到杭州的新住处。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"用户只是计划搬家，尚未发生","anchors":[["用户"],["下个月"],["还没有","尚未"]]},{"description":"已经搬家的是林墨","anchors":[["林墨"],["已经"],["杭州"]]}],
+      "questions": [{"text":"用户已经搬家了吗？","fact_indices":[0]},{"text":"谁已经搬到杭州？","fact_indices":[1]}]
+    },
+    {
+      "id": "two_birthdays", "title": "相似经历：两次生日赠书",
+      "cards": [{"key":"a","type":"event","content":"2024年生日时，用户送给林墨一本蓝色封面的诗集。"},{"key":"b","type":"event","content":"2025年生日时，用户送给林墨一本红色封面的旅行手记。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"2024年的蓝色诗集","anchors":[["2024"],["蓝色"],["诗集"]]},{"description":"2025年的红色旅行手记","anchors":[["2025"],["红色"],["旅行手记"]]}],
+      "questions": [{"text":"2024年生日用户送了什么书？","fact_indices":[0]},{"text":"2025年的生日礼物是什么？","fact_indices":[1]}]
+    },
+    {
+      "id": "relationship_change", "title": "关系变化：过去疏远，现在和解",
+      "cards": [{"key":"a","type":"relationship","content":"争吵后的那一周，林墨曾经不愿意和用户说话。"},{"key":"b","type":"relationship","content":"坦白误会后，林墨目前已经和用户和解，愿意恢复交流。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"疏远属于过去争吵后的阶段","anchors":[["争吵"],["曾经"],["不愿意"]]},{"description":"当前已和解并恢复交流","anchors":[["目前"],["和解"],["交流"]]}],
+      "questions": [{"text":"林墨现在还不愿意和用户交流吗？","fact_indices":[1]},{"text":"林墨曾经为什么疏远用户？","fact_indices":[0]}]
+    },
+    {
+      "id": "independent_facts", "title": "主题接近但应独立更新的事实",
+      "cards": [{"key":"a","type":"fact","content":"用户喜欢在下雨时听爵士乐。"},{"key":"b","type":"fact","content":"用户平时在杭州工作。"},{"key":"c","type":"fact","content":"用户养的猫叫豆包。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"雨天听爵士乐的偏好","anchors":[["下雨","雨天"],["爵士乐"]]},{"description":"工作地点为杭州","anchors":[["杭州"],["工作"]]},{"description":"猫的名字是豆包","anchors":[["猫"],["豆包"]]}],
+      "questions": [{"text":"用户的猫叫什么？","fact_indices":[2]},{"text":"用户喜欢在下雨时听什么？","fact_indices":[0]}]
+    },
+    {
+      "id": "identity_disambiguation", "title": "身份：用户与妹妹的不同偏好",
+      "cards": [{"key":"a","type":"fact","content":"用户的妹妹小雨非常喜欢草莓蛋糕。"},{"key":"b","type":"fact","content":"用户自己不喜欢草莓蛋糕，更喜欢柠檬派。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"喜欢草莓蛋糕的是妹妹小雨","anchors":[["妹妹"],["小雨"],["喜欢草莓蛋糕"]]},{"description":"用户不喜欢草莓蛋糕且更喜欢柠檬派","anchors":[["用户"],["不喜欢草莓蛋糕"],["柠檬派"]]}],
+      "questions": [{"text":"用户和妹妹分别喜欢什么甜点？","fact_indices":[0,1]}]
+    },
+    {
+      "id": "precise_promise", "title": "承诺：时间、地点与取消条件",
+      "cards": [{"key":"a","type":"event","content":"周二晚饭时，林墨答应周六早上八点在东门等用户。"},{"key":"b","type":"event","content":"关于周二晚饭时约定的周六见面，双方补充：如果下暴雨就取消，并提前发消息。"}],
+      "allowed_groups": [["a","b"]],
+      "replay_groups": [{"kind":"event","source_keys":["a","b"],"content":"周二晚饭时，林墨答应周六早上八点在东门等用户；如果下暴雨就取消，并提前发消息。","reason":"同一次见面约定的时间地点和取消条件。"}],
+      "facts": [{"description":"周六早上八点在东门等候","anchors":[["周六"],["八点","8点"],["东门"]]},{"description":"仅暴雨时取消且提前通知","anchors":[["暴雨"],["取消"],["提前"],["消息","通知"]]}],
+      "questions": [{"text":"周六几点在哪里见面？","fact_indices":[0]},{"text":"下暴雨时我们的约定怎么办？","fact_indices":[1]}]
+    },
+    {
+      "id": "emotion_context", "title": "情绪不能脱离触发事件变成性格",
+      "cards": [{"key":"a","type":"emotion","content":"林墨因周一的迟到误会而暂时生气。"},{"key":"b","type":"emotion","content":"林墨在周二收到用户的解释后已经释然。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"生气有周一误会这一原因，且是暂时状态","anchors":[["周一"],["误会"],["暂时"]]},{"description":"周二解释后已经释然","anchors":[["周二"],["解释"],["释然"]]}],
+      "questions": [{"text":"林墨现在还因为迟到生气吗？","fact_indices":[1]}]
+    },
+    {
+      "id": "temporal_place_change", "title": "旧地点与新地点不能互相覆盖",
+      "cards": [{"key":"a","type":"fact","content":"用户去年住在北京。"},{"key":"b","type":"fact","content":"用户目前住在苏州，但仍在远程为杭州的公司工作。"}],
+      "allowed_groups": [], "replay_groups": [],
+      "facts": [{"description":"去年住北京","anchors":[["去年"],["北京"]]},{"description":"目前住苏州，与杭州工作地点不同","anchors":[["目前"],["苏州"],["杭州"],["远程"]]}],
+      "questions": [{"text":"用户现在住哪里，为哪里的公司工作？","fact_indices":[1]}]
+    },
+    {
+      "id": "mixed_scene", "title": "同批多组整理与未参与卡保留",
+      "cards": [{"key":"a","type":"fact","content":"用户养的猫叫豆包。"},{"key":"b","type":"fact","content":"豆包是用户养的猫的名字。"},{"key":"c","type":"event","content":"周日逛旧书店时，用户和林墨找到一本绝版诗集。"},{"key":"d","type":"event","content":"那次周日逛旧书店时，林墨替用户买下了找到的绝版诗集。"},{"key":"e","type":"fact","content":"用户不能吃花生。"}],
+      "allowed_groups": [["a","b"],["c","d"]],
+      "replay_groups": [{"kind":"duplicate","source_keys":["a","b"],"content":"用户养的猫叫豆包。","reason":"同一个猫名的重复表达。"},{"kind":"event","source_keys":["c","d"],"content":"周日逛旧书店时，用户和林墨找到一本绝版诗集，林墨替用户买下了它。","reason":"同一次逛书店的发现与购买。"}],
+      "facts": [{"description":"猫叫豆包","anchors":[["猫"],["豆包"]]},{"description":"周日旧书店的绝版诗集由林墨买下","anchors":[["周日"],["旧书店"],["绝版诗集"],["林墨"],["买下"]]},{"description":"花生禁忌独立保留","anchors":[["不能"],["花生"]]}],
+      "questions": [{"text":"那本绝版诗集是谁买的？","fact_indices":[1]},{"text":"用户的猫叫什么？","fact_indices":[0]}]
+    }
+  ]
+}

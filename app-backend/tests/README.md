@@ -50,6 +50,8 @@ python -m tests.manual.manual_lorebook
 
 ## 新增与调试
 
+`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
+
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
 
 需要保留现场或使用 IDE 单步调试时，可在准备好独立配置的数据环境中直接运行标准入口，例如 `python -m unittest tests.memory.test_memory_versioning -v`。直接运行 `unittest` 会跳过上述临时工作区隔离。
