@@ -312,7 +312,9 @@ ACCESS_API_KEY=
 
 ### 3. 修改模型配置
 
-编辑 `config.yaml`（见下方[配置说明](#配置说明)），至少填写 `chat_base_url` 和模型名称。
+创建或编辑本地 `config.yaml`（见下方[配置说明](#配置说明)），至少填写 `chat_base_url` 和模型名称。可以只填写需要覆盖的配置项，启动时会自动补齐其余字段；文件不存在时会自动生成默认配置，但仍需按实际服务修改连接和模型。
+
+`config.yaml` 仅在本地保存，已从 Git 跟踪中移除并由后端 `.gitignore` 忽略。配置默认值和升级规则维护在 `core/config.py` 的 `CONFIG_SCHEMA` 与迁移逻辑中；新增字段自动补齐并回写，保留已有配置值。
 
 ### 4. 启动服务
 
@@ -442,7 +444,7 @@ tts:
 ```
 app-backend/
 ├── main.py                  # ASGI 入口：app = create_app()
-├── config.yaml              # 非敏感运行时配置
+├── config.yaml              # 自动生成的本地运行时配置（Git 忽略）
 ├── .env                     # 敏感密钥（不提交）
 ├── requirements.txt
 ├── application/

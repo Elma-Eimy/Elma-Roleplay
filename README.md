@@ -222,7 +222,7 @@ graph TD
    ACCESS_API_KEY=                        # 外部保护访问密钥（本地联调留空即可）
    ```
 3. **调整运行时配置**：
-   修改 `app-backend/config.yaml`，指定您的 API 基础路径、主/副模型型号以及语音缓存大小等。
+   创建或编辑本地 `app-backend/config.yaml`，指定您的 API 基础路径、主/副模型型号以及语音缓存大小等。启动时会自动补齐缺失字段，文件不存在时生成默认配置；此文件由 Git 忽略。
 4. **启动服务**：
    ```bash
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
