@@ -60,6 +60,8 @@ illustrative; configurable values depend on the running backend.
 | **GET** | `/sessions/recent` | Get paginated recent sessions with character and last-message summaries |
 | **GET** | `/sessions` | List a character's sessions with last-message previews and pagination |
 | **GET** | `/sessions/{session_id}` | Retrieve details of a session and its persona |
+| **GET** | `/sessions/{session_id}/role-state` | Read branch-local current scene and per-character state |
+| **PUT** | `/sessions/{session_id}/role-state` | Apply a manual state correction with optimistic revision checking |
 | **GET** | `/sessions/{session_id}/history` | Get inheritance-aware chronological chat history (cursor pagination) |
 | **PUT** | `/sessions/{session_id}/title` | Rename a session's title |
 | **DELETE** | `/sessions/{session_id}` | Delete a session and safely relink children |
@@ -99,6 +101,27 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 ---
 
 ## 📝 Detailed API Reference
+
+### Current role state
+
+`GET /sessions/{session_id}/role-state` returns `{session_id, revision, state}`. `revision` is a 64-character SHA-256 digest of the branch baseline and active message/state sequence. `state` contains optional `scene` and `characters`, where character names map to optional `posture`, `clothing`, and `location` strings. Unknown fields may be absent; an explicitly cleared scene is `null` and does not restore the opening location.
+
+`PUT /sessions/{session_id}/role-state` accepts:
+
+```json
+{
+  "expected_revision": "<64-character revision from GET>",
+  "patch": {
+    "scene": "客厅",
+    "characters": {"露娜": {"posture": "坐在沙发上", "clothing": "白色衬衫", "location": "窗边"}}
+  }
+}
+```
+
+- Returns the updated GET shape. Omitted fields remain unchanged; manual `null` or empty string clears a field. Clearing all known fields removes that character's state. Scene limit: 300 characters; character names: 1–50 characters; posture/clothing/location: 1–200 characters; at most 8 characters in the resulting state. Up to 16 character entries are allowed in a manual patch to clear old entries while adding new ones. Unknown keys, invalid types, oversized payloads or invalid revisions return `422`.
+- Missing session/persona returns `404`. A stale revision or a session currently generating a reply returns `409`. Corrections attach to the latest active local message, or the baseline when no messages exist, and affect subsequent prompt assembly. Reads do not call an LLM.
+- Chat generation must append an increment such as `<state_update>{"scene":"客厅","characters":{"露娜":{"posture":"站着"}}}</state_update>` after reply/status when state changes or is first explicitly described; the entire increment may be omitted when nothing changes. This is an internal model-output protocol, not an extra SSE event. Only changed or first explicitly described fields are emitted; omitted updates preserve state. LLM patches cannot clear fields or use nulls. Invalid patches are ignored atomically while reply/status are retained; raw state tags never enter stored reply text or streamed body chunks.
+- Active candidates determine state. Regeneration starts before the replaced candidate; branches snapshot only their selected message boundary. Editing assistant text invalidates that message's model-derived patch, preserving manual corrections. Existing emotion/affection behavior remains separate. See [role-state behavior](docs/ROLE_STATE.md) for scope and limitations.
 
 ### 1. General & Utilities
 
