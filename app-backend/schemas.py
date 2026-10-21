@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal
 
 class CharacterCreate(BaseModel):
@@ -186,6 +186,13 @@ class MemoryUpdateRequest(BaseModel):
 
 class MemoryConsolidationPreviewRequest(BaseModel):
     after_id: int = Field(0, ge=0)
+    mode: Literal["full", "incremental"] = "full"
+
+    @model_validator(mode="after")
+    def valid_scan_cursor(self):
+        if self.mode == "incremental" and self.after_id != 0:
+            raise ValueError("增量扫描不使用 ID 游标，请传入 after_id=0")
+        return self
 
 
 class MemoryConsolidationApplyRequest(BaseModel):

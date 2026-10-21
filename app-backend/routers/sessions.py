@@ -394,7 +394,7 @@ def list_memory_consolidations(session_id: int, limit: int = Query(10, ge=1, le=
 
 @router.post("/{session_id}/memory-consolidations/preview")
 def preview_memory_consolidation(session_id: int, request: MemoryConsolidationPreviewRequest, db: Session = Depends(get_db)):
-    return _consolidation_response(memory_consolidation_service.preview, session_id, request.after_id, db)
+    return _consolidation_response(memory_consolidation_service.preview, session_id, request.after_id, db, request.mode)
 
 
 @router.post("/{session_id}/memory-consolidations/{batch_id}/apply")

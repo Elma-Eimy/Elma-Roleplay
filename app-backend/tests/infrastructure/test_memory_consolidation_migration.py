@@ -12,6 +12,39 @@ import core.database as database
 
 
 class MemoryConsolidationMigrationTests(unittest.TestCase):
+    def test_scan_upgrade_starts_empty_and_downgrade_preserves_existing_previews(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = create_engine("sqlite:///" + (Path(directory) / "scan.db").as_posix())
+            @event.listens_for(engine, "connect")
+            def foreign_keys(connection, _):
+                connection.execute("PRAGMA foreign_keys=ON")
+            config = Config()
+            config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "alembic"))
+            try:
+                with patch.object(database, "engine", engine):
+                    command.upgrade(config, "e4f5a6b7c8d9")
+                    with engine.begin() as connection:
+                        for statement in [
+                            "INSERT INTO characters (id,name,description,first_mes) VALUES (1,'fixture','test','hello')",
+                            "INSERT INTO sessions (id,title) VALUES (1,'old story')",
+                            "INSERT INTO session_personas (id,session_id,character_id) VALUES (1,1,1)",
+                            "INSERT INTO memory_chunks (id,persona_id,content,memory_type) VALUES (1,1,'original','fact')",
+                            "INSERT INTO memory_consolidations (id,persona_id,status,preview_json) VALUES (1,1,'preview','{\"sources\":[],\"groups\":[]}')",
+                        ]:
+                            connection.execute(text(statement))
+                    command.upgrade(config, "head")
+                    with engine.begin() as connection:
+                        self.assertEqual(0, connection.execute(text("SELECT COUNT(*) FROM memory_consolidation_scans")).scalar())
+                        connection.execute(text("INSERT INTO memory_consolidation_scans (persona_id,memory_id,fingerprint,checked_at) VALUES (1,1,'version','2026-10-21 00:00:00')"))
+                    command.downgrade(config, "e4f5a6b7c8d9")
+                    self.assertNotIn("memory_consolidation_scans", inspect(engine).get_table_names())
+                    with engine.connect() as connection:
+                        self.assertEqual("original", connection.execute(text("SELECT content FROM memory_chunks WHERE id=1")).scalar())
+                        self.assertEqual('{"sources":[],"groups":[]}', connection.execute(text("SELECT preview_json FROM memory_consolidations WHERE id=1")).scalar())
+                    command.upgrade(config, "head")
+            finally:
+                engine.dispose()
+
     def test_populated_old_database_upgrade_and_downgrade_preserve_original_cards(self):
         with tempfile.TemporaryDirectory() as directory:
             engine = create_engine("sqlite:///" + (Path(directory) / "old.db").as_posix())

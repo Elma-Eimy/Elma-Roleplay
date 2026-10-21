@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from core.database import get_db
 from core.models import (Base, Character, Session, SessionPersona, ChatMessage, MessageRole,
                          MemoryChunk, MemoryType, MemoryConsolidation, MemoryConsolidationSource,
-                         MemoryConsolidationScope, OutboxJob)
+                         MemoryConsolidationScope, MemoryConsolidationScan, OutboxJob)
 from routers.sessions import router
 from services.memory import memory_consolidation_service as service, memory_manager
 from services.memory.session_memory_query_service import query_session_memories, get_character_memory_overview
@@ -68,12 +68,182 @@ class MemoryConsolidationTests(unittest.TestCase):
         return {"groups": [{"kind": "event", "source_ids": [self.one.id, self.two.id],
                             "content": "用户和林墨在雨夜的车站相遇，林墨把伞借给了用户。", "reason": "同一次车站相遇的互补细节"}]}
 
-    def preview(self, payload=None, session_id=None, after_id=0):
+    def preview(self, payload=None, session_id=None, after_id=0, mode="full"):
         provider = MagicMock()
         provider.generate.return_value = SimpleNamespace(choices=[SimpleNamespace(
             message=SimpleNamespace(content=json.dumps(payload or self.payload(), ensure_ascii=False)))])
         with patch.object(service, "get_llm_provider", return_value=provider):
-            return service.preview(session_id or self.session.id, after_id, self.db)
+            return service.preview(session_id or self.session.id, after_id, self.db, mode)
+
+    def test_incremental_tracks_checks_independently_of_apply_and_undo(self):
+        self.assertEqual(2, service.list_batches(self.session.id, self.db)["scan_status"]["pending_count"])
+        batch = self.preview(mode="incremental")
+        self.assertEqual(2, batch["recorded_count"])
+        self.assertEqual(0, batch["scan_status"]["pending_count"])
+        self.assertEqual(2, self.view()["total"])
+        with patch.object(service, "get_llm_provider") as provider:
+            empty = service.preview(self.session.id, 0, self.db, "incremental")
+        provider.assert_not_called()
+        self.assertEqual(0, empty["scanned_count"])
+        self.assertEqual([], empty["groups"])
+        service.apply(self.session.id, batch["id"], [0], self.db)
+        self.assertEqual(0, service.scan_status(self.persona.id, self.db)["eligible_count"])
+        service.undo(self.session.id, batch["id"], self.db)
+        self.assertEqual({"eligible_count": 2, "checked_count": 2, "pending_count": 0}, service.scan_status(self.persona.id, self.db))
+        full = self.preview()
+        self.assertEqual(2, full["scanned_count"])
+        self.assertEqual("full", full["scan_mode"])
+
+    def test_incremental_includes_modified_old_cards_and_new_cards_only(self):
+        self.preview({"groups": []})
+        self.one.content = "较早原卡已增加雨伞颜色信息。"
+        self.db.commit()
+        new = self.memory("用户新补充了一次独立经历。")
+        batch = self.preview({"groups": []}, mode="incremental")
+        self.assertEqual([self.one.id, new.id], [row["id"] for row in batch["sources"]])
+        self.assertNotIn(self.two.id, [row["id"] for row in batch["sources"]])
+        self.assertEqual({"eligible_count": 3, "checked_count": 3, "pending_count": 0}, batch["scan_status"])
+
+    def test_single_pending_card_waits_for_another_without_model_call(self):
+        self.preview({"groups": []})
+        new = self.memory("独立新增但暂不足两张的记忆。")
+        with patch.object(service, "get_llm_provider") as provider:
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+        provider.assert_not_called()
+        self.assertFalse(batch["model_checked"])
+        self.assertEqual(0, batch["recorded_count"])
+        self.assertEqual(1, batch["scan_status"]["pending_count"])
+        self.assertFalse(batch["has_more"])
+        newer = self.memory("另一张新增的独立记忆。")
+        next_batch = self.preview({"groups": []}, mode="incremental")
+        self.assertEqual([new.id, newer.id], [s["id"] for s in next_batch["sources"]])
+        self.assertEqual(0, next_batch["scan_status"]["pending_count"])
+
+    def test_incremental_resumes_pending_batches_and_full_scan_can_repeat(self):
+        for i in range(103):
+            self.memory(f"第{i}条独立新增原卡。")
+        first = self.preview({"groups": []}, mode="incremental")
+        self.assertEqual(100, first["scanned_count"])
+        self.assertEqual(5, first["scan_status"]["pending_count"])
+        self.assertTrue(first["has_more"])
+        second = self.preview({"groups": []}, mode="incremental")
+        self.assertEqual(5, second["scanned_count"])
+        self.assertFalse(second["has_more"])
+        self.assertEqual(0, second["scan_status"]["pending_count"])
+        self.assertEqual(100, self.preview({"groups": []})["scanned_count"])
+
+    def test_failed_model_and_failed_progress_write_do_not_mark_cards_checked(self):
+        with patch.object(service, "get_llm_provider", side_effect=RuntimeError("offline")):
+            with self.assertRaises(service.ConsolidationModelError):
+                service.preview(self.session.id, 0, self.db, "incremental")
+        with self.assertRaises(service.ConsolidationModelError):
+            self.preview({"groups": [{"bad": "invalid"}]}, mode="incremental")
+        original = service.scan.record_unchanged
+        def fail_after_record(*args):
+            original(*args)
+            raise RuntimeError("save failed")
+        with patch.object(service.scan, "record_unchanged", side_effect=fail_after_record):
+            with self.assertRaises(RuntimeError):
+                self.preview({"groups": []}, mode="incremental")
+        self.assertEqual(0, self.db.query(MemoryConsolidationScan).count())
+        self.assertEqual(0, self.db.query(MemoryConsolidation).count())
+        self.assertEqual(2, service.scan_status(self.persona.id, self.db)["pending_count"])
+
+    def test_scan_does_not_mark_sources_changed_during_model_call(self):
+        def generate(**kwargs):
+            self.one.content = "模型调用期间原卡发生变化。"
+            self.db.commit()
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"groups":[]}'))])
+        provider = MagicMock()
+        provider.generate.side_effect = generate
+        with patch.object(service, "get_llm_provider", return_value=provider):
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+        self.assertEqual(1, batch["recorded_count"])
+        self.assertEqual(1, batch["scan_status"]["pending_count"])
+        self.assertIsNone(self.db.get(MemoryConsolidationScan, (self.persona.id, self.one.id)))
+
+    def test_stale_suggestion_keeps_all_its_sources_pending_without_blocking_safe_groups(self):
+        three = self.memory("周日用户送给林墨一本蓝色封面的诗集。")
+        four = self.memory("那次周日赠书时，林墨收下了用户送的蓝色诗集。")
+        payload = self.payload()
+        payload["groups"].append({"kind": "event", "source_ids": [three.id, four.id],
+                                  "content": "周日用户送给林墨一本蓝色封面的诗集，林墨收下了它。", "reason": "同一次赠书"})
+        def generate(**kwargs):
+            self.one.content = "雨夜相遇的时间和地点已补充修改。"
+            self.db.commit()
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload, ensure_ascii=False)))])
+        provider = MagicMock()
+        provider.generate.side_effect = generate
+        with patch.object(service, "get_llm_provider", return_value=provider):
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+        self.assertEqual(2, batch["recorded_count"])
+        self.assertEqual(2, batch["scan_status"]["pending_count"])
+        self.assertTrue(batch["has_more"])
+        self.assertIsNotNone(batch["groups"][0]["conflict"])
+        self.assertIsNone(batch["groups"][1]["conflict"])
+        next_batch = self.preview({"groups": []}, mode="incremental")
+        self.assertTrue(next_batch["model_checked"])
+        self.assertEqual([self.one.id, self.two.id], [row["id"] for row in next_batch["sources"]])
+
+    def test_older_inflight_scan_does_not_overwrite_newer_checked_version(self):
+        def generate(**kwargs):
+            self.one.content = "较新的正文已经由另一次检查处理。"
+            self.db.commit()
+            self.preview({"groups": []}, mode="incremental")
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"groups":[]}'))])
+        provider = MagicMock()
+        provider.generate.side_effect = generate
+        with patch.object(service, "get_llm_provider", return_value=provider):
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+        self.assertEqual(1, batch["recorded_count"])
+        self.assertEqual(0, batch["scan_status"]["pending_count"])
+        self.assertEqual(service.scan.fingerprint(self.one), self.db.get(MemoryConsolidationScan, (self.persona.id, self.one.id)).fingerprint)
+
+    def test_stale_group_does_not_clear_newer_successful_scan_records(self):
+        payload = self.payload()
+        def generate(**kwargs):
+            self.one.content = "另一请求已经检查过的新版本车站相遇。"
+            self.db.commit()
+            self.preview(mode="incremental")
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload, ensure_ascii=False)))])
+        provider = MagicMock()
+        provider.generate.side_effect = generate
+        with patch.object(service, "get_llm_provider", return_value=provider):
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+        self.assertEqual(0, batch["recorded_count"])
+        self.assertEqual(0, batch["scan_status"]["pending_count"])
+        self.assertEqual(2, self.db.query(MemoryConsolidationScan).count())
+
+    def test_metadata_changes_invalidate_checked_versions(self):
+        self.preview({"groups": []})
+        self.one.importance_score = .9
+        self.two.source_message_id_bound = self.last_message.id + 1
+        self.db.commit()
+        self.assertEqual(2, service.scan_status(self.persona.id, self.db)["pending_count"])
+        self.assertEqual(2, self.preview({"groups": []}, mode="incremental")["recorded_count"])
+
+    def test_branch_scan_state_excludes_inherited_cards_and_cascades_on_delete(self):
+        self.preview({"groups": []})
+        child = self.fork()
+        child_persona = self.db.query(SessionPersona).filter_by(session_id=child).one()
+        self.assertEqual(0, service.list_batches(child, self.db)["scan_status"]["eligible_count"])
+        local_one = self.memory("分支自己的第一条记忆。", persona=child_persona)
+        self.memory("分支自己的第二条记忆。", persona=child_persona)
+        batch = self.preview({"groups": []}, session_id=child, mode="incremental")
+        self.assertEqual(2, batch["recorded_count"])
+        self.db.delete(local_one)
+        self.db.commit()
+        self.assertEqual(1, service.list_batches(child, self.db)["scan_status"]["checked_count"])
+        self.assertEqual(2, service.list_batches(self.session.id, self.db)["scan_status"]["checked_count"])
+
+    def test_scan_mode_http_validation_and_legacy_full_default(self):
+        url = f"/sessions/{self.session.id}/memory-consolidations/preview"
+        for request in ({"mode": "unknown"}, {"mode": "incremental", "after_id": 1}):
+            self.assertEqual(422, self.client.post(url, json=request).status_code)
+        self.preview({"groups": []})
+        response = self.client.post(url, json={"mode": "incremental"})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0, response.json()["scanned_count"])
 
     def view(self, session_id=None, status="active"):
         return query_session_memories(session_id=session_id or self.session.id, q=None,

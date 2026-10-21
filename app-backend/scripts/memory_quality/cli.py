@@ -64,7 +64,7 @@ def run(args, backend):
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=backend, capture_output=True, text=True).stdout.strip() or "unknown"
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=backend, capture_output=True, text=True).stdout.strip())
     fingerprint = hashlib.sha256()
-    for relative in ("services/memory/memory_consolidation_service.py", "services/memory/memory_consolidation_guard.py", "services/memory/memory_visibility.py",
+    for relative in ("services/memory/memory_consolidation_service.py", "services/memory/memory_consolidation_scan.py", "services/memory/memory_consolidation_guard.py", "services/memory/memory_visibility.py",
                      "services/memory/memory_manager.py", "core/models.py", "scripts/memory_quality/worker.py", "scripts/memory_quality/cases.py"):
         fingerprint.update(relative.encode())
         fingerprint.update((backend / relative).read_bytes())

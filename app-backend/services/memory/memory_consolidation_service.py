@@ -12,6 +12,7 @@ from services.memory.session_memory_service import _get_persona
 from services.memory.memory_visibility import memory_view, memory_source_bound
 from services.memory.memory_manager import add_memory_chunk
 from services.memory.memory_consolidation_guard import filter_safe_groups, has_source_conflict
+from services.memory import memory_consolidation_scan as scan
 
 
 class ConsolidationConflict(ValueError):
@@ -33,9 +34,10 @@ def snapshot(chunk):
     }
 
 
-def serialize_batch(batch, db):
+def serialize_batch(batch, db, include_scan_status=True):
     payload = json.loads(batch.preview_json)
     payload.setdefault("review_revision", 0)
+    payload.setdefault("scan_mode", "full")
     conflicts = group_conflicts(batch.persona_id, payload, db) if batch.status == "preview" else {}
     for group in payload["groups"]:
         group.setdefault("original_content", group["content"])
@@ -44,6 +46,7 @@ def serialize_batch(batch, db):
         group["conflict"] = conflicts.get(group["id"])
     return {
         **payload, "id": batch.id, "status": batch.status,
+        **({"scan_status": scan_status(batch.persona_id, db)} if include_scan_status else {}),
         "selected_group_ids": json.loads(batch.selected_json or "[]"),
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
         "results": [{"id": row.id, "content": row.content} for row in db.query(MemoryChunk)
@@ -55,8 +58,9 @@ def list_batches(session_id, db, limit=10, offset=0):
     persona = _get_persona(session_id, db)
     query = db.query(MemoryConsolidation).filter_by(persona_id=persona.id)
     total = query.count()
-    items = [serialize_batch(row, db) for row in query.order_by(MemoryConsolidation.id.desc()).offset(offset).limit(limit).all()]
-    return {"items": items, "total": total, "offset": offset, "limit": limit, "has_more": offset + len(items) < total}
+    items = [serialize_batch(row, db, include_scan_status=False) for row in query.order_by(MemoryConsolidation.id.desc()).offset(offset).limit(limit).all()]
+    return {"items": items, "total": total, "offset": offset, "limit": limit,
+            "has_more": offset + len(items) < total, "scan_status": scan_status(persona.id, db)}
 
 
 def eligible_query(persona_id, db):
@@ -67,6 +71,10 @@ def eligible_query(persona_id, db):
         visible_filter,
         MemoryChunk.id.not_in(hidden_ids),
     )
+
+
+def scan_status(persona_id, db):
+    return scan.collect(eligible_query(persona_id, db))[2]
 
 
 def group_conflicts(persona_id, payload, db):
@@ -139,13 +147,14 @@ def validate_groups(raw, sources):
     return groups
 
 
-def preview(session_id, after_id, db):
+def preview(session_id, after_id, db, mode="full"):
     persona = _get_persona(session_id, db)
     persona_id = persona.id
-    query = eligible_query(persona_id, db).filter(MemoryChunk.id > after_id)
-    remaining = query.count()
-    rows = query.order_by(MemoryChunk.id).limit(100).all()
+    if mode not in {"full", "incremental"} or (mode == "incremental" and after_id != 0):
+        raise ConsolidationConflict("增量扫描须从当前待检卡开始，请重新检查新增与变更")
+    rows, remaining, _ = scan.collect(eligible_query(persona_id, db), mode, after_id)
     sources = [snapshot(row) for row in rows]
+    fingerprints = {row.id: scan.fingerprint(row) for row in rows}
     # 不在外部模型调用期间持有数据库事务；保存的是完整来源快照。
     db.commit()
     groups = []
@@ -180,14 +189,30 @@ duplicate 要求各卡表达同一个命题、可以相互替代；互补信息�
         except Exception as exc:
             # 不把可能含原卡、密钥或服务原始响应的异常写入用户提示/日志。
             raise ConsolidationModelError("整理模型调用或解析失败，原记忆未改变，请重试") from exc
-    _get_persona(session_id, db)
+    # 模型调用结束后再开启写事务，扫描记录与预览原子保存。
     payload = {"sources": sources, "groups": groups, "scanned_count": len(sources),
                "remaining_count": remaining, "has_more": remaining > len(sources),
-               "next_after_id": sources[-1]["id"] if sources else after_id}
+               "next_after_id": sources[-1]["id"] if sources else after_id,
+               "scan_mode": mode, "model_checked": len(sources) >= 2}
     batch = MemoryConsolidation(persona_id=persona_id, status="preview",
                                 preview_json=json.dumps(payload, ensure_ascii=False))
-    db.add(batch)
-    db.commit()
+    try:
+        db.commit()
+        db.execute(text("BEGIN IMMEDIATE"))
+        db.expire_all()
+        if _get_persona(session_id, db).id != persona_id:
+            raise ConsolidationConflict("当前故事角色已经变化，请重新预览")
+        payload["recorded_count"] = scan.record_unchanged(
+            persona_id, fingerprints, eligible_query(persona_id, db), db, groups) if len(sources) >= 2 else 0
+        if mode == "incremental":
+            # 不用 ID 游标；调用期间修改的低 ID 原卡仍应留在下一次待检范围。
+            payload["has_more"] = scan_status(persona_id, db)["pending_count"] >= 2
+        batch.preview_json = json.dumps(payload, ensure_ascii=False)
+        db.add(batch)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return serialize_batch(batch, db)
 
 

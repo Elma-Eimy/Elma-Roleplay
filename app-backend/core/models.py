@@ -367,6 +367,16 @@ class MemoryConsolidationScope(Base):
     consolidation_id = Column(Integer, ForeignKey("memory_consolidations.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
+class MemoryConsolidationScan(Base):
+    """仅记录本故事原卡成功送检时的版本，与整理应用状态独立。"""
+    __tablename__ = "memory_consolidation_scans"
+
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), primary_key=True)
+    memory_id = Column(Integer, ForeignKey("memory_chunks.id", ondelete="CASCADE"), primary_key=True, index=True)
+    fingerprint = Column(String(64), nullable=False)
+    checked_at = Column(DateTime, default=func.now(), nullable=False)
+
+
 # ──────────────────────────────────────────────
 # 4.6 知识图谱表 (Graph RAG)
 # ──────────────────────────────────────────────
