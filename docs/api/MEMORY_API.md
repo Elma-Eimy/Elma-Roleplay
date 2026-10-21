@@ -196,7 +196,7 @@ ORDER BY created_at DESC, id DESC
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/sessions/{session_id}/memory-consolidations` | 当前故事整理记录，含来源快照、建议和结果；`limit=10`（1–20）、`offset=0`（≥0） |
-| POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0 }`，按原卡 ID 升序扫描最多 80 张 |
+| POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0 }`，按原卡 ID 升序扫描最多 100 张 |
 | POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/apply` | 请求 `{ "group_ids": [0] }`，应用指定建议 |
 | POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | 无请求体，撤销本次整理对当前故事的影响 |
 
@@ -221,6 +221,10 @@ ORDER BY created_at DESC, id DESC
 ```
 
 `sources` 实际包含本批全部扫描卡片（示例省略第二张）；`remaining_count` 是请求游标之后待检原卡总数，`scanned_count` 是本批检查数。`has_more` 为真时将 `next_after_id` 传给下一批预览。继续检查不会自动应用前一批建议。GET 按 ID 倒序返回 `{ "items": [整理记录], "total": 12, "limit": 10, "offset": 0, "has_more": true }`；三个 POST 直接返回整理记录。历史分页不会删除旧记录，较早的已应用整理仍可重新打开和撤销。第一版按卡片顺序分批，不在批间做语义聚类，因此可能漏掉相距很远的重复卡。
+
+后端会跳过事件来源发生日期明确冲突的整组建议，保留其他安全建议，并重新顺序编号；被跳过组的原卡保持有效，不直接删卡、拼接摘要或自动重试模型。应用时再次检查同一边界，旧预览若包含跨日期事件则返回 `409`，需重新生成预览。预约、计划等句中的目标日期不作为本次发生日；同次就诊中预约未来复诊不因此被拆开。当前日期规则覆盖数字形式的中文年月日、`YYYY-MM-DD`/`YYYY/MM/DD` 及明确年份，不推断相对日期、未注明日期或隐含事件身份，因此仍需审阅建议。
+
+`duplicate` 来源的明确否定标记有差异时也跳过整组，应用旧预览时同样返回 `409`，避免把肯定和否定的独立事实当作重复。该规则是保守筛查：可能让不同措辞的等价事实保持分开，未匹配到否定标记也不能证明两个命题等价。事件组不按这一否定标记规则拆分，以保留同次事件内“用户车坏了、林墨车没坏”等正常细节。
 
 预览会持久化建议和完整来源快照，不创建新记忆或向量任务。应用仅接收分组编号，正文始终来自已保存建议；在 `BEGIN IMMEDIATE` 事务内校验来源内容、类型、权重、消息范围、版本与有效性，再原子写入整理产物、多来源关系、当前故事快照和向量 Outbox。结果权重取来源最大值，来源范围取起止包络，精确依据仍以来源关联/快照为准。
 

@@ -2,7 +2,7 @@
   <scroll-view scroll-y :scroll-into-view="scrollTarget" class="consolidation-panel">
     <view class="intro">
       <text class="heading">让记忆更清楚，保留故事细节</text>
-      <text class="description">每批检查当前故事最多 80 张有效原卡，寻找重复内容和同一次经历的碎片。先查看建议，再选择应用；原卡保留，可撤销。继承记忆暂不参与整理。</text>
+      <text class="description">每批检查当前故事最多 100 张有效原卡，寻找重复内容和同一次经历的碎片。先查看建议，再选择应用；原卡保留，可撤销。继承记忆暂不参与整理。</text>
       <button class="primary" :disabled="busy" @tap="preview(0)">{{ busy ? '正在处理，请稍候…' : '生成整理预览' }}</button>
       <text v-if="busy" class="hint">模型整理可能需要一些时间，关闭后可重新进入查看已保存的记录。</text>
     </view>

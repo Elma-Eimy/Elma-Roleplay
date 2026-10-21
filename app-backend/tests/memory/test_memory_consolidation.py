@@ -19,6 +19,7 @@ from services.memory.session_memory_query_service import query_session_memories,
 from services.memory.session_memory_service import update_memory, delete_memory, ProtectedMemoryMutationError
 from services.conversation.session_service import create_session_service
 from services.conversation.message_service import delete_message
+from services.memory.memory_consolidation_guard import event_date_anchor, has_conflicting_event_dates, has_source_conflict
 
 
 class MemoryConsolidationTests(unittest.TestCase):
@@ -93,6 +94,97 @@ class MemoryConsolidationTests(unittest.TestCase):
         with self.assertRaises(service.ConsolidationConflict):
             service.apply(self.session.id, result["id"], [], self.db)
 
+    def test_explicit_event_dates_support_partial_years_and_target_dates(self):
+        for text_value, expected in (
+            ("2025年6月7日雨夜在南站相遇。", (2025, 6, 7)),
+            ("6月8号白天独自取回充电器。", (None, 6, 8)),
+            ("用户在2025-06-07到达南站。", (2025, 6, 7)),
+            ("2024年生日时用户送了一本诗集。", (2024, None, None)),
+            ("那次拔牙后，林墨预约了6月27日上午十点复诊。", None),
+            ("林墨答应2025年7月8日陪用户回家。", None),
+            ("那次雨夜南站相遇时借了伞。", None),
+        ):
+            with self.subTest(text=text_value):
+                self.assertEqual(expected, event_date_anchor(text_value))
+        def sources(*texts):
+            return [{"memory_type": "event", "content": content} for content in texts]
+        self.assertTrue(has_conflicting_event_dates(sources("2025年6月7日相遇。", "6月8日独自取物。")))
+        self.assertTrue(has_conflicting_event_dates(sources("2024年生日赠书。", "2025年生日赠书。")))
+        self.assertFalse(has_conflicting_event_dates(sources("2025年6月7日相遇。", "6月7日借伞。")))
+        self.assertFalse(has_conflicting_event_dates(sources("6月20日拔牙。", "预约了6月27日复诊。")))
+
+    def test_cross_date_event_is_omitted_without_losing_safe_suggestions(self):
+        self.one.content = "2025年6月7日用户和林墨在南站相遇。"
+        self.two.content = "6月8日用户独自去南站取充电器，没有见到林墨。"
+        a = self.memory("周日用户与林墨在旧书店找到一本诗集。")
+        b = self.memory("那次周日逛旧书店时，林墨替用户买下那本诗集。")
+        payload = self.payload()
+        payload["groups"].append({"kind": "event", "source_ids": [a.id, b.id],
+                                  "content": "周日用户与林墨在旧书店找到诗集，林墨替用户买下它。", "reason": "同一次购书。"})
+        batch = self.preview(payload)
+        self.assertEqual([0], [group["id"] for group in batch["groups"]])
+        self.assertEqual([a.id, b.id], batch["groups"][0]["source_ids"])
+        service.apply(self.session.id, batch["id"], [0], self.db)
+        active_ids = {row["id"] for row in self.view()["items"]}
+        self.assertTrue({self.one.id, self.two.id} <= active_ids)
+        self.assertFalse({a.id, b.id} & active_ids)
+
+    def test_appointment_target_does_not_block_same_visit_consolidation(self):
+        self.one.content = "2025年6月20日林墨陪用户在城西诊所拔智齿。"
+        self.two.content = "那次拔智齿结束后，林墨替用户预约了6月27日上午十点复诊。"
+        self.db.commit()
+        payload = self.payload()
+        payload["groups"][0]["content"] = "2025年6月20日林墨陪用户在城西诊所拔智齿，并在结束后替用户预约了6月27日上午十点复诊。"
+        batch = self.preview(payload)
+        self.assertEqual(1, len(batch["groups"]))
+
+    def test_duplicate_with_positive_and_negative_facts_is_omitted(self):
+        self.one.content = "林墨喜欢别人叫他的名字。"
+        self.two.content = "林墨不喜欢别人叫他的全名。"
+        self.one.memory_type = self.two.memory_type = MemoryType.fact
+        self.db.commit()
+        payload = self.payload()
+        payload["groups"][0].update(kind="duplicate", content="林墨喜欢被叫名字，不喜欢被叫全名。")
+        batch = self.preview(payload)
+        self.assertEqual([], batch["groups"])
+        self.assertEqual(2, self.view()["total"])
+        self.assertFalse(has_source_conflict("duplicate", [
+            {"memory_type": "fact", "content": "用户不能吃花生。"},
+            {"memory_type": "fact", "content": "用户不可以吃花生。"},
+        ]))
+        self.assertFalse(has_source_conflict("event", [
+            {"memory_type": "event", "content": "7月3日用户爆胎。"},
+            {"memory_type": "event", "content": "那次爆胎后，林墨的车没有损坏。"},
+        ]))
+
+    def test_old_duplicate_preview_with_negation_difference_cannot_apply(self):
+        batch = self.preview()
+        self.one.content = "林墨喜欢被叫名字。"
+        self.two.content = "林墨不喜欢被叫全名。"
+        self.one.memory_type = self.two.memory_type = MemoryType.fact
+        payload = {**self.payload(), "sources": [service.snapshot(self.one), service.snapshot(self.two)]}
+        payload["groups"][0].update(id=0, kind="duplicate")
+        self.db.get(MemoryConsolidation, batch["id"]).preview_json = json.dumps(payload, ensure_ascii=False)
+        self.db.commit()
+        with self.assertRaisesRegex(service.ConsolidationConflict, "否定"):
+            service.apply(self.session.id, batch["id"], [0], self.db)
+        self.assertEqual(2, self.db.query(MemoryChunk).count())
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_old_cross_date_preview_is_rejected_again_when_applying(self):
+        batch = self.preview()
+        self.one.content = "2025年6月7日用户和林墨在南站相遇。"
+        self.two.content = "2025年6月8日用户独自去南站取充电器。"
+        payload = {**self.payload(), "sources": [service.snapshot(self.one), service.snapshot(self.two)]}
+        saved = self.db.get(MemoryConsolidation, batch["id"])
+        payload["groups"][0]["id"] = 0
+        saved.preview_json = json.dumps(payload, ensure_ascii=False)
+        self.db.commit()
+        with self.assertRaisesRegex(service.ConsolidationConflict, "不同日期"):
+            service.apply(self.session.id, batch["id"], [0], self.db)
+        self.assertEqual(2, self.db.query(MemoryChunk).count())
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
     def test_apply_and_undo_restore_list_stats_and_keep_provenance(self):
         batch = self.preview()
         result = service.apply(self.session.id, batch["id"], [0], self.db)
@@ -155,15 +247,40 @@ class MemoryConsolidationTests(unittest.TestCase):
         self.assertEqual(2, self.db.query(MemoryChunk).count())
 
     def test_preview_is_bounded_and_next_batch_advances_without_modifying_cards(self):
-        for index in range(83):
+        for index in range(103):
             self.memory(f"第 {index} 次独立事件。")
         first = self.preview({"groups": []})
-        self.assertEqual(80, first["scanned_count"])
+        self.assertEqual(100, first["scanned_count"])
         self.assertTrue(first["has_more"])
         second = self.preview({"groups": []}, after_id=first["next_after_id"])
         self.assertEqual(5, second["scanned_count"])
         self.assertFalse(second["has_more"])
         self.assertFalse({m["id"] for m in first["sources"]} & {m["id"] for m in second["sources"]})
+
+    def test_event_suggestions_with_emotion_or_relationship_sources_are_rejected_atomically(self):
+        for kinds in ((MemoryType.emotion, MemoryType.emotion),
+                      (MemoryType.relationship, MemoryType.relationship),
+                      (MemoryType.emotion, MemoryType.relationship)):
+            with self.subTest(kinds=kinds):
+                self.one.memory_type, self.two.memory_type = kinds
+                self.db.commit()
+                with self.assertRaises(service.ConsolidationModelError):
+                    self.preview()
+                self.assertEqual(2, self.db.query(MemoryChunk).count())
+                self.assertEqual(0, self.db.query(MemoryConsolidation).count())
+                self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_one_hundred_cards_are_scanned_together_including_distant_fragments(self):
+        for index in range(97):
+            self.memory(f"独立保留的第 {index} 条记忆。")
+        payload = self.payload()
+        last = self.memory("那次雨夜车站相遇后，林墨答应下周五陪用户回家。")
+        payload["groups"][0]["source_ids"] = [self.one.id, last.id]
+        preview = self.preview(payload)
+        self.assertEqual(100, preview["scanned_count"])
+        self.assertFalse(preview["has_more"])
+        self.assertEqual([self.one.id, last.id], preview["groups"][0]["source_ids"])
+        self.assertEqual(100, self.db.query(MemoryChunk).count())
 
     def test_forks_before_and_after_apply_have_independent_snapshots(self):
         before = self.fork()
