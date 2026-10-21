@@ -196,12 +196,27 @@ ORDER BY created_at DESC, id DESC
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/sessions/{session_id}/memory-consolidations` | 当前故事整理记录，含来源快照、建议和结果；`limit=10`（1–20）、`offset=0`（≥0） |
-| POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0 }`，按原卡 ID 升序扫描最多 100 张 |
+| POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0, "mode": "full" }`，按原卡 ID 升序扫描最多 100 张；支持手动增量模式 |
 | POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/apply` | 请求 `{ "group_ids": [0], "expected_revision": 0 }`，应用指定建议 |
 | PUT | `/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}` | 保存单组审阅，返回完整整理记录 |
 | POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | 无请求体，撤销本次整理对当前故事的影响 |
 
 预览只扫描当前 Persona 的有效普通原卡，不含继承卡、已被替代/整理收起的原卡和整理产物。每次模型输入有界；每批最多 12 组、每组 2–12 张、各组来源不重叠、类型相同。仅支持 `duplicate`（重复内容）和 `event`（同一次事件，来源必须全为 event），不处理矛盾、时态变化或不同事件的主题归纳。建议正文 4–500 字符，理由 1–160 字符。模型是否正确保留语义仍需用户审阅。
+
+手动扫描有两个入口：
+
+- `mode=incremental`（检查新增与变更）：只送检当前版本未检查的原卡；包括新增卡和内容、类型、权重、来源范围、替代关系发生变化的旧卡。每次续扫均传 `after_id=0`，不使用高 ID 水位，因此不会漏掉低 ID 旧卡的修改。非零游标返回 `422`。
+- `mode=full`（重新检查全部）：忽略已检查标记，从 `after_id` 后依次重新送检，按 `next_after_id` 续扫。省略 mode 时沿用此模式，兼容原客户端。
+
+两个入口均由用户点击触发，无后台定时扫描。增量模式不补入已检查旧卡，两个模式均不做跨批候选发现；新旧卡之间或不同批次之间的重复可能保留。“已检查”与“已审阅/已应用”独立，生成成功但未选择、已忽略或尚未应用的建议仍留在历史中，不因再次点击增量检查而自动重复生成。需要重新判断时可使用全量入口。
+
+至少两张待检卡才调用模型；合法响应即使没有建议也记录为已检查。模型调用、格式/来源校验或预览保存失败都不推进进度。来源在调用期间变化、删除或失效时，该版本不记录为已检查；若它属于归并建议，同组其他来源也不推进本次进度，保留整组重试所需的卡片，其他安全组仍可推进。不清除其他较新成功扫描已经保存的记录。预览仍保留原始送检快照，待检卡可在后续增量中再次送检。只有一张待检卡时不调用模型、不推进检查记录，等待另一张新增/变更卡后再手动检查。
+
+进度表 `memory_consolidation_scans` 按 Persona 和原卡保存成功送检时的版本指纹与时间，不复制到分支，不受应用/撤销影响。统计仅包含当前可整理的有效本地原卡；应用后收起的原卡不计入，撤销恢复原卡后其未变版本仍算已检查。删除故事或原卡会级联删除对应进度。旧库迁移新增空进度表，保留全部原卡及已有预览，不根据旧记录猜测检查进度，升级后第一次增量会从未检查开始。
+
+响应增加 `scan_mode`（旧记录默认 full）、`model_checked`、`recorded_count`。`scanned_count` 为本次取出的原卡数；只有一张时可能取出但未送模型，须结合 `model_checked=false` 与 `recorded_count=0` 阅读。`remaining_count` 为本次开始时请求范围中的原卡总数。全量 `has_more` 表示游标后仍有卡；增量 `has_more` 表示保存时至少还有两张待检卡，继续时不传 ID 游标。
+
+`scan_status` 为当前统计：`{ "eligible_count": 10, "checked_count": 8, "pending_count": 2 }`。GET 历史列表在顶层返回一次统计，单条 POST/PUT 返回中附带统计；历史 items 内不重复计算。它们表示读取时的有效原卡状态，不是历史批次的完成比例，也不代表整个故事已去重。
 
 逐组审阅请求为 `{ "expected_revision": 0, "content": "审阅后的完整正文", "ignored": false, "ignore_reason": "" }`。`expected_revision` 必填且非负；`content` 可省略，提供时去除首尾空白后须为 4–500 字符；`ignored` 默认 false；`ignore_reason` 为可选原因或备注，最多 160 字符。仅待审阅批次可保存；忽略不删除原卡，可在应用前恢复，仅作用于这份预览，不阻止未来重新生成建议。来源过期仍可忽略或恢复，但不能修改正文或应用。
 
@@ -227,7 +242,7 @@ ORDER BY created_at DESC, id DESC
 }
 ```
 
-`sources` 实际包含本批全部扫描卡片（示例省略第二张）；`remaining_count` 是请求游标之后待检原卡总数，`scanned_count` 是本批检查数。`has_more` 为真时将 `next_after_id` 传给下一批预览。继续检查不会自动应用前一批建议。GET 按 ID 倒序返回 `{ "items": [整理记录], "total": 12, "limit": 10, "offset": 0, "has_more": true }`；三个 POST 直接返回整理记录。历史分页不会删除旧记录，较早的已应用整理仍可重新打开和撤销。第一版按卡片顺序分批，不在批间做语义聚类，因此可能漏掉相距很远的重复卡。
+`sources` 实际包含本批全部取出的卡片（示例省略第二张）；`remaining_count` 为本次请求范围的原卡总数。`has_more` 为真时，全量模式传 `next_after_id` 续扫，增量模式传 `after_id=0` 重新查询待检集合。继续检查不会自动应用前一批建议。GET 按 ID 倒序返回 `{ "items": [整理记录], "total": 12, "limit": 10, "offset": 0, "has_more": true, "scan_status": { "eligible_count": 10, "checked_count": 8, "pending_count": 2 } }`；三个 POST 和审阅 PUT 直接返回整理记录。历史分页不会删除旧记录，较早的已应用整理仍可重新打开和撤销。当前按卡片顺序分批，不在批间做语义聚类，因此可能漏掉相距很远的重复卡。
 
 后端会跳过事件来源发生日期明确冲突的整组建议，保留其他安全建议，并重新顺序编号；被跳过组的原卡保持有效，不直接删卡、拼接摘要或自动重试模型。应用时再次检查同一边界，旧预览若包含跨日期事件则返回 `409`，需重新生成预览。预约、计划等句中的目标日期不作为本次发生日；同次就诊中预约未来复诊不因此被拆开。当前日期规则覆盖数字形式的中文年月日、`YYYY-MM-DD`/`YYYY/MM/DD` 及明确年份，不推断相对日期、未注明日期或隐含事件身份，因此仍需审阅建议。
 

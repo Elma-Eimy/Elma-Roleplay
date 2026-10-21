@@ -161,7 +161,7 @@
 
 记忆整理质量可通过 `python -m scripts.memory_quality` 反复验收：默认在临时副本中回放虚构样本，生成 HTML/JSON 报告；实际模型调用须显式使用在线参数。自动规则、字面线索与人工语义结论分开记录，详见 [验收工具](../docs/MEMORY_QUALITY.md)。
 
-记忆库支持存量整理预览、逐组应用与撤销。`services/memory/memory_consolidation_service.py` 处理有界模型建议和事务校验，`memory_visibility.py` 处理原卡/整理结果可见性及分支快照；原卡和来源关联保留，继承卡暂不参与整理。服务启动沿现有迁移链新增整理表，无需清库。详细契约见 [记忆 API](../docs/api/MEMORY_API.md#可预览的存量记忆整理)。
+记忆库支持用户手动“检查新增与变更”和“重新检查全部”、逐组审阅、应用与撤销。`services/memory/memory_consolidation_service.py` 处理有界模型建议和事务校验，`memory_consolidation_scan.py` 比对原卡指纹并独立记录扫描进度，`memory_visibility.py` 处理原卡/整理结果可见性及分支快照；原卡和来源关联保留，继承卡暂不参与整理。服务启动沿现有迁移链新增整理及扫描进度表，无需清库；旧预览保留，首次增量从未检查开始。仅增量范围内的卡相互比较，不做跨批关联。详细契约见 [记忆 API](../docs/api/MEMORY_API.md#可预览的存量记忆整理)。
 
 本轮维护重点解决了分支时间线泄漏、短长期记忆交接空档、检索查询脱离语境，以及长期记忆切片过碎的问题。当前完整链路如下：
 
