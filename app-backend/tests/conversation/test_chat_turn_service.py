@@ -141,11 +141,14 @@ class ChatTurnServiceTests(unittest.TestCase):
             emotion_tag="开心",
             affection_change=3,
             db=self.db,
+            role_state_patch={"scene": "客厅"},
         )
 
         reply = self.db.get(ChatMessage, completed.assistant_message_id)
         persona = self.db.get(SessionPersona, self.persona_id)
         self.assertEqual("真实回复", reply.content)
+        from services.conversation.role_state_service import get_state
+        self.assertEqual("客厅", get_state(self.session_id, self.db)["state"]["scene"])
         self.assertEqual(turn.user_message.id, reply.parent_id)
         self.assertEqual(3, completed.affection_score)
         self.assertEqual(3, persona.affection_score)

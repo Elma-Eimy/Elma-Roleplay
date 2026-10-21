@@ -1,6 +1,18 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal
 
+class RoleStateUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_revision: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    patch: dict
+
+    @field_validator("patch")
+    @classmethod
+    def valid_state_patch(cls, value):
+        from services.conversation.role_state_schema import validate_patch
+        return validate_patch(value, manual=True)
+
+
 class CharacterCreate(BaseModel):
     name: str
     avatar_path: str = ""

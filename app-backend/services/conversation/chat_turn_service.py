@@ -128,6 +128,7 @@ def complete_chat_turn(
     emotion_tag: str,
     affection_change: int,
     db: DBSession,
+    role_state_patch=None,
 ) -> CompletedChatTurn:
     """原子保存助手回复、候选版本及 Persona 状态。"""
     assistant_id, affection_score, candidates = session_service.save_chat_response(
@@ -141,6 +142,7 @@ def complete_chat_turn(
         is_regenerate=turn.is_regenerate,
         old_reply_id=turn.old_reply.id if turn.old_reply else None,
         db=db,
+        role_state_patch=role_state_patch,
     )
     return CompletedChatTurn(
         assistant_message_id=assistant_id,

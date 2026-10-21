@@ -299,7 +299,7 @@ _STATUS_ATTRIBUTE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _STREAM_REPLY_END_RE = re.compile(
-    r"</\s*(?:reply|replay)\s*>|<\s*status\b",
+    r"</\s*(?:reply|replay)\s*>|<\s*(?:status|state_update)\b",
     re.IGNORECASE,
 )
 
@@ -316,6 +316,20 @@ def extract_xml_block(text: str) -> dict:
         return {"reply": "", "emotion_tag": "平静", "affection_change": 0}
 
     text = text.strip()
+    # 无论状态 JSON 是否有效，都不能让附属协议进入正文或音频。
+    state_match = re.search(r"<\s*state_update\b[^>]*>(.*?)</\s*state_update\s*>", text, re.IGNORECASE | re.DOTALL)
+    state_patch = None
+    if state_match:
+        try:
+            from services.conversation.role_state_schema import validate_patch
+            state_patch = validate_patch(json.loads(state_match.group(1)))
+        except (ValueError, TypeError):
+            pass
+    state_start = re.search(r"<\s*state_update\b", text, re.IGNORECASE)
+    if state_start:
+        # 增量只允许位于正文/status 之后。即使模型错误地提前关闭标签，
+        # 其后残余 JSON 也不能回流为正文。
+        text = text[:state_start.start()]
     status_match = _STATUS_TAG_RE.search(text)
     attributes = {}
     if status_match:
@@ -338,11 +352,14 @@ def extract_xml_block(text: str) -> dict:
     reply = _MALFORMED_REPLY_CLOSE_RE.sub("", reply)
     reply = reply.strip()
 
-    return {
+    result = {
         "reply": reply,
         "emotion_tag": emotion_tag,
         "affection_change": affection_change,
     }
+    if state_patch is not None:
+        result["role_state_patch"] = state_patch
+    return result
 
 
 def extract_stream_reply_prefix(text: str) -> str:

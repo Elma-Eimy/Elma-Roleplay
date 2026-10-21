@@ -197,6 +197,9 @@ class SessionPersona(Base):
     # 当前心情标签，如 "开心" / "恐惧" / "平静"
     current_mood = Column(String(50), nullable=True)
 
+    # 分支创建时的独立状态快照；之后沿本地有效消息增量重放。
+    role_state_base = Column(Text, nullable=True)
+
     # ── 进度追踪指针 ──
 
     # 记忆提纯进度：上一次 summarize_and_store_memory 处理到的最后一条消息 ID
@@ -447,6 +450,8 @@ class ChatMessage(Base):
     # 消息级微状态（溯源用，不参与 RAG）
     emotion_tag      = Column(String(50),  nullable=True)  # 发出本条消息时角色的情绪标签
     affection_change = Column(Integer, nullable=True)  # 本条消息带来的好感度变动量（正/负）
+    role_state_patch = Column(Text, nullable=True)  # 本轮 LLM 状态增量
+    role_state_manual = Column(Text, nullable=True)  # 此剧情节点之后的手动校正
     audio_path       = Column(String(255), nullable=True)  # 该条消息的 TTS 音频文件本地相对路径/URL
 
     # Swipe 候选回复支持

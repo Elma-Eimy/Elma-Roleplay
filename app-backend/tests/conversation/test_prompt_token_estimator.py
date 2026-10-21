@@ -57,6 +57,7 @@ class PromptTokenEstimatorTests(unittest.TestCase):
                     "<current_scenario>办公室</current_scenario>\n"
                     "<cognition_state>信任用户</cognition_state>\n"
                     "<current_status>当前心情: 平静</current_status>\n"
+                    '<current_role_state>{"scene":"办公室"}</current_role_state>\n'
                     "<lorebook_knowledge>城市设定</lorebook_knowledge>\n"
                     "<recalled_memories>- 用户喜欢咖啡</recalled_memories>\n"
                     "<factual_relationships>用户 friend 角色</factual_relationships>"

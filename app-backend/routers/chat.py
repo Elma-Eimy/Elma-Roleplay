@@ -73,6 +73,7 @@ async def _complete_turn(
     reasoning_content: str,
     emotion_tag: str,
     affection_change: int,
+    role_state_patch=None,
 ):
     return await run_in_threadpool(
         chat_turn_service.complete_chat_turn,
@@ -82,6 +83,7 @@ async def _complete_turn(
         emotion_tag,
         affection_change,
         db,
+        role_state_patch,
     )
 
 
@@ -135,6 +137,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
                 reasoning_content,
                 emotion_tag,
                 affection_change,
+                response_data.get("role_state_patch"),
             )
         except BaseException:
             await _abort_turn(turn, db)
@@ -250,6 +253,7 @@ async def _run_stream_worker(
             is_regenerate=is_regenerate,
             old_reply_id=old_reply_id,
             db=task_db,
+            role_state_patch=result.get("role_state_patch"),
         ))
         saved, cancelled = await _finish_stream_operation(save_task)
         assistant_id, affection_score, candidates = saved

@@ -28,12 +28,13 @@ TAG_TO_SECTION = {
     "current_scenario": "scenario",
     "cognition_state": "cognition",
     "current_status": "status",
+    "current_role_state": "status",
     "lorebook_knowledge": "lorebook",
     "recalled_memories": "long_term_memory",
     "factual_relationships": "graph",
 }
 TAG_BLOCK_RE = re.compile(
-    r"<(current_scenario|cognition_state|current_status|lorebook_knowledge|"
+    r"<(current_scenario|cognition_state|current_status|current_role_state|lorebook_knowledge|"
     r"recalled_memories|factual_relationships)(?:\s[^>]*)?>.*?</\1>",
     re.DOTALL,
 )

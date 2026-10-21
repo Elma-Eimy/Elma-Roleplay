@@ -31,12 +31,12 @@ class AlembicCliTests(unittest.TestCase):
     def test_heads_runs_without_recursive_environment_import(self):
         result = self._run_alembic("heads")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("f5a6b7c8d9e0", result.stdout)
+        self.assertIn("a6b7c8d9e0f1", result.stdout)
 
     def test_current_runs_without_recursive_environment_import(self):
         result = self._run_alembic("current")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("f5a6b7c8d9e0", result.stdout)
+        self.assertIn("a6b7c8d9e0f1", result.stdout)
 
 
 if __name__ == "__main__":

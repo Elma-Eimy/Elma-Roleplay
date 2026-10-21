@@ -491,6 +491,9 @@ def create_session_service(
 
         if start_message:
             session.fork_message_id = start_message.id
+            from services.conversation.role_state_service import state_before_message
+            from services.conversation.role_state_schema import encode_state
+            persona.role_state_base = encode_state(state_before_message(start_message, db))
             first_message = ChatMessage(
                 session_id=session.id,
                 role=start_message.role,
@@ -498,6 +501,8 @@ def create_session_service(
                 emotion_tag=start_message.emotion_tag,
                 affection_change=start_message.affection_change,
                 audio_path=start_message.audio_path,
+                role_state_patch=start_message.role_state_patch,
+                role_state_manual=start_message.role_state_manual,
                 parent_id=None,
                 is_active=True,
             )
@@ -605,7 +610,8 @@ def save_chat_response(
     affection_change: int,
     is_regenerate: bool,
     old_reply_id: Optional[int],
-    db: DBSession
+    db: DBSession,
+    role_state_patch=None,
 ) -> tuple[int, int, list[dict]]:
     """
     业务逻辑：保存 AI 回复消息，更新 Persona 好感度与心情，重置/更新 Swipe 历史候选列表，并提交事务。
@@ -629,6 +635,9 @@ def save_chat_response(
     if not p:
         raise ValueError("SessionPersona not found")
 
+    from services.conversation.role_state_service import validated_model_patch
+    encoded_state_patch = validated_model_patch(session_id, user_msg_id, role_state_patch, db)
+
     # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
     if is_regenerate and old_reply_id:
         db_old_reply = db.get(ChatMessage, old_reply_id)
@@ -645,6 +654,7 @@ def save_chat_response(
         reasoning_content=reasoning_content,
         emotion_tag=emotion_tag,
         affection_change=affection_change,
+        role_state_patch=encoded_state_patch,
         parent_id=user_msg_id,
         is_active=True
     )

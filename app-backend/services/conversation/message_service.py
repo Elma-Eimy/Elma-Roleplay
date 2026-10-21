@@ -24,6 +24,9 @@ def update_message(message_id: int, content: str, db: DBSession) -> dict:
 
     old_audio_path = message.audio_path
     message.content = content
+    if message.role == MessageRole.assistant:
+        # 正文经过人工编辑后，原先由该正文推导的增量不再可靠；手动校正独立保留。
+        message.role_state_patch = None
     message.audio_path = None
 
     session = db.get(Session, message.session_id)

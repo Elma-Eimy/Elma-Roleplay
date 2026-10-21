@@ -258,6 +258,7 @@ class MemoryHandoffTests(unittest.TestCase):
                 "build_chat_messages",
                 return_value=[],
             ),
+            patch.object(context_assembler, "resolve_state", return_value=({"state": {}}, [])),
         ):
             asyncio.run(context_assembler.assemble_prompt_context(
                 session_id=1,

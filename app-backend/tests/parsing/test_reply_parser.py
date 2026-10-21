@@ -6,6 +6,29 @@ from services.parse import extract_stream_reply_prefix, extract_xml_block
 
 
 class ReplyParserTests(unittest.TestCase):
+    def test_optional_state_delta_is_validated_and_never_leaks_to_reply(self):
+        valid = '{"characters":{"露娜":{"posture":"站着"}}}'
+        for data in (valid, '{"scene":null}', '{"unexpected":1}', '{"scene":', '{"scene":"' + '长' * 301 + '"}'):
+            with self.subTest(data=data):
+                raw = '<reply>正文</reply><status emotion="平静"/><state_update>' + data + '</state_update>'
+                result = extract_xml_block(raw)
+                self.assertEqual("正文", result["reply"])
+                self.assertEqual(data == valid, "role_state_patch" in result)
+        self.assertEqual("正文", extract_xml_block('正文<state_update>{"scene":')["reply"])
+        self.assertEqual("正文", extract_xml_block('正文<state_update')["reply"])
+        self.assertEqual("正文", extract_xml_block('正文<state_update>{"scene":"</state_update>"}</state_update>')["reply"])
+
+    def test_stream_state_delta_without_status_never_leaks(self):
+        raw = '一段足够长的正文用于检测流式边界并保证状态协议不进入正文。<state_update>{"scene":"窗边"}</state_update>'
+        emitted = ""
+        for index in range(1, len(raw) + 1):
+            prefix = extract_stream_reply_prefix(raw[:index])
+            length = max(0, len(prefix) - 24)
+            if prefix.startswith(emitted) and length > len(emitted):
+                emitted += prefix[len(emitted):length]
+        self.assertTrue(extract_xml_block(raw)["reply"].startswith(emitted))
+        self.assertNotIn("state_update", emitted)
+
     def test_parses_status_attributes_in_any_order(self):
         parsed = extract_xml_block(
             '<reply>你好</reply>'

@@ -136,6 +136,7 @@ async def generate_reply(
             "affection_change": result["affection_change"],
             "model_used": model,
             "reasoning_content": reasoning_content,
+            "role_state_patch": result.get("role_state_patch"),
         }
 
     except Exception as e:

@@ -11,6 +11,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from typing import Literal, Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
@@ -18,16 +19,45 @@ from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
 from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest, MemoryConsolidationReviewRequest
+from schemas import RoleStateUpdate
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
-from core.locking import cleanup_session_lock, is_session_locked
+from core.locking import cleanup_session_lock, is_session_locked, get_session_lock
 import services.conversation.session_service as session_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
 import services.memory.memory_consolidation_service as memory_consolidation_service
 router = APIRouter()
+
+
+@router.get("/{session_id}/role-state")
+def get_role_state(session_id: int, db: Session = Depends(get_db)):
+    from services.conversation.role_state_service import get_state
+    try:
+        return get_state(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/{session_id}/role-state")
+async def update_role_state(session_id: int, request: RoleStateUpdate, db: Session = Depends(get_db)):
+    from services.conversation.role_state_service import update_state, StateConflict
+    lock = get_session_lock(session_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="当前故事正在生成回复，请完成后再修改状态")
+    await lock.acquire()
+    try:
+        return await run_in_threadpool(update_state, session_id, request.patch, request.expected_revision, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StateConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        lock.release()
 
 
 @router.post("/create")
