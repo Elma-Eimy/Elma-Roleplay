@@ -49,6 +49,8 @@
           </view>
         </view>
 
+        <view class="panel-section"><RoleStatePanel :session-id="props.sessionId" /></view>
+
         <!-- ③ 微观认知状态显示区 -->
         <view class="panel-section">
           <text class="section-title">微观认知</text>
@@ -335,6 +337,7 @@ import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
 import GenerationPicker from "./GenerationPicker.vue";
+import RoleStatePanel from "./RoleStatePanel.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
