@@ -122,7 +122,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   ```
 
 #### GET `/utils/settings`
-* Also returns `translation_model` (default `deepseek-flash`), independently selectable for character reading translations. It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
+* Also returns `translation_model`, independently selectable for character reading translations. When absent, it initializes once from the existing non-reasoning chat model (falling back to the legacy chat model or default chat model). It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
 * Also returns `default_chat_model`, `model_profiles` (editable `{id,label,adapter}` entries), `model_catalog` (read-only `{id,label,adapter,thinking,efforts}` capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`.
 * `thinking` is `toggle`, `always`, or `unsupported`. Adapters: `compatible`, `deepseek`, `reasoning`. The catalog is configured locally; it does not query providers.
 * **Response (200 OK)**:
