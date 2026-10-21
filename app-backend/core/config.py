@@ -15,7 +15,7 @@ CONFIG_SCHEMA = {
         # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
         "default_chat_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_DEFAULT_CHAT_MODEL"},
         "model_profiles": {"type": list, "default": [], "dynamic": True, "attr": "LLM_MODEL_PROFILES"},
-        "translation_model": {"type": str, "default": "deepseek-flash", "dynamic": True, "attr": "LLM_TRANSLATION_MODEL"},
+        "translation_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TRANSLATION_MODEL"},
         "memory_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_MEMORY_THINKING_MODE"},
         "memory_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_MEMORY_REASONING_EFFORT"},
         "tts_preprocess_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TTS_PREPROCESS_MODEL"},
@@ -163,6 +163,12 @@ class Settings:
             llm["default_chat_model"] = (llm.get("chat_model") if reasoning else llm.get("non_reasoning_chat_model")) or llm.get("chat_model") or "gpt-3.5-turbo"
             has_updates = True
         
+        # 翻译初始值复用已有非思考模型，避免凭空加入另一种供应商模型 ID。
+        # 只初始化一次；显式选择的独立翻译模型保持不变。
+        if not llm.get("translation_model"):
+            llm["translation_model"] = llm.get("non_reasoning_chat_model") or llm.get("chat_model") or llm["default_chat_model"]
+            has_updates = True
+
         for namespace, items in CONFIG_SCHEMA.items():
             ns_dict = self.config.setdefault(namespace, {})
             

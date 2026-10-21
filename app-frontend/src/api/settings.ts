@@ -44,7 +44,7 @@ export interface UpdateSettingsResponse {
 // ===================== 默认设定值 =====================
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  translation_model: "deepseek-flash",
+  translation_model: "",
   default_chat_model: "",
   model_profiles: [],
   model_catalog: [],

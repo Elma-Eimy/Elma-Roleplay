@@ -20,6 +20,21 @@ class TestConfigSystem(unittest.TestCase):
             migrated.migrate_and_bind_config()
             self.assertEqual(migrated.LLM_DEFAULT_CHAT_MODEL, 'deepseek-v4-flash')
 
+    def test_translation_model_initializes_from_existing_model_once(self):
+        from unittest.mock import patch
+        from services.infrastructure.model_capabilities import model_catalog
+        original = {"llm": {"chat_model": "deepseek-v4-pro", "non_reasoning_chat_model": "deepseek-v4-flash"}}
+        with patch.object(Settings, '_load_yaml_config', return_value=original), patch.object(Settings, '_save_yaml_config'):
+            migrated = Settings()
+            self.assertEqual(migrated.LLM_TRANSLATION_MODEL, 'deepseek-v4-flash')
+            self.assertNotIn('deepseek-flash', [item['id'] for item in model_catalog(migrated)])
+            migrated.update_and_persist({'default_chat_model': 'other-model'})
+            migrated.migrate_and_bind_config()
+            self.assertEqual(migrated.LLM_TRANSLATION_MODEL, 'deepseek-v4-flash')
+            migrated.update_and_persist({'translation_model': 'custom-translator'})
+            migrated.migrate_and_bind_config()
+            self.assertEqual(migrated.LLM_TRANSLATION_MODEL, 'custom-translator')
+
     def setUp(self):
         self.test_yaml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "test_config_temp.yaml")
         # Ensure clean state
