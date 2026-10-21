@@ -189,6 +189,10 @@
   ],
   [
     "PUT",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}"
+  ],
+  [
+    "PUT",
     "/sessions/{session_id}/title"
   ],
   [

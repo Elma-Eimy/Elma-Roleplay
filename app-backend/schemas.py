@@ -190,6 +190,7 @@ class MemoryConsolidationPreviewRequest(BaseModel):
 
 class MemoryConsolidationApplyRequest(BaseModel):
     group_ids: list[int] = Field(min_length=1, max_length=12)
+    expected_revision: int = Field(0, ge=0)
 
     @field_validator("group_ids")
     @classmethod
@@ -197,5 +198,17 @@ class MemoryConsolidationApplyRequest(BaseModel):
         if any(i < 0 for i in value) or len(set(value)) != len(value):
             raise ValueError("整理分组编号必须非负且不重复")
         return value
+
+
+class MemoryConsolidationReviewRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    content: str | None = Field(None, min_length=4, max_length=500)
+    ignored: bool = False
+    ignore_reason: str = Field("", max_length=160)
+
+    @field_validator("content", "ignore_reason", mode="before")
+    @classmethod
+    def trim_review_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 

@@ -94,6 +94,66 @@ class MemoryConsolidationTests(unittest.TestCase):
         with self.assertRaises(service.ConsolidationConflict):
             service.apply(self.session.id, result["id"], [], self.db)
 
+    def test_review_preserves_model_original_and_applies_saved_edit(self):
+        batch = self.preview()
+        url = f"/sessions/{self.session.id}/memory-consolidations/{batch['id']}"
+        content = "雨夜在车站相遇时，林墨将雨伞借给用户。"
+        response = self.client.put(url + "/groups/0", json={"expected_revision": 0, "content": content})
+        self.assertEqual(200, response.status_code)
+        saved = response.json()
+        self.assertEqual(batch["groups"][0]["content"], saved["groups"][0]["original_content"])
+        self.assertEqual(content, saved["groups"][0]["content"])
+        self.assertEqual(2, self.db.query(MemoryChunk).count())
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+        self.assertEqual(409, self.client.post(url + "/apply", json={"group_ids": [0]}).status_code)
+        result = self.client.post(url + "/apply", json={"group_ids": [0], "expected_revision": 1})
+        self.assertEqual(200, result.status_code)
+        self.assertEqual(content, result.json()["results"][0]["content"])
+        self.assertEqual(409, self.client.put(url + "/groups/0", json={"expected_revision": 1}).status_code)
+        service.undo(self.session.id, batch["id"], self.db)
+        self.assertEqual(2, self.view()["total"])
+
+    def test_ignore_restore_and_concurrent_review(self):
+        batch = self.preview()
+        url = f"/sessions/{self.session.id}/memory-consolidations/{batch['id']}"
+        response = self.client.put(url + "/groups/0", json={"expected_revision": 0, "ignored": True, "ignore_reason": "事件不够明确"})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("事件不够明确", service.list_batches(self.session.id, self.db)["items"][0]["groups"][0]["ignore_reason"])
+        self.assertEqual(409, self.client.post(url + "/apply", json={"group_ids": [0], "expected_revision": 1}).status_code)
+        self.assertEqual(409, self.client.put(url + "/groups/0", json={"expected_revision": 0}).status_code)
+        self.assertEqual(200, self.client.put(url + "/groups/0", json={"expected_revision": 1, "ignored": False}).status_code)
+        self.assertEqual(200, self.client.post(url + "/apply", json={"group_ids": [0], "expected_revision": 2}).status_code)
+
+    def test_review_validation_ownership_and_stale_group_details(self):
+        batch = self.preview()
+        url = f"/sessions/{self.session.id}/memory-consolidations/{batch['id']}/groups/0"
+        for content in ("   ", "短", "长" * 501):
+            self.assertEqual(422, self.client.put(url, json={"expected_revision": 0, "content": content}).status_code)
+        child = self.fork()
+        self.assertEqual(404, self.client.put(url.replace(f"/sessions/{self.session.id}/", f"/sessions/{child}/"), json={"expected_revision": 0}).status_code)
+        with patch.object(service, "is_session_locked", return_value=True):
+            self.assertEqual(409, self.client.put(url, json={"expected_revision": 0}).status_code)
+        self.one.content = "原卡内容已修改，预览不再适用。"
+        self.db.commit()
+        group = service.list_batches(self.session.id, self.db)["items"][0]["groups"][0]
+        self.assertIn("来源记忆", group["conflict"])
+        self.assertEqual(409, self.client.put(url, json={"expected_revision": 0, "content": "不能用编辑绕过来源过期。"}).status_code)
+        self.assertEqual(200, self.client.put(url, json={"expected_revision": 0, "ignored": True}).status_code)
+
+    def test_conflicting_group_does_not_block_other_reviewed_groups(self):
+        three = self.memory("用户周日送给林墨一本蓝色诗集。")
+        four = self.memory("那本周日赠送的诗集是蓝色封面。")
+        payload = self.payload()
+        payload["groups"].append({"kind": "event", "source_ids": [three.id, four.id], "content": "周日用户送给林墨一本蓝色封面的诗集。", "reason": "同次赠书"})
+        batch = self.preview(payload)
+        self.one.content = "已修改的相遇记忆。"
+        self.db.commit()
+        listed = service.list_batches(self.session.id, self.db)["items"][0]
+        self.assertIsNotNone(listed["groups"][0]["conflict"])
+        self.assertIsNone(listed["groups"][1]["conflict"])
+        result = service.apply(self.session.id, batch["id"], [1], self.db)
+        self.assertEqual(1, len(result["results"]))
+
     def test_explicit_event_dates_support_partial_years_and_target_dates(self):
         for text_value, expected in (
             ("2025年6月7日雨夜在南站相遇。", (2025, 6, 7)),

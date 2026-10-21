@@ -17,7 +17,7 @@ from core.database import get_db
 from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
-from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest
+from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest, MemoryConsolidationReviewRequest
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
@@ -399,7 +399,12 @@ def preview_memory_consolidation(session_id: int, request: MemoryConsolidationPr
 
 @router.post("/{session_id}/memory-consolidations/{batch_id}/apply")
 def apply_memory_consolidation(session_id: int, batch_id: int, request: MemoryConsolidationApplyRequest, db: Session = Depends(get_db)):
-    return _consolidation_response(memory_consolidation_service.apply, session_id, batch_id, request.group_ids, db)
+    return _consolidation_response(memory_consolidation_service.apply, session_id, batch_id, request.group_ids, db, request.expected_revision)
+
+
+@router.put("/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}")
+def review_memory_consolidation_group(session_id: int, batch_id: int, group_id: int, request: MemoryConsolidationReviewRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.review_group, session_id, batch_id, group_id, request, db)
 
 
 @router.post("/{session_id}/memory-consolidations/{batch_id}/undo")

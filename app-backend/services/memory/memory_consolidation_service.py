@@ -35,6 +35,13 @@ def snapshot(chunk):
 
 def serialize_batch(batch, db):
     payload = json.loads(batch.preview_json)
+    payload.setdefault("review_revision", 0)
+    conflicts = group_conflicts(batch.persona_id, payload, db) if batch.status == "preview" else {}
+    for group in payload["groups"]:
+        group.setdefault("original_content", group["content"])
+        group.setdefault("ignored", False)
+        group.setdefault("ignore_reason", "")
+        group["conflict"] = conflicts.get(group["id"])
     return {
         **payload, "id": batch.id, "status": batch.status,
         "selected_group_ids": json.loads(batch.selected_json or "[]"),
@@ -60,6 +67,48 @@ def eligible_query(persona_id, db):
         visible_filter,
         MemoryChunk.id.not_in(hidden_ids),
     )
+
+
+def group_conflicts(persona_id, payload, db):
+    expected = {row["id"]: row for row in payload["sources"]}
+    ids = {i for group in payload["groups"] for i in group["source_ids"]}
+    originals = {row.id: row for row in eligible_query(persona_id, db).filter(MemoryChunk.id.in_(ids)).all()}
+    conflicts = {}
+    for group in payload["groups"]:
+        if any(i not in originals or snapshot(originals[i]) != expected.get(i) for i in group["source_ids"]):
+            conflicts[group["id"]] = "来源记忆已修改、删除或不再有效，请重新预览"
+        elif has_source_conflict(group["kind"], [snapshot(originals[i]) for i in group["source_ids"]]):
+            conflicts[group["id"]] = "来源存在不同日期或肯定/否定边界冲突，请重新预览"
+    return conflicts
+
+
+def review_group(session_id, batch_id, group_id, request, db):
+    """审阅元数据存于预览 JSON，兼容旧记录，不改变原卡与模型原稿。"""
+    try:
+        persona, batch = _begin_mutation(session_id, batch_id, db)
+        payload = json.loads(batch.preview_json)
+        if batch.status != "preview":
+            raise ConsolidationConflict("只有待审阅的预览可以修改")
+        if request.expected_revision != payload.get("review_revision", 0):
+            raise ConsolidationConflict("审阅内容已在其他页面更新，请刷新记录")
+        group = next((g for g in payload["groups"] if g["id"] == group_id), None)
+        if group is None:
+            raise ConsolidationConflict("整理建议不存在")
+        if request.content is not None:
+            conflict = group_conflicts(persona.id, payload, db).get(group_id)
+            if conflict:
+                raise ConsolidationConflict(conflict)
+            group.setdefault("original_content", group["content"])
+            group["content"] = request.content
+        group["ignored"] = request.ignored
+        group["ignore_reason"] = request.ignore_reason
+        payload["review_revision"] = payload.get("review_revision", 0) + 1
+        batch.preview_json = json.dumps(payload, ensure_ascii=False)
+        db.commit()
+        return serialize_batch(batch, db)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def validate_groups(raw, sources):
@@ -144,7 +193,7 @@ duplicate 要求各卡表达同一个命题、可以相互替代；互补信息�
 
 def _begin_mutation(session_id, batch_id, db):
     if is_session_locked(session_id):
-        raise ConsolidationConflict("对话正在生成，请结束后再应用或撤销整理")
+        raise ConsolidationConflict("对话正在生成，请结束后再保存审阅、应用或撤销整理")
     # SQLite 写事务串行化校验和落库，防止两份预览同时消费相同来源。
     db.commit()
     db.execute(text("BEGIN IMMEDIATE"))
@@ -157,7 +206,7 @@ def _begin_mutation(session_id, batch_id, db):
     return persona, batch
 
 
-def apply(session_id, batch_id, selected_ids, db):
+def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
     try:
         persona, batch = _begin_mutation(session_id, batch_id, db)
         selected_ids = sorted(set(selected_ids))
@@ -168,9 +217,16 @@ def apply(session_id, batch_id, selected_ids, db):
         if batch.status != "preview":
             raise ConsolidationConflict("这份预览已经处理，请重新预览")
         payload = json.loads(batch.preview_json)
+        if expected_revision != payload.get("review_revision", 0):
+            raise ConsolidationConflict("审阅内容已更新，请刷新记录后再应用")
         groups = [group for group in payload["groups"] if group["id"] in selected_ids]
         if not groups or len(groups) != len(selected_ids):
             raise ConsolidationConflict("请选择有效的整理建议")
+        if any(group.get("ignored", False) for group in groups):
+            raise ConsolidationConflict("所选建议已忽略，请先恢复建议")
+        conflicts = group_conflicts(persona.id, payload, db)
+        if any(group["id"] in conflicts for group in groups):
+            raise ConsolidationConflict("；".join(f"第{group['id'] + 1}组：{conflicts[group['id']]}" for group in groups if group["id"] in conflicts))
         source_ids = {i for group in groups for i in group["source_ids"]}
         originals = {row.id: row for row in eligible_query(persona.id, db).filter(MemoryChunk.id.in_(source_ids)).all()}
         expected = {row["id"]: row for row in payload["sources"]}
