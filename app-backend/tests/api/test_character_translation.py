@@ -59,6 +59,7 @@ class CharacterTranslationTests(unittest.TestCase):
             wire = json.dumps(call.kwargs["messages"])
             self.assertNotIn("HIDDEN_", wire)
             self.assertEqual("deepseek-flash", call.kwargs["model"])
+            self.assertEqual(32768, call.kwargs["max_tokens"])
             self.assertEqual("disabled", call.kwargs["extra_body"]["thinking"]["type"])
         self.assertEqual(1, self.db.query(CharacterTranslation).filter_by(source_hash=result["source_hash"]).count())
 
@@ -88,7 +89,35 @@ class CharacterTranslationTests(unittest.TestCase):
         self.assertGreater(provider.generate_async.await_count, 2)
         self.assertEqual(400, result["fields"]["description"].count("{{char}}"))
         for call in provider.generate_async.call_args_list:
-            self.assertTrue(all(len(text) <= 2400 for text in json.loads(call.kwargs["messages"][-1]["content"])))
+            texts = json.loads(call.kwargs["messages"][-1]["content"])
+            self.assertTrue(all(service.mapped_length(text) <= service.SEGMENT_UNITS for text in texts))
+            self.assertLessEqual(sum(map(len, texts)), service.MAX_BATCH_CHARACTERS)
+
+    def test_ascii_mapping_expands_english_segments_and_keeps_chinese_budget(self):
+        self.assertEqual(1, service.mapped_length("abcd"))
+        self.assertEqual(1, service.mapped_length("中"))
+        self.assertEqual(2, service.mapped_length("中文"))
+        self.assertEqual(["a" * 9600, "a"], service.split_text("a" * 9601))
+        self.assertEqual(["中" * 2400, "中"], service.split_text("中" * 2401))
+        for text in ("", " \n", "hello world 中文 🌙\n" * 1500, "a" * 9589 + "⟦RP_KEEP_123⟧" + "尾" * 3000):
+            with self.subTest(prefix=text[:20]):
+                parts = service.split_text(text)
+                self.assertEqual(text, "".join(parts))
+                self.assertTrue(all(service.mapped_length(part) <= service.SEGMENT_UNITS for part in parts))
+                self.assertEqual(service.MARKER.findall(text), [marker for part in parts for marker in service.MARKER.findall(part)])
+
+    def test_batch_raw_character_cap_prevents_three_expanded_segments_in_one_request(self):
+        english_jobs = [("description", 0, "a" * 9600)] * 3
+        batches = list(service.translation_batches(english_jobs))
+        self.assertEqual([1, 1, 1], list(map(len, batches)))
+        chinese_jobs = [("description", 0, "中" * 2400)] * 3
+        self.assertEqual([3], list(map(len, service.translation_batches(chinese_jobs))))
+        mixed_jobs = [("description", 0, "a" * 8000), ("description", 0, "中" * 2400)]
+        self.assertEqual([1, 1], list(map(len, service.translation_batches(mixed_jobs))))
+
+    def test_original_total_character_limit_is_unchanged(self):
+        with self.assertRaisesRegex(service.TranslationError, "12 万字符"):
+            service.reading_source({"description": "a" * 120001})
 
     def test_truncated_response_is_not_saved(self):
         card = {**self.card, "description": "Truncated unique source"}

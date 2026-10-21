@@ -280,7 +280,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
     }
   }
   ```
-* Uses `translation_model` and the existing chat provider connection. Long cards are segmented; the complete result is committed to SQLite atomically. Invalid/truncated model output, changed placeholders or translation service failures return `502`; the original card and previous successful cache are retained. Invalid request shapes return `422`.
+* Uses `translation_model` and the existing chat provider connection. Long cards are segmented using a coarse length mapping (ASCII characters count as 0.25, others as 1), with up to 2,400 mapped units per segment. Each batch has at most three segments and 9,600 raw text characters in total; the output token ceiling is raised from 8,192 to 32,768. The 120,000 raw character input limit is unchanged. The complete result is committed to SQLite atomically. Invalid/truncated model output, changed placeholders or translation service failures return `502`; the original card and previous successful cache are retained. Invalid request shapes return `422`.
 * Translations are reading-only: no character, worldbook, prompt, greeting index or chat message is updated. Name, tags and hidden prompt fields remain in the original language. Cache entries survive character deletion and may be reused after reimporting the same content.
 
 #### POST `/characters/create`
