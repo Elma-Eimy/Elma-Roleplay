@@ -765,10 +765,13 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 | --- | --- | --- | --- |
 | GET | (none) | `limit=10` (1–20), `offset=0` (≥0) | `{ "items": [Consolidation], "total": 12, "limit": 10, "offset": 0, "has_more": true }`, local records in descending ID order |
 | POST | `/preview` | `{ "after_id": 0 }`, integer ≥ 0 | `Consolidation` |
-| POST | `/{batch_id}/apply` | `{ "group_ids": [0] }`, 1–12 distinct non-negative indices | `Consolidation` |
+| POST | `/{batch_id}/apply` | `{ "group_ids": [0], "expected_revision": 0 }`, 1–12 distinct non-negative indices | `Consolidation` |
+| PUT | `/{batch_id}/groups/{group_id}` | `{ "expected_revision": 0, "content": "Reviewed content", "ignored": false, "ignore_reason": "" }` | `Consolidation` |
 | POST | `/{batch_id}/undo` | None | `Consolidation` |
 
 `Consolidation` contains `id`, `status` (`preview/applied/undone`), `created_at`, `sources` (original-card snapshots), `groups` (`id`, `kind: duplicate/event`, `source_ids`, `content`, `reason`), `selected_group_ids`, `results` (`id`, `content`), `scanned_count`, `remaining_count`, `has_more`, and `next_after_id`.
+
+Review adds batch `review_revision` (legacy records default to 0) and group `original_content`, `ignored`, `ignore_reason`, `conflict` (message or null). PUT is allowed only for previews: optional trimmed content is 4–500 characters, reason is at most 160 characters, ignored defaults to false. Omit content to change only review metadata, including on stale groups. Each save increments the revision; stale revisions return 409. Apply defaults its expected revision to 0 for older clients, uses saved reviewed content, and rejects ignored or conflicting selected groups. Unselected conflicts do not block valid groups. Ignore is limited to this preview and can be reversed before apply; it does not suppress future previews. Review preserves model originals and source snapshots in the existing JSON record, without memory/vector writes or a schema migration. Generation locks also block review saves.
 
 Each preview scans at most 100 active local original cards in ID order. Inherited cards and consolidation outputs are excluded. Preview persists suggestions without changing memories; apply accepts only saved group indices, atomically revalidates unchanged sources, preserves originals, creates derived cards/source links/story scope, and queues vector Outbox tasks. Repeating the same apply/undo is idempotent. Selected originals enter the existing `superseded` category (UI: 历史原卡); active counts and retrieval use the same story view. Filters still run before pagination.
 

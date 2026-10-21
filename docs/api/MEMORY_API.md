@@ -197,10 +197,17 @@ ORDER BY created_at DESC, id DESC
 | --- | --- | --- |
 | GET | `/sessions/{session_id}/memory-consolidations` | 当前故事整理记录，含来源快照、建议和结果；`limit=10`（1–20）、`offset=0`（≥0） |
 | POST | `/sessions/{session_id}/memory-consolidations/preview` | 请求 `{ "after_id": 0 }`，按原卡 ID 升序扫描最多 100 张 |
-| POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/apply` | 请求 `{ "group_ids": [0] }`，应用指定建议 |
+| POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/apply` | 请求 `{ "group_ids": [0], "expected_revision": 0 }`，应用指定建议 |
+| PUT | `/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}` | 保存单组审阅，返回完整整理记录 |
 | POST | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | 无请求体，撤销本次整理对当前故事的影响 |
 
 预览只扫描当前 Persona 的有效普通原卡，不含继承卡、已被替代/整理收起的原卡和整理产物。每次模型输入有界；每批最多 12 组、每组 2–12 张、各组来源不重叠、类型相同。仅支持 `duplicate`（重复内容）和 `event`（同一次事件，来源必须全为 event），不处理矛盾、时态变化或不同事件的主题归纳。建议正文 4–500 字符，理由 1–160 字符。模型是否正确保留语义仍需用户审阅。
+
+逐组审阅请求为 `{ "expected_revision": 0, "content": "审阅后的完整正文", "ignored": false, "ignore_reason": "" }`。`expected_revision` 必填且非负；`content` 可省略，提供时去除首尾空白后须为 4–500 字符；`ignored` 默认 false；`ignore_reason` 为可选原因或备注，最多 160 字符。仅待审阅批次可保存；忽略不删除原卡，可在应用前恢复，仅作用于这份预览，不阻止未来重新生成建议。来源过期仍可忽略或恢复，但不能修改正文或应用。
+
+返回新增批次 `review_revision`（旧记录默认为 0）和分组 `original_content`（模型原稿）、`ignored`、`ignore_reason`、`conflict`（无冲突为 null）。预览记录读取时逐组检查来源是否已修改、删除、不再有效及日期/否定边界，界面展示原因并禁止勾选冲突组；其他有效组仍可应用。保存审阅会递增版本；保存与应用版本不匹配返回 `409`，须刷新后重新核对。应用请求的 `expected_revision` 默认 0，兼容未经编辑的旧预览；已忽略组不能应用。客户端编辑期间禁止应用，保存成功清空选择以便重新确认。
+
+审阅与模型原稿保存在既有预览 JSON 中，无表结构变更；不修改来源快照，不生成记忆或向量任务。生成对话期间保存审阅同样返回 `409`。应用后保持批量撤销，不提供单组独立应用/撤销。
 
 整理记录结构：
 
@@ -226,7 +233,7 @@ ORDER BY created_at DESC, id DESC
 
 `duplicate` 来源的明确否定标记有差异时也跳过整组，应用旧预览时同样返回 `409`，避免把肯定和否定的独立事实当作重复。该规则是保守筛查：可能让不同措辞的等价事实保持分开，未匹配到否定标记也不能证明两个命题等价。事件组不按这一否定标记规则拆分，以保留同次事件内“用户车坏了、林墨车没坏”等正常细节。
 
-预览会持久化建议和完整来源快照，不创建新记忆或向量任务。应用仅接收分组编号，正文始终来自已保存建议；在 `BEGIN IMMEDIATE` 事务内校验来源内容、类型、权重、消息范围、版本与有效性，再原子写入整理产物、多来源关系、当前故事快照和向量 Outbox。结果权重取来源最大值，来源范围取起止包络，精确依据仍以来源关联/快照为准。
+预览会持久化建议和完整来源快照，不创建新记忆或向量任务。应用仅接收分组编号和审阅版本，正文始终来自已保存建议；在 `BEGIN IMMEDIATE` 事务内校验来源内容、类型、权重、消息范围、版本与有效性，再原子写入整理产物、多来源关系、当前故事快照和向量 Outbox。结果权重取来源最大值，来源范围取起止包络，精确依据仍以来源关联/快照为准。
 
 状态为 `preview → applied → undone`；同一份预览只能应用一次，未选组保持原样，想调整选择应重新预览。同分组的重复应用、重复撤销幂等。应用后的原卡仍留在 SQLite 和向量库，并进入“历史原卡”分类。撤销保留整理产物与记录，恢复当前故事原卡；已建立的子故事保持其分叉时快照。整理结果若在当前故事可见范围内已有后续版本，撤销返回 `409`，避免恢复过时信息；仅子故事独有的后续版本不阻止父故事撤销。
 
