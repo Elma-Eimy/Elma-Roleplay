@@ -288,12 +288,15 @@ const saveEngineSettings = async (updatedSettings: AppSettings) => {
     uni.showLoading({ title: '正在保存...' });
     await updateSettings({ ...updatedSettings });
     // 同步本地的 engineSettings 状态
-    Object.assign(engineSettings, updatedSettings);
+    Object.assign(engineSettings, await getSettings());
     uni.hideLoading();
     uni.showToast({ title: '引擎设置已保存', icon: 'success' });
   } catch (e) {
     uni.hideLoading();
-    uni.showToast({ title: '保存失败，请检查连接', icon: 'none' });
+    const raw = e instanceof Error ? e.message : "请检查连接后重试。";
+    let detail = raw;
+    try { detail = JSON.parse(raw.slice(raw.indexOf("{"))).detail || raw; } catch { /* 保留网络错误 */ }
+    uni.showModal({ title: "引擎设置未保存", content: typeof detail === "string" ? detail : "请检查模型配置后重试。", showCancel: false });
     console.error("Failed to save settings", e);
   }
 };

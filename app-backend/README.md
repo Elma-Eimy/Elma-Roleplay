@@ -1,5 +1,9 @@
 # AI Roleplay Backend Engine
 
+[项目说明](../README.md) · [共享 API](../API_TABLE.md) · [文档索引](../docs/README.md)
+
+后端职责边界见 [架构说明](../docs/ARCHITECTURE.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
+
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  
 > 支持角色深度模拟、长期记忆 RAG 检索、树状分支会话管理、认知与好感度动态演化、多模态 TTS 音频生成以及多候选回复分支机制。
 
@@ -9,7 +13,7 @@
 
 - [技术栈](#技术栈)
 - [核心特性](#核心特性)
-- [近期记忆与上下文增强](#近期记忆与上下文增强2026-07)
+- [记忆与上下文机制](#记忆与上下文机制)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [API 参考](#api-参考)
@@ -34,6 +38,8 @@
 
 ## 核心特性
 
+角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 默认为 `deepseek-flash`。使用流程和范围见 [角色卡双版本阅读](../docs/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
+
 ### 1. 优化 Prompt Caching 的提示词设计
 
 - **角色数量中立的 Main RP Prompt**：`{{char}}` 表示当前角色卡或叙事主体，不机械推断卡内逻辑角色数量。单角色卡不会被擅自扩展成群像；单卡若明确声明多个角色、Narrator、Director 或场景主持职责，则允许在同一 assistant 回复中呈现多个受控角色，并要求分别维持身份、目标、知识边界、秘密、人格和语言风格。
@@ -56,24 +62,24 @@
 - **下一轮确认**：用户发送下一条消息后，上一轮最终 active 候选即被视为已确认并冻结；修改更早的剧情应创建会话分支，而不是原地切换已经进入长期记忆流程的历史候选。
 - **元数据绑定**：每个候选回复版本在数据库中独立绑定其情绪标签（`emotion_tag`）、好感度变动（`affection_change`）以及生成的音频路径（`audio_path`）。切换候选回复时，好感度和情绪指标会自动联动回滚并重算，实现“音画同步、多版本安全切换”。
 
-### 3. 语音合成（TTS）与 LRU 缓存机制
+### 3. 语音合成（TTS）与本地缓存
 
 - **情感与声音事件**：接入云端 MIMO-v2.5-tts API，支持“开心、悲伤、愤怒、温柔、悄悄话、唱歌”等情感，以及“（叹气）、（笑声）、（哭声）、（咳嗽）、[inhale]（吸气）”等声音事件。
 - **文本前处理**：
   - **短文本提取、长文本压缩**：使用快速模型（如 `deepseek-v4-flash`）过滤非发音的物理动作、心理活动、场景叙述、其他角色台词和对话前缀。800 字符以内尽量保留原台词；更长输入会保留关键事实和角色口吻，并压缩为最多 500 字符的可播报文本。
-  - **结构化质量门槛**：辅助模型关闭 thinking，并返回区分 `ok` 与 `no_speech` 的 JSON。截断、空正文、非法结构或长文本未压缩会触发一次强化重试，不能再把失败结果直接发送给 TTS。
+  - **结构化质量门槛**：辅助模型默认关闭 thinking（可独立配置），并返回区分 `ok` 与 `no_speech` 的 JSON。截断、空正文、非法结构或长文本未压缩会触发一次强化重试，不能再把失败结果直接发送给 TTS。
   - **声音标签白名单**：只保留受支持的情绪与声音控制标签，动作描述和未知方括号内容不会伪装成音频指令。
   - **安全规则退避**：连续两次 LLM 处理失败时，只保守提取明确引号内或目标角色名前缀后的台词；超长且无法确认说话内容的文本返回“无可安全合成台词”，绝不回退整段原文。
-- **LRU 缓存与重建**：
+- **本地缓存与重建**：
   - 生成的文件缓存于本地（`data/audio_cache`）。
   - **预处理版本隔离**：缓存键包含 TTS 预处理器版本；提炼规则升级后不会继续命中旧版原文音频。
-  - **缓存重建**：播放请求到达时，如果本地物理文件不存在但数据库中有记录，会自动触发重新合成，避免播放失败。
-  - **LRU 清理**：由后台线程监控缓存文件总数，超限时自动清理较旧的音频。
-- **音频托管**：通过自定义 `/audio/{filename}` 路由提供音频文件；客户端需要先用携带 `X-API-Key` 请求头的下载请求取得临时文件，再交给播放器播放。该路由同时负责缓存文件丢失后的延迟自愈重建，不接受 URL 查询参数中的长期密钥。
+  - **缓存重建**：再次调用 `POST /utils/tts` 并传入 `message_id` 时，会检查绑定文件是否存在，缺失则重新合成；直接下载缺失文件的限制见根目录 API 文档。
+  - **容量清理**：合成完成后启动后台线程检查 MP3 数量，超限时按文件修改时间（mtime）删除最旧的文件；缓存命中不刷新该时间，因此不是严格的 LRU。
+- **音频托管**：通过 `/audio/{filename}` 路由下载文件，请求需携带 `X-API-Key`。当前恢复分支仍使用旧文件名格式，不能恢复缺失的 `p2` 版本文件；需重新请求 TTS。长期密钥不接受通过 URL 查询参数传递。
 
 ### 4. 数据库自动迁移升级与 Alembic 机制
 
-- **启动期自适应升级**：FastAPI 执行 startup 回调时，会显式调用 `core/database.py` 中的 `run_migrations()`，使用 Alembic 扫描并自动应用所有新迁移升级（通过 `command.upgrade` 直达 `head` 版本）。单纯导入数据库模块不会触发迁移。
+- **启动期自适应升级**：`application/lifecycle.py` 的 lifespan 启动阶段显式调用 `core/database.py` 中的 `run_migrations()`，使用 Alembic 自动应用新迁移至 `head`。单纯导入数据库模块不会触发迁移。
 - **Baseline 自动对齐**：若检测到已存在 `chat_messages` 但没有 `alembic_version`，系统会自动执行 baseline revision 的 stamp 标记，以确保向后兼容与升级的平滑。
 
 ### 5. 游标滚动分页历史消息 API
@@ -85,7 +91,8 @@
 
 - 使用 `asyncio.Lock` 实现单会话串行处理，避免多请求并发时的写乱序。
 - 非流式接口：使用 `try/finally` 确保锁正常释放。
-- 流式接口：锁的生命周期绑定到 SSE `StreamingResponse` 的 `finally` 块，防止并发请求导致写入乱序。
+- 流式接口：后台生成 Worker 持有会话锁，与 SSE 连接解耦，断连后继续生成并落库。关闭或重载会取消生成；若已进入写库，则等待保存完成，未完成回合清理结束后再释放数据库会话与锁。
+- 历史恢复：历史读取开始或结束时会话仍持锁，则返回 `is_generating=true`；生成在读取期间结束时保守要求客户端再拉取一次最终历史。
 - 清理机制：会话删除时自动从锁字典中清理对应条目，防止长期运行占用内存。
 
 ### 7. 长期记忆 RAG 检索管道
@@ -94,7 +101,7 @@
 - 进阶祖先链检索：使用单次 SQLite CTE 递归查询，避免 RAG 检索时出现多轮 N+1 查询。
 - **三维混合打分精排**：**余弦相似度（60%）+ 内容重要性（20%）+ 时间衰减（20%）**，对父辈及祖先会话条目额外施加代际惩罚权重。
 - **图谱关联召回**：与 **Graph RAG** 关系提取相匹配，召回时混合查询数据库事实三元组，获得更精准的事实一致性上下文。
-- 检索权重、半衰期、候选倍数等参数均可在 `config.yaml` 中调整；其中标记为动态可调的参数还可通过 API 热更新，无需重启。
+- 检索权重、半衰期、候选倍数等参数可在 `config.yaml` 中调整。HTTP 热更新仅接受 `schemas.SettingsUpdate` 声明的字段，不能仅凭配置 Schema 的 `dynamic` 标记判断是否对外开放。
 
 ### 8. 会话继承树（分叉剧情线）
 
@@ -150,7 +157,7 @@
 
 ---
 
-## 近期记忆与上下文增强（2026-07）
+## 记忆与上下文机制
 
 本轮维护重点解决了分支时间线泄漏、短长期记忆交接空档、检索查询脱离语境，以及长期记忆切片过碎的问题。当前完整链路如下：
 
@@ -225,7 +232,7 @@
 - 默认检索在当前 Persona 继承链内隐藏已被替代的旧卡。子分支替代祖先记忆不会修改祖先记录，因此父分支和兄弟分支仍可继续使用原记忆。
 - 检索侧只直接去除规范化后完全相同的内容；“喜欢/不喜欢”“已经/尚未”等高字面相似但语义相反的记忆不会再被字符相似度误删。
 - 这里只实现面向 Prompt 的轻量替代关系，不引入当前/历史/计划/取消状态机、事实槽位、有效时间或复杂历史查询。
-- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 字段见 `API_TABLE.md`。
+- 对应迁移：`f8a3b4c5d6e7_add_memory_supersedes_id.py`。API 字段见根目录的 [API 总表](../API_TABLE.md)，记忆规则详见 [记忆模块 API](../docs/api/MEMORY_API.md)。
 
 ### 6. 向量 Outbox、故障降级与离线回归
 
@@ -263,6 +270,12 @@
 
 ## 快速开始
 
+以下命令均在仓库的 `app-backend/` 目录中执行。从仓库根目录进入：
+
+```bash
+cd app-backend
+```
+
 ### 1. 安装依赖
 
 ```bash
@@ -277,7 +290,7 @@ pip install -r requirements.txt
 
 ### 2. 配置环境变量
 
-在项目根目录创建 `.env` 文件：
+在后端目录 `app-backend/` 中创建 `.env` 文件（不是仓库根目录）：
 
 ```dotenv
 # 对话模型的 API Key
@@ -313,8 +326,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ```yaml
 llm:
-  chat_model: deepseek-v4-pro                  # 主（思考）模型
-  non_reasoning_chat_model: deepseek-v4-flash  # 快速（非思考）模型，兼用于 TTS 文本预处理
+  default_chat_model: deepseek-flash           # 默认模型，与思考开关独立
+  chat_model: deepseek-v4-pro                  # 旧客户端思考模型槽
+  non_reasoning_chat_model: deepseek-v4-flash  # 旧客户端非思考模型槽
+  model_profiles: []                          # id / label / adapter
+  memory_thinking_mode: disabled
+  memory_reasoning_effort: high
+  tts_preprocess_model: deepseek-flash
+  tts_thinking_mode: disabled
+  tts_reasoning_effort: high
   memory_model: deepseek-v4-flash              # 记忆提纯专用模型
   embedding_model: doubao-embedding-vision-251215
   chat_base_url: https://api.deepseek.com/v1
@@ -322,7 +342,7 @@ llm:
   temperature: 0.7
   memory_temperature: 0.3
   max_tokens: 4096
-  reasoning_mode: false                        # true → 默认使用思考模型
+  reasoning_mode: false                        # 默认模型的思考开关，不再切换模型
   timeout: 60                                  # LLM 请求超时秒数
   top_p: 1.0
   presence_penalty: 0.0
@@ -364,7 +384,7 @@ app:
 
   # 安全与限制
   cors_origins:
-    - "*"                                      # 预留的 CORS 配置；当前 main.py 仍允许所有 Origin
+    - "*"                                      # 预留的 CORS 配置；当前应用工厂仍允许所有 Origin
   max_card_size_mb: 10
 
   # 历史消息拉取
@@ -377,26 +397,27 @@ tts:
   model: "mimo-v2.5-tts"                       # 合成模型
   default_voice: "冰糖"                        # 默认角色音色
   cache_dir: "data/audio_cache"                # 音频缓存本地文件夹
-  max_cache_files: 500                         # LRU 缓存淘汰的最大文件数
+  max_cache_files: 500                         # 按修改时间清理缓存的最大文件数
 ```
 
 ### 动态可调参数（通过 `PUT /utils/settings` 无需重启）
+
+以下列表以 `schemas.SettingsUpdate` 为准。检索打分权重、祖先权重、去重阈值和图谱阈值目前不属于 HTTP 更新接口的字段，应修改 YAML 后重启。
 
 `temperature` · `max_tokens` · `reasoning_mode` · `context_history_limit` ·  
 `memory_handoff_margin` · `retrieval_top_k` · `retrieval_context_turns` ·
 `retrieval_query_max_chars` · `retrieval_min_importance` · `retrieval_max_distance` ·
 `lorebook_scan_depth` · `lorebook_token_budget` · `lorebook_max_recursive_passes` ·  
 `cognition_max_words` · `retrieval_half_life_turns` · `retrieval_candidate_multiplier` ·  
-`retrieval_weight_similarity` · `retrieval_weight_importance` · `retrieval_weight_time` ·
-`retrieval_ancestor_weight` · `dedup_write_threshold` · `graph_min_importance` ·
-`graph_max_relations` ·
 `top_p` · `presence_penalty` · `frequency_penalty` · `repetition_penalty` · `reasoning_effort`
 
 ---
 
 ## API 参考
 
-> 除公开静态头像 `/assets/avatars/*` 外，所有接口在 `.env` 中设置 `ACCESS_API_KEY` 后都需在请求头中携带 `X-API-Key: <your_key>`。
+完整请求、响应和前后端契约统一维护在根目录的 [API 总表](../API_TABLE.md)，记忆筛选、继承和故事导航规则见 [记忆模块 API](../docs/api/MEMORY_API.md)。
+
+> 业务 API 在 `.env` 中设置 `ACCESS_API_KEY` 后需携带 `X-API-Key: <your_key>`。静态头像 `/assets/avatars/*` 公开访问；内置 `/docs`、`/redoc` 和 `/openapi.json` 目前也未受该依赖保护。
 >
 > 不再支持通过 `?api_key=` 或 `?token=` 传递长期密钥，避免密钥进入访问日志、浏览器历史或 Referer。
 >
@@ -408,68 +429,7 @@ tts:
 - **音频**：后端返回 `/audio/{filename}` 相对 URL。该资源不是公开静态文件，客户端必须使用带 `X-API-Key` 请求头的下载请求获取临时文件后播放。
 - **外部绝对 URL**：后端若返回外部绝对资源 URL，该 URL 必须本身公开或为短期签名地址，客户端不会向外部域名发送本后端的长期 API Key。
 
-### 系统工具
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/` | 服务健康检查 |
-| POST | `/upload/avatar` | 上传头像（PNG/JPG/WEBP；大小上限由 `app.max_card_size_mb` 控制，当前为 10 MB） |
-| GET | `/utils/settings` | 获取当前运行时配置 |
-| PUT | `/utils/settings` | 热更新配置并持久化到 `config.yaml` |
-| POST | `/utils/tts` | 文本转语音合成接口（返回合成音频的挂载 URL） |
-| GET | `/audio/{filename}` | 使用 `X-API-Key` 请求头下载/播放音频（支持文件丢失后的在线延迟自愈重建） |
-
-### 角色卡管理 `/characters`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/characters/parse` | 解析 PNG/JSON 角色卡，返回结构化数据（不入库） |
-| POST | `/characters/create` | 将角色数据存入数据库 |
-| GET | `/characters` | 获取所有角色简要列表 |
-| GET | `/characters/{character_id}` | 获取角色完整设定 |
-| GET | `/characters/{character_id}/memory-overview` | 分页获取故事记忆导航、最后消息和分支级统计 |
-| PUT | `/characters/{character_id}` | 更新角色设定 |
-| DELETE / POST | `/characters/{character_id}` 或 `/characters/{character_id}/delete` | 级联删除角色与所有会话，并通过 Outbox 异步清理 ChromaDB 集合、对话音频和不再被引用的受管头像（POST 用于兼容客户端） |
-
-### 会话管理 `/sessions`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/sessions/create` | 新建会话（指定 `parent_session_id` 则继承分叉） |
-| GET | `/sessions` | 分页查询角色会话，并可批量返回最后一条有效消息 |
-| GET | `/sessions/{session_id}` | 获取会话详情（含 Persona 完整状态） |
-| GET | `/sessions/{session_id}/history` | 获取会话聊天历史，支持 `limit` 与 `before_id` 游标分页 |
-| PUT | `/sessions/{session_id}/title` | 修改会话标题 |
-| DELETE / POST | `/sessions/{session_id}` 或 `/sessions/{session_id}/delete` | 安全删除会话，自动重连子节点继承链 (POST 用于避让) |
-| POST | `/sessions/{session_id}/trigger_summary` | 手动触发记忆提纯 |
-| POST | `/sessions/{session_id}/trigger_cognition` | 手动触发认知状态更新 |
-| PUT | `/sessions/messages/{message_id}` | 编辑消息内容 |
-| DELETE / POST | `/sessions/messages/{message_id}` 或 `/sessions/messages/{message_id}/delete` | 删除消息（自动回滚好感与情绪） |
-| GET | `/sessions/{session_id}/memories` | 服务端筛选并分页返回当前故事的记忆、总数和分类统计 |
-| POST | `/sessions/{session_id}/memories` | 手动写入当前会话的专属向量记忆 |
-| PUT | `/sessions/{session_id}/memories/{memory_id}` | 修改当前会话的本地专属向量记忆（继承只读） |
-| DELETE | `/sessions/{session_id}/memories/{memory_id}` | 删除当前会话的本地专属向量记忆（继承只读） |
-| GET | `/sessions/{session_id}/compile_prompt` | 调试端点：预览/编译最近一次大模型 Prompt 组装 |
-
-### 世界书管理 `/lorebooks`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/lorebooks/import` | 导入并解析 SillyTavern 格式的世界书 JSON 文件 |
-| GET | `/lorebooks` | 查询系统中所有独立世界书列表 |
-| GET | `/lorebooks/{lorebook_id}` | 获取单个世界书详情（包含所有条目） |
-| PUT | `/lorebooks/{lorebook_id}` | 编辑更新世界书属性和条目 |
-| DELETE / POST | `/lorebooks/{lorebook_id}` 或 `/lorebooks/{lorebook_id}/delete` | 删除指定世界书及其所有绑定关系 (POST 用于避让) |
-| POST | `/lorebooks/characters/{character_id}/bind/{lorebook_id}` | 将指定世界书绑定到角色卡上 |
-| POST | `/lorebooks/characters/{character_id}/unbind/{lorebook_id}` | 将指定世界书与角色卡解绑 |
-
-### 对话核心 `/chat`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/chat` | 非流式对话（等待完整回复） |
-| POST | `/chat/stream` | SSE 流式对话（逐 chunk 推送） |
-| POST | `/chat/switch_candidate` | 设定当前活跃的消息候选版本（切换 active_index 并联动好感度） |
+各业务端点的路径、分页参数、请求和响应示例统一见 [API 总表](../API_TABLE.md)，本页不再重复维护接口表。
 
 ---
 
@@ -477,16 +437,23 @@ tts:
 
 ```
 app-backend/
-├── main.py                  # 启动入口，路由注册，CORS
+├── main.py                  # ASGI 入口：app = create_app()
 ├── config.yaml              # 非敏感运行时配置
 ├── .env                     # 敏感密钥（不提交）
 ├── requirements.txt
-├── query_db.py              # 数据库诊断工具
-├── clear_db.py              # 数据库重置清理脚本
+├── application/
+│   ├── factory.py           # 应用、CORS、静态资源与路由装配
+│   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   └── banner.py            # 启动地址提示
+├── scripts/
+│   ├── README.md            # 显式维护命令说明
+│   ├── query_db.py          # 数据库概览
+│   ├── query_session_messages.py # 会话消息查询
+│   └── clear_db.py          # 数据重置（保留原有终端确认）
 │
 ├── core/
 │   ├── models.py            # SQLAlchemy ORM 模型定义
-│   ├── database.py          # 数据库连接、Session 工厂与 Alembic 迁移执行函数（由 main.py startup 调用）
+│   ├── database.py          # 数据库连接、Session 工厂与迁移函数（由 lifespan 调用）
 │   ├── config.py            # Settings 类，加载 .env + config.yaml
 │   ├── auth.py              # X-API-Key 鉴权依赖
 │   ├── locking.py           # 会话级 asyncio.Lock 锁管理
@@ -497,9 +464,12 @@ app-backend/
 │   ├── sessions.py          # /sessions 端点（分页历史、消息/记忆管理、调试等）
 │   ├── characters.py        # /characters 端点
 │   ├── lorebooks.py         # /lorebooks 端点（导入、详情、编辑、绑定等）
+│   ├── audio.py             # 受鉴权保护的音频下载
 │   └── utils.py             # /upload/avatar 与 /utils/tts 端点
 │
 ├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
+│   ├── media/
+│   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
 │   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
 │   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）
@@ -524,6 +494,7 @@ app-backend/
 │   │   ├── memory_extraction_service.py # 长期记忆提取、剪裁与来源范围限制服务
 │   │   ├── memory_manager.py # RAG 检索粗排与精排计算、记忆库接口层外观模式（Facade）
 │   │   ├── persona_lineage.py # Persona 继承树追溯与分支 turn 计算服务
+│   │   ├── session_memory_query_service.py # 记忆分页、分类统计与角色故事导航
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
 │   ├── parse.py             # SillyTavern 角色卡解析与清洗
@@ -533,31 +504,18 @@ app-backend/
 ├── alembic.ini              # Alembic 数据库迁移配置文件
 ├── alembic/                 # Alembic 数据库迁移版本控制目录
 │
-├── tests/                   # 系统单元测试与集成测试套件目录
-│   ├── test_config.py       # 动态配置参数加载单元测试
-│   ├── test_alembic_cli.py  # Alembic CLI 直接执行与递归导入回归测试
-│   ├── test_delete_candidate.py # 消息候选版本删除好感度回滚单元测试
-│   ├── test_independent_lorebook.py # 独立世界书绑定与扫描单元测试
-│   ├── test_lorebook.py     # 世界书引擎匹配与预算裁剪单元测试
-│   ├── test_lorebook_trigger_compatibility.py # 世界书过滤逻辑、正则与概率兼容测试
-│   ├── test_memory_deduplication.py # 记忆替代与多级继承集成测试
-│   ├── test_branching_start_message.py # 剧情线分叉首条消息克隆绑定测试
-│   ├── test_branch_context_boundary.py # 分叉点持久化与父分支未来消息隔离测试
-│   ├── test_memory_handoff.py # 短期上下文与长期记忆动态交接测试
-│   ├── test_contextual_retrieval_query.py # 上下文化检索、边界与预算测试
-│   ├── test_memory_card_extraction.py # 完整记忆卡、来源范围与失败回滚测试
-│   ├── test_memory_versioning.py # same/replace/coexist、分支局部替代与否定词回归测试
-│   ├── manual_deepseek_memory_quality.py # 仅调用聊天模型的人工提纯质量样例
-│   ├── test_memory_manager_offline.py # 向量故障降级与已知缺陷诊断测试
-│   ├── test_graph_rag.py    # 知识图谱 Graph RAG 增强检索测试
-│   ├── test_graph_rag_quality.py # 别名、分支覆盖、真实 2-hop 与枢纽抑制离线测试
-│   ├── test_outbox.py       # 发件箱模式任务消费与退避重试单元测试
-│   ├── test_avatar_cleanup.py # 受管头像删除、共享引用、越界防护与幂等清理测试
-│   ├── test_parse.py        # SillyTavern V1/V2 角色卡解析与清洗单元测试
-│   ├── test_character_prompt_compatibility.py # Prompt DSL、Depth Prompt、单卡多逻辑角色与 Main RP Prompt 兼容测试
-│   ├── test_tts_api.py      # TTS 预处理过滤及云端合成测试
-│   ├── test_closed_loop_memory.py # 记忆提纯与 RAG 闭环流程测试
-│   └── test_api.py          # 路由树与会话剧情重连集成测试
+├── tests/                   # 按职责分组的自动回归与手动场景
+│   ├── __main__.py          # python -m tests：临时工作区运行入口
+│   ├── README.md            # 测试指南与新增约定
+│   ├── api/                 # 接口、鉴权与路由服务边界
+│   ├── conversation/        # Prompt、分叉、对话回合和上下文
+│   ├── memory/              # 提纯、版本、检索与图谱
+│   ├── infrastructure/      # 迁移、资源清理、Embedding 与 Outbox
+│   ├── core/                # 配置系统
+│   ├── lorebook/            # 世界书规则
+│   ├── parsing/             # 回复解析
+│   ├── tts/                 # 语音文本预处理
+│   └── manual/              # 显式运行的旧式场景与真实服务抽查
 │
 └── data/
     ├── data.db              # SQLite 关系型数据库文件 (WAL 模式)
@@ -569,92 +527,19 @@ app-backend/
 
 ## 测试
 
-所有单元测试和集成测试均存放于 `tests/` 目录下，在运行测试前请确保已激活虚拟环境。
-
-Windows 开发环境可以直接使用项目虚拟环境解释器运行完全离线测试（不依赖外部大模型及向量数据库）：
-
-```powershell
-.\venv\Scripts\python.exe .\tests\test_branch_context_boundary.py      # 分叉边界持久化与未来消息隔离测试
-.\venv\Scripts\python.exe .\tests\test_memory_handoff.py              # 短短期上下文与长期记忆动态交接测试
-.\venv\Scripts\python.exe .\tests\test_contextual_retrieval_query.py   # 上下文化检索查询生成与边界测试
-.\venv\Scripts\python.exe .\tests\test_memory_card_extraction.py       # 语义记忆卡提取及来源定位测试
-.\venv\Scripts\python.exe .\tests\test_memory_versioning.py            # same/replace/coexist 分支局部替代关系测试
-.\venv\Scripts\python.exe .\tests\test_memory_manager_offline.py       # 向量数据库不可用时降级退避与冷处理测试
-.\venv\Scripts\python.exe -m unittest tests.test_vector_outbox_consistency -v # SQLite-Chroma 一致性测试
-.\venv\Scripts\python.exe -m unittest tests.test_alembic_cli -v        # Alembic 启动与命令行冲突避免测试
-.\venv\Scripts\python.exe .\tests\test_prompt_token_estimator.py       # 启发式 Token 估算器与块分析测试
-.\venv\Scripts\python.exe .\tests\test_character_prompt_compatibility.py # 角色卡 Prompt DSL 与 Main RP Prompt 兼容测试
-.\venv\Scripts\python.exe -m unittest tests.test_avatar_cleanup -v       # 受管头像生命周期与安全删除测试
-.\venv\Scripts\python.exe -m unittest discover -s tests -p 'test_lorebook_trigger_compatibility.py' -v # 世界书触发语义兼容测试
-.\venv\Scripts\python.exe .\tests\test_router_service_boundaries.py    # 路由层参数与异常处理的边界单元测试
-```
-
-这些测试不会调用真实对话模型或向量模型，提供稳定的离线持续回归验证。
-
-如果运行全套集成与单元测试，请在终端（激活环境后）执行对应的脚本：
+在后端目录使用当前虚拟环境运行：
 
 ```bash
-# 1. 动态配置参数加载与热更新单元测试
-python tests/test_config.py
-
-# 2. 消息候选版本（Swipe）切换与删除好感度/心情回滚测试
-python tests/test_delete_candidate.py
-
-# 3. 独立世界书（Lorebook）加载与角色绑定测试
-python tests/test_independent_lorebook.py
-
-# 4. 世界书关键词匹配、深度扫描与 Token 限制裁剪测试
-python tests/test_lorebook.py
-
-# 5. 记忆合并替代与跨分支继承的图谱/向量召回集成测试
-python tests/test_memory_deduplication.py
-
-# 6. 分剧情线分叉起点克隆绑定首条消息测试
-python tests/test_branching_start_message.py
-
-# 7. 知识图谱 Graph RAG 两邻接点召回与合并重叠实体测试
-python tests/test_graph_rag.py
-
-# 8. 知识图谱图论相关特性（别名处理、COW 关系折叠、枢纽抑制）测试
-python tests/test_graph_rag_quality.py
-
-# 9. 发件箱 outbox_worker 异常断电租约锁与指数退避重试测试
-python tests/test_outbox.py
-
-# 10. SillyTavern V1/V2 角色卡解析、元数据解码与 HTML 清洗测试
-python tests/test_parse.py
-
-# 11. TTS 前处理（动作过滤、声效保留）及云端合成模拟测试
-python tests/test_tts_api.py
-
-# 12. 记忆提纯触发、认知更新迭代与 RAG 结合的闭环流程测试
-python tests/test_closed_loop_memory.py
-
-# 13. 对话流式接口中途异常、断开导致的消息事务性物理回滚与释放锁测试
-python tests/test_chat_turn_service.py
-
-# 14. 向量嵌入失败下的容错和空值响应退避策略测试
-python tests/test_embedding_failure_policy.py
-
-# 15. 路由树挂载、级联删除重连与会话继承树完整性集成测试
-python tests/test_api.py
+python -m tests
+python -m tests --group memory
+python -m tests --group conversation --pattern test_branch_context_boundary.py
 ```
 
-需要人工抽查真实大模型对于记忆提取身份解析、卡片颗粒度生成的质量时，可运行：
+Windows 未激活环境时使用 `.\venv\Scripts\python.exe -m tests`。
 
-```powershell
-.\venv\Scripts\python.exe .\tests\manual_deepseek_memory_quality.py
-```
+入口会创建临时工作区、临时数据库和服务配置，再执行自动回归；不会复制日常开发的密钥或数据。需要真实模型、持久数据库或本地角色卡的场景保留在 `tests/manual/`，不参与默认发现。
 
-该脚本调用配置中的记忆提取大模型，但会使用内存 Mock 屏蔽向量与图谱写入，因此不依赖真实 ChromaDB 服务。
-
-Alembic 迁移机制与命令行也受到完全支持。加载 `alembic/env.py` 时会自动识别命令行环境并临时屏蔽 `database.py` 的应用级自动升级副作用，确保无循环：
-
-```powershell
-.\venv\Scripts\python.exe -m alembic heads
-.\venv\Scripts\python.exe -m alembic current
-.\venv\Scripts\python.exe -m alembic upgrade head
-```
+目录职责、调试方式和手动脚本的使用边界统一维护在 [测试指南](tests/README.md)。
 
 ---
 
@@ -662,6 +547,6 @@ Alembic 迁移机制与命令行也受到完全支持。加载 `alembic/env.py` 
 
 - **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
 - **密钥传输边界**：长期 `ACCESS_API_KEY` 只允许放在 `X-API-Key` 请求头中，禁止拼接到头像、音频或其他 URL。生产环境还必须启用 HTTPS，避免请求头在传输途中被窃听。
-- **自愈缓存策略**：本地音频缓存目录（`data/audio_cache/`）可以根据需要进行手动清理或重命名。系统带有自愈模式，如果物理文件丢失但数据库有路径，它会在用户下一次触发朗读时默默发起被动重建，完全不影响系统运行。
+- **缺失音频恢复**：重新请求 `POST /utils/tts` 并传入原 `message_id`、音色和语速可重新生成。直接下载缺失的版本化文件目前返回 `404`，不能承诺透明恢复；详见根目录 API 文档。
 - **历史分页性能**：通过 `/sessions/{id}/history` 查询历史记录时，参数 `before_id` 可作为分页游标，强烈建议前端在聊天页初始化时分步拉取（如每次获取 50 条），并在滚动触顶时按需往前拉取，避免长会话引起的内存暴涨。
-- **移动端与 Nginx 兼容（DELETE 降级避让）**：为防范移动原生客户端及 Nginx 反向代理层在 HTTP 强跳转 HTTPS 时自动将 `DELETE` 重定向并降级为 `GET` 的现象，所有的物理删除接口均已挂载 `DELETE` 和 `POST .../delete` 双通道路径。移动端开发或联调时推荐统一走 `POST .../delete` 通道。
+- **删除接口兼容**：角色、会话、消息和世界书删除提供 `DELETE` 与 `POST .../delete` 两种路径。记忆删除目前只有 `DELETE /sessions/{session_id}/memories/{memory_id}`，没有 POST 别名。

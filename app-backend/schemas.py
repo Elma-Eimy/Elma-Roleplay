@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Literal
 
 class CharacterCreate(BaseModel):
     name: str
@@ -22,16 +22,20 @@ class SessionCreate(BaseModel):
     greeting_index: Optional[int] = None
     start_message_id: Optional[int] = None
 
+
+class CharacterTranslationRequest(BaseModel):
+    card: CharacterCreate
+    force: bool = False
+
 class SessionTitleUpdate(BaseModel):
     title: str
 
 class ChatRequest(BaseModel):
     session_id: int
     user_message: str
-    # 可选：覆盖 config.yaml 中的 reasoning_mode 设置
-    # True  → 强制使用思考模型（chat_model）
-    # False → 强制使用非思考模型（non_reasoning_chat_model）
-    # None  → 沿用 config.yaml 的默认配置（reasoning_mode 字段）
+    model: Optional[str] = Field(None, min_length=1, max_length=200)
+    thinking_mode: Optional[Literal["inherit", "enabled", "disabled"]] = None
+    # 旧客户端仍可用该字段同时选择旧模型槽位与思考模式。
     use_reasoning: Optional[bool] = None
     is_regenerate: bool = False
     user_nickname: Optional[str] = "用户"
@@ -42,12 +46,56 @@ class ChatRequest(BaseModel):
     repetition_penalty: Optional[float] = None
     reasoning_effort: Optional[str] = None
 
+    @field_validator("model")
+    @classmethod
+    def valid_model(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("模型 ID 不能为空")
+        return value.strip() if value is not None else None
+
 
 class MessageUpdate(BaseModel):
     content: str
 
 
+class ModelProfile(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=200)
+    adapter: Literal["compatible", "deepseek", "reasoning"] = "compatible"
+
+    @field_validator("id")
+    @classmethod
+    def nonblank_id(cls, value):
+        if not value.strip():
+            raise ValueError("模型 ID 不能为空")
+        return value.strip()
+
+
 class SettingsUpdate(BaseModel):
+    translation_model: Optional[str] = Field(None, min_length=1, max_length=200)
+    default_chat_model: Optional[str] = Field(None, min_length=1, max_length=200)
+    model_profiles: Optional[list[ModelProfile]] = Field(None, max_length=100)
+    memory_model: Optional[str] = Field(None, min_length=1, max_length=200)
+    memory_thinking_mode: Optional[Literal["enabled", "disabled"]] = None
+    memory_reasoning_effort: Optional[str] = None
+    tts_preprocess_model: Optional[str] = Field(None, min_length=1, max_length=200)
+    tts_thinking_mode: Optional[Literal["enabled", "disabled"]] = None
+    tts_reasoning_effort: Optional[str] = None
+
+    @field_validator("default_chat_model", "memory_model", "tts_preprocess_model", "translation_model")
+    @classmethod
+    def valid_model_id(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("模型 ID 不能为空")
+        return value.strip() if value is not None else None
+
+    @field_validator("model_profiles")
+    @classmethod
+    def unique_profiles(cls, profiles):
+        if profiles is not None and len({profile.id for profile in profiles}) != len(profiles):
+            raise ValueError("模型 ID 不能重复")
+        return profiles
+
     temperature: Optional[float] = None
     reasoning_mode: Optional[bool] = None
     context_history_limit: Optional[int] = None

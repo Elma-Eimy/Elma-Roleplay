@@ -10,21 +10,7 @@
     />
 
     <view v-else class="engine-card">
-      <!-- 推理模式开关行 -->
-      <view class="engine-row border-bottom">
-        <view class="engine-row-left">
-          <text class="engine-param-name">默认推理模式</text>
-          <text class="engine-param-desc">全局默认是否使用深度思考模型（聊天页的切换优先级更高）</text>
-        </view>
-        <view
-          class="custom-toggle"
-          :class="{ 'is-on': localSettings.reasoning_mode }"
-          @tap="localSettings.reasoning_mode = !localSettings.reasoning_mode"
-        >
-          <view class="toggle-thumb"></view>
-        </view>
-      </view>
-
+      <ModelConfiguration :settings="localSettings" @change="Object.assign(localSettings, $event)" />
       <!-- 温度参数滑块行 -->
       <view class="engine-row border-bottom">
         <view class="engine-row-left">
@@ -34,7 +20,7 @@
           </view>
           <text class="engine-param-desc">控制回复的随机性。值越高越有创意，越低越保守精确（范围 0.1 ~ 2.0）</text>
         </view>
-        <slider
+        <slider :disabled="effectiveModel.thinking"
           class="engine-slider"
           :value="Math.round(localSettings.temperature * 10)"
           :min="1" :max="20" :step="1"
@@ -97,7 +83,7 @@
             </view>
             <text class="engine-param-desc">核采样概率阈值，只保留概率累加达到此值的高概率词汇（范围 0.10 ~ 1.00）</text>
           </view>
-          <slider
+          <slider :disabled="effectiveModel.capability?.adapter === 'reasoning' || (effectiveModel.capability?.adapter === 'deepseek' && (/flash/i.test(effectiveModel.id) ? !effectiveModel.thinking : effectiveModel.thinking))"
             class="engine-slider"
             :value="Math.round(localSettings.top_p * 100)"
             :min="10" :max="100" :step="5"
@@ -118,7 +104,7 @@
             </view>
             <text class="engine-param-desc">对已出现过的词施加一次性惩罚，值越高越鼓励 AI 开启新话题（范围 -2.0 ~ 2.0）</text>
           </view>
-          <slider
+          <slider :disabled="effectiveModel.thinking"
             class="engine-slider"
             :value="Math.round((localSettings.presence_penalty + 2) * 10)"
             :min="0" :max="40" :step="1"
@@ -139,7 +125,7 @@
             </view>
             <text class="engine-param-desc">根据词汇出现的累积频次施加惩罚，用于有效抑制复读机现象（范围 -2.0 ~ 2.0）</text>
           </view>
-          <slider
+          <slider :disabled="effectiveModel.thinking"
             class="engine-slider"
             :value="Math.round((localSettings.frequency_penalty + 2) * 10)"
             :min="0" :max="40" :step="1"
@@ -160,7 +146,7 @@
             </view>
             <text class="engine-param-desc">乘积型惩罚，主要用于本地及特定云端模型，1.0 代表不惩罚（范围 0.50 ~ 2.00）</text>
           </view>
-          <slider
+          <slider :disabled="effectiveModel.capability?.adapter !== 'compatible'"
             class="engine-slider"
             :value="Math.round(localSettings.repetition_penalty * 100)"
             :min="50" :max="200" :step="5"
@@ -315,8 +301,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from "vue";
+import { ref, reactive, watch, computed } from "vue";
 import type { AppSettings } from "@/api/settings";
+import { effectiveGeneration } from "@/utils/generation";
+import { EMPTY_GENERATION } from "@/types/generation";
+import ModelConfiguration from "./ModelConfiguration.vue";
 import AppStatusState from "@/components/common/AppStatusState.vue";
 
 const props = defineProps<{
@@ -330,6 +319,7 @@ const emit = defineEmits<{
 
 const showAdvanced = ref(false);
 const localSettings = reactive<AppSettings>({ ...props.settings });
+const effectiveModel = computed(() => effectiveGeneration(localSettings, EMPTY_GENERATION));
 
 // 监听父组件属性变化，并同步更新本地副本
 watch(() => props.settings, (newVal) => {

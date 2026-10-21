@@ -243,7 +243,7 @@ export function setMockDB(db: MockDatabase) {
 /** 带有统一错误处理的通用 uni.request 请求封装 */
 export async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeout?: number } = {}
 ): Promise<T> {
   const url = `${getBaseUrl()}${endpoint}`;
   const method = (options.method ?? "GET") as "GET" | "POST" | "PUT" | "DELETE";
@@ -288,6 +288,8 @@ export async function request<T>(
         reject(new Error(err.errMsg || "网络连接失败"));
       }
     };
+
+    if (options.timeout !== undefined) reqOptions.timeout = options.timeout;
 
     if (data !== undefined) {
       reqOptions.data = data;

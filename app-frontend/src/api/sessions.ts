@@ -1,220 +1,15 @@
-import { request, USE_MOCK, getMockDB, setMockDB } from "./config";
-
-// ===================== 类型定义 =====================
-
-export interface PersonaSummary {
-  id: number;
-  affection_score: number;
-  current_mood: string;
-}
-
-export interface PersonaDetail {
-  id: number;
-  character_id: number;
-  affection_score: number;
-  cognition_state: string;
-  current_mood: string;
-  current_scenario_override: string | null;
-}
-
-export interface CharacterRef {
-  id: number;
-  name: string;
-  avatar_path: string;
-}
-
-export interface SessionSummary {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  fork_message_id?: number | null;
-  created_at: string;
-  updated_at: string;
-  persona: PersonaSummary;
-  last_message: Pick<Message, "content" | "created_at"> | null;
-}
-
-export interface SessionDetail {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona: PersonaDetail;
-  character: CharacterRef;
-}
-
-export interface MessageCandidate {
-  id: number;
-  content: string;
-  reasoning_content?: string | null;
-  emotion_tag: string | null;
-  affection_change: number | null;
-  created_at: string;
-  audio_path?: string | null;
-}
-
-export interface Message {
-  id: number;
-  role: "user" | "assistant";
-  content: string;
-  reasoning_content?: string | null;
-  emotion_tag: string | null;
-  affection_change: number | null;
-  created_at: string;
-  model_used?: string;
-  parent_id?: number | null;
-  is_active?: boolean;
-  candidates?: MessageCandidate[];
-  active_index?: number;
-  audio_path?: string | null;
-}
-
-export interface MemoryChunk {
-  id: number;
-  content: string;
-  memory_type: string;
-  importance_score: number;
-  is_local: boolean;
-  created_at: string | null;
-  origin_session_id?: number | null;
-  source_start_message_id?: number | null;
-  source_message_id?: number | null;
-  supersedes_id?: number | null;
-  is_superseded?: boolean;
-}
-
-export type MemoryScope = "all" | "local" | "inherited";
-export type MemoryStatus = "active" | "superseded" | "all";
-
-export interface MemoryStats {
-  effective_total: number;
-  local_active: number;
-  inherited_active: number;
-  superseded: number;
-}
-
-export interface GetSessionMemoriesParams {
-  q?: string;
-  scope?: MemoryScope;
-  status?: MemoryStatus;
-  limit?: number;
-  offset?: number;
-}
-
-export interface GetSessionMemoriesResponse {
-  items: MemoryChunk[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-  facets: MemoryStats;
-}
-
-export interface CharacterMemoryOverviewSession {
-  session_id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  last_message: Pick<Message, "content" | "created_at"> | null;
-  memory_stats: MemoryStats;
-}
-
-export interface CharacterMemoryOverviewResponse {
-  character_id: number;
-  story_count: number;
-  recent_session_id: number | null;
-  sessions: CharacterMemoryOverviewSession[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-}
-
-export interface CreateSessionParams {
-  character_id: number;
-  parent_session_id?: number | null;
-  title: string;
-  greeting_index?: number;
-  start_message_id?: number | null;
-}
-
-export interface CreateSessionResponse {
-  message: string;
-  session_id: number;
-  persona_id: number;
-  character_id: number;
-  inherited: boolean;
-  title: string;
-}
-
-export interface GetSessionsResponse {
-  character_id: number;
-  sessions: SessionSummary[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-}
-
-export interface RecentSessionSummary extends SessionSummary {
-  character: CharacterRef;
-  last_message: Pick<Message, "content" | "created_at"> | null;
-}
-
-export interface GetRecentSessionsResponse {
-  sessions: RecentSessionSummary[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-}
-
-export interface GetHistoryResponse {
-  session_id: number;
-  messages: Message[];
-}
-
-export interface UpdateTitleResponse {
-  message: string;
-  session_id: number;
-  title: string;
-}
-
-export interface DeleteSessionResponse {
-  message: string;
-  deleted_session_id: number;
-  relinked_children: number;
-  memories_deleted: number;
-}
-
-export interface TriggerSummaryResponse {
-  message: string;
-  session_id: number;
-  extracted_count: number;
-}
-
-export interface TriggerCognitionResponse {
-  message: string;
-  session_id: number;
-  cognition_state: string;
-}
-
-export interface UpdateMessageResponse {
-  message: string;
-  message_id: number;
-  content: string;
-}
-
-export interface DeleteMessageResponse {
-  message: string;
-  message_id: number;
-  affection_score?: number | null;
-  current_mood?: string | null;
-}
-
-// ===================== API 接口函数 =====================
+import { request, USE_MOCK } from "./config";
+import * as mock from "./mock/sessions";
+import type {
+  SessionDetail,
+  CreateSessionParams,
+  CreateSessionResponse,
+  GetSessionsResponse,
+  GetRecentSessionsResponse,
+  UpdateTitleResponse,
+  DeleteSessionResponse,
+  TriggerCognitionResponse,
+} from "../types/sessions";
 
 /**
  * 创建新会话（全新会话或继承自父会话的分支会话）。
@@ -223,102 +18,7 @@ export interface DeleteMessageResponse {
 export async function createSession(
   params: CreateSessionParams
 ): Promise<CreateSessionResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const parentSession = params.parent_session_id 
-      ? db.sessions.find((s) => s.id === params.parent_session_id) 
-      : null;
-      
-    const char = db.characters.find((c) => c.id === params.character_id);
-    const newSessionId = Date.now();
-    const personaId = Date.now() + 1;
-
-    const mockPersona: PersonaDetail = {
-      id: personaId,
-      character_id: params.character_id,
-      affection_score: parentSession ? parentSession.persona.affection_score : 10,
-      cognition_state: parentSession 
-        ? parentSession.persona.cognition_state 
-        : "Initial acquaintance. Character is ready to chat.",
-      current_mood: parentSession ? parentSession.persona.current_mood : "Calm",
-      current_scenario_override: parentSession ? parentSession.persona.current_scenario_override : null,
-    };
-
-    const newSession: SessionDetail = {
-      id: newSessionId,
-      title: params.title || (parentSession ? `${parentSession.title} (Branch)` : "New Story"),
-      parent_session_id: params.parent_session_id || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      persona: mockPersona,
-      character: {
-        id: params.character_id,
-        name: char ? char.name : "Unknown Character",
-        avatar_path: char ? char.avatar_path || "" : "",
-      },
-    };
-
-    db.sessions.push(newSession);
-
-    // 如果是全新的首个会话（无父级会话），插入角色的第一条问候消息。
-    if (!params.parent_session_id) {
-      db.messages[newSessionId] = [];
-      let firstContent = char ? char.first_mes : "";
-      if (params.greeting_index !== undefined && char && char.extensions?.alternate_greetings) {
-        const alt = char.extensions.alternate_greetings as string[];
-        if (params.greeting_index >= 0 && params.greeting_index < alt.length) {
-          firstContent = alt[params.greeting_index];
-        }
-      }
-      if (firstContent) {
-        db.messages[newSessionId].push({
-          id: Date.now() + 2,
-          role: "assistant",
-          content: firstContent,
-          emotion_tag: "Calm",
-          affection_change: 0,
-          created_at: new Date().toISOString(),
-        });
-      }
-    } else {
-      // 衍生分支：复制触发分支的开头消息
-      db.messages[newSessionId] = [];
-      const parentSessionId = params.parent_session_id;
-      if (parentSessionId) {
-        let startMsg = null;
-        if (params.start_message_id) {
-          const parentMsgs = db.messages[parentSessionId] || [];
-          startMsg = parentMsgs.find(m => m.id === params.start_message_id);
-        } else {
-          const parentMsgs = db.messages[parentSessionId] || [];
-          if (parentMsgs.length > 0) {
-            startMsg = parentMsgs[parentMsgs.length - 1];
-          }
-        }
-        if (startMsg) {
-          db.messages[newSessionId].push({
-            id: Date.now() + 3,
-            role: startMsg.role,
-            content: startMsg.content,
-            emotion_tag: startMsg.emotion_tag || "Calm",
-            affection_change: startMsg.affection_change || 0,
-            audio_path: startMsg.audio_path || null,
-            created_at: new Date().toISOString(),
-          });
-        }
-      }
-    }
-
-    setMockDB(db);
-    return {
-      message: "Session created successfully (Mock)",
-      session_id: newSessionId,
-      persona_id: personaId,
-      character_id: params.character_id,
-      inherited: !!params.parent_session_id,
-      title: newSession.title,
-    };
-  }
+  if (USE_MOCK) return mock.createSession(params);
 
   return request<CreateSessionResponse>("/sessions/create", {
     method: "POST",
@@ -336,50 +36,7 @@ export async function getSessions(
   offset = 0,
   includeLastMessage = true
 ): Promise<GetSessionsResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const filtered = db.sessions
-      .filter((s) => s.character_id === characterId)
-      .sort((a, b) => {
-        const timeDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-        return timeDiff || b.id - a.id;
-      });
-    const page = filtered.slice(offset, offset + limit);
-    return {
-      character_id: characterId,
-      sessions: page.map((s) => {
-        const activeMessages = (db.messages[s.id] || []).filter(
-          (message) => message.is_active !== false
-        );
-        const lastMessage = includeLastMessage
-          ? activeMessages[activeMessages.length - 1] || null
-          : null;
-        return {
-          id: s.id,
-          title: s.title,
-          parent_session_id: s.parent_session_id,
-          fork_message_id: s.fork_message_id || null,
-          created_at: s.created_at,
-          updated_at: s.updated_at,
-          persona: {
-            id: s.persona.id,
-            affection_score: s.persona.affection_score,
-            current_mood: s.persona.current_mood,
-          },
-          last_message: lastMessage
-            ? {
-                content: String(lastMessage.content || ""),
-                created_at: lastMessage.created_at,
-              }
-            : null,
-        };
-      }),
-      total: filtered.length,
-      limit,
-      offset,
-      has_more: offset + page.length < filtered.length,
-    };
-  }
+  if (USE_MOCK) return mock.getSessions(characterId, limit, offset, includeLastMessage);
 
   return request<GetSessionsResponse>(
     `/sessions?character_id=${characterId}&include_last_message=${includeLastMessage}&limit=${limit}&offset=${offset}`
@@ -423,52 +80,7 @@ export async function getRecentSessions(
   limit = 50,
   offset = 0
 ): Promise<GetRecentSessionsResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const sessions = db.sessions
-      .map((session) => {
-        const character = db.characters.find((item) => item.id === session.character_id);
-        const messages = db.messages[session.id] || [];
-        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-
-        return {
-          id: session.id,
-          title: session.title,
-          parent_session_id: session.parent_session_id,
-          created_at: session.created_at,
-          updated_at: session.updated_at,
-          persona: {
-            id: session.persona.id,
-            affection_score: session.persona.affection_score,
-            current_mood: session.persona.current_mood,
-          },
-          character: {
-            id: character?.id ?? session.character_id,
-            name: character?.name ?? "Unknown Character",
-            avatar_path: character?.avatar_path ?? "",
-          },
-          last_message: lastMessage
-            ? {
-                content: String(lastMessage.content || ""),
-                created_at: lastMessage.created_at,
-              }
-            : null,
-        };
-      })
-      .sort((a, b) => {
-        const aTime = a.last_message?.created_at || a.updated_at;
-        const bTime = b.last_message?.created_at || b.updated_at;
-        return new Date(bTime).getTime() - new Date(aTime).getTime();
-      });
-
-    return {
-      sessions: sessions.slice(offset, offset + limit),
-      total: sessions.length,
-      limit,
-      offset,
-      has_more: offset + limit < sessions.length,
-    };
-  }
+  if (USE_MOCK) return mock.getRecentSessions(limit, offset);
 
   return request<GetRecentSessionsResponse>(
     `/sessions/recent?limit=${limit}&offset=${offset}`
@@ -480,45 +92,9 @@ export async function getRecentSessions(
  * GET /sessions/{session_id}
  */
 export async function getSession(sessionId: number): Promise<SessionDetail> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-    return session;
-  }
+  if (USE_MOCK) return mock.getSession(sessionId);
 
   return request<SessionDetail>(`/sessions/${sessionId}`);
-}
-
-/**
- * 获取感知继承关系的、按时间先后排序的会话聊天历史记录。
- * GET /sessions/{session_id}/history?limit={limit}
- */
-export async function getSessionHistory(
-  sessionId: number,
-  limit = 50,
-  beforeId?: number
-): Promise<GetHistoryResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    // 开启分支故事（子会话）时，不再合并父会话的历史消息，只读取本会话产生的聊天记录
-    let msgs = db.messages[sessionId] || [];
-    if (beforeId !== undefined) {
-      msgs = msgs.filter((m) => m.id < beforeId);
-    }
-    return {
-      session_id: sessionId,
-      messages: msgs.slice(-limit),
-    };
-  }
-
-  const url = beforeId !== undefined
-    ? `/sessions/${sessionId}/history?limit=${limit}&before_id=${beforeId}`
-    : `/sessions/${sessionId}/history?limit=${limit}`;
-
-  return request<GetHistoryResponse>(url);
 }
 
 /**
@@ -529,21 +105,7 @@ export async function updateSessionTitle(
   sessionId: number,
   title: string
 ): Promise<UpdateTitleResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-    session.title = title;
-    session.updated_at = new Date().toISOString();
-    setMockDB(db);
-    return {
-      message: "Session title updated successfully (Mock)",
-      session_id: sessionId,
-      title: title,
-    };
-  }
+  if (USE_MOCK) return mock.updateSessionTitle(sessionId, title);
 
   return request<UpdateTitleResponse>(`/sessions/${sessionId}/title`, {
     method: "PUT",
@@ -558,61 +120,11 @@ export async function updateSessionTitle(
 export async function deleteSession(
   sessionId: number
 ): Promise<DeleteSessionResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const targetSession = db.sessions.find((s) => s.id === sessionId);
-    if (!targetSession) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    const parentId = targetSession.parent_session_id;
-
-    // 将指向该会话的所有子分支会话重新链接到该会话的父级会话
-    let relinkedCount = 0;
-    db.sessions.forEach((s) => {
-      if (s.parent_session_id === sessionId) {
-        s.parent_session_id = parentId;
-        relinkedCount++;
-      }
-    });
-
-    db.sessions = db.sessions.filter((s) => s.id !== sessionId);
-    const messagesCount = db.messages[sessionId]?.length || 0;
-    delete db.messages[sessionId];
-
-    setMockDB(db);
-    return {
-      message: "Session deleted successfully (Mock)",
-      deleted_session_id: sessionId,
-      relinked_children: relinkedCount,
-      memories_deleted: messagesCount,
-    };
-  }
+  if (USE_MOCK) return mock.deleteSession(sessionId);
 
   return request<DeleteSessionResponse>(`/sessions/${sessionId}/delete`, {
     method: "POST",
   });
-}
-
-/**
- * 手动触发新消息的记忆提纯（记忆元提取）。
- * POST /sessions/{session_id}/trigger_summary
- */
-export async function triggerSummary(
-  sessionId: number
-): Promise<TriggerSummaryResponse> {
-  if (USE_MOCK) {
-    return {
-      message: "记忆提纯流程已完成 (Mock)",
-      session_id: sessionId,
-      extracted_count: 2,
-    };
-  }
-
-  return request<TriggerSummaryResponse>(
-    `/sessions/${sessionId}/trigger_summary`,
-    { method: "POST" }
-  );
 }
 
 /**
@@ -622,23 +134,7 @@ export async function triggerSummary(
 export async function triggerCognition(
   sessionId: number
 ): Promise<TriggerCognitionResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    const session = db.sessions.find((s) => s.id === sessionId);
-    const charName = session?.character.name || "AI";
-    const newCognition = `The character ${charName} feels a deeper bond with the user. Current scenario remains active.`;
-    
-    if (session) {
-      session.persona.cognition_state = newCognition;
-      setMockDB(db);
-    }
-
-    return {
-      message: "认知更新已完成 (Mock)",
-      session_id: sessionId,
-      cognition_state: newCognition,
-    };
-  }
+  if (USE_MOCK) return mock.triggerCognition(sessionId);
 
   return request<TriggerCognitionResponse>(
     `/sessions/${sessionId}/trigger_cognition`,
@@ -646,484 +142,49 @@ export async function triggerCognition(
   );
 }
 
-/**
- * 修改单条消息的内容。
- * PUT /sessions/messages/{message_id}
- */
-export async function updateMessage(
-  messageId: number,
-  content: string
-): Promise<UpdateMessageResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let updated = false;
-
-    // 在所有会话的消息中进行检索
-    for (const sid in db.messages) {
-      const msgs = db.messages[sid];
-      const m = msgs.find((msg) => msg.id === messageId);
-      if (m) {
-        m.content = content;
-        updated = true;
-        break;
-      }
-    }
-
-    if (!updated) {
-      throw new Error(`Message ${messageId} not found`);
-    }
-
-    setMockDB(db);
-    return {
-      message: "Message updated successfully (Mock)",
-      message_id: messageId,
-      content,
-    };
-  }
-
-  return request<UpdateMessageResponse>(`/sessions/messages/${messageId}`, {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-/**
- * 删除单条消息（回滚/撤销对话状态）。
- * DELETE /sessions/messages/{message_id} -> 改为 POST /sessions/messages/{message_id}/delete 避开移动端及网关限制
- */
-export async function deleteMessage(
-  messageId: number
-): Promise<DeleteMessageResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let deleted = false;
-
-    for (const sid in db.messages) {
-      const msgs = db.messages[sid];
-      const idx = msgs.findIndex((msg) => msg.id === messageId);
-      if (idx !== -1) {
-        msgs.splice(idx, 1);
-        deleted = true;
-        break;
-      }
-    }
-
-    if (!deleted) {
-      throw new Error(`Message ${messageId} not found`);
-    }
-
-    setMockDB(db);
-    return {
-      message: "Message deleted successfully (Mock)",
-      message_id: messageId,
-    };
-  }
-
-  return request<DeleteMessageResponse>(`/sessions/messages/${messageId}/delete`, {
-    method: "POST",
-  });
-}
-
-export interface SwitchCandidateResponse {
-  message: string;
-  message_id: number;
-  is_active: boolean;
-  affection_score: number | null;
-  current_mood: string | null;
-}
-
-/**
- * 切换激活的 AI 回复候选版本。
- * POST /chat/switch_candidate
- */
-export async function switchCandidate(
-  messageId: number
-): Promise<SwitchCandidateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB();
-    let msg: any = null;
-    let sid: string = "";
-    for (const key in db.messages) {
-      const found = db.messages[key].find((m) => m.id === messageId);
-      if (found) {
-        msg = found;
-        sid = key;
-        break;
-      }
-    }
-    if (msg) {
-      const msgs = (db.messages as any)[sid] as any[];
-      if (msgs) {
-        msgs.forEach((m: any) => {
-          if (m.role === "assistant" && m.parent_id === msg.parent_id) {
-            m.is_active = (m.id === messageId);
-          }
-        });
-      }
-      setMockDB(db);
-    }
-    return {
-      message: "Candidate switched successfully (Mock)",
-      message_id: messageId,
-      is_active: true,
-      affection_score: 50,
-      current_mood: msg?.emotion_tag || "Calm",
-    };
-  }
-
-  return request<SwitchCandidateResponse>("/chat/switch_candidate", {
-    method: "POST",
-    body: JSON.stringify({ message_id: messageId }),
-  });
-}
-
-export interface MemoryCreateResponse {
-  message: string;
-  memory: MemoryChunk;
-}
-
-export interface MemoryUpdateResponse {
-  message: string;
-  memory: {
-    id: number;
-    content: string;
-    importance_score: number;
-    source_start_message_id?: number | null;
-    source_message_id?: number | null;
-    supersedes_id?: number | null;
-  };
-}
-
-export interface MemoryDeleteResponse {
-  message: string;
-  memory_id: number;
-}
-
-export interface TokenEstimateDetail {
-  characters: number;
-  estimated_tokens: number;
-  lower_bound: number;
-  upper_bound: number;
-}
-
-export interface TokenEstimate {
-  characters: number;
-  estimated_tokens: number;
-  lower_bound: number;
-  upper_bound: number;
-  method: string;
-  is_exact: boolean;
-  sections: Record<string, TokenEstimateDetail>;
-}
-
-export interface CompiledPromptResponse {
-  messages: { role: string; content: string }[];
-  token_estimate?: TokenEstimate;
-}
-
-/**
- * 获取会话对应的向量记忆列表。
- * GET /sessions/{session_id}/memories
- */
-export async function getSessionMemories(
-  sessionId: number,
-  params: GetSessionMemoriesParams = {}
-): Promise<GetSessionMemoriesResponse> {
-  const {
-    q = "",
-    scope = "all",
-    status = "active",
-    limit = 20,
-    offset = 0,
-  } = params;
-
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    const sessionById = new Map<number, any>(
-      (db.sessions || []).map((session: any) => [session.id, session])
-    );
-    const lineageSessionIds: number[] = [];
-    const visited = new Set<number>();
-    let currentSessionId: number | null = sessionId;
-    while (currentSessionId !== null && !visited.has(currentSessionId)) {
-      visited.add(currentSessionId);
-      lineageSessionIds.push(currentSessionId);
-      currentSessionId = sessionById.get(currentSessionId)?.parent_session_id ?? null;
-    }
-
-    let list: MemoryChunk[] = lineageSessionIds.flatMap((visibleSessionId) =>
-      (db.memories[visibleSessionId] || []).map((memory: MemoryChunk) => ({
-        ...memory,
-        is_local: visibleSessionId === sessionId,
-      }))
-    );
-    const supersededIds = new Set<number>(
-      list
-        .map((memory) => memory.supersedes_id)
-        .filter((id): id is number => typeof id === "number")
-    );
-    list = list.map((memory) => ({
-      ...memory,
-      is_superseded: supersededIds.has(memory.id),
-    }));
-
-    if (q && q.trim()) {
-      const term = q.trim().toLowerCase();
-      list = list.filter((memory) => memory.content.toLowerCase().includes(term));
-    }
-
-    const activeList = list.filter((memory) => !memory.is_superseded);
-    const facets: MemoryStats = {
-      effective_total: activeList.length,
-      local_active: activeList.filter((memory) => memory.is_local).length,
-      inherited_active: activeList.filter((memory) => !memory.is_local).length,
-      superseded: list.filter((memory) => memory.is_superseded).length,
-    };
-
-    if (scope === "local") {
-      list = list.filter((memory) => memory.is_local);
-    } else if (scope === "inherited") {
-      list = list.filter((memory) => !memory.is_local);
-    }
-    if (status === "active") {
-      list = list.filter((memory) => !memory.is_superseded);
-    } else if (status === "superseded") {
-      list = list.filter((memory) => memory.is_superseded);
-    }
-
-    list.sort((a, b) => {
-      const timeDiff =
-        new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-      return timeDiff || b.id - a.id;
-    });
-    const items = list.slice(offset, offset + limit);
-    return {
-      items,
-      total: list.length,
-      limit,
-      offset,
-      has_more: offset + items.length < list.length,
-      facets,
-    };
-  }
-
-  const query = [
-    `scope=${scope}`,
-    `status=${status}`,
-    `limit=${limit}`,
-    `offset=${offset}`,
-  ];
-  if (q.trim()) {
-    query.push(`q=${encodeURIComponent(q.trim())}`);
-  }
-  return request<GetSessionMemoriesResponse>(
-    `/sessions/${sessionId}/memories?${query.join("&")}`,
-    { method: "GET" }
-  );
-}
-
-/**
- * 获取角色下各故事线的记忆统计与最近消息，用于角色详情记忆导航。
- * GET /characters/{character_id}/memory-overview
- */
-export async function getCharacterMemoryOverview(
-  characterId: number,
-  limit = 50,
-  offset = 0
-): Promise<CharacterMemoryOverviewResponse> {
-  if (USE_MOCK) {
-    const page = await getSessions(characterId, limit, offset, true);
-    const sessions = await Promise.all(
-      page.sessions.map(async (session) => {
-        const memories = await getSessionMemories(session.id, {
-          scope: "all",
-          status: "active",
-          limit: 1,
-          offset: 0,
-        });
-        return {
-          session_id: session.id,
-          title: session.title,
-          parent_session_id: session.parent_session_id,
-          created_at: session.created_at,
-          updated_at: session.updated_at,
-          last_message: session.last_message,
-          memory_stats: memories.facets,
-        };
-      })
-    );
-    return {
-      character_id: characterId,
-      story_count: page.total,
-      recent_session_id: sessions[0]?.session_id ?? null,
-      sessions,
-      total: page.total,
-      limit,
-      offset,
-      has_more: page.has_more,
-    };
-  }
-
-  return request<CharacterMemoryOverviewResponse>(
-    `/characters/${characterId}/memory-overview?limit=${limit}&offset=${offset}`,
-    { method: "GET" }
-  );
-}
-
-/**
- * 手动创建向量记忆。
- * POST /sessions/{session_id}/memories
- */
-export async function createSessionMemory(
-  sessionId: number,
-  content: string,
-  importanceScore: number = 0.8
-): Promise<MemoryCreateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    if (!db.memories[sessionId]) {
-      db.memories[sessionId] = [];
-    }
-    const newMemory: MemoryChunk = {
-      id: Date.now(),
-      content,
-      memory_type: "fact",
-      importance_score: importanceScore,
-      is_local: true,
-      created_at: new Date().toISOString(),
-      origin_session_id: sessionId,
-    };
-    db.memories[sessionId].unshift(newMemory);
-    setMockDB(db);
-    return {
-      message: "Memory added successfully (Mock)",
-      memory: newMemory,
-    };
-  }
-
-  return request<MemoryCreateResponse>(`/sessions/${sessionId}/memories`, {
-    method: "POST",
-    body: JSON.stringify({
-      content,
-      importance_score: importanceScore,
-      memory_type: "fact",
-    }),
-  });
-}
-
-/**
- * 更新向量记忆。
- * PUT /sessions/{session_id}/memories/{memory_id}
- */
-export async function updateSessionMemory(
-  sessionId: number,
-  memoryId: number,
-  content: string,
-  importanceScore: number
-): Promise<MemoryUpdateResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    const list = db.memories[sessionId] || [];
-    const item = list.find((m: any) => m.id === memoryId);
-    if (item) {
-      item.content = content;
-      item.importance_score = importanceScore;
-      setMockDB(db);
-    }
-    return {
-      message: "Memory updated successfully (Mock)",
-      memory: {
-        id: memoryId,
-        content,
-        importance_score: importanceScore,
-      },
-    };
-  }
-
-  return request<MemoryUpdateResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      content,
-      importance_score: importanceScore,
-    }),
-  });
-}
-
-/**
- * 删除向量记忆。
- * DELETE /sessions/{session_id}/memories/{memory_id}
- */
-export async function deleteSessionMemory(
-  sessionId: number,
-  memoryId: number
-): Promise<MemoryDeleteResponse> {
-  if (USE_MOCK) {
-    const db = getMockDB() as any;
-    if (!db.memories) {
-      db.memories = {};
-    }
-    const list = db.memories[sessionId] || [];
-    const idx = list.findIndex((m: any) => m.id === memoryId);
-    if (idx !== -1) {
-      list.splice(idx, 1);
-      setMockDB(db);
-    }
-    return {
-      message: "Memory deleted successfully (Mock)",
-      memory_id: memoryId,
-    };
-  }
-
-  return request<MemoryDeleteResponse>(`/sessions/${sessionId}/memories/${memoryId}`, {
-    method: "DELETE",
-  });
-}
-
-/**
- * 获取当前会话最近编译组装好的提示词。
- * GET /sessions/{session_id}/compile_prompt
- */
-export async function getCompiledPrompt(
-  sessionId: number
-): Promise<CompiledPromptResponse> {
-  if (USE_MOCK) {
-    return {
-      messages: [
-        { role: "system", content: "【系统提示词（编译预设）】\n你扮演Cyber Hacker...\n\n【重要：输出格式要求】\n<reply>回复内容</reply>\n<status emotion=\"开心\" affection_change=\"0\"/>" },
-        { role: "assistant", content: "<reply>你好，我是赛博黑客。找我有什么事？</reply>\n<status emotion=\"平静\" affection_change=\"0\"/>" },
-        { role: "user", content: "【系统提供的上下文背景信息（大模型请注意结合以下背景进行角色扮演回复）：】\n<current_scenario>\n赛博朋克霓虹城市酒吧。\n</current_scenario>\n\n【当前用户的最新消息：】\n你好，请帮我分析一下这个系统漏洞。" }
-      ],
-      token_estimate: {
-        characters: 18420,
-        estimated_tokens: 12800,
-        lower_bound: 9760,
-        upper_bound: 16720,
-        method: "heuristic_v1",
-        is_exact: false,
-        sections: {
-          character: { characters: 8200, estimated_tokens: 6100, lower_bound: 4800, upper_bound: 7600 },
-          recent_history: { characters: 6000, estimated_tokens: 3900, lower_bound: 3000, upper_bound: 5000 },
-          scenario: { characters: 300, estimated_tokens: 220, lower_bound: 150, upper_bound: 350 },
-          cognition: { characters: 500, estimated_tokens: 350, lower_bound: 250, upper_bound: 500 },
-          status: { characters: 120, estimated_tokens: 90, lower_bound: 60, upper_bound: 150 },
-          lorebook: { characters: 900, estimated_tokens: 600, lower_bound: 400, upper_bound: 850 },
-          long_term_memory: { characters: 1000, estimated_tokens: 700, lower_bound: 500, upper_bound: 1000 },
-          graph: { characters: 400, estimated_tokens: 280, lower_bound: 190, upper_bound: 420 },
-          current_user_message: { characters: 800, estimated_tokens: 520, lower_bound: 380, upper_bound: 750 },
-          other: { characters: 200, estimated_tokens: 40, lower_bound: 30, upper_bound: 100 }
-        }
-      }
-    };
-  }
-
-  return request<CompiledPromptResponse>(`/sessions/${sessionId}/compile_prompt`);
-}
+// Compatibility exports for existing callers; new code should import its domain directly.
+export * from "./messages";
+export * from "./memories";
+export * from "./prompts";
+export type {
+  PersonaSummary,
+  PersonaDetail,
+  CharacterRef,
+  SessionSummary,
+  SessionDetail,
+  CreateSessionParams,
+  CreateSessionResponse,
+  GetSessionsResponse,
+  RecentSessionSummary,
+  GetRecentSessionsResponse,
+  UpdateTitleResponse,
+  DeleteSessionResponse,
+  TriggerCognitionResponse,
+} from "../types/sessions";
+export type {
+  MessageCandidate,
+  Message,
+  GetHistoryResponse,
+  UpdateMessageResponse,
+  DeleteMessageResponse,
+  SwitchCandidateResponse,
+} from "../types/messages";
+export type {
+  MemoryChunk,
+  MemoryScope,
+  MemoryStatus,
+  MemoryStats,
+  GetSessionMemoriesParams,
+  GetSessionMemoriesResponse,
+  CharacterMemoryOverviewSession,
+  CharacterMemoryOverviewResponse,
+  TriggerSummaryResponse,
+  MemoryCreateResponse,
+  MemoryUpdateResponse,
+  MemoryDeleteResponse,
+} from "../types/memories";
+export type {
+  TokenEstimateDetail,
+  TokenEstimate,
+  CompiledPromptResponse,
+} from "../types/prompts";

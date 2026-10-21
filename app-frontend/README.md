@@ -1,5 +1,7 @@
 # AI Roleplay Frontend
 
+[项目说明](../README.md) · [共享 API](../API_TABLE.md) · [文档索引](../docs/README.md)
+
 面向手机端的跨平台 AI 角色扮演客户端，基于 Vue 3、uni-app、Vite、Pinia 和 TypeScript 构建，可运行于 Android/iOS App、H5 与微信小程序。
 
 界面采用“清新角色画册 + 柔光叙事聊天”的视觉方向：首页用于继续故事，角色库用于浏览人物，聊天页聚焦长篇阅读，人物详情则以档案、世界、记忆和故事线组织内容。
@@ -15,6 +17,7 @@
 - 人物档案、角色专属世界书及公共世界书绑定
 - SillyTavern JSON 世界书导入、编辑和词条管理
 - Prompt 组装结果预览与模型生成参数配置
+- 模型、思考模式和强度独立选择，支持全局默认与故事覆盖，详见[模型设置](../docs/MODEL_SELECTION.md)。
 - 运行时服务器地址和 `X-API-Key` 配置
 - App、H5、微信小程序三端构建
 
@@ -29,6 +32,12 @@
 | 设置 | 外观、模型、记忆与世界、连接安全、数据管理 |
 
 应用使用统一的语义颜色、圆角、间距、按钮和状态组件，并支持系统“减少动态效果”偏好。加载、空数据、错误与离线状态采用一致的视觉反馈。
+
+## 角色卡导入与展示
+
+首页和画册的导入入口会打开角色卡预览。先选择文件，再检查人物设定、全部开场、作者说明与内嵌世界；确认前保留当前编辑内容。导入到已有角色时可以替换设定，或只补充空项。创建和编辑先进入草稿，人物档案中的更新在确认后保存。
+
+角色可单独存入画册，也可选择开场后开启故事。档案与故事创建共用支持搜索、分页和全文预览的开场浏览器，编辑页可以维护备用开场。作者说明采用分页阅读，角色标签默认折叠，作者和角色版本随导入保存。完整行为与格式边界见 [角色卡说明](../docs/CHARACTER_CARDS.md)。
 
 ## 故事记忆
 
@@ -77,6 +86,12 @@
 
 ### 安装依赖
 
+以下命令均在仓库的 `app-frontend/` 目录中执行。从仓库根目录进入：
+
+```bash
+cd app-frontend
+```
+
 ```bash
 npm install
 ```
@@ -118,7 +133,7 @@ VITE_API_BASE_URL=http://192.168.1.100:8000
 
 应用内保存的地址优先于环境变量。如果后端配置了访问控制，请在同一区域填写对应的 `X-API-Key`；地址和密钥保存在当前设备的 uni-app 本地存储中。
 
-完整接口约定见 [`API_TABLE.md`](API_TABLE.md)。
+完整接口约定见根目录的 [API 总表](../API_TABLE.md)，记忆筛选与故事导航的详细语义见 [记忆模块 API](../docs/api/MEMORY_API.md)。
 
 ### Mock 模式
 
@@ -132,7 +147,12 @@ export const USE_MOCK = false;
 
 ## 常用命令
 
+回归检查范围和跨端验证方法见 [前端测试说明](tests/README.md)。
+
 ```bash
+# 网络、流式解析与会话状态回归
+npm test
+
 # 类型检查
 npm run type-check
 
@@ -156,7 +176,7 @@ npx uni build -p app-plus
 
 ```text
 src/
-├── api/                    # 请求封装、接口类型、运行时连接与 Mock 数据
+├── api/                    # 按领域拆分的请求封装、运行时连接与 mock/ 离线实现
 ├── components/
 │   ├── character/          # 人物档案与角色世界书
 │   ├── chat/               # 消息、输入框、抽屉、记忆与故事分支
@@ -168,6 +188,7 @@ src/
 │   ├── chat/               # 叙事聊天页
 │   └── settings/           # 设置与世界书管理
 ├── store/                  # Pinia 状态仓库
+├── types/                  # 会话、消息、记忆、提示词与流式桥接的共享类型
 ├── App.vue                 # 全局语义变量、基础样式与动效降级
 ├── pages.json              # 页面与原生 TabBar 配置
 └── uni.scss                # uni-app 与应用级 SCSS 变量
@@ -175,8 +196,10 @@ src/
 
 ## 跨端注意事项
 
+API 的模块边界与兼容入口见 [API 模块约定](src/api/README.md)。
+
 - App 端选择角色卡时使用相册中的原始 PNG，以免系统压缩破坏卡片元数据；H5 等平台可选择 PNG 或 JSON。
-- App 端流式响应通过 renderjs/XHR 桥接，并继续使用请求头传递 `X-API-Key`。
+- 三端流式协议由 `utils/chatStreamProtocol.ts` 统一解析。App 使用独立的 `ChatStreamBridge.vue` 和 `api/transports/appStream.ts` 进行 renderjs/XHR 桥接，通过实例方法回传事件，请求头传递 `X-API-Key`；页面不再直接解析流式响应。
 - Android 聊天页使用 `adjustResize` 适配软键盘；iOS 通过键盘高度监听补偿输入区。
 - 音频资源属于受保护接口时，同样通过请求头携带 `X-API-Key`。
 - 自定义 TabBar 会隐藏 uni-app 原生 TabBar，页面底部布局需要保留安全区和导航高度。

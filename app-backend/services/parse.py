@@ -5,6 +5,7 @@ import os
 import zlib
 import re
 import html
+from copy import deepcopy
 
 
 def parse_character_card(file_path: str) -> dict:
@@ -24,107 +25,99 @@ def parse_character_card(file_path: str) -> dict:
         raise ValueError(f"Unsupported file format: {ext}. Only .json and .png are supported currently.")
 
 def _parse_json_card(file_path: str) -> dict:
-    """解析 JSON 格式的角色卡"""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return _extract_v2_data(data)
+    with open(file_path, 'r', encoding='utf-8-sig') as f:
+        return _extract_v2_data(json.load(f))
+
+
+def read_png_card_payloads(file_path: str) -> list[dict]:
+    """读取所有有效 chara 元数据，保留顺序与原始字段，供导入和无损导出复用。"""
+    payloads = []
+    with open(file_path, 'rb') as f:
+        if f.read(8) != b'\x89PNG\r\n\x1a\n':
+            raise ValueError("不是有效的 PNG 文件。")
+        while True:
+            header = f.read(8)
+            if not header:
+                break
+            if len(header) != 8:
+                raise ValueError("PNG 数据块头不完整。")
+            length, kind = struct.unpack('>I4s', header)
+            # 防止损坏的长度声明触发巨大读取。
+            if length > os.fstat(f.fileno()).st_size - f.tell() - 4:
+                raise ValueError("PNG 数据块不完整。")
+            content = f.read(length)
+            crc = f.read(4)
+            if len(crc) != 4:
+                raise ValueError("PNG 校验字段不完整。")
+            if kind == b'IEND':
+                break
+            if kind not in (b'tEXt', b'zTXt', b'iTXt'):
+                continue
+            keyword, separator, text = content.partition(b'\0')
+            if keyword != b'chara' or not separator:
+                continue
+            try:
+                if kind == b'zTXt':
+                    if not text or text[0] != 0:
+                        continue
+                    text = _decompress_card_text(text[1:])
+                elif kind == b'iTXt':
+                    if len(text) < 2 or text[0] not in (0, 1) or text[1] != 0:
+                        continue
+                    compressed = text[0]
+                    _, sep, rest = text[2:].partition(b'\0')
+                    _, sep2, text = rest.partition(b'\0')
+                    if not sep or not sep2:
+                        continue
+                    if compressed:
+                        text = _decompress_card_text(text)
+                try:
+                    raw = json.loads(base64.b64decode(b''.join(text.split()), validate=True).decode('utf-8-sig'))
+                except (ValueError, UnicodeError):
+                    raw = json.loads(text.decode('utf-8-sig'))
+                # 仅识别角色对象，避免误导入任意 JSON；失败块不遮蔽后续有效块。
+                _validate_card_object(raw)
+                payloads.append(raw)
+            except (ValueError, UnicodeError, zlib.error):
+                continue
+    if not payloads:
+        raise ValueError("PNG 中未找到有效的 chara 角色数据，请选择原始角色卡 PNG 或 JSON。")
+    return payloads
+
+
+def _decompress_card_text(data: bytes) -> bytes:
+    decoder = zlib.decompressobj()
+    text = decoder.decompress(data, 16 * 1024 * 1024 + 1)
+    if len(text) > 16 * 1024 * 1024 or not decoder.eof:
+        raise ValueError("角色卡文本损坏或解压后超过 16 MB。")
+    return text
+
+
+def _validate_card_object(raw: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("角色卡 JSON 必须是对象。")
+    data = raw.get('data', raw)
+    if not isinstance(data, dict):
+        raise ValueError("角色卡 data 必须是对象。")
+    if not isinstance(data.get('name'), str) or not data['name'].strip():
+        raise ValueError("角色卡缺少有效的 name 字段。")
+    for key in ('description', 'personality', 'scenario', 'first_mes', 'mes_example',
+                'creator_notes', 'system_prompt', 'system_prompt_override',
+                'post_history_instructions', 'char_persona', 'world_scenario',
+                'greeting', 'example_dialogue'):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ValueError(f"角色卡 {key} 必须是文本。")
+    for key in ('tags', 'alternate_greetings'):
+        value = data.get(key)
+        if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) for item in value)):
+            raise ValueError(f"角色卡 {key} 必须是字符串数组。")
+    return data
+
 
 def _parse_png_card(file_path: str) -> dict:
-    """
-    解析 SillyTavern PNG 角色卡 (无需第三方依赖)。
-    角色数据通常以 base64 编码的 JSON 字符串形式存储在名为 'chara' 的 tEXt / zTXt / iTXt 数据块中。
-    """
-    with open(file_path, 'rb') as f:
-        # 1. 验证 PNG 文件签名
-        png_signature = b'\x89PNG\r\n\x1a\n'
-        if f.read(len(png_signature)) != png_signature:
-            raise ValueError("Not a valid PNG file.")
+    # 同一 PNG 可有多个 chara 块：沿用首个有效块，不能让后续旧副本覆盖世界书。
+    return _extract_v2_data(read_png_card_payloads(file_path)[0])
 
-        # 2. 遍历 PNG 数据块 (Chunks)
-        while True:
-            length_bytes = f.read(4)
-            if not length_bytes:
-                break # 文件结束
-            
-            chunk_length = struct.unpack('>I', length_bytes)[0]
-            chunk_type = f.read(4)
-            chunk_data = f.read(chunk_length)
-            f.read(4) # CRC32，跳过验证
-
-            text_string = None
-
-            # ── 2a. 解析 tEXt 块 (非压缩文本) ──
-            if chunk_type == b'tEXt':
-                try:
-                    # tEXt 格式: Keyword (1-79 bytes) + \0 + Text string
-                    decoded_text = chunk_data.decode('latin-1', errors='ignore') 
-                    if '\0' in decoded_text:
-                        keyword, content = decoded_text.split('\0', 1)
-                        if keyword == 'chara':
-                            text_string = content
-                except Exception:
-                    pass
-
-            # ── 2b. 解析 zTXt 块 (Deflate 压缩文本) ──
-            elif chunk_type == b'zTXt':
-                try:
-                    # zTXt 格式: Keyword (1-79 bytes) + \0 + Compression method (1 byte) + Compressed text
-                    parts = chunk_data.split(b'\x00', 1)
-                    if len(parts) == 2:
-                        keyword = parts[0].decode('latin-1', errors='ignore')
-                        if keyword == 'chara':
-                            comp_data = parts[1]
-                            if len(comp_data) > 1:
-                                comp_method = comp_data[0]
-                                compressed_text = comp_data[1:]
-                                if comp_method == 0:  # 0 代表 zlib deflate
-                                    decompressed = zlib.decompress(compressed_text)
-                                    text_string = decompressed.decode('utf-8', errors='ignore')
-                except Exception as e:
-                    print(f"[WARN] Failed to decompress zTXt chunk: {e}")
-
-            # ── 2c. 解析 iTXt 块 (国际 UTF-8 文本，支持压缩) ──
-            elif chunk_type == b'iTXt':
-                try:
-                    # iTXt 格式: Keyword (1-79 bytes) + \0 + Compression flag (1 byte) + Compression method (1 byte) 
-                    # + Language tag + \0 + Translated keyword + \0 + Text
-                    idx1 = chunk_data.find(b'\x00')
-                    if idx1 != -1:
-                        keyword = chunk_data[:idx1].decode('latin-1', errors='ignore')
-                        if keyword == 'chara':
-                            comp_flag = chunk_data[idx1 + 1]
-                            comp_method = chunk_data[idx1 + 2]
-                            
-                            # 查找 Language tag 结束的 \0
-                            idx2 = chunk_data.find(b'\x00', idx1 + 3)
-                            if idx2 != -1:
-                                # 查找 Translated keyword 结束的 \0
-                                idx3 = chunk_data.find(b'\x00', idx2 + 1)
-                                if idx3 != -1:
-                                    text_bytes = chunk_data[idx3 + 1:]
-                                    if comp_flag == 1:
-                                        if comp_method == 0:
-                                            text_bytes = zlib.decompress(text_bytes)
-                                    text_string = text_bytes.decode('utf-8', errors='ignore')
-                except Exception as e:
-                    print(f"[WARN] Failed to decode iTXt chunk: {e}")
-
-            # 如果找到了 chara 关键字对应的内容，开始尝试解析
-            if text_string is not None:
-                # 尝试 base64 解码，失败则作为 raw JSON 解析
-                try:
-                    json_bytes = base64.b64decode(text_string)
-                    json_str = json_bytes.decode('utf-8')
-                    card_data = json.loads(json_str)
-                    return _extract_v2_data(card_data)
-                except Exception:
-                    try:
-                        card_data = json.loads(text_string)
-                        return _extract_v2_data(card_data)
-                    except Exception:
-                        pass
-
-    raise ValueError("No character data found in this PNG file.")
 
 def _html_to_markdown(text: str) -> str:
     """
@@ -133,6 +126,8 @@ def _html_to_markdown(text: str) -> str:
     - 剥离纯视觉修饰标签 (如 span style, div, mark 等)。
     - 解码 HTML 实体编码，并规范化连续的空行。
     """
+    if text is None:
+        return ""
     if not isinstance(text, str) or not text:
         return text
 
@@ -216,10 +211,8 @@ def _extract_v2_data(raw_data: dict) -> dict:
     从原始 JSON 数据中提取符合 V2 规范的字段，并向后兼容 V1，确保输出字段的结构完全归一化。
     支持标准 chara_card_v2 结构以及 spec_v2 等变种。
     """
-    # 提取主数据体（宽松匹配：只要有 data 字典，就直接认定为 V2 架构并下钻）
-    data = raw_data
-    if 'data' in raw_data and isinstance(raw_data['data'], dict):
-        data = raw_data['data']
+    # 后续规范化不修改原始卡或第三方扩展。
+    data = deepcopy(_validate_card_object(raw_data))
 
     # 映射旧字段或变种字段以兼容 V1 / 不同平台变种
     description = data.get("description", data.get("char_persona", ""))
@@ -234,12 +227,24 @@ def _extract_v2_data(raw_data: dict) -> dict:
     extensions = data.get("extensions", {})
     if not isinstance(extensions, dict):
         extensions = {}
+    # 作者信息随 extensions 持久化，不需要改变现有数据库结构。
+    metadata = extensions.get("ai_roleplay_card")
+    if metadata is None or isinstance(metadata, dict):
+        metadata = dict(metadata or {})
+        for key in ("creator", "character_version"):
+            if isinstance(data.get(key), str):
+                metadata[key] = data[key]
+        for key in ("spec", "spec_version"):
+            if isinstance(raw_data.get(key), str):
+                metadata[key] = raw_data[key]
+        if metadata:
+            extensions["ai_roleplay_card"] = metadata
     if 'character_book' in data and data['character_book']:
         extensions['character_book'] = data['character_book']
 
     # 清洗 alternate_greetings 列表中的 HTML 为 Markdown
     alt_greetings = []
-    for g in data.get("alternate_greetings", []):
+    for g in data.get("alternate_greetings", extensions.get("alternate_greetings", [])) or []:
         if isinstance(g, str):
             alt_greetings.append(_html_to_markdown(g))
         else:
@@ -268,7 +273,7 @@ def _extract_v2_data(raw_data: dict) -> dict:
         "creator_notes": _html_to_markdown(data.get("creator_notes", "")),
         "system_prompt_override": _normalize_prompt_text(system_prompt),
         "post_history_instructions": _normalize_prompt_text(data.get("post_history_instructions", "")),
-        "tags": data.get("tags", []),
+        "tags": data.get("tags") or [],
         "creator": _html_to_markdown(data.get("creator", "")),
         "character_version": data.get("character_version", ""),
         "alternate_greetings": alt_greetings,

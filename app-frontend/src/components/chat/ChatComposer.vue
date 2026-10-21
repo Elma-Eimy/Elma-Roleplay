@@ -8,7 +8,7 @@
       <view
         class="reasoning-toggle-btn"
         :class="{ 'is-reasoning': useReasoning }"
-        @tap="emit('update:useReasoning', !useReasoning)"
+        @tap="emit('open-model-settings')"
       >
         <image
           class="reasoning-icon"
@@ -20,7 +20,7 @@
           mode="aspectFit"
         />
         <text class="reasoning-label">
-          {{ useReasoning ? "深度思考" : "思考" }}
+          {{ modelSummary }} ⌄
         </text>
       </view>
     </view>
@@ -68,6 +68,7 @@ import type { CSSProperties } from "vue";
 defineProps<{
   modelValue: string;
   useReasoning: boolean;
+  modelSummary: string;
   isFocused: boolean;
   isAndroid: boolean;
   keyboardHeight: number;
@@ -76,7 +77,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (event: "update:modelValue", value: string): void;
-  (event: "update:useReasoning", value: boolean): void;
+  (event: "open-model-settings"): void;
   (event: "focus-change", focused: boolean): void;
   (event: "line-change"): void;
   (event: "send"): void;
@@ -233,4 +234,8 @@ const handleInput = (event: Event) => {
 .keyboard-spacer {
   transition: height 0.1s ease-out;
 }
+</style>
+
+<style scoped>
+.reasoning-label { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

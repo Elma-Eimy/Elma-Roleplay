@@ -6,6 +6,7 @@ import base64
 import httpx
 import threading
 from core.config import settings
+from services.infrastructure.model_capabilities import auxiliary_controls
 
 class TTSService:
     _instance = None
@@ -179,12 +180,8 @@ class TTSService:
         ]
 
     def _model_kwargs(self, model: str) -> dict:
-        kwargs = {
-            "temperature": 0.1,
-            "max_tokens": self.PREPROCESS_MAX_TOKENS,
-        }
-        if "deepseek" in model.lower():
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        kwargs = auxiliary_controls("tts", 0.1, model)
+        kwargs["max_tokens"] = self.PREPROCESS_MAX_TOKENS
         return kwargs
 
     def _normalize_control_tags(self, text: str) -> str:
@@ -310,7 +307,7 @@ class TTSService:
             return ""
 
         from services.infrastructure.llm_provider import get_llm_provider
-        model = settings.CHAT_MODEL_NON_REASONING
+        model = settings.LLM_TTS_PREPROCESS_MODEL
         provider = get_llm_provider()
         errors = []
         for force_compress in (False, True):
@@ -338,7 +335,7 @@ class TTSService:
             return ""
 
         from services.infrastructure.llm_provider import get_llm_provider
-        model = settings.CHAT_MODEL_NON_REASONING
+        model = settings.LLM_TTS_PREPROCESS_MODEL
         provider = get_llm_provider()
         errors = []
         for force_compress in (False, True):

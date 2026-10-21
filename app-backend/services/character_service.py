@@ -14,6 +14,8 @@ def create_character(data: dict, db: DBSession) -> dict:
         return {
             "message": f"Character '{data['name']}' already exists.",
             "character_id": existing.id,
+            "name": existing.name,
+            "created": False,
         }
 
     character = Character()
@@ -28,6 +30,7 @@ def create_character(data: dict, db: DBSession) -> dict:
 
     return {
         "message": "Character created successfully",
+        "created": True,
         "character_id": character.id,
         "name": character.name,
     }

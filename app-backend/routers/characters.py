@@ -3,15 +3,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
-from services.parse import parse_character_card
+from services.media.character_card_import import import_character_card
 import services.character_service as character_service
 import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
-from schemas import CharacterCreate
+from schemas import CharacterCreate, CharacterTranslationRequest
+import services.character_translation_service as translation_service
 import json
 import os
-import shutil
-import uuid
 
 router = APIRouter()
 
@@ -41,35 +40,38 @@ def parse_character(file: UploadFile = File(...)):
 
     try:
         # 校验文件大小
-        content = file.file.read()
+        content = file.file.read(MAX_CARD_SIZE_BYTES + 1)
         if len(content) > MAX_CARD_SIZE_BYTES:
             raise HTTPException(
                 status_code=413,
                 detail=f"文件过大，最大允许 {MAX_CARD_SIZE_BYTES // 1024 // 1024} MB。"
             )
 
-        filename = os.path.basename(file.filename or "card.png")
-        if not filename:
-            filename = "card.png"
-        # 加 UUID 短码前缀，防止同名角色卡相互覆盖
-        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-
-        card_data = parse_character_card(file_path)
-
-        avatar_path = file_path if ext == ".png" else ""
-        if avatar_path:
-            # 统一使用正斜杠以适配 Web/URL 访问路径
-            avatar_path = avatar_path.replace("\\", "/")
-        card_data["avatar_path"] = avatar_path
+        card_data = import_character_card(content, ext, UPLOAD_DIR)
 
         return {"message": "Character parsed successfully", "data": card_data}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse character: {str(e)}")
+
+@router.post("/translation-cache")
+def get_translation_cache(request: CharacterTranslationRequest, db: Session = Depends(get_db)):
+    """仅查询已保存的阅读译文，不调用模型。"""
+    try:
+        return {"translation": translation_service.cached_translation(request.card.model_dump(), db)}
+    except translation_service.TranslationError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+
+
+@router.post("/translate")
+async def translate_character(request: CharacterTranslationRequest, db: Session = Depends(get_db)):
+    """手动生成独立的中文阅读版本，支持尚未导入的角色卡。"""
+    try:
+        return {"translation": await translation_service.translate_card(request.card.model_dump(), db, request.force)}
+    except translation_service.TranslationError as exc:
+        raise HTTPException(502, detail=str(exc)) from exc
+
 
 @router.post("/create")
 def create_character(character_data: CharacterCreate, db: Session = Depends(get_db)):

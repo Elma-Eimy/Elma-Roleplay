@@ -6,6 +6,12 @@ import { getSession } from "@/api/sessions";
 import type { PersonaDetail, SessionDetail } from "@/api/sessions";
 
 export const usePersonaStore = defineStore("persona", () => {
+  let detailVersion = 0;
+
+  function cancelSessionLoad() {
+    detailVersion++;
+    isLoadingPersona.value = false;
+  }
   // ===== 状态变量 =====
 
   /** 当前选中的角色完整设定详情 */
@@ -102,23 +108,27 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 根据会话 ID 异步加载会话详情与关联的角色设定信息 */
   async function loadSessionDetail(sessionId: number) {
+    const version = ++detailVersion;
     isLoadingPersona.value = true;
     try {
       const session = await getSession(sessionId);
-      currentPersona.value = session.persona;
+      if (version !== detailVersion) return;
       
       // Load full character details to populate activeCharacter
       const fullChar = await getCharacter(session.character.id);
+      if (version !== detailVersion) return;
+      currentPersona.value = session.persona;
       activeCharacter.value = fullChar;
     } catch (e) {
       console.error(`Failed to load session ${sessionId} detail`, e);
     } finally {
-      isLoadingPersona.value = false;
+      if (version === detailVersion) isLoadingPersona.value = false;
     }
   }
 
   /** 从完整的详情对象中直接设置活跃角色设定 */
   function setActiveCharacter(character: CharacterDetail) {
+    cancelSessionLoad();
     activeCharacter.value = character;
   }
 
@@ -129,6 +139,7 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 从会话详情的响应中加载设置角色人格状态数据 */
   function setPersonaFromSession(session: SessionDetail) {
+    cancelSessionLoad();
     currentPersona.value = session.persona;
   }
 
@@ -158,6 +169,7 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 清除当前的活跃角色和人设状态数据（例如在登出或切换角色时） */
   function clearActiveCharacter() {
+    cancelSessionLoad();
     activeCharacter.value = null;
     currentPersona.value = null;
   }
@@ -201,6 +213,7 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    cancelSessionLoad();
     activeCharacter.value = null;
     characterList.value = [];
     currentPersona.value = null;
@@ -229,6 +242,7 @@ export const usePersonaStore = defineStore("persona", () => {
     // Actions
     loadCharacters,
     loadSessionDetail,
+    cancelSessionLoad,
     setActiveCharacter,
     setCharacterList,
     setPersonaFromSession,

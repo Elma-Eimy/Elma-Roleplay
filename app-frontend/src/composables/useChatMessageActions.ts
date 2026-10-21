@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import type { Ref } from "vue";
 import { createSession } from "@/api/sessions";
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { useChatStore } from "@/store/chatStore";
 import type { ChatMessage } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
@@ -50,6 +51,7 @@ export function useChatMessageActions(
             title: `${character.name} (分支故事)`,
             start_message_id: message.id,
           });
+          useChatSettingsStore().inheritSession(sessionId, branch.session_id);
           uni.hideLoading();
           uni.showToast({ title: "分支创建成功", icon: "success" });
           setTimeout(() => {

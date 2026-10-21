@@ -14,11 +14,18 @@
 
         <!-- ① 角色卡片面板 -->
         <view class="char-card">
-          <AvatarImage
-            class="char-card-avatar"
-            :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
-            :lazy-load="false"
-          />
+          <button
+            class="char-card-avatar-link"
+            :aria-label="`查看${personaStore.characterName}的人物档案`"
+            :disabled="!personaStore.activeCharacter?.id || personaStore.isLoadingPersona || isOpeningProfile"
+            @tap.stop="openCharacterProfile"
+          >
+            <AvatarImage
+              class="char-card-avatar"
+              :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+              :lazy-load="false"
+            />
+          </button>
           <view class="char-card-info">
             <text class="char-card-name">{{ personaStore.characterName }}</text>
             <view class="mood-badge">
@@ -79,24 +86,10 @@
         <!-- ④ 对话配置开关项 -->
         <view class="panel-section">
           <text class="section-title">对话设置</text>
-          <view class="setting-row">
-            <view class="setting-row-left">
-              <image 
-                class="setting-row-icon" 
-                :src="chatSettingsStore.useReasoning ? '/static/icons/chat_sparkle_active.svg' : '/static/icons/chat_sparkle.svg'" 
-                mode="aspectFit" 
-              />
-              <text class="setting-row-label">深度思考模式</text>
-            </view>
-            <view
-              class="custom-toggle"
-              :class="{ 'is-on': chatSettingsStore.useReasoning }"
-              @tap="chatSettingsStore.useReasoning = !chatSettingsStore.useReasoning"
-            >
-              <view class="toggle-thumb"></view>
-            </view>
-          </view>
-
+          <text class="generation-scope">模型选择仅用于当前故事，在本机保存。</text>
+          <GenerationPicker v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
+          <text v-if="chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
+          <button class="generation-reset" @tap="chatSettingsStore.resetGeneration">恢复全局默认</button>
           <view class="background-setting">
             <view class="background-setting-header">
               <text class="setting-row-label">聊天背景</text>
@@ -162,7 +155,7 @@
                   >重置</text>
                 </view>
               </view>
-              <slider
+              <slider :disabled="chatSettingsStore.effective.thinking"
                 class="drawer-slider-component"
                 :value="Math.round((chatSettingsStore.temperature ?? 1.0) * 10)"
                 :min="1" :max="20" :step="1"
@@ -189,7 +182,7 @@
                   >重置</text>
                 </view>
               </view>
-              <slider
+              <slider :disabled="chatSettingsStore.effective.capability?.adapter === 'reasoning' || (chatSettingsStore.effective.capability?.adapter === 'deepseek' && (/flash/i.test(chatSettingsStore.effective.id) ? !chatSettingsStore.effective.thinking : chatSettingsStore.effective.thinking))"
                 class="drawer-slider-component"
                 :value="Math.round((chatSettingsStore.top_p ?? 1.0) * 100)"
                 :min="10" :max="100" :step="5"
@@ -216,7 +209,7 @@
                   >重置</text>
                 </view>
               </view>
-              <slider
+              <slider :disabled="chatSettingsStore.effective.thinking"
                 class="drawer-slider-component"
                 :value="Math.round(((chatSettingsStore.presence_penalty ?? 0.0) + 2) * 10)"
                 :min="0" :max="40" :step="1"
@@ -243,7 +236,7 @@
                   >重置</text>
                 </view>
               </view>
-              <slider
+              <slider :disabled="chatSettingsStore.effective.thinking"
                 class="drawer-slider-component"
                 :value="Math.round(((chatSettingsStore.frequency_penalty ?? 0.0) + 2) * 10)"
                 :min="0" :max="40" :step="1"
@@ -270,7 +263,7 @@
                   >重置</text>
                 </view>
               </view>
-              <slider
+              <slider :disabled="chatSettingsStore.effective.capability?.adapter !== 'compatible'"
                 class="drawer-slider-component"
                 :value="Math.round((chatSettingsStore.repetition_penalty ?? 1.0) * 100)"
                 :min="50" :max="200" :step="5"
@@ -340,6 +333,7 @@ import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
+import GenerationPicker from "./GenerationPicker.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
@@ -360,6 +354,20 @@ const emit = defineEmits<{
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const isOpeningProfile = ref(false);
+
+const openCharacterProfile = () => {
+  const characterId = personaStore.activeCharacter?.id;
+  if (!characterId || personaStore.isLoadingPersona || isOpeningProfile.value) return;
+  isOpeningProfile.value = true;
+  // 压入页面栈，保留原聊天页及其草稿；档案页 navigateBack 返回此处。
+  uni.navigateTo({
+    url: `/pages/character/detail?id=${characterId}`,
+    success: () => emit("close"),
+    fail: () => uni.showToast({ title: "无法打开人物档案，请重试", icon: "none" }),
+    complete: () => { isOpeningProfile.value = false; },
+  });
+};
 
 const showAdvancedParams = ref(false);
 const userNicknameInput = ref(personaStore.userNickname);
@@ -501,6 +509,20 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
   margin: 0 20rpx 28rpx 20rpx;
   border-radius: 24rpx;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.char-card-avatar-link {
+  display: flex;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.char-card-avatar-link::after {
+  border: 0;
 }
 
 .char-card-avatar {
@@ -971,4 +993,9 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
   backdrop-filter: none !important;
   background-color: rgba(0, 0, 0, 0.55) !important;
 }
+</style>
+
+<style scoped>
+.generation-scope { display: block; font-size: 22rpx; color: #7c8983; line-height: 1.8; margin: 14rpx 0 24rpx; }
+.generation-reset { margin: 22rpx 0; border-radius: 16rpx; background: #f1f6f2; color: #4f8e7c; font-size: 23rpx; }
 </style>

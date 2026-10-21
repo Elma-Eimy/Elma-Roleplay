@@ -7,10 +7,10 @@
       </view>
       <text class="title">人物档案</text>
       <view class="header-right">
-        <view class="header-btn sync-btn" @tap="quickUpdateFromCard">
+        <view role="button" aria-label="导入更新角色卡" class="header-btn sync-btn" @tap="quickUpdateFromCard">
           <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
         </view>
-        <view class="header-btn edit-btn" @tap="goToEdit">
+        <view role="button" aria-label="编辑人物档案" class="header-btn edit-btn" @tap="goToEdit">
           <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
         </view>
       </view>
@@ -47,26 +47,31 @@
         <view class="char-header-section">
           <text class="archive-eyebrow">CHARACTER FILE</text>
           <text class="char-name">{{ character.name }}</text>
+          <CharacterTranslationBar :available="!!translation" :busy="translating" :language="language" :error="translationError" @language="selectLanguage" @translate="translate" />
           <text class="char-summary">
-            {{ character.description?.trim() || "这位角色还没有留下档案摘要。" }}
+            {{ plainCardText(readingCard?.scenario || readingCard?.description).slice(0, 220) || "这位角色还没有留下档案摘要。" }}
           </text>
+          <text v-if="getCardMetadata(character).creator" class="card-author">作者 · {{ getCardMetadata(character).creator }}{{ getCardMetadata(character).version ? " · 版本 " + getCardMetadata(character).version : "" }}</text>
           <view class="tag-row" v-if="character.personality || (character.tags && character.tags.length > 0)">
             <view 
               class="personality-tag" 
-              v-for="tag in personalityTags" 
+              v-for="tag in personalityTags.slice(0, 4)"
               :key="'pers-' + tag"
             >
               {{ tag }}
             </view>
             <view 
               class="character-tag" 
-              v-for="tag in (character.tags || [])" 
+              v-for="tag in (showAllTags ? character.tags || [] : (character.tags || []).slice(0, 6))"
               :key="'tag-' + tag"
             >
               #{{ tag }}
             </view>
           </view>
+          <button v-if="(character.tags?.length || 0) > 6" class="tag-toggle" @tap="showAllTags = !showAllTags">{{ showAllTags ? "收起标签" : "查看全部 " + character.tags?.length + " 个标签" }}</button>
           <view class="archive-stats">
+            <view class="archive-stat"><text class="archive-stat-value">{{ getCardGreetings(character).length + 1 }}</text><text class="archive-stat-label">故事开场</text></view>
+            <view class="archive-stat-divider"></view>
             <view class="archive-stat">
               <text class="archive-stat-value">{{ sessions.length }}</text>
               <text class="archive-stat-label">故事线</text>
@@ -190,6 +195,7 @@
         <CharacterProfileTab 
           v-if="activeTab === 'profile'" 
           :character="character" 
+          :reading-character="readingCard || character"
         />
 
         <!-- Tab 3: 专属与绑定世界书列表 -->
@@ -365,11 +371,14 @@
     <!-- 新建平行宇宙分支模态框 -->
     <NewSessionModal 
       v-model:isOpen="isNewBranchModalOpen" 
-      :alternateGreetings="(character?.extensions?.alternate_greetings as string[] | undefined)"
+      :alternateGreetings="getCardGreetings(character)"
+      :first-mes="character.first_mes"
       :characterName="character?.name"
       :characterId="characterId"
       @confirm="startNewBranch"
     />
+
+    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="character" :busy="isImportSaving" save-immediately @apply="applyImportedCard" />
 
     <!-- 重命名会话分支模态框 -->
     <RenameSessionModal
@@ -384,8 +393,8 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
-import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl, parseCharacter } from "@/api/characters";
-import type { CharacterDetail } from "@/api/characters";
+import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl } from "@/api/characters";
+import type { CharacterBase, CharacterDetail } from "@/api/characters";
 import {
   getAllSessions,
   deleteSession,
@@ -396,8 +405,13 @@ import {
 import type { MemoryStats, SessionSummary } from "@/api/sessions";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
 import BranchTreeView from "@/components/chat/BranchTreeView.vue";
+import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { usePersonaStore } from "@/store/personaStore";
+import CharacterImportSheet from "@/components/character/CharacterImportSheet.vue";
+import { plainCardText, getCardMetadata, getCardGreetings } from "@/utils/characterCard";
 import CharacterProfileTab from "@/components/character/CharacterProfileTab.vue";
+import CharacterTranslationBar from "@/components/character/CharacterTranslationBar.vue";
+import { useCharacterTranslation } from "@/composables/useCharacterTranslation";
 import CharacterLorebookTab from "@/components/character/CharacterLorebookTab.vue";
 import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 
@@ -425,6 +439,7 @@ interface MemoryStoryItem {
 
 const characterId = ref<number | null>(null);
 const character = ref<CharacterDetail | null>(null);
+const { translation, language, selectLanguage, translating, error: translationError, readingCard, translate } = useCharacterTranslation(() => character.value);
 const sessions = ref<CharacterSessionItem[]>([]);
 const isNewBranchModalOpen = ref(false);
 const isMemoryModalOpen = ref(false);
@@ -473,6 +488,7 @@ const openMemoryArchive = async () => {
 };
 
 const lorebookEntriesCount = ref(0);
+const showAllTags = ref(false);
 
 const onEntriesCountUpdate = (count: number) => {
   lorebookEntriesCount.value = count;
@@ -485,8 +501,8 @@ const getParentSessionTitle = (parentId: number | null) => {
 };
 
 const personalityTags = computed(() => {
-  if (!character.value?.personality) return [];
-  return character.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
+  if (!readingCard.value?.personality) return [];
+  return readingCard.value.personality.split(/[,，\s]+/).filter(tag => tag.trim() !== "");
 });
 
 const getAffectionClass = (score: number | undefined | null) => {
@@ -596,86 +612,19 @@ const goToEdit = () => {
   }
 };
 
-const runQuickUpdate = async (tempFilePath: string, isPng: boolean) => {
-  if (characterId.value === null || !character.value) return;
-  uni.showLoading({ title: '正在解析角色卡...' });
+const isImportOpen = ref(false);
+const isImportSaving = ref(false);
+const quickUpdateFromCard = () => { isImportOpen.value = true; };
+const applyImportedCard = async (data: CharacterBase) => {
+  if (characterId.value === null || isImportSaving.value) return;
+  isImportSaving.value = true;
   try {
-    const parseRes = await parseCharacter(tempFilePath);
-    
-    let avatarPath = character.value.avatar_path || "";
-    // 如果是 PNG 格式角色卡，自动上传并更新头像
-    if (isPng) {
-      uni.showLoading({ title: '正在上传头像...' });
-      try {
-        const uploadRes = await uploadAvatar(tempFilePath);
-        avatarPath = uploadRes.avatar_path;
-      } catch (uploadErr) {
-        console.error("Auto avatar upload failed", uploadErr);
-      }
-    } else if (parseRes.data.avatar_path) {
-      avatarPath = parseRes.data.avatar_path;
-    }
-
-    const updatedData = {
-      ...character.value,
-      ...parseRes.data,
-      avatar_path: avatarPath
-    };
-
-    uni.showLoading({ title: '正在更新角色信息...' });
-    await updateCharacter(characterId.value, updatedData);
-    await personaStore.loadCharacters();
-    await loadCharacterData(characterId.value);
-    
-    uni.showToast({ title: '更新角色信息成功', icon: 'success' });
-  } catch (e) {
-    console.error("Quick update failed", e);
-    uni.showToast({ title: '更新失败，请检查格式', icon: 'none' });
-  } finally {
-    uni.hideLoading();
-  }
-};
-
-const quickUpdateFromCard = () => {
-  if (characterId.value === null || !character.value) return;
-  
-  uni.showModal({
-    title: "快捷更新",
-    content: "导入新角色卡将直接覆盖该角色的当前设定（不会影响聊天记录和好感度）。是否继续？",
-    success: (modalRes) => {
-      if (!modalRes.confirm) return;
-
-      // #ifdef APP-PLUS
-      uni.chooseImage({
-        count: 1,
-        sizeType: ['original'],
-        sourceType: ['album'],
-        success: (res) => {
-          runQuickUpdate(res.tempFilePaths[0], true);
-        },
-        fail: (err) => {
-          console.log("选择图片取消或失败", err);
-        }
-      });
-      // #endif
-
-      // #ifndef APP-PLUS
-      uni.chooseFile({
-        count: 1,
-        type: "all",
-        extension: [".png", ".json"],
-        success: (res) => {
-          const path = res.tempFilePaths[0];
-          const isPng = path.toLowerCase().endsWith('.png');
-          runQuickUpdate(path, isPng);
-        },
-        fail: (err) => {
-          console.log("选择文件取消或失败", err);
-        }
-      });
-      // #endif
-    }
-  });
+    await updateCharacter(characterId.value, data);
+    isImportOpen.value = false;
+    await Promise.all([personaStore.loadCharacters(), loadCharacterData(characterId.value)]);
+    uni.showToast({ title: "角色设定已更新", icon: "success" });
+  } catch (failure) { uni.showModal({ title: "更新未完成", content: failure instanceof Error ? failure.message : "请检查连接后重试。", showCancel: false }); }
+  finally { isImportSaving.value = false; }
 };
 
 const previewPortrait = () => {
@@ -739,6 +688,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
       title: payload.title,
       greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
+    if (activeParentSessionId.value !== null) useChatSettingsStore().inheritSession(activeParentSessionId.value, res.session_id);
     uni.hideLoading();
     uni.navigateTo({
       url: `/pages/chat/chat?sessionId=${res.session_id}`
@@ -777,6 +727,7 @@ const onSessionLongPress = (session: any) => {
             if (mRes.confirm && charId !== null) {
               try {
                 await deleteSession(session.id);
+                useChatSettingsStore().removeSession(session.id);
                 await loadCharacterData(charId);
                 uni.showToast({ title: '删除成功', icon: 'success' });
               } catch (e: any) {
@@ -824,3 +775,12 @@ const formatDate = (dateString: string) => {
 </script>
 
 <style scoped src="./detail.css"></style>
+
+<style scoped>
+.card-author { display: block; font-size: 24rpx; color: var(--app-color-text-secondary, #7c8983); margin: 16rpx 0; }
+</style>
+
+<style scoped>
+.tag-toggle { margin: 12rpx 0 0; padding: 0; background: transparent; color: #4f8e7c; font-size: 23rpx; line-height: 48rpx; text-align: left; }
+.tag-toggle::after { border: 0; }
+</style>

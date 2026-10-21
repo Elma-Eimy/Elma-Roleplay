@@ -15,8 +15,7 @@
 
     <!-- App 端流式传输通信桥梁 (仅 APP-PLUS 环境下有效) -->
     <!-- #ifdef APP-PLUS -->
-    <view :propVal="localStreamRequest" :change:propVal="stream.onStreamRequestChange" class="renderjs-bridge"></view>
-    <view id="hidden-stream-bridge" style="display: none;" @bridge-msg="onBridgeMessage"></view>
+    <ChatStreamBridge :request="localStreamRequest" @message="onBridgeMessage" />
     <!-- #endif -->
     <ChatHeader
       :character-name="personaStore.characterName"
@@ -40,15 +39,18 @@
     <ChatComposer
       v-model="inputText"
       :use-reasoning="chatSettingsStore.useReasoning"
+      :model-summary="chatSettingsStore.modelSummary"
       :is-focused="isInputFocused"
       :is-android="isAndroid"
       :keyboard-height="keyboardHeight"
       :wrapper-style="inputWrapperStyle"
-      @update:use-reasoning="chatSettingsStore.useReasoning = $event"
+      @open-model-settings="isModelSettingsOpen = true"
       @focus-change="isInputFocused = $event"
       @line-change="scrollToBottom"
       @send="onSend"
     />
+
+    <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
 
     <EditMessageModal
       v-model="editMessageContent"
@@ -96,7 +98,9 @@
     <NewSessionModal
       v-if="isNewBranchModalOpen"
       :isOpen="isNewBranchModalOpen"
-      :character="personaStore.activeCharacter"
+      :show-greetings="activeParentSessionId === null"
+      :first-mes="personaStore.activeCharacter?.first_mes"
+      :alternate-greetings="(personaStore.activeCharacter?.extensions?.alternate_greetings as string[] | undefined)"
       :character-id="personaStore.activeCharacter?.id"
       :character-name="personaStore.characterName"
       @close="isNewBranchModalOpen = false"
@@ -115,8 +119,11 @@
 </template>
 
 <script setup lang="ts">
+// #ifdef APP-PLUS
+import ChatStreamBridge from "@/components/chat/ChatStreamBridge.vue";
+// #endif
 import { ref, computed, watch } from "vue";
-import { onLoad, onUnload } from "@dcloudio/uni-app";
+import { onLoad, onUnload, onShow } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
@@ -129,6 +136,7 @@ import {
 } from "@/api/sessions";
 import ChatHeader from "@/components/chat/ChatHeader.vue";
 import ChatMessageList from "@/components/chat/ChatMessageList.vue";
+import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import ChatComposer from "@/components/chat/ChatComposer.vue";
 import EditMessageModal from "@/components/chat/EditMessageModal.vue";
 import ChatDrawer from "@/components/chat/ChatDrawer.vue";
@@ -147,6 +155,8 @@ import type { BranchSession } from "@/types/chat";
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const isModelSettingsOpen = ref(false);
+onShow(() => { void chatSettingsStore.refreshModels(); });
 const {
   scrollTop,
   scrollIntoViewId,
@@ -330,6 +340,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
       greeting_index: payload.greeting_index !== null ? payload.greeting_index : undefined
     });
     if (activeParentSessionId.value !== null) {
+      chatSettingsStore.inheritSession(activeParentSessionId.value, res.session_id);
       saveBackgroundMode(
         res.session_id,
         readBackgroundMode(activeParentSessionId.value)
@@ -382,6 +393,7 @@ const handleTreeNodeLongpress = (session: BranchSession) => {
               try {
                 await deleteSession(session.id);
                 clearBackgroundMode(session.id);
+                chatSettingsStore.removeSession(session.id);
                 // 如果删除的是当前会话，需要退回到会话列表首页
                 if (session.id === currentSessionId.value) {
                   uni.showToast({ title: '当前会话已删除', icon: 'none' });
@@ -445,6 +457,7 @@ onLoad(async (options) => {
 onUnload(() => {
   console.log("[chat.vue] onUnload page - resetting chatStore");
   chatStore.$reset();
+  personaStore.cancelSessionLoad();
   resetStreamBridge();
 });
 
@@ -537,6 +550,7 @@ const deleteCurrentSession = () => {
           uni.showLoading({ title: '正在删除...' });
           await deleteSession(currentSessionId.value!);
           clearBackgroundMode(currentSessionId.value!);
+          chatSettingsStore.removeSession(currentSessionId.value!);
           uni.hideLoading();
           isStatusPanelOpen.value = false;
           uni.navigateBack();
@@ -571,234 +585,6 @@ const onLoadMore = async () => {
   }
 };
 
-</script>
-
-<script module="stream" lang="renderjs">
-// @ts-ignore
-var activeXhr = null;
-
-/**
- * @param {string} type
- * @param {Record<string, unknown>} payload
- */
-function sendToLogic(type = "", payload = {}) {
-  var bridgeEl = document.getElementById("hidden-stream-bridge");
-  if (bridgeEl) {
-    var data = Object.assign({ type: type }, payload);
-    
-    var evt;
-    if (typeof CustomEvent === "function") {
-      evt = new CustomEvent("bridge-msg", {
-        detail: data,
-        bubbles: true,
-        cancelable: true
-      });
-    } else {
-      evt = document.createEvent("CustomEvent");
-      evt.initCustomEvent("bridge-msg", true, true, data);
-    }
-    
-    bridgeEl.dispatchEvent(evt);
-  } else {
-    console.error("[renderjs] hidden-stream-bridge element not found!");
-  }
-}
-
-export default {
-  beforeDestroy: function() {
-    this.abortActiveStream();
-  },
-  beforeUnmount: function() {
-    this.abortActiveStream();
-  },
-  methods: {
-    abortActiveStream: function() {
-      // @ts-ignore
-      if (activeXhr) {
-        try {
-          // @ts-ignore
-          activeXhr.abort();
-        } catch (e) {}
-        // @ts-ignore
-        activeXhr = null;
-      }
-    },
-    // @ts-ignore
-    onStreamRequestChange: function(newValue, oldValue, ownerInstance, instance) {
-      if (!newValue) {
-        this.abortActiveStream();
-        return;
-      }
-      this.startStream(newValue, ownerInstance);
-    },
-    // @ts-ignore
-    startStream: function(request, ownerInstance) {
-      try {
-        var logMsg = "[renderjs] startStream entered. placeholder: " + request.placeholderId;
-        console.log(logMsg);
-        sendToLogic("log", { level: "info", message: logMsg });
-
-        this.abortActiveStream();
-        
-        var requestId = request.requestId;
-        var baseUrl = request.baseUrl;
-        var apiKey = request.apiKey;
-        var params = request.params;
-        var placeholderId = request.placeholderId;
-        var userMessageTempId = request.userMessageTempId;
-        
-        // 包装 sendToLogic 函数，自动将 requestId 注入到 payload 中，实现跨页面安全隔离与防卡死
-        /**
-         * @param {string} type
-         * @param {Record<string, unknown>} payload
-         */
-        function sendToLogicWithReq(type = "", payload = {}) {
-          var payloadData = Object.assign({}, payload, { requestId: requestId });
-          sendToLogic(type, payloadData);
-        }
-        
-        var fetchUrl = baseUrl + "/chat/stream";
-        var logUrlMsg = "[renderjs] XHR url: " + fetchUrl;
-        console.log(logUrlMsg);
-        sendToLogic("log", { level: "info", message: logUrlMsg });
-        
-        var xhr = new XMLHttpRequest();
-        // @ts-ignore
-        activeXhr = xhr;
-        
-        xhr.open("POST", fetchUrl, true);
-        xhr.setRequestHeader("Content-Type", "application/json");
-        if (apiKey) {
-          xhr.setRequestHeader("X-API-Key", apiKey);
-        }
-        
-        var lastSeenIndex = 0;
-        var buffer = "";
-        
-        /** @param {string} chunkText */
-        function handleChunk(chunkText = "") {
-          buffer += chunkText;
-          var lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          
-          for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            var trimmedLine = line.trim();
-            if (!trimmedLine) continue;
-            
-            if (trimmedLine.indexOf("data: ") === 0) {
-              var raw = trimmedLine.slice(6).trim();
-              if (raw === "[DONE]") {
-                continue;
-              }
-              try {
-                var parsed = JSON.parse(raw);
-                if (parsed.error !== undefined) {
-                  var logErrorMsg = "[renderjs] stream error chunk parsed: " + parsed.error;
-                  console.log(logErrorMsg);
-                  sendToLogic("log", { level: "warn", message: logErrorMsg });
-                  
-                  sendToLogicWithReq("error", {
-                    placeholderId: placeholderId,
-                    userMessageTempId: userMessageTempId,
-                    error: parsed.error
-                  });
-                } else if (parsed.reasoning_chunk !== undefined) {
-                  sendToLogicWithReq("reasoning_chunk", {
-                    placeholderId: placeholderId,
-                    reasoning_chunk: parsed.reasoning_chunk
-                  });
-                } else if (parsed.chunk !== undefined) {
-                  sendToLogicWithReq("chunk", {
-                    placeholderId: placeholderId,
-                    chunk: parsed.chunk
-                  });
-                } else {
-                  var logMetaMsg = "[renderjs] stream metadata done chunk: " + JSON.stringify(parsed);
-                  console.log(logMetaMsg);
-                  sendToLogic("log", { level: "info", message: logMetaMsg });
-                  
-                  sendToLogicWithReq("done", {
-                    placeholderId: placeholderId,
-                    userMessageTempId: userMessageTempId,
-                    meta: parsed
-                  });
-                }
-              } catch (e) {
-                sendToLogicWithReq("chunk", {
-                  placeholderId: placeholderId,
-                  chunk: raw
-                });
-              }
-            }
-          }
-        }
-        
-        xhr.onprogress = function() {
-          try {
-            var responseText = xhr.responseText;
-            var newData = responseText.substring(lastSeenIndex);
-            lastSeenIndex = responseText.length;
-            if (newData) {
-              handleChunk(newData);
-            }
-          } catch (e) {
-            console.error("[renderjs] onprogress error", e);
-          }
-        };
-        
-        xhr.onload = function() {
-          try {
-            var responseText = xhr.responseText;
-            var newData = responseText.substring(lastSeenIndex);
-            if (newData) {
-              handleChunk(newData);
-            }
-            if (buffer.trim()) {
-              handleChunk("\n");
-            }
-            // @ts-ignore
-            activeXhr = null;
-          } catch (e) {}
-        };
-        
-        xhr.onerror = function(err) {
-          var logErrorMsg = "[renderjs] XHR error caught";
-          console.error(logErrorMsg);
-          sendToLogic("log", { level: "error", message: logErrorMsg });
-          
-          sendToLogicWithReq("error", {
-            placeholderId: placeholderId,
-            userMessageTempId: userMessageTempId,
-            error: "网络连接失败或服务器响应异常"
-          });
-          // @ts-ignore
-          activeXhr = null;
-        };
-        
-        xhr.send(JSON.stringify(params));
-        
-      } catch (globalErr) {
-        var globalErrorMessage = globalErr instanceof Error
-          ? globalErr.message
-          : String(globalErr);
-        var logGlobalErrorMsg = "[renderjs] startStream global error caught: " + globalErrorMessage;
-        console.error(logGlobalErrorMsg);
-        sendToLogic("log", { level: "error", message: logGlobalErrorMsg });
-
-        // 避免在 catch 中调用 try 作用域内的 sendToLogicWithReq 导致 ReferenceError，直接使用 sendToLogic 并拼接参数
-        sendToLogic("error", {
-          requestId: request ? request.requestId : undefined,
-          placeholderId: request ? request.placeholderId : undefined,
-          userMessageTempId: request ? request.userMessageTempId : undefined,
-          error: globalErrorMessage
-        });
-        // @ts-ignore
-        activeXhr = null;
-      }
-    }
-  }
-}
 </script>
 
 <style scoped src="./chat.css"></style>
