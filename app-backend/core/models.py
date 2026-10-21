@@ -304,6 +304,10 @@ class MemoryChunk(Base):
 
     content          = Column(Text,              nullable=False)           # 记忆的自然语言描述
     memory_type      = Column(SAEnum(MemoryType), nullable=False)
+    # 故事内时间语义，不按服务器日期推断计划是否兑现；旧卡保持 unknown。
+    temporal_status = Column(String(20), nullable=False, default="unknown", server_default="unknown")
+    temporal_note = Column(String(120), nullable=True)
+    source_evidence_json = Column(Text, nullable=True)
     importance_score = Column(Float,             default=0.5)             # 0.0~1.0，检索过滤用
 
     # ChromaDB 的 document_id，格式固定为 f"mem_{id}"，写入后不再修改
@@ -398,7 +402,13 @@ class GraphEntity(Base):
     aliases     = Column(Text, nullable=True)  # JSON 列表，存储显式的昵称/缩写
     entity_type = Column(String(50), nullable=False)  # 实体类型：如 "person"(人物)、"place"(地点)、"object"(物品)、"event"(事件)、"concept"(概念)
     description = Column(Text, nullable=True)
+    # 追加式事实版本；无来源的历史行保留存储，但不参与召回。
+    source_start_message_id = Column(Integer, nullable=True)
+    source_message_id_bound = Column(Integer, nullable=True)
+    evidence_json = Column(Text, nullable=True)
+    is_stub = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at  = Column(DateTime, default=func.now())
+    __table_args__ = (Index("ix_graph_entities_persona_source", persona_id, source_message_id_bound),)
 
 
 class GraphRelation(Base):
@@ -424,7 +434,11 @@ class GraphRelation(Base):
     relation_type = Column(String(50), nullable=False)
     description   = Column(Text, nullable=True)
     importance    = Column(Float, default=0.5)
+    source_start_message_id = Column(Integer, nullable=True)
+    source_message_id_bound = Column(Integer, nullable=True)
+    evidence_json = Column(Text, nullable=True)
     created_at    = Column(DateTime, default=func.now())
+    __table_args__ = (Index("ix_graph_relations_persona_source", persona_id, source_message_id_bound),)
 
 
 # ──────────────────────────────────────────────

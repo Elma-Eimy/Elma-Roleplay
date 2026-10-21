@@ -7,6 +7,10 @@ from core.models import SessionPersona, ChatMessage, MemoryType, MessageRole
 from services.infrastructure.llm_provider import get_llm_provider
 from services.memory.memory_manager import add_memory_chunk, retrieve_memories
 from services.memory.graph_service import upsert_graph_data
+from services.memory.memory_facts import normalize_temporal
+from services.memory.graph_evidence import (
+    content_fingerprint, snapshot_sources, sources_are_current, memory_evidence_is_current,
+)
 import services.memory.cognition_service as cognition_service
 from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
@@ -49,7 +53,7 @@ def normalize_extracted_memories(
     default_end = source_message_ids[-1]
     parsed: list[dict] = []
 
-    for memory in extracted_memories:
+    for extraction_index, memory in enumerate(extracted_memories):
         if len(parsed) >= _MEMORY_MAX_CARDS_PER_BATCH:
             break
         if not isinstance(memory, dict):
@@ -69,12 +73,15 @@ def normalize_extracted_memories(
             continue
 
         # 仅删除确定相同的记忆卡。对于否定对（例如“喜欢”/“不喜欢”），模糊文本相似度是不安全的；语义候选将在稍后通过受限的 LLM 关系检查进行解析。
+        temporal_status, temporal_note = normalize_temporal(
+            memory.get("temporal_status"), memory.get("temporal_note"))
         duplicate = False
         for existing in parsed:
             existing_compact = re.sub(
                 r"[\W_]+", "", existing["content"], flags=re.UNICODE
             ).casefold()
-            if compact == existing_compact:
+            if (compact == existing_compact and temporal_status == existing["temporal_status"]
+                    and temporal_note == existing["temporal_note"]):
                 duplicate = True
                 break
         if duplicate:
@@ -106,11 +113,14 @@ def normalize_extracted_memories(
             source_start, source_end = default_start, default_end
 
         parsed.append({
+            "_extraction_index": extraction_index,
             "content": content,
             "memory_type": memory_type,
             "importance_score": importance,
             "source_start_message_id": source_start,
             "source_message_id": source_end,
+            "temporal_status": temporal_status,
+            "temporal_note": temporal_note,
         })
 
     return parsed
@@ -159,6 +169,7 @@ def get_unsummarized_count(session_id: int, db: DBSession) -> int:
         ChatMessage.session_id == session_id,
         ChatMessage.is_active == True,
         ChatMessage.id < confirmed_upper_bound,
+        ChatMessage.role.in_((MessageRole.user, MessageRole.assistant)),
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
@@ -320,6 +331,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
         ChatMessage.session_id == session_id,
         ChatMessage.is_active == True,
         ChatMessage.id < confirmed_upper_bound,
+        ChatMessage.role.in_((MessageRole.user, MessageRole.assistant)),
     )
     if persona.last_summarized_msg_id is not None:
         query = query.filter(ChatMessage.id > persona.last_summarized_msg_id)
@@ -333,6 +345,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     # 记录待更新的指针 ID
     last_msg_id = unsummarized[-1].id
+    graph_source_messages = snapshot_sources(unsummarized)
 
     # 组合对话文本
     chat_text = ""
@@ -386,15 +399,19 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 1. memories：长期记忆片段列表。每个记忆包含：
    - content：记忆的自然语言描述（例如："用户最喜欢的食物是草莓蛋糕"）
    - memory_type：必须是 "event" (事件), "emotion" (角色情绪), "relationship" (关系变化), "fact" (客观事实/设定) 之一
+   - temporal_status："current"（明确目前成立）、"historical"（已发生的事件或过去状态）、"planned"（计划/约定/尚未兑现）、"unknown"（未明确时间）；不确定时用 unknown，不把计划当成已经发生
+   - temporal_note：可选，原文有依据的故事内时间描述（如“下个月”“搬家前”），不换算成服务器日期，不猜测计划兑现
    - importance_score：0.0 到 1.0 之间的重要性评分
    - source_start_message_id：支持该记忆的第一条消息ID
    - source_end_message_id：支持该记忆的最后一条消息ID
 2. entities：对话中出现的重要实体/概念列表。每个实体包含：
+   - memory_indices：支持本实体描述的 memories 原数组下标列表（从 0 开始）；只能引用本批实际输出的记忆，不得把没有记忆依据的内容另存为图谱事实
    - name：实体或人名（例如："小红"、"草莓蛋糕"、"东京"）
    - aliases：可选的明确昵称、简称或同一名称写法列表（例如：["阿墨", "墨哥"]）；不得把“他/她/它/这里/那个”等通用代词作为别名
    - entity_type：必须是 "person" (人物), "place" (地点), "object" (物品), "event" (事件), "concept" (概念/其它) 之一
    - description：对该实体的简要描述、状态或喜好（第一人称视角，例如："用户的妹妹，非常喜欢吃草莓蛋糕。"）
 3. relations：实体之间的关系列表。每个关系包含：
+   - memory_indices：支持本关系的 memories 原数组下标列表（从 0 开始）；当前关系变化与旧事实的替代判断以同一记忆依据为准
    - source：源实体名称（例如："用户" 或 "小红"）
    - target：目标实体名称（例如："小红" 或 "草莓蛋糕"）
    - relation_type：关系词/连接词（必须是简短英文单词或词组，例如："sibling", "likes", "visited", "friend" 等）
@@ -407,11 +424,10 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
     {"content": "用户最喜欢的食物是草莓蛋糕", "memory_type": "fact", "importance_score": 0.7, "source_start_message_id": 101, "source_end_message_id": 103}
   ],
   "entities": [
-    {"name": "小红", "aliases": ["红红"], "entity_type": "person", "description": "用户的妹妹，非常喜欢吃草莓蛋糕"}
+    {"name": "草莓蛋糕", "aliases": [], "entity_type": "object", "description": "用户最喜欢的食物", "memory_indices": [0]}
   ],
   "relations": [
-    {"source": "用户", "relation_type": "sibling", "target": "小红", "description": "用户和小红是亲兄妹", "importance": 0.8},
-    {"source": "小红", "relation_type": "likes", "target": "草莓蛋糕", "description": "小红非常喜欢草莓蛋糕", "importance": 0.7}
+    {"source": "用户", "relation_type": "likes", "target": "草莓蛋糕", "description": "用户最喜欢草莓蛋糕", "importance": 0.7, "memory_indices": [0]}
   ]
 }
 
@@ -497,6 +513,10 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
 
     try:
         # 批量写入传统向量记忆片段，引入增量融合与去重
+        if not sources_are_current(persona_id, graph_source_messages, db):
+            db.rollback()
+            return 0
+        graph_memory_bindings = {}
         for pm in parsed_memories:
             # 1. 检索当前 Persona（含祖先链）下最多 3 条高相似度记忆（#5 fix：top_k=1 时
             #    若最佳候选被重要性/距离过滤掉会漏匹配，top_k=3 提供更充分的候选集）
@@ -517,12 +537,20 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                     memory for memory in existing_similar
                     if memory.get("id") is not None
                     and memory.get("distance", 1.0) < settings.APP_DEDUP_WRITE_THRESHOLD
+                    # 计划、历史与当前状态不能仅凭正文相似被 same/replace 合并。
+                    and memory.get("temporal_status", "unknown") == pm["temporal_status"]
+                    and memory.get("temporal_note") == pm["temporal_note"]
                 ),
                 key=lambda memory: memory.get("distance", 1.0),
             )
             decision = None
             matched_candidate = None
             for candidate in candidates:
+                # 来源失效的旧卡不能吞掉本批重新确认的事实，也不能成为替代依据。
+                if not memory_evidence_is_current(
+                    persona_id, candidate["id"], content_fingerprint(candidate["content"]), db,
+                ):
+                    continue
                 candidate_decision = resolve_memory_relationship_via_llm(
                     candidate["content"], pm["content"]
                 )
@@ -531,7 +559,16 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                     matched_candidate = candidate
                     break
 
+            if matched_candidate and not memory_evidence_is_current(
+                persona_id, matched_candidate["id"],
+                content_fingerprint(matched_candidate["content"]), db,
+            ):
+                db.rollback()
+                return 0
+
             if decision and decision["relation"] == "same":
+                evidence_memory_id = matched_candidate["id"]
+                evidence_content = matched_candidate["content"]
                 print(
                     f"[INFO] 记忆判定 same: 保留 chunk_id={matched_candidate['id']}，"
                     "跳过重复写入"
@@ -564,12 +601,26 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                     source_start_message_id=pm["source_start_message_id"],
                     supersedes_id=supersedes_id,
                     auto_commit=False,
+                    temporal_status=pm["temporal_status"],
+                    temporal_note=pm["temporal_note"],
+                    source_evidence=[source for source in graph_source_messages
+                                     if pm["source_start_message_id"] <= source["id"] <= pm["source_message_id"]],
                 )
+                evidence_memory_id = getattr(chunk, "id", None)
+                evidence_content = content_to_store
                 if supersedes_id is not None:
                     print(
                         f"[INFO] 记忆判定 replace: 新建 chunk_id={chunk.id} "
                         f"替代 chunk_id={supersedes_id}"
                     )
+
+            if type(evidence_memory_id) is int:
+                graph_memory_bindings[pm["_extraction_index"]] = {
+                    "memory_id": evidence_memory_id,
+                    "hash": content_fingerprint(evidence_content),
+                    "source_start": pm["source_start_message_id"],
+                    "source_end": pm["source_message_id"],
+                }
 
             if pm["importance_score"] > max_importance:
                 max_importance = pm["importance_score"]
@@ -580,10 +631,16 @@ def summarize_and_store_memory(session_id: int, db: DBSession) -> int:
                 persona_id=persona_id,
                 entities=extracted_entities,
                 relations=extracted_relations,
-                db=db
+                db=db,
+                source_messages=graph_source_messages,
+                memory_bindings=graph_memory_bindings,
             )
 
         # 所有记忆写入成功，更新进度指针
+        # 去重关系判断也可能调用外部模型，提交前再次检查来源，保持整批原子性。
+        if not sources_are_current(persona_id, graph_source_messages, db):
+            db.rollback()
+            return 0
         persona.last_summarized_msg_id = last_msg_id
 
         # 单次原子提交（SQLite 侧）

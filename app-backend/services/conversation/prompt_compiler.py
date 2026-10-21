@@ -2,6 +2,7 @@ import re
 import json
 from typing import Optional
 from core.config import settings
+from services.memory.memory_facts import TEMPORAL_LABELS
 from services.lorebook.lorebook_engine import empty_lorebook_result, process_lorebook
 from services.lorebook.parse_lorebook import (
     normalize_lorebook_depth,
@@ -628,9 +629,13 @@ def build_system_prompt(
                     time_label = "很久以前"
             
             if content:
+                temporal_label = TEMPORAL_LABELS.get(mem.get("temporal_status"), "") if isinstance(mem, dict) else ""
+                temporal_note = mem.get("temporal_note") if isinstance(mem, dict) else None
+                story_time = "；".join(part for part in (temporal_label, temporal_note) if part)
+                story_prefix = f"[{story_time}] " if story_time else ""
                 time_prefix = f"[{time_label}] " if time_label else ""
                 type_prefix = f"[{mem_type}] " if mem_type else ""
-                memory_lines.append(f"- {time_prefix}{type_prefix}{content}")
+                memory_lines.append(f"- {time_prefix}{type_prefix}{story_prefix}{content}")
 
         if memory_lines:
             retrieved_memories_text = "\n".join(memory_lines)

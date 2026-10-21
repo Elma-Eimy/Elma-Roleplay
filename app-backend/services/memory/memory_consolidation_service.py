@@ -11,6 +11,7 @@ from services.infrastructure.model_capabilities import auxiliary_controls
 from services.memory.session_memory_service import _get_persona
 from services.memory.memory_visibility import memory_view, memory_source_bound
 from services.memory.memory_manager import add_memory_chunk
+from services.memory.memory_facts import fact_sources_current
 from services.memory.memory_consolidation_guard import filter_safe_groups, has_source_conflict
 from services.memory import memory_consolidation_scan as scan
 
@@ -24,7 +25,7 @@ class ConsolidationModelError(ValueError):
 
 
 def snapshot(chunk):
-    return {
+    result = {
         "id": chunk.id, "content": chunk.content,
         "memory_type": chunk.memory_type.value,
         "importance_score": chunk.importance_score,
@@ -32,6 +33,9 @@ def snapshot(chunk):
         "source_message_id": chunk.source_message_id,
         "supersedes_id": chunk.supersedes_id,
     }
+    if chunk.temporal_status != "unknown" or chunk.temporal_note:
+        result.update(temporal_status=chunk.temporal_status, temporal_note=chunk.temporal_note)
+    return result
 
 
 def serialize_batch(batch, db, include_scan_status=True):
@@ -83,7 +87,8 @@ def group_conflicts(persona_id, payload, db):
     originals = {row.id: row for row in eligible_query(persona_id, db).filter(MemoryChunk.id.in_(ids)).all()}
     conflicts = {}
     for group in payload["groups"]:
-        if any(i not in originals or snapshot(originals[i]) != expected.get(i) for i in group["source_ids"]):
+        if any(i not in originals or snapshot(originals[i]) != expected.get(i)
+               or not fact_sources_current(originals[i], db) for i in group["source_ids"]):
             conflicts[group["id"]] = "来源记忆已修改、删除或不再有效，请重新预览"
         elif has_source_conflict(group["kind"], [snapshot(originals[i]) for i in group["source_ids"]]):
             conflicts[group["id"]] = "来源存在不同日期或肯定/否定边界冲突，请重新预览"
@@ -255,7 +260,8 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
         source_ids = {i for group in groups for i in group["source_ids"]}
         originals = {row.id: row for row in eligible_query(persona.id, db).filter(MemoryChunk.id.in_(source_ids)).all()}
         expected = {row["id"]: row for row in payload["sources"]}
-        if set(originals) != source_ids or any(snapshot(row) != expected[row.id] for row in originals.values()):
+        if set(originals) != source_ids or any(snapshot(row) != expected[row.id]
+                                              or not fact_sources_current(row, db) for row in originals.values()):
             raise ConsolidationConflict("来源记忆已经改变，请重新预览后再应用")
         if any(has_source_conflict(group["kind"], [snapshot(originals[i]) for i in group["source_ids"]]) for group in groups):
             raise ConsolidationConflict("整理建议存在不同日期或肯定/否定边界冲突，请重新预览")
@@ -271,6 +277,7 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
                 source_start_message_id=min((row.source_start_message_id or row.source_message_id for row in inputs
                                              if row.source_start_message_id or row.source_message_id), default=None),
                 db=db, auto_commit=False,
+                temporal_status=inputs[0].temporal_status, temporal_note=inputs[0].temporal_note,
             )
             chunk.consolidation_id = batch.id
             for source_id in group["source_ids"]:

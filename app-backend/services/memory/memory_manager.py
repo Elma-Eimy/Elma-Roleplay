@@ -121,8 +121,13 @@ def add_memory_chunk(
     supersedes_id: Optional[int] = None,
     auto_commit: bool = True,
     source_message_id_bound: Optional[int] = None,
+    temporal_status: str = "unknown",
+    temporal_note: Optional[str] = None,
+    source_evidence: Optional[list] = None,
 ) -> MemoryChunk:
     """创建记忆，并在同一 SQLite 事务内登记向量同步任务。"""
+    from services.memory.memory_facts import normalize_temporal
+    temporal_status, temporal_note = normalize_temporal(temporal_status, temporal_note)
     chunk = MemoryChunk(
         persona_id=persona_id,
         content=content,
@@ -133,6 +138,8 @@ def add_memory_chunk(
         source_message_id_bound=source_message_id_bound if source_message_id_bound is not None else source_message_id,
         source_start_message_id=source_start_message_id,
         supersedes_id=supersedes_id,
+        temporal_status=temporal_status, temporal_note=temporal_note,
+        source_evidence_json=json.dumps(source_evidence, ensure_ascii=False) if source_evidence else None,
     )
     db.add(chunk)
     db.flush()  # 获取自增 ID
@@ -228,7 +235,8 @@ def retrieve_memories(
     query: str,
     db: DBSession,
     top_k: Optional[int] = None,
-    min_importance: Optional[float] = None
+    min_importance: Optional[float] = None,
+    before_message_id: Optional[int] = None,
 ) -> list:
     """
     跨继承链检索相关记忆。始终只需 1 次 ChromaDB 查询。
@@ -288,7 +296,7 @@ def retrieve_memories(
     authoritative = None
     if isinstance(db, DBSession):
         from services.memory.memory_visibility import memory_view
-        visible_filter, hidden_ids = memory_view(persona_id, db)
+        visible_filter, hidden_ids = memory_view(persona_id, db, before_message_id)
         superseded_ids = hidden_ids
         rows = db.query(MemoryChunk.id, MemoryChunk.chroma_doc_id).filter(
             visible_filter,
@@ -432,6 +440,8 @@ def retrieve_memories(
             "time_score": time_score,
             "turns_passed": turns_passed,
             "final_score": final_score,
+            "temporal_status": chunk.temporal_status if authoritative is not None else "unknown",
+            "temporal_note": chunk.temporal_note if authoritative is not None else None,
         })
 
     # 按 final_score 降序排序
@@ -446,9 +456,10 @@ def retrieve_memories(
         normalized = "".join(
             char.casefold() for char in rm["content"] if char.isalnum()
         )
-        if normalized in seen_normalized_contents:
+        identity = (normalized, rm["temporal_status"], rm["temporal_note"])
+        if identity in seen_normalized_contents:
             continue
-        seen_normalized_contents.add(normalized)
+        seen_normalized_contents.add(identity)
         deduped_memories.append(rm)
 
     memories = deduped_memories[:top_k]

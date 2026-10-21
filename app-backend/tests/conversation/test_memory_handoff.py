@@ -234,14 +234,9 @@ class MemoryHandoffTests(unittest.TestCase):
                 return_value=18,
             ),
             patch.object(
-                context_assembler.memory_manager,
-                "retrieve_memories",
-                return_value=[],
-            ),
-            patch.object(
                 context_assembler,
-                "retrieve_graph_context",
-                return_value="",
+                "retrieve_joint_memories",
+                return_value=[],
             ),
             patch.object(
                 context_assembler.session_service,

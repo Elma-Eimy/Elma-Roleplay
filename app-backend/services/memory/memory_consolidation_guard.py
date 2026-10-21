@@ -50,6 +50,9 @@ def has_conflicting_event_dates(sources):
 
 
 def has_source_conflict(kind, sources):
+    if len({(source.get("temporal_status", "unknown"), source.get("temporal_note"))
+            for source in sources}) > 1:
+        return True
     if has_conflicting_event_dates(sources):
         return True
     # 只挡明确否定标记不同的 duplicate，不对事件里不同动作的否定作比较。

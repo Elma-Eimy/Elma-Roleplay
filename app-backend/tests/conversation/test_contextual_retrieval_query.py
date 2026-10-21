@@ -168,7 +168,7 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
         for marker in markers:
             self.assertIn(marker, query)
 
-    def test_context_assembler_shares_one_query_with_memory_and_graph(self):
+    def test_context_assembler_passes_query_and_cutoff_to_joint_retrieval(self):
         db = MagicMock()
         character = SimpleNamespace(id=2)
         persona = SimpleNamespace(id=3)
@@ -181,15 +181,10 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
                 return_value="one contextual query",
             ) as builder_mock,
             patch.object(
-                context_assembler.memory_manager,
-                "retrieve_memories",
+                context_assembler,
+                "retrieve_joint_memories",
                 return_value=[],
             ) as memory_mock,
-            patch.object(
-                context_assembler,
-                "retrieve_graph_context",
-                return_value="",
-            ) as graph_mock,
             patch.object(
                 context_assembler,
                 "get_memory_handoff_history_limit",
@@ -225,10 +220,12 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
 
         builder_mock.assert_called_once_with(1, user_msg, db)
         self.assertEqual("one contextual query", memory_mock.call_args.kwargs["query"])
-        graph_mock.assert_called_once_with(
+        memory_mock.assert_called_once_with(
             persona_id=3,
-            query_text="one contextual query",
+            character_id=2,
+            query="one contextual query",
             db=db,
+            before_message_id=user_msg.id,
         )
 
 
