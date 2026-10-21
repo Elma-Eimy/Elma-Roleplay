@@ -106,13 +106,22 @@ export interface MemoryConsolidation {
   status: "preview" | "applied" | "undone";
   created_at: string | null;
   sources: ConsolidationSource[];
-  groups: { id: number; kind: "duplicate" | "event"; source_ids: number[]; content: string; reason: string }[];
+  review_revision?: number;
+  groups: { id: number; kind: "duplicate" | "event"; source_ids: number[]; content: string; reason: string;
+    original_content?: string; ignored?: boolean; ignore_reason?: string; conflict?: string | null }[];
   selected_group_ids: number[];
   results: { id: number; content: string }[];
   scanned_count: number;
   remaining_count: number;
   has_more: boolean;
   next_after_id: number;
+}
+
+export interface ConsolidationReviewInput {
+  expected_revision: number;
+  content?: string;
+  ignored: boolean;
+  ignore_reason: string;
 }
 
 export interface MemoryConsolidationHistory {

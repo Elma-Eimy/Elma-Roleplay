@@ -10,6 +10,7 @@ import type {
   MemoryDeleteResponse,
   MemoryConsolidation,
   MemoryConsolidationHistory,
+  ConsolidationReviewInput,
 } from "../types/memories";
 
 /**
@@ -145,10 +146,17 @@ export async function previewMemoryConsolidation(sessionId: number, afterId = 0)
   });
 }
 
-export async function applyMemoryConsolidation(sessionId: number, batchId: number, groupIds: number[]): Promise<MemoryConsolidation> {
+export async function applyMemoryConsolidation(sessionId: number, batchId: number, groupIds: number[], expectedRevision = 0): Promise<MemoryConsolidation> {
   if (USE_MOCK) throw new Error("离线模式不支持应用整理");
   return request(`/sessions/${sessionId}/memory-consolidations/${batchId}/apply`, {
-    method: "POST", body: JSON.stringify({ group_ids: groupIds }),
+    method: "POST", body: JSON.stringify({ group_ids: groupIds, expected_revision: expectedRevision }),
+  });
+}
+
+export async function reviewMemoryConsolidationGroup(sessionId: number, batchId: number, groupId: number, input: ConsolidationReviewInput): Promise<MemoryConsolidation> {
+  if (USE_MOCK) throw new Error("离线模式不支持审阅整理建议");
+  return request(`/sessions/${sessionId}/memory-consolidations/${batchId}/groups/${groupId}`, {
+    method: "PUT", body: JSON.stringify(input),
   });
 }
 

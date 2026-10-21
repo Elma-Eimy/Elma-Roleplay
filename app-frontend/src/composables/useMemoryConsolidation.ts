@@ -1,6 +1,6 @@
 import { ref, watch, onScopeDispose } from "vue";
 import { getBaseUrl } from "@/api/config";
-import { getMemoryConsolidations, previewMemoryConsolidation, applyMemoryConsolidation, undoMemoryConsolidation } from "@/api/memories";
+import { getMemoryConsolidations, previewMemoryConsolidation, applyMemoryConsolidation, undoMemoryConsolidation, reviewMemoryConsolidationGroup } from "@/api/memories";
 import type { MemoryConsolidation } from "@/types/memories";
 
 export function useMemoryConsolidation(sessionId: () => number | null, onChanged: () => void) {
@@ -10,11 +10,16 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   const busy = ref(false);
   const error = ref("");
   const historyHasMore = ref(false);
+  const editingId = ref<number | null>(null);
+  const draftContent = ref("");
+  const draftReason = ref("");
+  const draftIgnored = ref(false);
   let version = 0;
   let disposed = false;
   let stateServer = getBaseUrl();
 
   function reset() {
+    editingId.value = null;
     version++;
     busy.value = false;
     batches.value = [];
@@ -58,29 +63,75 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   }
 
   function update(batch: MemoryConsolidation) {
+    editingId.value = null;
     current.value = batch;
     selected.value = [];
     batches.value = [batch, ...batches.value.filter(item => item.id !== batch.id)].sort((a, b) => b.id - a.id);
   }
 
+  function protectDraft() {
+    const group = current.value?.groups.find(item => item.id === editingId.value);
+    const dirty = group && (draftContent.value !== group.content
+      || draftReason.value !== (group.ignore_reason || "")
+      || draftIgnored.value !== !!group.ignored);
+    if (!dirty) return false;
+    error.value = "当前组有未保存的修改，请先保存审阅，或点击取消放弃修改";
+    return true;
+  }
+
   function choose(batch: MemoryConsolidation) {
-    if (busy.value) return;
+    if (busy.value || protectDraft()) return false;
     current.value = batch;
+    editingId.value = null;
     selected.value = [];
     error.value = "";
+    return true;
   }
 
   function toggle(id: number) {
     if (busy.value || current.value?.status !== "preview") return;
+    const group = current.value.groups.find(item => item.id === id);
+    if (!group || group.ignored || group.conflict || editingId.value !== null) return;
     selected.value = selected.value.includes(id) ? selected.value.filter(value => value !== id) : [...selected.value, id];
   }
 
+  function editGroup(id: number) {
+    if (busy.value || current.value?.status !== "preview") return;
+    if (editingId.value === id || protectDraft()) return;
+    const group = current.value.groups.find(item => item.id === id);
+    if (!group) return;
+    editingId.value = id;
+    draftContent.value = group.content;
+    draftReason.value = group.ignore_reason || "";
+    draftIgnored.value = !!group.ignored;
+  }
+
+  const saveReview = () => {
+    const batch = current.value;
+    const group = batch?.groups.find(item => item.id === editingId.value);
+    if (!batch || !group) return Promise.resolve();
+    const content = draftContent.value.trim();
+    if (content.length < 4 || content.length > 500) {
+      error.value = "整理正文须为 4–500 字符";
+      return Promise.resolve();
+    }
+    const input = { expected_revision: batch.review_revision || 0,
+      content: content !== group.content ? content : undefined,
+      ignored: draftIgnored.value, ignore_reason: draftReason.value.trim() };
+    return run(async (id, valid) => {
+      const response = await reviewMemoryConsolidationGroup(id, batch.id, group.id, input);
+      if (valid()) update(response);
+    });
+  };
+
   const load = () => run(async (id, valid) => {
+    if (protectDraft()) return;
     const response = await getMemoryConsolidations(id);
     if (!valid()) return;
     batches.value = response.items;
     historyHasMore.value = response.has_more;
     current.value = response.items[0] || null;
+    editingId.value = null;
     selected.value = [];
   });
 
@@ -94,6 +145,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   });
 
   const preview = (afterId = 0) => run(async (id, valid) => {
+    if (protectDraft()) return;
     const response = await previewMemoryConsolidation(id, afterId);
     if (valid()) update(response);
   });
@@ -101,9 +153,9 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   const apply = () => {
     const batch = current.value;
     const groups = [...selected.value];
-    if (!batch || batch.status !== "preview" || !groups.length) return Promise.resolve();
+    if (!batch || batch.status !== "preview" || !groups.length || editingId.value !== null) return Promise.resolve();
     return run(async (id, valid) => {
-      const response = await applyMemoryConsolidation(id, batch.id, groups);
+      const response = await applyMemoryConsolidation(id, batch.id, groups, batch.review_revision || 0);
       if (!valid()) return;
       update(response);
       onChanged();
@@ -111,6 +163,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   };
 
   const undo = (batch: MemoryConsolidation) => run(async (id, valid) => {
+    if (protectDraft()) return;
     const response = await undoMemoryConsolidation(id, batch.id);
     if (!valid()) return;
     update(response);
@@ -124,5 +177,6 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   }, { immediate: true, flush: "sync" });
 
   onScopeDispose(() => { disposed = true; version++; });
-  return { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo };
+  return { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo,
+    editingId, draftContent, draftReason, draftIgnored, editGroup, saveReview };
 }

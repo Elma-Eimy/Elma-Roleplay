@@ -127,7 +127,7 @@ test("consolidation API uses domain routes, explicit group payloads and a model 
   assert.deepEqual(calls.map(call => call[0]), ["/sessions/2/memory-consolidations?limit=10&offset=0", "/sessions/2/memory-consolidations/preview",
     "/sessions/2/memory-consolidations/7/apply", "/sessions/2/memory-consolidations/7/undo"]);
   assert.deepEqual(JSON.parse(calls[1][1].body), { after_id: 80 });
-  assert.deepEqual(JSON.parse(calls[2][1].body), { group_ids: [0] });
+  assert.deepEqual(JSON.parse(calls[2][1].body), { group_ids: [0], expected_revision: 0 });
   assert.equal(calls[1][1].timeout, 180000);
 });
 
@@ -138,4 +138,120 @@ test("offline mode explicitly declines model generation and never mutates stored
   await assert.rejects(api.previewMemoryConsolidation(1), /离线/);
   await assert.rejects(api.applyMemoryConsolidation(1, 1, [0]), /离线/);
   await assert.rejects(api.undoMemoryConsolidation(1, 1), /离线/);
+  await assert.rejects(api.reviewMemoryConsolidationGroup(1, 1, 0, {}), /离线/);
+});
+
+test("review saves edits with revision, clears selection and prevents ignored or conflicting selection", async () => {
+  const calls = [];
+  const state = fixture({ reviewMemoryConsolidationGroup: async (...args) => {
+    calls.push(args);
+    const saved = batch(); saved.review_revision = 1;
+    saved.groups[0] = { ...saved.groups[0], content: args[3].content, ignored: args[3].ignored, ignore_reason: args[3].ignore_reason };
+    return saved;
+  } });
+  await flush(); await state.preview(); state.toggle(0); state.editGroup(0);
+  state.draftContent.value = "审阅后保留的完整经历";
+  state.draftIgnored.value = true; state.draftReason.value = "暂不整理";
+  await state.apply(); assert.equal(state.changed(), 0);
+  await state.saveReview();
+  assert.equal(calls[0][3].expected_revision, 0);
+  assert.equal(state.current.value.review_revision, 1);
+  assert.equal(state.editingId.value, null);
+  assert.equal(state.selected.value.length, 0);
+  state.toggle(0); assert.equal(state.selected.value.length, 0);
+  state.current.value.groups[0].ignored = false;
+  state.current.value.groups[0].conflict = "来源已改变";
+  state.toggle(0); assert.equal(state.selected.value.length, 0);
+  state.scope.stop();
+});
+
+test("failed review retains draft and late review cannot overwrite another story", async () => {
+  const pending = deferred();
+  const state = fixture({ reviewMemoryConsolidationGroup: () => pending.promise });
+  await flush(); await state.preview(); state.editGroup(0);
+  state.draftContent.value = "需要保留的用户编辑正文";
+  const saving = state.saveReview();
+  pending.reject(new Error("审阅内容已更新")); await saving;
+  assert.equal(state.editingId.value, 0);
+  assert.equal(state.draftContent.value, "需要保留的用户编辑正文");
+  assert.match(state.error.value, /已更新/);
+  state.scope.stop();
+  for (const mode of ["session", "server", "close"]) {
+    const request = deferred();
+    const other = fixture({ reviewMemoryConsolidationGroup: () => request.promise });
+    await flush(); await other.preview(); other.editGroup(0);
+    const saving = other.saveReview();
+    if (mode === "session") other.session.value = 2;
+    else if (mode === "server") other.setServer("http://two.invalid");
+    else other.scope.stop();
+    request.resolve(batch(99)); await saving; await flush();
+    assert.notEqual(other.current.value?.id, 99);
+    assert.equal(other.changed(), 0); other.scope.stop();
+  }
+});
+
+test("review API uses PUT and sends explicit review fields", async () => {
+  const calls = [];
+  const load = createLoader({ mocks: { "./mock/memories": {}, "./config": { USE_MOCK: false, request: async (...args) => { calls.push(args); return batch(); } } } });
+  const input = { expected_revision: 2, content: "用户修改后的完整经历", ignored: false, ignore_reason: "已核对" };
+  await load("api/memories.ts").reviewMemoryConsolidationGroup(2, 7, 0, input);
+  assert.equal(calls[0][0], "/sessions/2/memory-consolidations/7/groups/0");
+  assert.equal(calls[0][1].method, "PUT");
+  assert.deepEqual(JSON.parse(calls[0][1].body), input);
+});
+
+test("apply sends saved revision and review validation keeps invalid text local", async () => {
+  let applies = 0; let reviews = 0;
+  const state = fixture({ previewMemoryConsolidation: async () => ({ ...batch(), review_revision: 3 }),
+    applyMemoryConsolidation: async (_session, _batch, _groups, revision) => {
+      applies++; assert.equal(revision, 3); return batch(1, "applied");
+    }, reviewMemoryConsolidationGroup: async () => { reviews++; return batch(); } });
+  await flush(); await state.preview(); state.editGroup(0);
+  state.draftContent.value = "   "; await state.saveReview();
+  assert.equal(reviews, 0); assert.equal(state.editingId.value, 0);
+  state.editingId.value = null; state.toggle(0); await state.apply();
+  assert.equal(applies, 1); state.scope.stop();
+});
+
+test("unsaved content, notes and ignore state survive group, history, refresh, preview and undo attempts", async () => {
+  for (const field of ["draftContent", "draftReason", "draftIgnored"]) {
+    let reads = 0; let previews = 0; let undos = 0;
+    const saved = batch();
+    saved.groups.push({ ...saved.groups[0], id: 1, content: "第二组原始建议" });
+    const state = fixture({ getMemoryConsolidations: async () => { reads++; return { items: [saved] }; },
+      previewMemoryConsolidation: async () => { previews++; return batch(2); },
+      undoMemoryConsolidation: async () => { undos++; return batch(3, "undone"); } });
+    await flush(); state.editGroup(0);
+    state[field].value = field === "draftIgnored" ? true : "用户未保存的核对结果";
+    const expected = [state.draftContent.value, state.draftReason.value, state.draftIgnored.value];
+    state.editGroup(1);
+    assert.equal(state.choose(batch(9)), false);
+    await state.load(); await state.preview(); await state.preview(100); await state.undo(batch(3, "applied"));
+    assert.equal(state.editingId.value, 0);
+    assert.equal(state.current.value.id, 1);
+    assert.deepEqual([state.draftContent.value, state.draftReason.value, state.draftIgnored.value], expected);
+    assert.deepEqual([reads, previews, undos], [1, 0, 0]);
+    assert.match(state.error.value, /未保存/);
+    assert.equal(saved.groups[0].content, "合并的经历");
+    state.editingId.value = null;
+    assert.equal(state.choose(batch(9)), true);
+    state.scope.stop();
+  }
+});
+
+test("unchanged drafts can switch directly and dirty drafts never block context reset", async () => {
+  const saved = batch();
+  saved.groups.push({ ...saved.groups[0], id: 1, content: "第二组原始建议" });
+  const state = fixture({ getMemoryConsolidations: async id => ({ items: [id === 1 ? saved : batch(2)] }) });
+  await flush(); state.editGroup(0); state.editGroup(1);
+  assert.equal(state.editingId.value, 1);
+  state.draftContent.value = "第一故事未保存的正文";
+  state.session.value = 2; await flush();
+  assert.equal(state.editingId.value, null);
+  assert.equal(state.current.value.id, 2);
+  state.editGroup(0); state.draftReason.value = "旧服务器备注";
+  state.setServer("http://two.invalid"); await state.load();
+  assert.equal(state.editingId.value, null);
+  assert.equal(state.error.value, "");
+  state.scope.stop();
 });

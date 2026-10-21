@@ -24,12 +24,36 @@
       <view v-for="group in current.groups" :key="group.id" class="group">
         <view class="row" @tap="toggle(group.id)">
           <text class="group-title">{{ group.kind === 'duplicate' ? '重复内容' : '同一次经历' }} · {{ group.source_ids.length }} 张原卡</text>
-          <text v-if="current.status === 'preview'" class="selection" :class="{ checked: selected.includes(group.id) }">{{ selected.includes(group.id) ? '✓ 已选择' : '○ 选择' }}</text>
+          <text v-if="current.status === 'preview'" class="selection" :class="{ checked: selected.includes(group.id) }">{{ group.conflict ? '存在冲突' : group.ignored ? '已忽略' : selected.includes(group.id) ? '✓ 已选择' : '○ 选择' }}</text>
           <text v-else class="hint">{{ current.selected_group_ids.includes(group.id) ? '已选建议' : '未应用' }}</text>
         </view>
         <text class="reason">{{ group.reason }}</text>
+        <text v-if="group.conflict" class="conflict">{{ group.conflict }}</text>
+        <text v-if="group.ignored" class="hint">已忽略此组{{ group.ignore_reason ? '：' + group.ignore_reason : '' }}（仅本次预览）</text>
+        <text v-else-if="group.ignore_reason" class="hint">审阅备注：{{ group.ignore_reason }}</text>
         <text class="label">整理后</text>
         <text class="result">{{ group.content }}</text>
+        <view v-if="group.original_content && group.original_content !== group.content" class="source">
+          <text class="label">模型原稿</text>
+          <text class="source-content">{{ group.original_content }}</text>
+        </view>
+        <view v-if="current.status === 'preview'" class="review-actions">
+          <button v-if="editingId !== group.id" size="mini" :disabled="busy" @tap="editGroup(group.id)">编辑 / 忽略此组</button>
+          <view v-else class="editor">
+            <text class="hint">核对原卡后修改正文，保留时间、人物、条件和承诺。保存不会改变原卡。</text>
+            <textarea v-model="draftContent" :disabled="busy || !!group.conflict" :maxlength="500" auto-height class="review-input" />
+            <text class="hint">{{ draftContent.length }} / 500 字符</text>
+            <view class="row">
+              <text class="label">忽略此组（可恢复）</text>
+              <switch :checked="draftIgnored" :disabled="busy" @change="changeIgnored" />
+            </view>
+            <textarea v-model="draftReason" :disabled="busy" :maxlength="160" auto-height placeholder="忽略原因或审阅备注（选填）" class="review-input" />
+            <view class="row">
+              <button size="mini" :disabled="busy" @tap="saveReview">保存审阅</button>
+              <button size="mini" :disabled="busy" @tap="editingId = null">取消</button>
+            </view>
+          </view>
+        </view>
         <text class="label">原卡与来源</text>
         <view v-for="source in groupSources(group.source_ids)" :key="source.id" class="source">
           <text class="source-content">{{ source.content }}</text>
@@ -37,7 +61,7 @@
         </view>
       </view>
 
-      <button v-if="current.status === 'preview' && current.groups.length" class="primary" :disabled="busy || !selected.length" @tap="apply">应用所选 {{ selected.length }} 组建议</button>
+      <button v-if="current.status === 'preview' && current.groups.length" class="primary" :disabled="busy || !selected.length || editingId !== null" @tap="apply">应用所选 {{ selected.length }} 组建议</button>
       <button v-if="current.status === 'applied'" :disabled="busy" @tap="undo(current)">撤销本次整理</button>
       <button v-if="current.has_more" :disabled="busy" @tap="preview(current.next_after_id)">继续检查后面的记忆</button>
       <text v-if="current.has_more" class="hint">本批建议已保存，可从下方记录重新打开。</text>
@@ -60,12 +84,16 @@ import { useMemoryConsolidation } from "@/composables/useMemoryConsolidation";
 import type { ConsolidationSource, MemoryConsolidation } from "@/types/memories";
 const props = defineProps<{ sessionId: number }>();
 const emit = defineEmits<{ (event: "changed"): void }>();
-const { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo } =
+const { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo,
+  editingId, draftContent, draftReason, draftIgnored, editGroup, saveReview } =
   useMemoryConsolidation(() => props.sessionId, () => emit("changed"));
 const scrollTarget = ref("");
+const changeIgnored = (event: Event) => {
+  draftIgnored.value = (event as unknown as { detail: { value: boolean } }).detail.value;
+};
 const review = async (batch: MemoryConsolidation) => {
   if (busy.value) return;
-  choose(batch);
+  if (!choose(batch)) return;
   scrollTarget.value = "";
   await nextTick();
   scrollTarget.value = "memory-consolidation-current";
@@ -94,6 +122,9 @@ const formatDate = (value: string | null) => value ? value.replace("T", " ").sli
 .label { font-size: 21rpx; color: var(--text-secondary, #777); }
 .result { padding: 18rpx; border-radius: 12rpx; background: var(--bg-color, #f4f5f8); }
 .source { display: flex; flex-direction: column; gap: 8rpx; padding-top: 14rpx; border-top: 1px solid var(--border-color, #eee); }
+.editor { display: flex; flex-direction: column; gap: 16rpx; }
+.review-input { box-sizing: border-box; width: 100%; min-height: 90rpx; padding: 16rpx; font-size: 25rpx; line-height: 1.7; color: var(--text-primary, #333); background: var(--bg-color, #f4f5f8); border-radius: 12rpx; }
+.conflict { font-size: 24rpx; line-height: 1.6; color: var(--text-danger, #a03524); }
 button { margin: 0; font-size: 25rpx; border-radius: 14rpx; }
 .primary { background: var(--primary-color, #1c1c1e); color: white; }
 .primary[disabled] { opacity: .45; }
