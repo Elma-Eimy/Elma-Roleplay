@@ -1,15 +1,24 @@
 <template>
-  <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid }">
+  <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid, 'is-immersive': isImmersive }">
     <view
       class="chat-bg"
       :class="`mode-${backgroundMode}`"
-      :style="backgroundStyle"
     >
       <image
-        v-if="backgroundMode === 'character' && characterBackgroundUrl"
-        class="chat-scene-image"
+        v-if="isImmersive && isWideScreen"
+        class="chat-scene-wash"
         :src="characterBackgroundUrl"
         mode="aspectFill"
+        aria-hidden="true"
+      />
+      <image
+        v-if="isImmersive"
+        class="chat-scene-image"
+        :src="characterBackgroundUrl"
+        :mode="isWideScreen ? 'aspectFit' : 'aspectFill'"
+        :key="characterBackgroundUrl"
+        :data-source="characterBackgroundUrl"
+        @error="onPortraitUnavailable"
       />
     </view>
 
@@ -25,30 +34,34 @@
       @open-status="isStatusPanelOpen = true"
     />
 
-    <ChatMessageList
-      :messages="chatStore.messages"
-      :avatar-url="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
-      :character-name="personaStore.characterName"
-      :scroll-top="scrollTop"
-      :scroll-into-view-id="scrollIntoViewId"
-      :scroll-with-animation="scrollWithAnimation"
-      @load-more="onLoadMore"
-      @longpress-message="onMessageLongPress"
-    />
+    <view class="chat-workspace">
+      <view class="chat-conversation">
+        <ChatMessageList
+          :messages="chatStore.messages"
+          :avatar-url="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+          :character-name="personaStore.characterName"
+          :scroll-top="scrollTop"
+          :scroll-into-view-id="scrollIntoViewId"
+          :scroll-with-animation="scrollWithAnimation"
+          @load-more="onLoadMore"
+          @longpress-message="onMessageLongPress"
+        />
 
-    <ChatComposer
-      v-model="inputText"
-      :use-reasoning="chatSettingsStore.useReasoning"
-      :model-summary="chatSettingsStore.modelSummary"
-      :is-focused="isInputFocused"
-      :is-android="isAndroid"
-      :keyboard-height="keyboardHeight"
-      :wrapper-style="inputWrapperStyle"
-      @open-model-settings="isModelSettingsOpen = true"
-      @focus-change="isInputFocused = $event"
-      @line-change="scrollToBottom"
-      @send="onSend"
-    />
+        <ChatComposer
+          v-model="inputText"
+          :use-reasoning="chatSettingsStore.useReasoning"
+          :model-summary="chatSettingsStore.modelSummary"
+          :is-focused="isInputFocused"
+          :is-android="isAndroid"
+          :keyboard-height="keyboardHeight"
+          :wrapper-style="inputWrapperStyle"
+          @open-model-settings="isModelSettingsOpen = true"
+          @focus-change="isInputFocused = $event"
+          @line-change="scrollToBottom"
+          @send="onSend"
+        />
+      </view>
+    </view>
 
     <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
 
@@ -123,7 +136,7 @@
 import ChatStreamBridge from "@/components/chat/ChatStreamBridge.vue";
 // #endif
 import { ref, computed, watch } from "vue";
-import { onLoad, onUnload, onShow } from "@dcloudio/uni-app";
+import { onLoad, onUnload, onShow, onResize } from "@dcloudio/uni-app";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
@@ -144,7 +157,7 @@ import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import BranchTreePanel from "@/components/chat/BranchTreePanel.vue";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
-import { getAvatarUrl } from "@/api/characters";
+import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
@@ -178,6 +191,10 @@ const {
 const currentSessionId = ref<number | null>(null);
 const inputText = ref("");
 const isInputFocused = ref(false);
+const isWideScreen = ref(uni.getSystemInfoSync().windowWidth >= 900);
+onResize(({ size }) => {
+  if (size) isWideScreen.value = size.windowWidth >= 900;
+});
 const isStatusPanelOpen = ref(false);
 const isMemoryPanelOpen = ref(false);
 const isInitLoading = ref(true);
@@ -185,18 +202,18 @@ const isHistoryLoading = ref(false);
 type ChatBackgroundMode = "clean" | "character";
 
 const CHAT_BACKGROUND_STORAGE_PREFIX = "chat_background_mode:";
-const backgroundMode = ref<ChatBackgroundMode>("clean");
+const backgroundMode = ref<ChatBackgroundMode>("character");
 
 const getBackgroundStorageKey = (sessionId: number) =>
   `${CHAT_BACKGROUND_STORAGE_PREFIX}${sessionId}`;
 
 const readBackgroundMode = (sessionId: number): ChatBackgroundMode => {
   try {
-    return uni.getStorageSync(getBackgroundStorageKey(sessionId)) === "character"
-      ? "character"
-      : "clean";
+    return uni.getStorageSync(getBackgroundStorageKey(sessionId)) === "clean"
+      ? "clean"
+      : "character";
   } catch {
-    return "clean";
+    return "character";
   }
 };
 
@@ -503,36 +520,23 @@ const onSend = async () => {
   scrollToBottom();
 };
 
-// 角色柔光主题：不直接展示全屏立绘，仅以稳定的淡色气氛区分角色。
-const chatGlowPalettes = [
-  {
-    primary: "rgba(112, 174, 155, 0.2)",
-    secondary: "rgba(139, 184, 220, 0.13)",
-  },
-  {
-    primary: "rgba(139, 184, 220, 0.2)",
-    secondary: "rgba(241, 201, 141, 0.12)",
-  },
-  {
-    primary: "rgba(241, 201, 141, 0.19)",
-    secondary: "rgba(112, 174, 155, 0.12)",
-  },
-];
-
-const backgroundStyle = computed(() => {
-  const characterId = personaStore.activeCharacter?.id || 0;
-  const palette = chatGlowPalettes[
-    Math.abs(characterId) % chatGlowPalettes.length
-  ];
-  return {
-    "--chat-glow-primary": palette.primary,
-    "--chat-glow-secondary": palette.secondary,
-  };
-});
-
 const characterBackgroundUrl = computed(() =>
   getAvatarUrl(personaStore.activeCharacter?.avatar_path || "")
 );
+const portraitLoadFailed = ref(false);
+const hasPortrait = computed(() =>
+  !!personaStore.activeCharacter?.avatar_path &&
+  characterBackgroundUrl.value !== DEFAULT_AVATAR_URL &&
+  !portraitLoadFailed.value
+);
+watch(characterBackgroundUrl, () => { portraitLoadFailed.value = false; });
+const isImmersive = computed(() => backgroundMode.value === 'character' && hasPortrait.value);
+const onPortraitUnavailable = (event: Event) => {
+  const target = event.currentTarget as unknown as { dataset?: { source?: string } } | null;
+  if (target?.dataset?.source === characterBackgroundUrl.value) {
+    portraitLoadFailed.value = true;
+  }
+};
 
 
 
