@@ -3,7 +3,10 @@
     <view class="intro">
       <text class="heading">让记忆更清楚，保留故事细节</text>
       <text class="description">每批检查当前故事最多 100 张有效原卡，寻找重复内容和同一次经历的碎片。先查看建议，再选择应用；原卡保留，可撤销。继承记忆暂不参与整理。</text>
-      <button class="primary" :disabled="busy" @tap="preview(0)">{{ busy ? '正在处理，请稍候…' : '生成整理预览' }}</button>
+      <text v-if="scanStatus" class="hint">当前有效原卡 {{ scanStatus.eligible_count }} 张 · 当前版本已检查 {{ scanStatus.checked_count }} 张 · 新增或变更待检 {{ scanStatus.pending_count }} 张</text>
+      <button class="primary" :disabled="busy" @tap="preview(0, 'incremental')">{{ busy ? '正在处理，请稍候…' : '检查新增与变更' }}</button>
+      <button :disabled="busy" @tap="preview(0, 'full')">重新检查全部</button>
+      <text class="hint">增量检查仅比较本批新增或变更的卡片，不会关联已检查的旧卡。已检查不代表已应用；以前的建议仍保留在整理记录中。重新检查全部也会分批进行。</text>
       <text v-if="busy" class="hint">模型整理可能需要一些时间，关闭后可重新进入查看已保存的记录。</text>
     </view>
 
@@ -17,9 +20,13 @@
         <text class="heading">{{ statusLabel(current.status) }}</text>
         <text class="hint">检查 {{ current.scanned_count }} / {{ current.remaining_count }} 张待检原卡</text>
       </view>
+      <text class="hint">检查范围：{{ current.scan_mode === 'incremental' ? '新增与变更' : '全部原卡（分批）' }}</text>
+      <text v-if="current.model_checked === false && current.scanned_count === 1" class="description">本批只有 1 张待检卡，未调用模型，也未记录为已检查；新增其他卡后可再次检查。</text>
+      <text v-else-if="!current.scanned_count" class="description">{{ current.scan_mode === 'incremental' ? '没有新增或变更的待检记忆。' : '当前范围没有可检查的原卡。' }}</text>
+      <text v-if="current.model_checked && current.recorded_count !== undefined && current.recorded_count < current.scanned_count" class="hint">部分原卡在检查期间发生变化，仍需重新检查。</text>
       <text v-if="current.status === 'applied'" class="description">所选原卡已收起到历史原卡，聊天优先检索整理结果。来源和正文仍保留在下方。</text>
       <text v-if="current.status === 'undone'" class="description">当前故事已恢复原卡。此前分叉的故事继续保留各自的整理状态。</text>
-      <text v-if="!current.groups.length" class="description">这批没有发现可以稳妥合并的记忆，原卡保持原样。</text>
+      <text v-if="!current.groups.length && current.scanned_count >= 2" class="description">这批没有发现可以稳妥合并的记忆，原卡保持原样；已检查记录会保留。</text>
 
       <view v-for="group in current.groups" :key="group.id" class="group">
         <view class="row" @tap="toggle(group.id)">
@@ -63,7 +70,7 @@
 
       <button v-if="current.status === 'preview' && current.groups.length" class="primary" :disabled="busy || !selected.length || editingId !== null" @tap="apply">应用所选 {{ selected.length }} 组建议</button>
       <button v-if="current.status === 'applied'" :disabled="busy" @tap="undo(current)">撤销本次整理</button>
-      <button v-if="current.has_more" :disabled="busy" @tap="preview(current.next_after_id)">继续检查后面的记忆</button>
+      <button v-if="current.has_more" :disabled="busy" @tap="continueScan">继续检查此范围的记忆</button>
       <text v-if="current.has_more" class="hint">本批建议已保存，可从下方记录重新打开。</text>
     </view>
 
@@ -84,7 +91,7 @@ import { useMemoryConsolidation } from "@/composables/useMemoryConsolidation";
 import type { ConsolidationSource, MemoryConsolidation } from "@/types/memories";
 const props = defineProps<{ sessionId: number }>();
 const emit = defineEmits<{ (event: "changed"): void }>();
-const { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo,
+const { batches, current, selected, busy, error, historyHasMore, scanStatus, choose, toggle, load, loadMoreHistory, preview, continueScan, apply, undo,
   editingId, draftContent, draftReason, draftIgnored, editGroup, saveReview } =
   useMemoryConsolidation(() => props.sessionId, () => emit("changed"));
 const scrollTarget = ref("");

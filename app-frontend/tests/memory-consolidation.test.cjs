@@ -126,7 +126,7 @@ test("consolidation API uses domain routes, explicit group payloads and a model 
   await api.applyMemoryConsolidation(2, 7, [0]); await api.undoMemoryConsolidation(2, 7);
   assert.deepEqual(calls.map(call => call[0]), ["/sessions/2/memory-consolidations?limit=10&offset=0", "/sessions/2/memory-consolidations/preview",
     "/sessions/2/memory-consolidations/7/apply", "/sessions/2/memory-consolidations/7/undo"]);
-  assert.deepEqual(JSON.parse(calls[1][1].body), { after_id: 80 });
+  assert.deepEqual(JSON.parse(calls[1][1].body), { after_id: 80, mode: "full" });
   assert.deepEqual(JSON.parse(calls[2][1].body), { group_ids: [0], expected_revision: 0 });
   assert.equal(calls[1][1].timeout, 180000);
 });
@@ -254,4 +254,42 @@ test("unchanged drafts can switch directly and dirty drafts never block context 
   assert.equal(state.editingId.value, null);
   assert.equal(state.error.value, "");
   state.scope.stop();
+});
+
+test("manual incremental scans reuse pending scope while full scans preserve the ID cursor", async () => {
+  const calls = [];
+  const state = fixture({ getMemoryConsolidations: async () => ({ items: [], scan_status: { eligible_count: 105, checked_count: 0, pending_count: 105 } }),
+    previewMemoryConsolidation: async (id, after, mode) => {
+      calls.push([id, after, mode]);
+      return { ...batch(), scan_mode: mode, has_more: true, next_after_id: 100,
+        scan_status: { eligible_count: 105, checked_count: 100, pending_count: 5 } };
+    } });
+  await flush(); assert.equal(calls.length, 0);
+  assert.equal(state.scanStatus.value.pending_count, 105);
+  await state.preview(0, "incremental");
+  assert.equal(state.scanStatus.value.pending_count, 5);
+  await state.continueScan();
+  await state.preview(0, "full"); await state.continueScan();
+  assert.deepEqual(calls, [[1, 0, "incremental"], [1, 0, "incremental"], [1, 0, "full"], [1, 100, "full"]]);
+  state.scope.stop();
+});
+
+test("scan scope and progress remain unchanged on failed or late previews", async () => {
+  const pending = deferred();
+  const state = fixture({ getMemoryConsolidations: async () => ({ items: [], scan_status: { eligible_count: 2, checked_count: 0, pending_count: 2 } }),
+    previewMemoryConsolidation: () => pending.promise });
+  await flush();
+  const saving = state.preview(0, "incremental");
+  pending.reject(new Error("模型暂时不可用")); await saving;
+  assert.equal(state.scanStatus.value.pending_count, 2);
+  assert.equal(state.current.value, null);
+  state.scope.stop();
+});
+
+test("preview API sends explicit incremental mode without moving the ID cursor", async () => {
+  let body;
+  const load = createLoader({ mocks: { "./mock/memories": {}, "./config": { USE_MOCK: false,
+    request: async (_path, options) => { body = JSON.parse(options.body); return batch(); } } } });
+  await load("api/memories.ts").previewMemoryConsolidation(2, 0, "incremental");
+  assert.deepEqual(body, { after_id: 0, mode: "incremental" });
 });

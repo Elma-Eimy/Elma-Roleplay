@@ -1,7 +1,7 @@
 import { ref, watch, onScopeDispose } from "vue";
 import { getBaseUrl } from "@/api/config";
 import { getMemoryConsolidations, previewMemoryConsolidation, applyMemoryConsolidation, undoMemoryConsolidation, reviewMemoryConsolidationGroup } from "@/api/memories";
-import type { MemoryConsolidation } from "@/types/memories";
+import type { MemoryConsolidation, ConsolidationScanMode, ConsolidationScanStatus } from "@/types/memories";
 
 export function useMemoryConsolidation(sessionId: () => number | null, onChanged: () => void) {
   const batches = ref<MemoryConsolidation[]>([]);
@@ -10,6 +10,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   const busy = ref(false);
   const error = ref("");
   const historyHasMore = ref(false);
+  const scanStatus = ref<ConsolidationScanStatus | null>(null);
   const editingId = ref<number | null>(null);
   const draftContent = ref("");
   const draftReason = ref("");
@@ -27,6 +28,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
     selected.value = [];
     error.value = "";
     historyHasMore.value = false;
+    scanStatus.value = null;
   }
 
   const showError = (cause: unknown) => {
@@ -63,6 +65,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   }
 
   function update(batch: MemoryConsolidation) {
+    scanStatus.value = batch.scan_status || null;
     editingId.value = null;
     current.value = batch;
     selected.value = [];
@@ -129,6 +132,7 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
     const response = await getMemoryConsolidations(id);
     if (!valid()) return;
     batches.value = response.items;
+    scanStatus.value = response.scan_status || null;
     historyHasMore.value = response.has_more;
     current.value = response.items[0] || null;
     editingId.value = null;
@@ -140,15 +144,23 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
     const response = await getMemoryConsolidations(id, batches.value.length);
     if (!valid()) return;
     const seen = new Set(batches.value.map(batch => batch.id));
+    scanStatus.value = response.scan_status || null;
     batches.value.push(...response.items.filter(batch => !seen.has(batch.id)));
     historyHasMore.value = response.has_more;
   });
 
-  const preview = (afterId = 0) => run(async (id, valid) => {
+  const preview = (afterId = 0, mode: ConsolidationScanMode = "full") => run(async (id, valid) => {
     if (protectDraft()) return;
-    const response = await previewMemoryConsolidation(id, afterId);
+    const response = await previewMemoryConsolidation(id, afterId, mode);
     if (valid()) update(response);
   });
+
+  const continueScan = () => {
+    const batch = current.value;
+    if (!batch?.has_more) return Promise.resolve();
+    const mode = batch.scan_mode || "full";
+    return preview(mode === "incremental" ? 0 : batch.next_after_id, mode);
+  };
 
   const apply = () => {
     const batch = current.value;
@@ -177,6 +189,6 @@ export function useMemoryConsolidation(sessionId: () => number | null, onChanged
   }, { immediate: true, flush: "sync" });
 
   onScopeDispose(() => { disposed = true; version++; });
-  return { batches, current, selected, busy, error, historyHasMore, choose, toggle, load, loadMoreHistory, preview, apply, undo,
+  return { batches, current, selected, busy, error, historyHasMore, scanStatus, choose, toggle, load, loadMoreHistory, preview, continueScan, apply, undo,
     editingId, draftContent, draftReason, draftIgnored, editGroup, saveReview };
 }

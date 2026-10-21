@@ -107,6 +107,10 @@ export interface MemoryConsolidation {
   created_at: string | null;
   sources: ConsolidationSource[];
   review_revision?: number;
+  scan_mode?: ConsolidationScanMode;
+  scan_status?: ConsolidationScanStatus;
+  model_checked?: boolean;
+  recorded_count?: number;
   groups: { id: number; kind: "duplicate" | "event"; source_ids: number[]; content: string; reason: string;
     original_content?: string; ignored?: boolean; ignore_reason?: string; conflict?: string | null }[];
   selected_group_ids: number[];
@@ -130,4 +134,13 @@ export interface MemoryConsolidationHistory {
   offset: number;
   limit: number;
   has_more: boolean;
+  scan_status?: ConsolidationScanStatus;
+}
+
+export type ConsolidationScanMode = "full" | "incremental";
+
+export interface ConsolidationScanStatus {
+  eligible_count: number;
+  checked_count: number;
+  pending_count: number;
 }
