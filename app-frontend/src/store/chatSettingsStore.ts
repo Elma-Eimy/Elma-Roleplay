@@ -8,6 +8,9 @@ import {
   configuredCatalog,
   effectiveGeneration,
   normalizeOverride,
+  snapshotGeneration,
+  effortLabel,
+  modelOptionLabel,
 } from "@/utils/generation";
 
 export const useChatSettingsStore = defineStore("chatSettings", () => {
@@ -20,6 +23,8 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
   let loadingSelection = false;
   let settingsVersion = 0;
   let server = getBaseUrl();
+  let readyEndpoint: string | null = null;
+  let pendingModels: { endpoint: string; promise: Promise<void> } | null = null;
   const storageKey = () => `story_generation_v1:${getBaseUrl()}`;
   const readSelections = (): Record<string, unknown> => {
     try {
@@ -43,18 +48,33 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
   function activateSession(id: number) {
     const newServer = getBaseUrl();
     if (activeSessionId.value === id && server === newServer) return;
+    if (server !== newServer) {
+      defaults.value = { ...DEFAULT_SETTINGS };
+      readyEndpoint = null;
+    }
     server = newServer;
     loadingSelection = true;
     activeSessionId.value = id;
     selection.value = normalizeOverride(readSelections()[String(id)]);
     loadingSelection = false;
+    if (selection.value.model && selection.value.thinking_mode !== "inherit" && selection.value.reasoning_effort !== "inherit")
+      freezeSelection();
+    else
+      void refreshModels();
+  }
+  function freezeSelection() {
+    if (readyEndpoint === getBaseUrl() && server === getBaseUrl() && activeSessionId.value !== null)
+      selection.value = snapshotGeneration(defaults.value, selection.value);
   }
   function inheritSession(parent: number, child: number) {
     const values = readSelections();
-    if (values[String(parent)]) { values[String(child)] = { ...normalizeOverride(values[String(parent)]) }; uni.setStorageSync(storageKey(), JSON.stringify(values)); }
+    values[String(child)] = readyEndpoint === getBaseUrl()
+      ? snapshotGeneration(defaults.value, values[String(parent)])
+      : normalizeOverride(values[String(parent)]);
+    uni.setStorageSync(storageKey(), JSON.stringify(values));
   }
   function resetGeneration() {
-    selection.value = { ...EMPTY_GENERATION };
+    selection.value = snapshotGeneration(defaults.value, EMPTY_GENERATION);
   }
   function removeSession(id: number) {
     const values = readSelections();
@@ -67,15 +87,26 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
       loadingSelection = false;
     }
   }
-  async function refreshModels() {
+  function refreshModels(): Promise<void> {
+    const endpoint = getBaseUrl();
+    if (pendingModels?.endpoint === endpoint) return pendingModels.promise;
+    const promise = loadModels();
+    pendingModels = { endpoint, promise };
+    void promise.finally(() => { if (pendingModels?.promise === promise) pendingModels = null; });
+    return promise;
+  }
+  async function loadModels() {
     const version = ++settingsVersion;
     const endpoint = getBaseUrl();
     isLoadingModels.value = true;
     settingsError.value = "";
     try {
       const result = await getSettings();
-      if (version === settingsVersion && endpoint === getBaseUrl())
-        defaults.value = result;
+      if (version === settingsVersion && endpoint === getBaseUrl()) {
+        defaults.value = { ...DEFAULT_SETTINGS, ...result };
+        readyEndpoint = endpoint;
+        freezeSelection();
+      }
     } catch {
       if (version === settingsVersion)
         settingsError.value = "模型配置加载失败，请检查连接后重试。";
@@ -88,7 +119,9 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
   );
   const modelSummary = computed(
     () =>
-      `${effective.value.label} · ${effective.value.thinking ? "思考开启" : "思考关闭"}`,
+      !selection.value.model && isLoadingModels.value ? "正在加载模型…" :
+      !selection.value.model && settingsError.value ? "模型配置未加载" :
+      `${effective.value.capability ? modelOptionLabel(effective.value.capability, catalog.value) : effective.value.label} · ${effective.value.thinking ? "思考 · " + effortLabel(effective.value.effort || "high") : "思考关闭"}`,
   );
   // 为尚未升级的组件保留派生值，新的请求不再以这个布尔值切换模型。
   const useReasoning = computed({
@@ -115,18 +148,26 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
       selection.value.reasoning_effort = value;
     },
   });
-  function requestGeneration(id: number) {
+  async function requestGeneration(id: number) {
+    const endpoint = getBaseUrl();
+    if (pendingModels?.endpoint === endpoint) await pendingModels.promise;
+    else if (readyEndpoint !== endpoint) await refreshModels();
+    if (endpoint !== getBaseUrl() || readyEndpoint !== endpoint)
+      throw new Error("模型配置尚未加载，请检查连接后重试。");
     const value =
       activeSessionId.value === id && server === getBaseUrl()
         ? selection.value
         : normalizeOverride(readSelections()[String(id)]);
+    if (settingsError.value && (!value.model || value.thinking_mode === "inherit" || value.reasoning_effort === "inherit"))
+      throw new Error("模型配置尚未加载，请检查连接后重试。");
+    const resolved = snapshotGeneration(defaults.value, value);
+    const values = readSelections();
+    values[String(id)] = resolved;
+    uni.setStorageSync(storageKey(), JSON.stringify(values));
     return {
-      model: value.model || undefined,
-      thinking_mode: value.thinking_mode,
-      reasoning_effort:
-        value.reasoning_effort === "inherit"
-          ? undefined
-          : value.reasoning_effort,
+      model: resolved.model,
+      thinking_mode: resolved.thinking_mode,
+      reasoning_effort: resolved.reasoning_effort,
     };
   }
   const temperature = ref<number | null>(null);

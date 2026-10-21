@@ -73,3 +73,26 @@ export function normalizeOverride(value: unknown): GenerationOverride {
         : "inherit",
   };
 }
+
+/** 把旧的继承值一次性解析为会话自己的明确配置。 */
+export function snapshotGeneration(settings: AppSettings, value: unknown): GenerationOverride {
+  const override = normalizeOverride(value);
+  const effective = effectiveGeneration(settings, override);
+  const capability = effective.capability;
+  let effort = effective.effort || "high";
+  if (capability?.adapter === "deepseek") {
+    effort = ({ minimal: "low", medium: "high", xhigh: "high", ultra: "max" } as Record<string, string>)[effort] || effort;
+  }
+  if (capability?.efforts.length && !capability.efforts.includes(effort))
+    effort = capability.efforts.includes("high") ? "high" : capability.efforts[0];
+  return { model: effective.id, thinking_mode: effective.thinking ? "enabled" : "disabled", reasoning_effort: effort };
+}
+
+export function effortLabel(value: string): string {
+  return ({ low: "低", medium: "中", high: "高", max: "最高" } as Record<string, string>)[value] || value;
+}
+
+export function modelOptionLabel(model: ModelCapability, catalog: ModelCapability[]): string {
+  return catalog.some(item => item.id !== model.id && item.label === model.label)
+    ? `${model.label} (${model.id})` : model.label;
+}
