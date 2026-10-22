@@ -255,7 +255,8 @@ class MemoryNavigationApiTests(unittest.TestCase):
         finally:
             event.remove(self.engine, "before_cursor_execute", record_statement)
 
-        self.assertLessEqual(len(statements), 7)
+        # 记忆、来源关联与整理快照均批量加载，仍不随故事数量逐条查询。
+        self.assertLessEqual(len(statements), 10)
         self.assertEqual(3, overview["story_count"])
         self.assertEqual(self.child_session.id, overview["recent_session_id"])
         by_id = {item["session_id"]: item for item in overview["sessions"]}

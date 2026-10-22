@@ -72,6 +72,7 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             yield self._make_mock_chunk(reasoning="思考中...")
             yield self._make_mock_chunk(content="<reply>你好呀，这是后台完")
             yield self._make_mock_chunk(content='整生成的回复！</reply><status emotion="开心" affection_change="2"/>')
+            yield self._make_mock_chunk(content='<state_update>{"scene":"客厅","characters":{"测试伴侣":{"posture":"坐着"}}}</state_update>')
 
         queue = asyncio.Queue()
 
@@ -90,6 +91,12 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             )
 
         asyncio.run(run_test())
+
+        while not queue.empty():
+            item = queue.get_nowait()
+            if item and item.get("type") == "chunk":
+                self.assertNotIn("state_update", item["data"])
+                self.assertNotIn('"scene"', item["data"])
 
         # 验证会话锁已被 Worker 释放
         self.assertFalse(is_session_locked(self.session_id))
@@ -113,6 +120,9 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             self.assertEqual("你好呀，这是后台完整生成的回复！", ai_msg.content)
             self.assertEqual("开心", ai_msg.emotion_tag)
             self.assertEqual(2, ai_msg.affection_change)
+            from services.conversation.role_state_service import get_state
+            self.assertEqual("客厅", get_state(self.session_id, verify_db)["state"]["scene"])
+            self.assertNotIn("state_update", ai_msg.content)
 
             persona = verify_db.get(SessionPersona, self.persona_id)
             self.assertEqual(12, persona.affection_score)

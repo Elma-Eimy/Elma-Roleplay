@@ -49,6 +49,8 @@
           </view>
         </view>
 
+        <view class="panel-section"><RoleStatePanel :session-id="props.sessionId" /></view>
+
         <!-- ③ 微观认知状态显示区 -->
         <view class="panel-section">
           <text class="section-title">微观认知</text>
@@ -87,9 +89,10 @@
         <view class="panel-section">
           <text class="section-title">对话设置</text>
           <text class="generation-scope">模型选择仅用于当前故事，在本机保存。</text>
-          <GenerationPicker v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
+          <text v-if="chatSettingsStore.isLoadingModels" class="generation-scope">正在加载模型配置…</text>
+          <text v-if="chatSettingsStore.settingsError" class="generation-scope">{{ chatSettingsStore.settingsError }}</text>
+          <GenerationPicker v-if="!chatSettingsStore.isLoadingModels && chatSettingsStore.modelId" v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
           <text v-if="chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
-          <button class="generation-reset" @tap="chatSettingsStore.resetGeneration">恢复全局默认</button>
           <view class="background-setting">
             <view class="background-setting-header">
               <text class="setting-row-label">聊天背景</text>
@@ -334,6 +337,7 @@ import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
 import GenerationPicker from "./GenerationPicker.vue";
+import RoleStatePanel from "./RoleStatePanel.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
@@ -997,5 +1001,4 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
 
 <style scoped>
 .generation-scope { display: block; font-size: 22rpx; color: #7c8983; line-height: 1.8; margin: 14rpx 0 24rpx; }
-.generation-reset { margin: 22rpx 0; border-radius: 16rpx; background: #f1f6f2; color: #4f8e7c; font-size: 23rpx; }
 </style>

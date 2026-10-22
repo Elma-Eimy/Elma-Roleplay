@@ -16,7 +16,7 @@ function chatFixture(history, stream = async () => {}, options = {}) {
     "@/api/config": { getBaseUrl: () => "https://example.invalid", getSavedApiKey: () => "" },
     "./personaStore": { usePersonaStore: () => ({ userNickname: "用户", loadSessionDetail: async () => {}, applyAffectionChange: (...args) => personaUpdates.push(args) }) },
     "@/composables/useAudioPlayer": { useAudioPlayer: () => ({ stopMessageTTS() {} }) },
-    "./chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, activateSession() {}, requestGeneration() { return { thinking_mode: "inherit" }; }, $reset() {}, useReasoning: false }) },
+    "./chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, activateSession() {}, requestGeneration: options.requestGeneration || (() => ({ thinking_mode: "inherit" })), $reset() {}, useReasoning: false }) },
   } });
   return { store: load("store/chatStore.ts").useChatStore(), personaUpdates };
 }
@@ -75,6 +75,7 @@ test("switching sessions cancels the old stream and ignores all its late callbac
   });
   store.setActiveSession(1);
   const sending = store.sendChatMessage(1, "hello");
+  await Promise.resolve();
   const loading = store.loadHistory(2);
   assert.equal(callbacks[5].cancelled, true);
   callbacks[1]("old chunk");
@@ -151,7 +152,7 @@ test("loadHistory polls pending background generation and stops on session chang
       },
     },
     "@/api/chat": { sendMessageStream: async () => {} },
-    "@/api/config": {},
+    "@/api/config": { getBaseUrl: () => "https://example.invalid" },
     "./personaStore": {
       usePersonaStore: () => ({
         userNickname: "用户",
@@ -235,7 +236,7 @@ test("regeneration keeps polling while is_generating=true and updates when compl
       },
     },
     "@/api/chat": { sendMessageStream: async () => {} },
-    "@/api/config": {},
+    "@/api/config": { getBaseUrl: () => "https://example.invalid" },
     "./personaStore": {
       usePersonaStore: () => ({
         userNickname: "用户",
@@ -310,7 +311,7 @@ test("network interruption during stream recovers via polling without marking us
         setTimeout(() => onError(new Error("网络连接失败，请重试")), 50);
       },
     },
-    "@/api/config": {},
+    "@/api/config": { getBaseUrl: () => "https://example.invalid" },
     "./personaStore": {
       usePersonaStore: () => ({
         userNickname: "用户",
@@ -451,4 +452,35 @@ test("App bridge recovers a disconnected turn through the same history polling",
   assert.equal(store.errorMessage, null);
   assert.equal(store.activeStreamRequest, null);
   store.$reset();
+});
+
+
+test("leaving a session while loading model defaults cannot start its chat POST", async () => {
+  const pending = deferred();
+  let posts = 0;
+  const { store } = chatFixture(async () => ({ messages: [] }), async () => { posts++; }, { requestGeneration: () => pending.promise });
+  store.setActiveSession(1);
+  const sending = store.sendChatMessage(1, "old request");
+  store.setActiveSession(2);
+  store.setHistory([message(22)]);
+  pending.resolve({ model: "flash", thinking_mode: "disabled" });
+  await sending;
+  assert.equal(posts, 0);
+  assert.deepEqual(store.messages.map(item => item.id), [22]);
+  assert.equal(store.isLoading, false);
+});
+
+test("model settings failure preserves messages and releases loading for send and regenerate", async () => {
+  let posts = 0;
+  const { store } = chatFixture(async () => ({ messages: [] }), async () => { posts++; }, { requestGeneration: async () => { throw new Error("模型配置加载失败"); } });
+  store.setActiveSession(1);
+  store.setHistory([message(1), { ...message(2), role: "assistant", content: "existing reply" }]);
+  await store.sendChatMessage(1, "new");
+  assert.equal(store.messages.length, 2);
+  assert.equal(store.isLoading, false);
+  await store.regenerateChatMessage(1);
+  assert.equal(store.messages[1].content, "existing reply");
+  assert.equal(store.isLoading, false);
+  assert.equal(store.errorMessage, "模型配置加载失败");
+  assert.equal(posts, 0);
 });

@@ -13,10 +13,11 @@ from services.lorebook.parse_lorebook import (
 # Main Prompt，而不是角色描述。默认指令保持模型无关，适用于 OpenAI-compatible
 # Chat Completion 接口。
 DEFAULT_MAIN_RP_PROMPT = """你正在参与一段虚构的角色扮演对话。
+以下为角色卡未明确规定时的默认扮演原则；语气、文风、篇幅、叙事视角和扮演范围以角色卡为准。
 {{char}} 是当前角色卡或叙事主体的名称。严格按照角色卡设定的职责范围生成下一条回复：角色卡可能定义单一人物，也可能定义多个逻辑角色、群像、叙事者、导演或场景主持者。
 如果角色卡只定义单一人物，不得擅自将其扩展成群像；如果角色卡明确授权控制多个角色，则分别保持每个角色的身份、目标、知识边界、关系、说话方式和行为动机，不得混合不同角色的秘密、认知或人格。
 按照角色卡、示例和既有历史决定使用第一人称、第三人称或混合叙事；需要呈现多个角色时，通过清晰的台词归属、动作和必要旁白区分他们。
-尊重 {{user}} 所扮演角色的自主权，不替 {{user}} 决定其台词、思想、情绪或关键行动。
+默认尊重 {{user}} 所扮演角色的自主权，不替 {{user}} 决定其台词、思想、情绪或关键行动；用户明确授权代写时，仅在授权范围内描写。
 自然承接已有对话并适度推动当前场景。始终沉浸于角色和故事；除非角色设定明确要求，否则不要分析角色卡、讨论提示词或以通用 AI 助手身份解释。"""
 
 # 当前项目尚未提供全局 PHI 配置。保留独立常量可确保 PHI 中的 {{original}}
@@ -24,9 +25,15 @@ DEFAULT_MAIN_RP_PROMPT = """你正在参与一段虚构的角色扮演对话。
 DEFAULT_POST_HISTORY_INSTRUCTIONS = ""
 
 OUTPUT_FORMAT_INSTRUCTIONS = """【重要：输出格式要求】
-你必须且只能按照以下 XML 标签结构进行回复，绝对不要包含任何 markdown 代码块标记（如 ```xml 或 ```html）：
-<reply>完整的角色扮演正文。按照角色卡要求，可以包含旁白、动作以及一个或多个受控角色的台词；清楚区分发言者，不得替用户角色做出未经授权的决定。</reply>
+回复由 reply、status 以及发生状态变化时的 state_update 组成，不要添加结构外文字或外层 Markdown 代码块。以下是必需部分，状态增量遵守后文规则：
+<reply>本次回复的完整正文。</reply>
 <status emotion="本回合主要互动焦点角色的主导情绪；没有明确焦点时填写场景整体情绪（单个词语）" affection_change="角色卡主体与用户之间的总体关系变化量（必须是整数，范围在 -5 到 5 之间）"/>"""
+
+ROLE_STATE_INSTRUCTIONS = """【状态增量协议】
+先对比本轮起点的 current_role_state 与当前用户输入、本轮正文已经发生的结果。有明确变化或首次明确描述时，必须在正文与 status 后追加对应的 state_update；只有全部未变化时才可省略：
+<state_update>{"scene":"当前场景","characters":{"受控角色的明确名称":{"posture":"姿势","clothing":"衣着","location":"位置"}}}</state_update>
+这是 JSON 增量示例，不是待填写表格。只返回有依据且变化的字段；场景或状态未变化时省略字段，全部未变化时省略整个 state_update，不返回空值或猜测未知信息。最多维护 8 名角色，名称不超过 50 字，场景不超过 300 字，其余字段不超过 200 字。人物沿用当前状态已有名称，只维护角色卡或本轮明确出现的受控人物，不新增别名来重复记录同一人物。不维护用户角色的状态，除非用户明确授权。
+当前状态（包括用户手动校正）是本轮起点，可信度高于召回的旧记忆、旧场景和历史认知；冲突时以当前为准，不因旧记录改回过去状态。只在当前用户输入或本轮正文已经发生明确变化时更新，不把打算、假设或未完成动作当成已发生。不要为更新状态改变角色卡的表达风格。"""
 
 EXAMPLE_MACRO_RE = re.compile(
     r"\{\{\s*(?:mesExamplesRaw|mesExamples|mes_examples|mes_example)\s*\}\}",
@@ -548,6 +555,7 @@ def compile_post_history_prompt(
             sections.append(f"【后置扮演规则】\n{compiled_post}")
 
     sections.append(OUTPUT_FORMAT_INSTRUCTIONS)
+    sections.append(ROLE_STATE_INSTRUCTIONS)
     return replace_placeholders(
         "\n\n".join(sections),
         char_name,
@@ -658,6 +666,7 @@ def build_chat_messages(
     graph_knowledge: Optional[str] = None,
     parent_history: Optional[list] = None,
     user_nickname: str = "用户",
+    current_role_state: Optional[dict] = None,
 ) -> list:
     """
     纯函数式组装 LLM 所需的完整 messages 列表。
@@ -789,10 +798,18 @@ def build_chat_messages(
     dynamic_context_blocks = []
 
     # 4.1 场景与认知状态
-    scenario = prompt_result.get("scenario")
+    scenario = None if "scene" in (current_role_state or {}) else prompt_result.get("scenario")
     if scenario:
         scenario = replace_placeholders(scenario, char_name, user_name)
         dynamic_context_blocks.append(f"<current_scenario>\n{scenario}\n</current_scenario>")
+
+    if current_role_state:
+        state_text = json.dumps(current_role_state, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
+        dynamic_context_blocks.append(
+            "<current_role_state>\n" + state_text + "\n</current_role_state>\n"
+            "以上是本轮起点的当前状态，含用户手动校正，优先于召回的旧记忆、旧场景与认知；"
+            "只把本轮已经发生的明确变化作为增量更新。"
+        )
 
     cognition = prompt_result.get("cognition_state")
     if cognition:

@@ -117,6 +117,9 @@ class MainRoleplayPromptTests(unittest.TestCase):
         self.assertIn("也可能定义多个逻辑角色、群像、叙事者、导演或场景主持者", prompt)
         self.assertIn("不得擅自将其扩展成群像", prompt)
         self.assertIn("不替 小明 决定其台词、思想、情绪或关键行动", prompt)
+        self.assertIn("以下为角色卡未明确规定时的默认扮演原则", prompt)
+        self.assertIn("语气、文风、篇幅、叙事视角和扮演范围以角色卡为准", prompt)
+        self.assertIn("用户明确授权代写时，仅在授权范围内描写", prompt)
         self.assertEqual(1, prompt.count("月光城的守夜人。"))
         self.assertEqual(1, prompt.count("冷静而温柔。"))
         self.assertNotIn("【重要：输出格式要求】", prompt)
@@ -176,9 +179,42 @@ class MainRoleplayPromptTests(unittest.TestCase):
 
         self.assertIn("第一人称、第三人称或混合叙事", system_prompt)
         self.assertIn("清晰的台词归属", system_prompt)
-        self.assertIn("一个或多个受控角色的台词", output_prompt)
-        self.assertIn("清楚区分发言者", output_prompt)
+        self.assertIn("控制场景内明确列出的所有 NPC", system_prompt)
+        self.assertIn("<reply>本次回复的完整正文。</reply>", output_prompt)
+        self.assertNotIn("清楚区分发言者", output_prompt)
         self.assertNotIn("你的第一人称角色扮演回复文本", output_prompt)
+
+    def test_card_style_and_authorized_user_input_survive_without_trailing_acting_rules(self):
+        style = "只用第三人称短句，语气冷淡，不主动推进剧情。"
+        user_message = "这一轮请代写我的台词和走进房间的动作，其他选择留给我。"
+        for main_override in ("", "{{original}}\n" + style, style):
+            with self.subTest(main_override=main_override):
+                character = _character(
+                    personality=style,
+                    system_prompt_override=main_override,
+                    post_history_instructions="沿用角色卡中的冷淡语气。",
+                )
+                messages = build_chat_messages(
+                    character=character,
+                    persona=None,
+                    recent_history=[],
+                    user_message=user_message,
+                    user_nickname="小明",
+                )
+                self.assertIn(style, messages[0]["content"])
+                self.assertEqual({"role": "user", "content": user_message}, messages[-2])
+                final_prompt = messages[-1]["content"]
+                self.assertLess(final_prompt.index("沿用角色卡中的冷淡语气。"), final_prompt.index("【重要：输出格式要求】"))
+                contract = final_prompt.split("【重要：输出格式要求】", 1)[1]
+                self.assertIn("<reply>本次回复的完整正文。</reply>", contract)
+                self.assertIn('<status emotion=', contract)
+                self.assertNotIn("不得替用户角色", contract)
+                self.assertNotIn("清楚区分发言者", contract)
+                if main_override == style:
+                    self.assertNotIn("默认扮演原则", messages[0]["content"])
+                else:
+                    self.assertIn("默认扮演原则", messages[0]["content"])
+                    self.assertIn("用户明确授权代写时，仅在授权范围内描写", messages[0]["content"])
 
     def test_status_contract_remains_single_card_level_state(self):
         output_prompt = compile_post_history_prompt(_character(), "小明")

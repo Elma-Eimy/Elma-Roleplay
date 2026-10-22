@@ -17,6 +17,7 @@
             ><text>{{ store.settingsError }}</text
             ><button size="mini" @tap="store.refreshModels">重试</button></view
           ><GenerationPicker
+            v-if="!store.isLoadingModels && store.modelId"
             v-model:model="store.modelId"
             v-model:thinkingMode="store.thinkingMode"
             v-model:effort="store.reasoningEffort"
@@ -24,10 +25,8 @@
             :default-model="store.defaults.default_chat_model"
             :default-thinking="store.defaults.reasoning_mode"
             :default-effort="store.defaults.reasoning_effort"
-          /><button class="reset-generation" @tap="store.resetGeneration">
-            全部跟随全局默认</button
-          ><text class="scope-hint"
-            >在「设置 → 模型与引擎」可以添加模型并修改全局默认。</text
+          /><text class="scope-hint"
+            >新故事采用默认配置，之后独立保存。</text
           ></view
         ></scroll-view
       ><view class="sheet-footer"
@@ -108,7 +107,8 @@ watch(
   color: #26332e;
 }
 .sheet-body {
-  height: 60vh;
+  height: 480rpx;
+  max-height: 60vh;
   min-height: 0;
 }
 .sheet-inner {
@@ -120,13 +120,6 @@ watch(
   color: #7c8983;
   line-height: 1.8;
   margin-bottom: 24rpx;
-}
-.reset-generation {
-  margin: 30rpx 0 20rpx;
-  font-size: 24rpx;
-  color: #4f8e7c;
-  background: #f1f6f2;
-  border-radius: 16rpx;
 }
 .load-error {
   padding: 20rpx;

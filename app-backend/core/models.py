@@ -197,6 +197,9 @@ class SessionPersona(Base):
     # 当前心情标签，如 "开心" / "恐惧" / "平静"
     current_mood = Column(String(50), nullable=True)
 
+    # 分支创建时的独立状态快照；之后沿本地有效消息增量重放。
+    role_state_base = Column(Text, nullable=True)
+
     # ── 进度追踪指针 ──
 
     # 记忆提纯进度：上一次 summarize_and_store_memory 处理到的最后一条消息 ID
@@ -280,6 +283,12 @@ class MemoryChunk(Base):
         nullable=True
     )
 
+    # 非外键的来源上界：消息删除后仍用于分支隔离，不能将来源丢失当成手动无来源。
+    source_message_id_bound = Column(
+        Integer, nullable=True,
+        default=lambda context: context.get_current_parameters().get("source_message_id"),
+    )
+
     # 可选的直接前一版本。它只表达“当前这条记忆替代哪一条”，不把旧记忆
     # 全局标记为失效；是否隐藏旧记忆由当前 Persona 继承链动态解析，保证兄弟
     # 分支互不污染。
@@ -289,6 +298,9 @@ class MemoryChunk(Base):
         nullable=True,
         index=True,
     )
+
+    # 整理产物与原卡分开保存；可见性由当前故事的整理快照决定。
+    consolidation_id = Column(Integer, ForeignKey("memory_consolidations.id", ondelete="CASCADE"), nullable=True, index=True)
 
     content          = Column(Text,              nullable=False)           # 记忆的自然语言描述
     memory_type      = Column(SAEnum(MemoryType), nullable=False)
@@ -329,7 +341,47 @@ class MemoryChunk(Base):
 
 
 # ──────────────────────────────────────────────
-# 4.5 知识图谱表 (Graph RAG)
+# 4.5 可撤销的记忆整理
+# ──────────────────────────────────────────────
+
+class MemoryConsolidation(Base):
+    __tablename__ = "memory_consolidations"
+
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="preview")
+    # 保存模型建议和来源快照；应用时重新校验，不接受客户端提供的新正文。
+    preview_json = Column(Text, nullable=False)
+    selected_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class MemoryConsolidationSource(Base):
+    __tablename__ = "memory_consolidation_sources"
+
+    summary_id = Column(Integer, ForeignKey("memory_chunks.id", ondelete="CASCADE"), primary_key=True)
+    source_id = Column(Integer, ForeignKey("memory_chunks.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class MemoryConsolidationScope(Base):
+    __tablename__ = "memory_consolidation_scopes"
+
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), primary_key=True)
+    consolidation_id = Column(Integer, ForeignKey("memory_consolidations.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class MemoryConsolidationScan(Base):
+    """仅记录本故事原卡成功送检时的版本，与整理应用状态独立。"""
+    __tablename__ = "memory_consolidation_scans"
+
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), primary_key=True)
+    memory_id = Column(Integer, ForeignKey("memory_chunks.id", ondelete="CASCADE"), primary_key=True, index=True)
+    fingerprint = Column(String(64), nullable=False)
+    checked_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+# ──────────────────────────────────────────────
+# 4.6 知识图谱表 (Graph RAG)
 # ──────────────────────────────────────────────
 
 class GraphEntity(Base):
@@ -398,6 +450,8 @@ class ChatMessage(Base):
     # 消息级微状态（溯源用，不参与 RAG）
     emotion_tag      = Column(String(50),  nullable=True)  # 发出本条消息时角色的情绪标签
     affection_change = Column(Integer, nullable=True)  # 本条消息带来的好感度变动量（正/负）
+    role_state_patch = Column(Text, nullable=True)  # 本轮 LLM 状态增量
+    role_state_manual = Column(Text, nullable=True)  # 此剧情节点之后的手动校正
     audio_path       = Column(String(255), nullable=True)  # 该条消息的 TTS 音频文件本地相对路径/URL
 
     # Swipe 候选回复支持

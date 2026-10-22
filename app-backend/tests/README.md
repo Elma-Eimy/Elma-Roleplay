@@ -27,7 +27,7 @@ Windows 未激活虚拟环境时，可将命令中的 `python` 替换为 `.\venv
 | --- | --- |
 | `api/` | 应用装配与生命周期、路由契约、记忆导航、最近会话、鉴权以及路由与服务边界 |
 | `conversation/` | 分叉边界、Prompt、模型参数、对话回合和上下文交接 |
-| `memory/` | 记忆提纯、版本替代、离线检索和图谱质量 |
+| `memory/` | 记忆提纯、版本替代、整理的原子性/撤销/分支快照、离线检索和图谱质量 |
 | `infrastructure/` | Alembic、头像清理、音频缓存恢复、Embedding 失败和 Outbox 一致性 |
 | `core/` | 配置加载与持久化 |
 | `lorebook/` | 世界书触发与兼容规则 |
@@ -49,6 +49,8 @@ python -m tests.manual.manual_lorebook
 `manual_lorebook` 是尚未转为 `unittest` 的规则检查脚本；将它保留在这里不表示它需要真实模型。
 
 ## 新增与调试
+
+`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
 
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
 

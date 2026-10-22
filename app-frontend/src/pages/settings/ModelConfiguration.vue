@@ -2,14 +2,13 @@
   <view class="model-configuration">
     <text class="configuration-title">模型与思考</text
     ><text class="configuration-intro"
-      >模型和思考模式独立选择。故事中的单独设置优先于这里的默认值。</text
+      >设置新故事的默认模型与思考强度，已有故事保持各自的选择。</text
     >
     <GenerationPicker
       :model="settings.default_chat_model"
       :thinking-mode="settings.reasoning_mode ? 'enabled' : 'disabled'"
       :effort="settings.reasoning_effort || 'inherit'"
       :catalog="catalog"
-      :allow-inherit="false"
       @update:model="emit('change', { default_chat_model: $event })"
       @update:thinkingMode="
         emit('change', { reasoning_mode: $event === 'enabled' })
@@ -89,7 +88,7 @@
         <picker :range="catalog" range-key="label" :value="translationModelIndex" @change="selectTranslationModel">
           <view class="translation-model">{{ settings.translation_model }} · 点击切换</view>
         </picker>
-        <text class="configuration-intro">默认 DeepSeek Flash；译文独立保存，不改变聊天设定。</text>
+        <text class="configuration-intro">译文独立保存，不改变聊天设定。</text>
         <view class="auxiliary-divider"></view>
         <GenerationPicker
           model-label="记忆与认知模型"
@@ -97,8 +96,6 @@
           :thinking-mode="settings.memory_thinking_mode"
           :effort="settings.memory_reasoning_effort"
           :catalog="catalog"
-          :allow-inherit="false"
-          :allow-default-effort="false"
           @update:model="emit('change', { memory_model: $event })"
           @update:thinkingMode="
             emit('change', {
@@ -115,8 +112,6 @@
           :thinking-mode="settings.tts_thinking_mode"
           :effort="settings.tts_reasoning_effort"
           :catalog="catalog"
-          :allow-inherit="false"
-          :allow-default-effort="false"
           @update:model="emit('change', { tts_preprocess_model: $event })"
           @update:thinkingMode="
             emit('change', {

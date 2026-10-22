@@ -16,6 +16,12 @@
         </view>
       </view>
 
+      <view class="mode-tabs">
+        <button size="mini" :class="{ 'mode-active': !showConsolidation }" @tap="showConsolidation = false">浏览记忆</button>
+        <button size="mini" :class="{ 'mode-active': showConsolidation }" @tap="showConsolidation = true">整理记忆</button>
+      </view>
+      <MemoryConsolidationPanel v-if="showConsolidation && sessionId !== null" :key="sessionId" :session-id="sessionId" @changed="loadMemories" />
+      <template v-else>
       <view class="search-container">
         <input
           v-model="searchQuery"
@@ -88,7 +94,8 @@
                 <text class="memory-type-badge">{{ getMemoryTypeLabel(item.memory_type) }}</text>
                 <text v-if="!item.is_local" class="inherited-badge">来自主故事</text>
                 <text v-else class="local-badge">当前故事</text>
-                <text v-if="item.is_superseded" class="superseded-badge">已替代</text>
+                <text v-if="item.is_superseded" class="superseded-badge">历史原卡</text>
+                <text v-if="item.consolidation_id" class="local-badge">整理结果</text>
                 <text v-if="item.source_start_message_id || item.source_message_id" class="source-text">
                   {{ formatMemorySource(item) }}
                 </text>
@@ -96,7 +103,7 @@
               <text class="score-text">权重 {{ item.importance_score.toFixed(1) }}</text>
             </view>
 
-            <view v-if="item.is_local && editingId !== item.id" class="card-actions">
+            <view v-if="item.is_local && !item.consolidation_id && !item.is_superseded && editingId !== item.id" class="card-actions">
               <view class="action-icon-btn" @tap="startInlineEdit(item)">
                 <image class="action-svg-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
                 <text class="action-icon-text">编辑</text>
@@ -145,24 +152,26 @@
           </view>
         </view>
       </view>
+      </template>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
+import MemoryConsolidationPanel from "./MemoryConsolidationPanel.vue";
 import {
   getSessionMemories,
   createSessionMemory,
   updateSessionMemory,
   deleteSessionMemory
-} from "@/api/sessions";
+} from "@/api/memories";
 import type {
   MemoryChunk,
   MemoryScope,
   MemoryStats,
   MemoryStatus
-} from "@/api/sessions";
+} from "@/types/memories";
 
 const props = defineProps<{
   isOpen: boolean;
@@ -176,6 +185,7 @@ const emit = defineEmits<{
 }>();
 
 const memories = ref<MemoryChunk[]>([]);
+const showConsolidation = ref(false);
 const searchQuery = ref("");
 const isLoading = ref(false);
 const isMoreLoading = ref(false);
@@ -214,7 +224,7 @@ const filterOptions = computed<ReadonlyArray<{
     count: facets.value.local_active
   },
   { label: "继承", value: "inherited", count: facets.value.inherited_active },
-  { label: "已替代", value: "superseded", count: facets.value.superseded }
+  { label: "历史原卡", value: "superseded", count: facets.value.superseded }
 ]);
 
 const getFilterQuery = (
@@ -304,6 +314,10 @@ const selectFilter = async (filter: MemoryFilter) => {
 watch(
   [() => props.isOpen, () => props.sessionId],
   async ([newOpen, newSessionId]) => {
+    loadRequestId++;
+    showConsolidation.value = false;
+    editingId.value = null;
+    editingContent.value = "";
     if (newOpen && newSessionId !== null) {
       // 打开弹窗时清空搜索框
       searchQuery.value = "";
@@ -470,6 +484,9 @@ const addMemory = async () => {
 </script>
 
 <style scoped>
+.mode-tabs { display: flex; padding: 16rpx 32rpx 0; gap: 18rpx; }
+.mode-tabs button { margin: 0; font-size: 24rpx; }
+.mode-tabs .mode-active { background: #1c1c1e; color: white; }
 /* Backdrop */
 .modal-backdrop {
   position: fixed;

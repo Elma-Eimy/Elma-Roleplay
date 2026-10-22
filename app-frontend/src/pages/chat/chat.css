@@ -1,4 +1,4 @@
-/* 聊天页只保留页面级布局；组件样式由各组件自行维护。 */
+/* 居中立绘与滚动消息在同一画面叠放；纯净模式保留原有浅色样式。 */
 .page-container {
   display: flex;
   flex-direction: column;
@@ -11,56 +11,72 @@
   position: relative;
   overflow: hidden;
 }
-
-.chat-bg {
-  --chat-glow-primary: rgba(112, 174, 155, 0.2);
-  --chat-glow-secondary: rgba(139, 184, 220, 0.13);
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  background:
-    radial-gradient(circle at 94% 4%, var(--chat-glow-primary), transparent 38%),
-    radial-gradient(circle at 0% 44%, var(--chat-glow-secondary), transparent 34%),
-    linear-gradient(180deg, #f9fbf9 0%, #f7f9f7 48%, #f6f8f6 100%);
-  opacity: 1;
-  pointer-events: none;
-  z-index: 0;
-  transition: opacity var(--app-motion-slow, 360ms) ease;
-}
-
-.chat-scene-image {
-  position: absolute;
-  inset: -3%;
-  width: 106%;
-  height: 106%;
-  opacity: 0.8;
-  filter: blur(8rpx) saturate(0.78);
-  transform: scale(1.02);
-}
-
-.chat-bg::after {
+.chat-bg { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.chat-bg.mode-clean { display: none; }
+.chat-scene-image { position: absolute; inset: 0; width: 100%; height: 100%; }
+.is-immersive .chat-bg { background: #24342c; }
+.chat-scene-wash { position: absolute; inset: -24px; width: calc(100% + 48px); height: calc(100% + 48px); filter: blur(20px); opacity: .32; }
+.is-immersive .chat-bg::after {
   content: "";
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  background:
-    linear-gradient(180deg, rgba(247, 249, 247, 0.38), rgba(247, 249, 247, 0.5)),
-    linear-gradient(0deg, rgba(247, 249, 247, 0.9), transparent 22%);
-  pointer-events: none;
+  /* 顶底局部压暗，人物主体保留清晰与原色。 */
+  background: linear-gradient(180deg, rgba(10,18,18,.40) 0%, transparent 22%, transparent 72%, rgba(10,18,18,.40) 100%);
 }
+.chat-workspace, .chat-conversation {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.chat-workspace { position: relative; z-index: 1; }
+.chat-conversation { width: 100%; max-width: 900px; margin: 0 auto; }
 
-.chat-bg.mode-clean {
-  opacity: 0;
+/* 局部语义变量不影响抽屉和编辑弹窗。 */
+.is-immersive :deep(.chat-bubble-wrapper),
+.is-immersive :deep(.custom-header),
+.is-immersive :deep(.input-area-wrapper) {
+  --app-color-text-primary: #fbfaf5;
+  --app-color-text-secondary: #d9e4df;
+  --app-color-text-muted: #c0cfc8;
+  --app-color-primary-strong: #d2eddf;
+  --app-color-primary-soft: rgba(157,207,179,.16);
+  --app-color-border: rgba(255,255,255,.14);
 }
-
-.chat-bg.mode-character {
-  opacity: 1;
+.is-immersive :deep(.custom-header),
+.is-immersive :deep(.custom-header.is-android) {
+  background: linear-gradient(180deg, rgba(12,22,20,.42), rgba(12,22,20,.08));
+  border-bottom-color: rgba(255,255,255,.1);
+  backdrop-filter: none;
+  box-shadow: none;
 }
-
-.is-android .chat-bg {
-  background:
-    radial-gradient(circle at 94% 4%, var(--chat-glow-primary), transparent 38%),
-    linear-gradient(180deg, #f9fbf9 0%, #f7f9f7 100%);
+.is-immersive :deep(.header-btn) { background: rgba(15,27,24,.26); border-color: rgba(255,255,255,.22); }
+.is-immersive :deep(.back-icon),
+.is-immersive :deep(.info-icon),
+.is-immersive :deep(.tts-icon),
+.is-immersive :deep(.send-icon) { filter: brightness(0) invert(1); }
+.is-immersive :deep(.ai-bubble) {
+  background: rgba(19,29,27,.64);
+  border-color: rgba(255,255,255,.15);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 4px 18px rgba(0,0,0,.08);
 }
+.is-immersive :deep(.user-bubble) { background: rgba(51,83,69,.76); border-color: rgba(205,235,218,.24); box-shadow: none; }
+.is-immersive :deep(.name-tag) { color: #fff; text-shadow: 0 1px 5px rgba(0,0,0,.7); }
+.is-immersive :deep(.meta-tag) { background: rgba(18,30,26,.65); border-color: rgba(255,255,255,.12); }
+.is-immersive :deep(.candidate-pager) { background: rgba(18,30,26,.65); border-radius: 999px; }
+.is-immersive :deep(.thought-container),
+.is-immersive :deep(.md-status-card) { background: rgba(210,235,222,.08); }
+.is-immersive :deep(.input-area-wrapper),
+.is-immersive :deep(.input-area-wrapper.is-android) { padding-top: 8rpx; background: transparent; }
+.is-immersive :deep(.input-area),
+.is-immersive :deep(.input-area.is-focused) { background: rgba(19,31,27,.78); border-color: rgba(255,255,255,.25); box-shadow: 0 6px 24px rgba(0,0,0,.12); }
+.is-immersive :deep(.uni-textarea-placeholder) { color: #c0cfc8; }
+.is-immersive :deep(.reasoning-toggle-btn),
+.is-immersive :deep(.reasoning-toggle-btn.is-reasoning) { min-height: 40rpx; background: rgba(19,31,27,.72); border-color: rgba(255,255,255,.12); }
+.is-immersive :deep(.reasoning-label) { font-size: 19rpx; }
+.is-immersive :deep(.empty-chat-title),
+.is-immersive :deep(.empty-chat-text) { color: #fff; text-shadow: 0 1px 5px rgba(0,0,0,.8); }
+@media (min-width: 900px) { .chat-conversation { max-width: 800px; } }

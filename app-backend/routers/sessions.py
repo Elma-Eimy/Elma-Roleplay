@@ -11,21 +11,53 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from typing import Literal, Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
+from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest, MemoryConsolidationReviewRequest
+from schemas import RoleStateUpdate
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
-from core.locking import cleanup_session_lock, is_session_locked
+from core.locking import cleanup_session_lock, is_session_locked, get_session_lock
 import services.conversation.session_service as session_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
+import services.memory.memory_consolidation_service as memory_consolidation_service
 router = APIRouter()
+
+
+@router.get("/{session_id}/role-state")
+def get_role_state(session_id: int, db: Session = Depends(get_db)):
+    from services.conversation.role_state_service import get_state
+    try:
+        return get_state(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/{session_id}/role-state")
+async def update_role_state(session_id: int, request: RoleStateUpdate, db: Session = Depends(get_db)):
+    from services.conversation.role_state_service import update_state, StateConflict
+    lock = get_session_lock(session_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="当前故事正在生成回复，请完成后再修改状态")
+    await lock.acquire()
+    try:
+        return await run_in_threadpool(update_state, session_id, request.patch, request.expected_revision, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StateConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        lock.release()
 
 
 @router.post("/create")
@@ -354,6 +386,8 @@ def update_session_memory(session_id: int, memory_id: int, request: MemoryUpdate
         }
     except session_memory_service.InheritedMemoryMutationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.ProtectedMemoryMutationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except session_memory_service.SessionMemoryNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -365,9 +399,47 @@ def delete_session_memory(session_id: int, memory_id: int, db: Session = Depends
         session_memory_service.delete_memory(session_id, memory_id, db)
     except session_memory_service.InheritedMemoryMutationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except session_memory_service.ProtectedMemoryMutationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except session_memory_service.SessionMemoryNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"message": "Memory deleted successfully", "memory_id": memory_id}
+
+
+def _consolidation_response(action, *args):
+    try:
+        return action(*args)
+    except session_memory_service.SessionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except memory_consolidation_service.ConsolidationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except memory_consolidation_service.ConsolidationModelError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/{session_id}/memory-consolidations")
+def list_memory_consolidations(session_id: int, limit: int = Query(10, ge=1, le=20), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.list_batches, session_id, db, limit, offset)
+
+
+@router.post("/{session_id}/memory-consolidations/preview")
+def preview_memory_consolidation(session_id: int, request: MemoryConsolidationPreviewRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.preview, session_id, request.after_id, db, request.mode)
+
+
+@router.post("/{session_id}/memory-consolidations/{batch_id}/apply")
+def apply_memory_consolidation(session_id: int, batch_id: int, request: MemoryConsolidationApplyRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.apply, session_id, batch_id, request.group_ids, db, request.expected_revision)
+
+
+@router.put("/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}")
+def review_memory_consolidation_group(session_id: int, batch_id: int, group_id: int, request: MemoryConsolidationReviewRequest, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.review_group, session_id, batch_id, group_id, request, db)
+
+
+@router.post("/{session_id}/memory-consolidations/{batch_id}/undo")
+def undo_memory_consolidation(session_id: int, batch_id: int, db: Session = Depends(get_db)):
+    return _consolidation_response(memory_consolidation_service.undo, session_id, batch_id, db)
 
 
 @router.get("/{session_id}/compile_prompt")

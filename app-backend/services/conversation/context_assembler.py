@@ -20,6 +20,7 @@ import services.memory.memory_manager as memory_manager
 import services.conversation.session_service as session_service
 from services.memory.memory_extraction_service import get_memory_handoff_history_limit
 from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.role_state_service import resolve_state
 from services.memory.graph_service import retrieve_graph_context
 from services.conversation.retrieval_query_service import build_contextual_retrieval_query
 from services.conversation.prompt_token_estimator import (
@@ -145,7 +146,8 @@ async def assemble_prompt_context(
         retrieved_memories=memories,
         graph_knowledge=graph_knowledge,
         parent_history=parent_history,
-        user_nickname=user_nickname
+        user_nickname=user_nickname,
+        current_role_state=resolve_state(session_id, db, before_id=user_msg.id + 1)[0]["state"],
     )
 
     # Observation only: never rewrite or trim the model payload here.

@@ -406,6 +406,19 @@ export const useChatStore = defineStore("chat", () => {
 
     isLoading.value = true;
     clearError();
+    const version = sessionVersion;
+    const endpoint = getBaseUrl();
+    let generation;
+    try {
+      generation = await useChatSettingsStore().requestGeneration(sessionId);
+    } catch (error) {
+      if (version === sessionVersion && endpoint === getBaseUrl()) {
+        setError(error instanceof Error ? error.message : String(error));
+        isLoading.value = false;
+      }
+      return;
+    }
+    if (version !== sessionVersion || endpoint !== getBaseUrl() || activeSessionId.value !== sessionId) return;
 
     const afterMessageId = latestPersistedMessageId();
 
@@ -424,7 +437,7 @@ export const useChatStore = defineStore("chat", () => {
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: lastUserMsg.content,
-      ...settingsStore.requestGeneration(sessionId),
+      ...generation,
       is_regenerate: true,
       user_nickname: personaStore.userNickname,
       temperature: settingsStore.temperature ?? undefined,
@@ -459,6 +472,19 @@ export const useChatStore = defineStore("chat", () => {
     
     isLoading.value = true;
     clearError();
+    const version = sessionVersion;
+    const endpoint = getBaseUrl();
+    let generation;
+    try {
+      generation = await useChatSettingsStore().requestGeneration(sessionId);
+    } catch (error) {
+      if (version === sessionVersion && endpoint === getBaseUrl()) {
+        setError(error instanceof Error ? error.message : String(error));
+        isLoading.value = false;
+      }
+      return;
+    }
+    if (version !== sessionVersion || endpoint !== getBaseUrl() || activeSessionId.value !== sessionId) return;
 
     const tempId = addOptimisticUserMessage(text);
     const streamPlaceholderId = addStreamingPlaceholder();
@@ -467,7 +493,7 @@ export const useChatStore = defineStore("chat", () => {
     const requestParams: ChatRequest = { 
       session_id: sessionId, 
       user_message: text,
-      ...settingsStore.requestGeneration(sessionId),
+      ...generation,
       user_nickname: personaStore.userNickname,
       temperature: settingsStore.temperature ?? undefined,
       top_p: settingsStore.top_p ?? undefined,

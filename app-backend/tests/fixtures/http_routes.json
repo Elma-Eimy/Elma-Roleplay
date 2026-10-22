@@ -73,6 +73,14 @@
   ],
   [
     "GET",
+    "/sessions/{session_id}/memory-consolidations"
+  ],
+  [
+    "GET",
+    "/sessions/{session_id}/role-state"
+  ],
+  [
+    "GET",
     "/utils/settings"
   ],
   [
@@ -141,6 +149,18 @@
   ],
   [
     "POST",
+    "/sessions/{session_id}/memory-consolidations/preview"
+  ],
+  [
+    "POST",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/apply"
+  ],
+  [
+    "POST",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/undo"
+  ],
+  [
+    "POST",
     "/sessions/{session_id}/trigger_cognition"
   ],
   [
@@ -170,6 +190,14 @@
   [
     "PUT",
     "/sessions/{session_id}/memories/{memory_id}"
+  ],
+  [
+    "PUT",
+    "/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}"
+  ],
+  [
+    "PUT",
+    "/sessions/{session_id}/role-state"
   ],
   [
     "PUT",

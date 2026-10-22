@@ -1,5 +1,17 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal
+
+class RoleStateUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_revision: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    patch: dict
+
+    @field_validator("patch")
+    @classmethod
+    def valid_state_patch(cls, value):
+        from services.conversation.role_state_schema import validate_patch
+        return validate_patch(value, manual=True)
+
 
 class CharacterCreate(BaseModel):
     name: str
@@ -182,5 +194,40 @@ class MemoryCreateRequest(BaseModel):
 class MemoryUpdateRequest(BaseModel):
     content: str
     importance_score: float
+
+
+class MemoryConsolidationPreviewRequest(BaseModel):
+    after_id: int = Field(0, ge=0)
+    mode: Literal["full", "incremental"] = "full"
+
+    @model_validator(mode="after")
+    def valid_scan_cursor(self):
+        if self.mode == "incremental" and self.after_id != 0:
+            raise ValueError("增量扫描不使用 ID 游标，请传入 after_id=0")
+        return self
+
+
+class MemoryConsolidationApplyRequest(BaseModel):
+    group_ids: list[int] = Field(min_length=1, max_length=12)
+    expected_revision: int = Field(0, ge=0)
+
+    @field_validator("group_ids")
+    @classmethod
+    def valid_groups(cls, value):
+        if any(i < 0 for i in value) or len(set(value)) != len(value):
+            raise ValueError("整理分组编号必须非负且不重复")
+        return value
+
+
+class MemoryConsolidationReviewRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    content: str | None = Field(None, min_length=4, max_length=500)
+    ignored: bool = False
+    ignore_reason: str = Field("", max_length=160)
+
+    @field_validator("content", "ignore_reason", mode="before")
+    @classmethod
+    def trim_review_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 

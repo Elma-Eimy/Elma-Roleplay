@@ -60,6 +60,8 @@ illustrative; configurable values depend on the running backend.
 | **GET** | `/sessions/recent` | Get paginated recent sessions with character and last-message summaries |
 | **GET** | `/sessions` | List a character's sessions with last-message previews and pagination |
 | **GET** | `/sessions/{session_id}` | Retrieve details of a session and its persona |
+| **GET** | `/sessions/{session_id}/role-state` | Read branch-local current scene and per-character state |
+| **PUT** | `/sessions/{session_id}/role-state` | Apply a manual state correction with optimistic revision checking |
 | **GET** | `/sessions/{session_id}/history` | Get inheritance-aware chronological chat history (cursor pagination) |
 | **PUT** | `/sessions/{session_id}/title` | Rename a session's title |
 | **DELETE** | `/sessions/{session_id}` | Delete a session and safely relink children |
@@ -100,6 +102,27 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 
 ## 📝 Detailed API Reference
 
+### Current role state
+
+`GET /sessions/{session_id}/role-state` returns `{session_id, revision, state}`. `revision` is a 64-character SHA-256 digest of the branch baseline and active message/state sequence. `state` contains optional `scene` and `characters`, where character names map to optional `posture`, `clothing`, and `location` strings. Unknown fields may be absent; an explicitly cleared scene is `null` and does not restore the opening location.
+
+`PUT /sessions/{session_id}/role-state` accepts:
+
+```json
+{
+  "expected_revision": "<64-character revision from GET>",
+  "patch": {
+    "scene": "客厅",
+    "characters": {"露娜": {"posture": "坐在沙发上", "clothing": "白色衬衫", "location": "窗边"}}
+  }
+}
+```
+
+- Returns the updated GET shape. Omitted fields remain unchanged; manual `null` or empty string clears a field. Clearing all known fields removes that character's state. Scene limit: 300 characters; character names: 1–50 characters; posture/clothing/location: 1–200 characters; at most 8 characters in the resulting state. Up to 16 character entries are allowed in a manual patch to clear old entries while adding new ones. Unknown keys, invalid types, oversized payloads or invalid revisions return `422`.
+- Missing session/persona returns `404`. A stale revision or a session currently generating a reply returns `409`. Corrections attach to the latest active local message, or the baseline when no messages exist, and affect subsequent prompt assembly. Reads do not call an LLM.
+- Chat generation must append an increment such as `<state_update>{"scene":"客厅","characters":{"露娜":{"posture":"站着"}}}</state_update>` after reply/status when state changes or is first explicitly described; the entire increment may be omitted when nothing changes. This is an internal model-output protocol, not an extra SSE event. Only changed or first explicitly described fields are emitted; omitted updates preserve state. LLM patches cannot clear fields or use nulls. Invalid patches are ignored atomically while reply/status are retained; raw state tags never enter stored reply text or streamed body chunks.
+- Active candidates determine state. Regeneration starts before the replaced candidate; branches snapshot only their selected message boundary. Editing assistant text invalidates that message's model-derived patch, preserving manual corrections. Existing emotion/affection behavior remains separate. See [role-state behavior](docs/ROLE_STATE.md) for scope and limitations.
+
 ### 1. General & Utilities
 
 #### GET `/`
@@ -122,7 +145,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   ```
 
 #### GET `/utils/settings`
-* Also returns `translation_model` (default `deepseek-flash`), independently selectable for character reading translations. It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
+* Also returns `translation_model`, independently selectable for character reading translations. When absent, it initializes once from the existing non-reasoning chat model (falling back to the legacy chat model or default chat model). It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
 * Also returns `default_chat_model`, `model_profiles` (editable `{id,label,adapter}` entries), `model_catalog` (read-only `{id,label,adapter,thinking,efforts}` capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`.
 * `thinking` is `toggle`, `always`, or `unsupported`. Adapters: `compatible`, `deepseek`, `reasoning`. The catalog is configured locally; it does not query providers.
 * **Response (200 OK)**:
@@ -257,7 +280,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
     }
   }
   ```
-* Uses `translation_model` and the existing chat provider connection. Long cards are segmented; the complete result is committed to SQLite atomically. Invalid/truncated model output, changed placeholders or translation service failures return `502`; the original card and previous successful cache are retained. Invalid request shapes return `422`.
+* Uses `translation_model` and the existing chat provider connection. Long cards are segmented using a coarse length mapping (ASCII characters count as 0.25, others as 1), with up to 2,400 mapped units per segment. Each batch has at most three segments and 9,600 raw text characters in total; the output token ceiling is raised from 8,192 to 32,768. The 120,000 raw character input limit is unchanged. The complete result is committed to SQLite atomically. Invalid/truncated model output, changed placeholders or translation service failures return `502`; the original card and previous successful cache are retained. Invalid request shapes return `422`.
 * Translations are reading-only: no character, worldbook, prompt, greeting index or chat message is updated. Name, tags and hidden prompt fields remain in the original language. Cache entries survive character deletion and may be reused after reimporting the same content.
 
 #### POST `/characters/create`
@@ -646,7 +669,8 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   | `source_start_message_id` | `integer \| null` | First message in the smallest continuous source range supporting this memory. `null` for legacy or manually created memories without a chat source. |
   | `source_message_id` | `integer \| null` | Last message in the source range supporting this memory. The name is retained for database compatibility. |
   | `supersedes_id` | `integer \| null` | ID of the older memory directly superseded by this memory, or `null` when there is no explicit replacement relationship. |
-  | `is_superseded` | `boolean` | Whether another memory supersedes this memory on the current session's Persona ancestry chain. |
+  | `is_superseded` | `boolean` | Whether this original card is hidden by a visible replacement or applied consolidation in the current story. |
+  | `consolidation_id` | `integer \| null` | Consolidation record producing this card; ordinary originals use `null`. |
 
 * **Response (200 OK)**:
   ```json
@@ -757,6 +781,38 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
     "memory_id": 5
   }
   ```
+
+#### Memory consolidation (`/sessions/{session_id}/memory-consolidations`)
+
+| Method | Path suffix | Request | Response |
+| --- | --- | --- | --- |
+| GET | (none) | `limit=10` (1–20), `offset=0` (≥0) | `{ "items": [Consolidation], "total": 12, "limit": 10, "offset": 0, "has_more": true, "scan_status": ScanStatus }`, local records in descending ID order |
+| POST | `/preview` | `{ "after_id": 0, "mode": "full" }`; mode is `full` (default) or `incremental`; incremental requires after_id=0 | `Consolidation` |
+| POST | `/{batch_id}/apply` | `{ "group_ids": [0], "expected_revision": 0 }`, 1–12 distinct non-negative indices | `Consolidation` |
+| PUT | `/{batch_id}/groups/{group_id}` | `{ "expected_revision": 0, "content": "Reviewed content", "ignored": false, "ignore_reason": "" }` | `Consolidation` |
+| POST | `/{batch_id}/undo` | None | `Consolidation` |
+
+`Consolidation` contains `id`, `status` (`preview/applied/undone`), `created_at`, `sources` (original-card snapshots), `groups` (`id`, `kind: duplicate/event`, `source_ids`, `content`, `reason`), `selected_group_ids`, `results` (`id`, `content`), `scanned_count`, `remaining_count`, `has_more`, and `next_after_id`.
+
+Manual scan modes: `full` scans eligible originals after the ID cursor regardless of earlier checks; `incremental` scans only originals whose current fingerprint has not been checked, including changed low-ID cards, and continues with after_id=0. Neither mode clusters across batches or adds previously checked cards to incremental input. Successful model responses (including empty suggestions) atomically save the preview and unchanged source fingerprints. Failures do not advance progress; edits/deletions during model generation are not recorded as checked. With fewer than two sources, no model is called and no card is marked checked. Apply/undo does not reset checked versions. Existing previews remain intact on upgrade; their old scan progress is not inferred.
+
+If any source of a suggested group changes or becomes ineligible during generation, this scan also defers the remaining sources of that group so a later incremental scan can retry together. Other valid groups advance normally; records from newer successful scans are preserved.
+
+New record fields: `scan_mode` (legacy default `full`), `model_checked` (whether at least two cards were sent and the response validated), `recorded_count` (unchanged source versions recorded this time). `remaining_count` is the number of cards in the requested scope before this batch. Full-mode `has_more` follows the ID cursor; incremental `has_more` means at least two pending cards remain at save time. One pending card waits for another or for a later manual full scan. `ScanStatus` contains current `eligible_count`, `checked_count`, `pending_count`; list GET returns it once at the top level, while individual POST/PUT responses include `scan_status`. Counts cover only active local ordinary cards, excluding inherited/hidden originals and summaries. Checked does not mean reviewed or applied; saved suggestions remain available through history. Progress uses SQLite `memory_consolidation_scans`, not ChromaDB; the internal fingerprint is not exposed over HTTP.
+
+Review adds batch `review_revision` (legacy records default to 0) and group `original_content`, `ignored`, `ignore_reason`, `conflict` (message or null). PUT is allowed only for previews: optional trimmed content is 4–500 characters, reason is at most 160 characters, ignored defaults to false. Omit content to change only review metadata, including on stale groups. Each save increments the revision; stale revisions return 409. Apply defaults its expected revision to 0 for older clients, uses saved reviewed content, and rejects ignored or conflicting selected groups. Unselected conflicts do not block valid groups. Ignore is limited to this preview and can be reversed before apply; it does not suppress future previews. Review preserves model originals and source snapshots in the existing JSON record, without memory/vector writes or a schema migration. Generation locks also block review saves.
+
+Each preview scans at most 100 active local original cards in ID order. Inherited cards and consolidation outputs are excluded. Preview persists suggestions without changing memories; apply accepts only saved group indices, atomically revalidates unchanged sources, preserves originals, creates derived cards/source links/story scope, and queues vector Outbox tasks. Repeating the same apply/undo is idempotent. Selected originals enter the existing `superseded` category (UI: 历史原卡); active counts and retrieval use the same story view. Filters still run before pagination.
+
+Preview omits an entire suggested group when its event sources contain conflicting explicit occurrence dates; safe groups remain selectable and omitted sources remain active. Apply rechecks the same boundary, including previously saved previews, returning `409` on conflict. Appointment/plan target dates are not treated as occurrence dates. This conservative guard recognizes numeric Chinese calendar dates, `YYYY-MM-DD`/`YYYY/MM/DD`, and explicit years; it does not resolve relative dates or guarantee semantic event identity.
+
+For `duplicate` suggestions, sources with differing explicit negation markers are also omitted and rechecked on apply. This favors keeping originals over combining positive/negative facts; absence of a recognized marker does not prove semantic equivalence, and differently phrased equivalent facts may conservatively remain separate.
+
+Forks copy enabled consolidation scopes with at least one group visible at creation and respect source-message cutoffs; later parent apply/undo does not change existing children. Sources referenced by actually visible consolidation groups and derived outputs are read-only (`409` for ordinary edit/delete); invisible legacy scope associations do not lock originals. Undo restores originals only in the current story and retains referenced outputs for existing forks. Subsequent replacements visible in the current story block undo with `409`; child-only replacements do not prevent parent undo. Graph/cognition/message state is unchanged.
+
+Source-message foreign-key references may become `null` after deletion. An internal persistent source upper bound still enforces branch isolation for original cards and derived summaries; HTTP response fields are unchanged. Upgrade restores known cutoffs from existing references and saved consolidation snapshots where available. Truly manual cards without message provenance retain their inheritance behavior.
+
+Errors: `404` for missing story/local record; `422` for invalid request; `409` for changed sources, conflicting state or apply/undo during generation; `502` for failed/invalid model suggestions. Full payload/lifecycle rules: [Memory API](docs/api/MEMORY_API.md#可预览的存量记忆整理). New vectors synchronize asynchronously; recall may temporarily omit results until Outbox upsert completes.
 
 #### GET `/sessions/{session_id}/compile_prompt`
 * **Query Parameters**:
