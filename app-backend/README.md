@@ -546,6 +546,8 @@ python -m tests --group conversation --pattern test_branch_context_boundary.py
 
 Windows 未激活环境时使用 `.\venv\Scripts\python.exe -m tests`。
 
+GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配置与排查见[持续集成说明](../docs/CI.md)。
+
 入口会创建临时工作区、临时数据库和服务配置，再执行自动回归；不会复制日常开发的密钥或数据。需要真实模型、持久数据库或本地角色卡的场景保留在 `tests/manual/`，不参与默认发现。
 
 目录职责、调试方式和手动脚本的使用边界统一维护在 [测试指南](tests/README.md)。
