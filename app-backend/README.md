@@ -556,6 +556,8 @@ GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配�
 
 ## 注意事项
 
+- **手动多立绘**：`services/media/character_portraits.py` 管理独立图片资源与剧情节点选择；新增 `character_portraits`、Persona 初始选择和消息选择列，通过 Alembic 升级保留旧卡旧故事。图片用 Pillow 校验 PNG/JPEG/WebP 内容、大小和像素数，存入既有头像资源目录；删除沿用 Outbox 并复核头像和立绘引用。无额外资源时沿用头像，不触发情绪、开场或脚本规则。HTTP 契约见根目录 API 总表。
+
 - **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
 - **密钥传输边界**：长期 `ACCESS_API_KEY` 只允许放在 `X-API-Key` 请求头中，禁止拼接到头像、音频或其他 URL。生产环境还必须启用 HTTPS，避免请求头在传输途中被窃听。
 - **缺失音频恢复**：重新请求 `POST /utils/tts` 并传入原 `message_id`、音色和语速可重新生成。直接下载缺失的版本化文件目前返回 `404`，不能承诺透明恢复；详见根目录 API 文档。

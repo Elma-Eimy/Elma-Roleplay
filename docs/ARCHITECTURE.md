@@ -28,7 +28,7 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 | `services/conversation/` | 会话、消息、Prompt、模型执行和对话回合 | FastAPI 应用创建 |
 | `services/memory/` | 记忆提纯、版本、继承、检索、图谱和管理查询 | HTTP 路由装配 |
 | `services/lorebook/` | 世界书解析、触发和注入 | 服务器启动逻辑 |
-| `services/media/` | 音频缓存文件查找与恢复 | HTTP 状态码与 `FileResponse` |
+| `services/media/` | 角色卡图片导入、立绘资源与选择、音频缓存文件查找与恢复 | HTTP 状态码与 `FileResponse` |
 | `services/infrastructure/` | LLM/向量客户端、Outbox 和模型日志 | 页面展示逻辑 |
 | `core/` | 配置、ORM、数据库会话、迁移函数、锁和基础工具 | 路由注册与后台任务启动 |
 | `schemas.py` | 当前 Pydantic 请求模型 | ORM 表定义或数据库操作 |

@@ -49,6 +49,9 @@ illustrative; configurable values depend on the running backend.
 | **GET** | `/characters` | Get abbreviated character list |
 | **GET** | `/characters/{character_id}` | Get full details of a specific character |
 | **GET** | `/characters/{character_id}/memory-overview` | Get paginated story memory navigation and statistics |
+| **GET / POST** | `/characters/{character_id}/portraits` | List / upload optional portrait images |
+| **PUT** | `/characters/{character_id}/portraits/{portrait_id}` | Rename a portrait |
+| **POST** | `/characters/{character_id}/portraits/{portrait_id}/delete` | Delete a portrait and queue file cleanup |
 | **PUT** | `/characters/{character_id}` | Update settings of an existing character |
 | **DELETE** | `/characters/{character_id}` | Delete character and cascade wipe all sessions/memories |
 | **POST** | `/characters/{character_id}/delete` | Alternative POST method for deletion (to avoid HTTP/HTTPS redirect downgrades) |
@@ -61,6 +64,7 @@ illustrative; configurable values depend on the running backend.
 | **GET** | `/sessions` | List a character's sessions with last-message previews and pagination |
 | **GET** | `/sessions/{session_id}` | Retrieve details of a session and its persona |
 | **GET** | `/sessions/{session_id}/role-state` | Read branch-local current scene and per-character state |
+| **GET / PUT** | `/sessions/{session_id}/portrait` | Read / manually select a portrait at the current story node |
 | **PUT** | `/sessions/{session_id}/role-state` | Apply a manual state correction with optimistic revision checking |
 | **GET** | `/sessions/{session_id}/history` | Get inheritance-aware chronological chat history (cursor pagination) |
 | **PUT** | `/sessions/{session_id}/title` | Rename a session's title |
@@ -421,6 +425,17 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 ---
 
 ### 3. Session & Message Management (`/sessions`)
+
+#### Manual character portraits
+
+* `GET /characters/{character_id}/portraits` returns `{ "portraits": [{ "id": 1, "name": "便服", "image_path": "assets/avatars/portrait_....png" }] }`, ordered by ID. A plain character returns an empty list.
+* `POST /characters/{character_id}/portraits` accepts multipart `file`, verifies PNG/JPEG/WebP content and pixel decoding, the configured `SECURITY_MAX_CARD_SIZE_MB` limit and at most 25 million pixels. Returns the saved portrait object; invalid or truncated images return `422`, oversized uploads `413`, missing characters `404`. This upload attaches the resource immediately; failure before database commit removes the newly written file.
+* `PUT /characters/{character_id}/portraits/{portrait_id}` accepts `{ "name": "便服" }` (trimmed, 1–80 characters, no control characters). Returns the portrait object. Names carry no automatic emotion or story meaning.
+* `POST /characters/{character_id}/portraits/{portrait_id}/delete` returns `{ "message": "..." }`. Resources are shared by all stories of that character. Referencing stories fall back to the character avatar; cleanup uses Outbox and checks both avatar and portrait references. Missing or foreign portraits return `404`.
+* `GET /sessions/{session_id}/portrait` returns `{ "session_id": 1, "portrait_id": null, "image_path": "avatar.png", "revision": "<64 hex characters>" }`. `null` means avatar fallback, including removed resources.
+* `PUT /sessions/{session_id}/portrait` accepts `{ "portrait_id": 1, "expected_revision": "<revision from GET>" }`; explicit `null` restores avatar fallback. Returns the same shape as GET. A stale revision or active generation returns `409`; missing/foreign resources or invalid payloads return `422`; missing stories return `404`.
+* Selections apply after the current latest active message (or the empty story baseline), persist across devices, and replay only active local messages. Regeneration and candidate switching restore that candidate's selection; forks snapshot the selected message boundary, including a nonactive candidate, without reading later parent changes. An empty parent story passes its portrait baseline to the new branch as an independent snapshot. Deleting a selection's message removes that override. The image ID is never reused after deletion.
+* This version has no required tags, emotion classification, outfit groups, greeting bindings, or CHARX/ZIP import. Pure/character background mode remains a separate client preference; selecting an image does not turn on character background mode.
 
 #### POST `/sessions/create`
 * **Request (JSON)**:
