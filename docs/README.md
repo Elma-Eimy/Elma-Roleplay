@@ -11,8 +11,10 @@
 | [角色卡导入](CHARACTER_CARDS.md) | 社区规范、导入与中文双版本阅读、元数据兼容、无损导出与资源清理 |
 | [多立绘与 CHARX 待办](CHARACTER_PORTRAITS_PLAN.md) | 暂缓实施的角色资源包、多表情立绘与剧情联动需求 |
 | [后端架构](ARCHITECTURE.md) | 应用装配、生命周期、模块边界和维护约定 |
+| [持续集成](CI.md) | GitHub Actions 触发方式、运行环境、自动检查与失败排查 |
 | [模型与思考设置](MODEL_SELECTION.md) | 独立模型选择、故事覆盖、辅助任务策略与兼容 |
 | [当前角色状态](ROLE_STATE.md) | 场景、姿势、衣着与位置的增量维护、人工校正和剧情版本边界 |
+| [图谱与记忆一致性](GRAPH_MEMORY_CONSISTENCY.md) | 共同事实、时间语义、联合检索、图谱证据、分叉边界与旧库策略 |
 | [HTTP API](../API_TABLE.md) | 前后端共享的接口总表、请求与响应格式 |
 | [记忆模块 API](api/MEMORY_API.md) | 记忆筛选、统计、继承、故事导航与可撤销整理的详细契约 |
 | [记忆整理质量验收](MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收、本地报告和人工审阅 |

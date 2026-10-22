@@ -10,12 +10,14 @@ def memory_source_bound(chunk):
     return chunk.source_message_id_bound if chunk.source_message_id_bound is not None else chunk.source_message_id
 
 
-def branch_memory_filter(persona_id, db):
+def branch_memory_filter(persona_id, db, before_message_id=None):
     segments = build_branch_turn_segments(persona_id, db)
     conditions = []
     source_bound = func.coalesce(MemoryChunk.source_message_id_bound, MemoryChunk.source_message_id)
     for index, segment in enumerate(segments):
         condition = MemoryChunk.persona_id == segment["persona_id"]
+        if index == 0 and before_message_id is not None:
+            condition = and_(condition, or_(source_bound.is_(None), source_bound < before_message_id))
         if index:
             boundary = segment["through_message_id"]
             condition = and_(condition, or_(
@@ -55,9 +57,9 @@ def consolidation_state(persona_id, db, branch_filter=None):
     return active_summaries, masked_sources
 
 
-def memory_view(persona_id, db):
+def memory_view(persona_id, db, before_message_id=None):
     """每次操作只解析一次整理和分支状态，返回可见 SQL 条件与收起的原卡 ID。"""
-    branch_filter = branch_memory_filter(persona_id, db)
+    branch_filter = branch_memory_filter(persona_id, db, before_message_id)
     summary_ids, masked_sources = consolidation_state(persona_id, db, branch_filter)
     visible_filter = and_(branch_filter, or_(
         MemoryChunk.consolidation_id.is_(None), MemoryChunk.id.in_(summary_ids)))

@@ -96,6 +96,8 @@ export interface ConsolidationSource {
   id: number;
   content: string;
   memory_type: string;
+  temporal_status?: "unknown" | "current" | "historical" | "planned";
+  temporal_note?: string | null;
   importance_score: number;
   source_start_message_id: number | null;
   source_message_id: number | null;

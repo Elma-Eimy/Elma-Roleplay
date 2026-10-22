@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`memory/test_joint_retrieval.py` 验证语义种子扩图、支持卡回查、去重、摘要映射、预算和故事边界；`test_memory_fact_semantics.py` 验证提纯时间语义及整理保留。`infrastructure/test_memory_fact_migration.py` 使用临时库验证共源字段升降级，不读取开发数据。
+
 ```bash
 # 全部自动回归
 python -m tests
@@ -51,6 +53,8 @@ python -m tests.manual.manual_lorebook
 ## 新增与调试
 
 `memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
+
+`memory/test_graph_memory_consistency.py` 覆盖图谱消息与记忆证据、追加版本、分叉隔离、原数组下标关联、`same/replace`、人工修改/删除、整理后证据保留及原子回滚；`infrastructure/test_graph_evidence_migration.py` 验证旧库升降级保留原行且不猜测来源。优先使用隔离入口，不直接运行会写当前库的 `manual/manual_graph_rag.py`。
 
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
 

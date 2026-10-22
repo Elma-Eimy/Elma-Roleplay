@@ -11,6 +11,8 @@ def fingerprint(chunk):
     values = [chunk.id, chunk.persona_id, chunk.content, chunk.memory_type.value,
               chunk.importance_score, chunk.source_start_message_id,
               chunk.source_message_id, chunk.source_message_id_bound, chunk.supersedes_id]
+    if chunk.temporal_status != "unknown" or chunk.temporal_note:
+        values.extend([chunk.temporal_status, chunk.temporal_note])
     return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 

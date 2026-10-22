@@ -2,8 +2,8 @@
 会话上下文装配服务 (Session Context Assembler Service)
 
 本服务承载角色扮演记忆系统中的“上下文装配（Context Assembly）”核心逻辑，具体包括：
-1. 从向量库中跨继承链查询检索 RAG 记忆卡片。
-2. 从图数据库（基于 Graph RAG）中检索角色/实体知识背景。
+1. 从向量库中跨继承链查询语义记忆种子。
+2. 经图谱扩展回查 SQLite 事实卡，统一去重并限制预算。
 3. 获取当前会话历史与分支点之前的父会话示例。
 4. 调用纯 Prompt 编译器拼装大模型所能直接消费的消息格式。
 
@@ -16,12 +16,11 @@ from sqlalchemy.orm import Session as DBSession
 from fastapi.concurrency import run_in_threadpool
 import core.models as models
 from core.models import SessionPersona, ChatMessage, Character, MessageRole
-import services.memory.memory_manager as memory_manager
 import services.conversation.session_service as session_service
 from services.memory.memory_extraction_service import get_memory_handoff_history_limit
 from services.conversation.prompt_compiler import build_chat_messages
 from services.conversation.role_state_service import resolve_state
-from services.memory.graph_service import retrieve_graph_context
+from services.memory.joint_retrieval import retrieve_joint_memories
 from services.conversation.retrieval_query_service import build_contextual_retrieval_query
 from services.conversation.prompt_token_estimator import (
     estimate_prompt_tokens,
@@ -96,19 +95,13 @@ async def assemble_prompt_context(
     # The same semantic query is shared by vector memory and graph retrieval.
     rag_query = build_contextual_retrieval_query(session_id, user_msg, db)
 
-    # 1. 跨继承链 RAG 向量检索
-    memories = memory_manager.retrieve_memories(
+    # 1. 语义种子与图谱扩展共用 SQLite 事实，统一去重和预算。
+    memories = retrieve_joint_memories(
         persona_id=persona.id,
         character_id=character.id,
         query=rag_query,
         db=db,
-    )
-
-    # 2. 知识图谱 Graph RAG 检索
-    graph_knowledge = retrieve_graph_context(
-        persona_id=persona.id,
-        query_text=rag_query,
-        db=db
+        before_message_id=user_msg.id,
     )
 
     # 3. 提取历史记录轮次。后台长期记忆提纯完成前，临时扩大窗口以保留
@@ -144,7 +137,7 @@ async def assemble_prompt_context(
         recent_history=recent_history,
         user_message=user_msg.content,
         retrieved_memories=memories,
-        graph_knowledge=graph_knowledge,
+        graph_knowledge=None,
         parent_history=parent_history,
         user_nickname=user_nickname,
         current_role_state=resolve_state(session_id, db, before_id=user_msg.id + 1)[0]["state"],

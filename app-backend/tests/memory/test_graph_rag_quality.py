@@ -14,6 +14,9 @@ from core.models import (
     Base,
     Character,
     GraphEntity,
+    ChatMessage,
+    MemoryChunk,
+    MessageRole,
     Session,
     SessionPersona,
 )
@@ -23,6 +26,7 @@ from services.memory.graph_service import (
     sanitize_entity_aliases,
     upsert_graph_data,
 )
+from services.memory.graph_evidence import content_fingerprint, snapshot_sources
 
 
 class GraphRagQualityTests(unittest.TestCase):
@@ -76,8 +80,25 @@ class GraphRagQualityTests(unittest.TestCase):
         self.engine.dispose()
 
     def _upsert(self, persona, entities, relations):
-        upsert_graph_data(persona.id, entities, relations, self.db)
+        message = ChatMessage(session_id=persona.session_id, role=MessageRole.assistant,
+                              content=json.dumps([entities, relations], ensure_ascii=False), is_active=True)
+        self.db.add(message)
+        self.db.flush()
+        if persona.id == self.parent_persona.id and self.child_session.fork_message_id is None:
+            self.child_session.fork_message_id = message.id
+        self.db.add(ChatMessage(session_id=persona.session_id, role=MessageRole.user,
+                                content="确认上一轮", is_active=True))
+        memory = MemoryChunk(persona_id=persona.id, content=message.content, memory_type="fact",
+                             importance_score=.8, origin_session_id=persona.session_id,
+                             source_start_message_id=message.id, source_message_id=message.id)
+        self.db.add(memory)
+        self.db.flush()
+        upsert_graph_data(persona.id, entities, relations, self.db,
+                          source_messages=snapshot_sources([message]), memory_bindings={0: {
+                              "memory_id": memory.id, "hash": content_fingerprint(memory.content),
+                              "source_start": message.id, "source_end": message.id}})
         self.db.commit()
+        return memory
 
     def test_aliases_match_and_generic_pronouns_are_discarded(self):
         self._upsert(
@@ -101,7 +122,7 @@ class GraphRagQualityTests(unittest.TestCase):
             }],
         )
 
-        entity = self.db.query(GraphEntity).filter(GraphEntity.name == "林墨").one()
+        entity = self.db.query(GraphEntity).filter(GraphEntity.name == "林墨", GraphEntity.is_stub.is_(False)).one()
         aliases = json.loads(entity.aliases)
         self.assertIn("阿墨", aliases)
         self.assertIn("墨哥", aliases)
@@ -197,7 +218,9 @@ class GraphRagQualityTests(unittest.TestCase):
             GraphEntity.persona_id == self.child_persona.id,
             GraphEntity.name == "蛋糕",
         ).one()
-        self.assertEqual("object", child_cake.entity_type)
+        # 边的身份桩不复制祖先的属性，展示定义仍由有证据的实体版本提供。
+        self.assertTrue(child_cake.is_stub)
+        self.assertEqual("concept", child_cake.entity_type)
         self.assertIn("用户现在最信任的朋友", context)
         self.assertIn("小红现在只偶尔吃蛋糕", context)
         self.assertNotIn("用户的初中同学", context)

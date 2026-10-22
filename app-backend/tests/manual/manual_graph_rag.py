@@ -11,6 +11,7 @@
 import os
 import sys
 import io
+import json
 
 # 强制在 Windows 终端下使用 UTF-8 编码输出以支持 Emoji 和中文
 if sys.platform.startswith('win'):
@@ -23,8 +24,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from core.database import SessionLocal
 from core.database import engine
 from core.models import Base
-from core.models import Character, Session, SessionPersona, GraphEntity, GraphRelation
+from core.models import Character, Session, SessionPersona, GraphEntity, GraphRelation, ChatMessage, MemoryChunk, MessageRole
 from services.memory.graph_service import upsert_graph_data, retrieve_graph_context
+from services.memory.graph_evidence import snapshot_sources, content_fingerprint
+
+
+def write_graph_fixture(persona, entities, relations, db):
+    """仅用于独立测试库：为图谱构造已确认消息及真实记忆依据。"""
+    message = ChatMessage(session_id=persona.session_id, role=MessageRole.assistant,
+                          content=json.dumps([entities, relations], ensure_ascii=False), is_active=True)
+    db.add(message)
+    db.flush()
+    db.add(ChatMessage(session_id=persona.session_id, role=MessageRole.user, content="确认", is_active=True))
+    memory = MemoryChunk(persona_id=persona.id, content=message.content, memory_type="fact", importance_score=.8,
+                         source_start_message_id=message.id, source_message_id=message.id)
+    db.add(memory)
+    db.flush()
+    upsert_graph_data(persona.id, entities, relations, db,
+                      source_messages=snapshot_sources([message]), memory_bindings={0: {
+                          "memory_id":memory.id, "hash":content_fingerprint(memory.content),
+                          "source_start":message.id, "source_end":message.id}})
+    return message.id
 
 def run_graph_rag_test():
     print("=" * 60)
@@ -89,18 +109,13 @@ def run_graph_rag_test():
             {"source": "用户", "relation_type": "friend", "target": "小红", "description": "用户和小红是好朋友。", "importance": 0.9}
         ]
 
-        upsert_graph_data(
-            persona_id=persona_parent.id,
-            entities=parent_entities,
-            relations=parent_relations,
-            db=db
-        )
+        session_child.fork_message_id = write_graph_fixture(persona_parent, parent_entities, parent_relations, db)
         db.commit()
 
         # 验证写入
         db_entities = db.query(GraphEntity).filter(GraphEntity.persona_id == persona_parent.id).all()
         db_relations = db.query(GraphRelation).filter(GraphRelation.persona_id == persona_parent.id).all()
-        print(f"  - 父代写入实体数: {len(db_entities)} (预期: 3, 自动包含'用户')")
+        print(f"  - 父代写入实体版本与关系身份桩数: {len(db_entities)}")
         print(f"  - 父代写入关系数: {len(db_relations)} (预期: 2)")
         assert len(db_relations) == 2, "父代关系数不匹配"
 
@@ -116,12 +131,7 @@ def run_graph_rag_test():
             {"source": "小红", "relation_type": "classmate", "target": "Alice", "description": "小红和 Alice 是大学同班同学。", "importance": 0.6}
         ]
 
-        upsert_graph_data(
-            persona_id=persona_child.id,
-            entities=child_entities,
-            relations=child_relations,
-            db=db
-        )
+        write_graph_fixture(persona_child, child_entities, child_relations, db)
         db.commit()
 
         # 5. 测试检索功能 (三项核心检索场景)

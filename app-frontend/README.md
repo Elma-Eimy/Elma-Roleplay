@@ -152,6 +152,8 @@ export const USE_MOCK = false;
 
 回归检查范围和跨端验证方法见 [前端测试说明](tests/README.md)。
 
+GitHub Actions 使用 Node.js 24 / Ubuntu 24.04，通过 `npm ci` 安装锁定依赖，执行离线测试、类型检查和 H5 构建；详见[持续集成说明](../docs/CI.md)。
+
 ```bash
 # 网络、流式解析与会话状态回归
 npm test
