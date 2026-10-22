@@ -494,6 +494,8 @@ def create_session_service(
             from services.conversation.role_state_service import state_before_message
             from services.conversation.role_state_schema import encode_state
             persona.role_state_base = encode_state(state_before_message(start_message, db))
+            from services.media.character_portraits import selection_before_message
+            persona.portrait_base = selection_before_message(start_message, db)
             first_message = ChatMessage(
                 session_id=session.id,
                 role=start_message.role,
@@ -503,10 +505,14 @@ def create_session_service(
                 audio_path=start_message.audio_path,
                 role_state_patch=start_message.role_state_patch,
                 role_state_manual=start_message.role_state_manual,
+                portrait_selection=start_message.portrait_selection,
                 parent_id=None,
                 is_active=True,
             )
             db.add(first_message)
+        else:
+            # 空故事的手动选择保存在 Persona 基线中，也需要独立继承。
+            persona.portrait_base = parent_persona.portrait_base or 0
 
     if parent_session_id:
         from services.memory.memory_visibility import inherit_consolidation_scope

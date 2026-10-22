@@ -5,9 +5,10 @@ from core.database import get_db
 from core import models
 from services.media.character_card_import import import_character_card
 import services.character_service as character_service
+import services.media.character_portraits as portrait_service
 import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
-from schemas import CharacterCreate, CharacterTranslationRequest
+from schemas import CharacterCreate, CharacterTranslationRequest, PortraitNameUpdate
 import services.character_translation_service as translation_service
 import json
 import os
@@ -23,6 +24,45 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # 角色卡解析允许的文件类型
 ALLOWED_CARD_EXTENSIONS = {".png", ".json"}
 MAX_CARD_SIZE_BYTES = settings.SECURITY_MAX_CARD_SIZE_MB * 1024 * 1024
+
+
+@router.get("/{character_id}/portraits")
+def list_portraits(character_id: int, db: Session = Depends(get_db)):
+    try:
+        return portrait_service.list_portraits(character_id, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.post("/{character_id}/portraits")
+def add_portrait(character_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    try:
+        content = file.file.read(MAX_CARD_SIZE_BYTES + 1)
+        if len(content) > MAX_CARD_SIZE_BYTES:
+            raise HTTPException(413, detail="图片超过大小限制")
+        return portrait_service.add_portrait(character_id, content, file.filename, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.post("/{character_id}/portraits/{portrait_id}/delete")
+def delete_portrait(character_id: int, portrait_id: int, db: Session = Depends(get_db)):
+    try:
+        return portrait_service.delete_portrait(character_id, portrait_id, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.put("/{character_id}/portraits/{portrait_id}")
+def rename_portrait(character_id: int, portrait_id: int, request: PortraitNameUpdate, db: Session = Depends(get_db)):
+    try:
+        return portrait_service.rename_portrait(character_id, portrait_id, request.name, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 @router.post("/parse")
 def parse_character(file: UploadFile = File(...)):

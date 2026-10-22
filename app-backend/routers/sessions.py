@@ -19,7 +19,7 @@ from core import models
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
 from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest, MemoryConsolidationReviewRequest
-from schemas import RoleStateUpdate
+from schemas import RoleStateUpdate, PortraitSelectionUpdate
 import services.memory.memory_extraction_service as memory_extraction_service
 import services.memory.cognition_service as cognition_service
 from core.config import settings
@@ -30,6 +30,34 @@ import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
 import services.memory.memory_consolidation_service as memory_consolidation_service
 router = APIRouter()
+
+
+@router.get("/{session_id}/portrait")
+def get_portrait_selection(session_id: int, db: Session = Depends(get_db)):
+    from services.media.character_portraits import get_selection
+    try:
+        return get_selection(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.put("/{session_id}/portrait")
+async def update_portrait_selection(session_id: int, request: PortraitSelectionUpdate, db: Session = Depends(get_db)):
+    from services.media.character_portraits import update_selection, PortraitConflict
+    lock = get_session_lock(session_id)
+    if lock.locked():
+        raise HTTPException(409, detail="当前故事正在生成回复，请完成后再切换立绘")
+    await lock.acquire()
+    try:
+        return await run_in_threadpool(update_selection, session_id, request.portrait_id, request.expected_revision, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except PortraitConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    finally:
+        lock.release()
 
 
 @router.get("/{session_id}/role-state")

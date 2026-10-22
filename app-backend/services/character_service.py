@@ -4,7 +4,7 @@ import json
 
 from sqlalchemy.orm import Session as DBSession
 
-from core.models import Character, ChatMessage, OutboxJob, Session, SessionPersona
+from core.models import Character, CharacterPortrait, ChatMessage, OutboxJob, Session, SessionPersona
 
 
 def create_character(data: dict, db: DBSession) -> dict:
@@ -79,6 +79,7 @@ def delete_character_service(character_id: int, db: DBSession) -> dict:
         raise ValueError("Character not found")
 
     avatar_path = character.avatar_path
+    portrait_paths = [row[0] for row in db.query(CharacterPortrait.image_path).filter_by(character_id=character_id).all()]
     session_ids = [
         row[0]
         for row in (
@@ -134,6 +135,9 @@ def delete_character_service(character_id: int, db: DBSession) -> dict:
                 payload=json.dumps({"file_paths": audio_paths}),
             )
         )
+
+    for path in portrait_paths:
+        db.add(OutboxJob(task_type="delete_avatar", payload=json.dumps({"file_path": path})))
 
     try:
         db.commit()

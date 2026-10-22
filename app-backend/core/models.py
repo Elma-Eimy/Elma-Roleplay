@@ -91,6 +91,16 @@ class Character(Base):
 #    时间线容器。parent_session_id 记录"从哪条线继承而来"
 # ──────────────────────────────────────────────
 
+class CharacterPortrait(Base):
+    __tablename__ = "character_portraits"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(Integer, ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    image_path = Column(String(255), nullable=False)
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -199,6 +209,8 @@ class SessionPersona(Base):
 
     # 分支创建时的独立状态快照；之后沿本地有效消息增量重放。
     role_state_base = Column(Text, nullable=True)
+    # 0 表示沿用头像；消息上的 NULL 表示该节点没有修改选择。
+    portrait_base = Column(Integer, nullable=False, default=0, server_default="0")
 
     # ── 进度追踪指针 ──
 
@@ -466,6 +478,7 @@ class ChatMessage(Base):
     affection_change = Column(Integer, nullable=True)  # 本条消息带来的好感度变动量（正/负）
     role_state_patch = Column(Text, nullable=True)  # 本轮 LLM 状态增量
     role_state_manual = Column(Text, nullable=True)  # 此剧情节点之后的手动校正
+    portrait_selection = Column(Integer, nullable=True)
     audio_path       = Column(String(255), nullable=True)  # 该条消息的 TTS 音频文件本地相对路径/URL
 
     # Swipe 候选回复支持

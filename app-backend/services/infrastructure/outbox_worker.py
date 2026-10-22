@@ -239,7 +239,7 @@ def _resolve_managed_avatar_path(file_path: str):
 
 def _avatar_is_still_referenced(target_path: Path) -> bool:
     """Avoid deleting a managed file that another character still references."""
-    from core.models import Character
+    from core.models import Character, CharacterPortrait
 
     db = SessionLocal()
     try:
@@ -251,6 +251,7 @@ def _avatar_is_still_referenced(target_path: Path) -> bool:
             )
             .all()
         )
+        paths += db.query(CharacterPortrait.image_path).all()
         for (avatar_path,) in paths:
             resolved = _resolve_managed_avatar_path(avatar_path)
             if resolved == target_path:

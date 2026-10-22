@@ -1,4 +1,10 @@
 [
+  ["GET", "/characters/{character_id}/portraits"],
+  ["POST", "/characters/{character_id}/portraits"],
+  ["PUT", "/characters/{character_id}/portraits/{portrait_id}"],
+  ["POST", "/characters/{character_id}/portraits/{portrait_id}/delete"],
+  ["GET", "/sessions/{session_id}/portrait"],
+  ["PUT", "/sessions/{session_id}/portrait"],
   [
     "DELETE",
     "/characters/{character_id}"

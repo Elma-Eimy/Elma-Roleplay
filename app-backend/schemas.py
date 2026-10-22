@@ -13,6 +13,16 @@ class RoleStateUpdate(BaseModel):
         return validate_patch(value, manual=True)
 
 
+class PortraitSelectionUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    portrait_id: Optional[int] = Field(default=None, gt=0)
+    expected_revision: str = Field(min_length=64, max_length=64)
+
+
+class PortraitNameUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 class CharacterCreate(BaseModel):
     name: str
     avatar_path: str = ""
