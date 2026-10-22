@@ -39,7 +39,7 @@
           
           <view class="change-portrait-btn" @tap="changePortrait">
             <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
-            <text class="change-portrait-text">更换立绘</text>
+            <text class="change-portrait-text">更换头像</text>
           </view>
         </view>
 
@@ -192,6 +192,9 @@
         </view>
 
         <!-- Tab 2: 人设细节卡片 -->
+        <view v-if="activeTab === 'profile'" class="char-header-section">
+          <CharacterPortraitPanel :character-id="character.id" />
+        </view>
         <CharacterProfileTab 
           v-if="activeTab === 'profile'" 
           :character="character" 
@@ -391,6 +394,7 @@
 </template>
 
 <script setup lang="ts">
+import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
 import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl } from "@/api/characters";
