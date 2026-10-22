@@ -21,6 +21,7 @@ test("portrait requests use domain endpoints, revision and authenticated uploads
   await api.renamePortrait(5, 8, "便服");
   await api.deletePortrait(5, 8);
   await api.uploadPortrait(5, "temp.png");
+  await api.getPortraits(5, 24);
   assert.equal(calls[0][0], "/characters/5/portraits");
   assert.equal(calls[1][0], "/sessions/3/portrait");
   assert.deepEqual(JSON.parse(calls[2][1].body), { portrait_id: null, expected_revision: "revision" });
@@ -29,6 +30,7 @@ test("portrait requests use domain endpoints, revision and authenticated uploads
   assert.equal(uploads[0].url, "https://server.test/characters/5/portraits");
   assert.equal(uploads[0].header["X-API-Key"], "test-key");
   assert.equal(uploads[0].filePath, "temp.png");
+  assert.equal(calls[5][0], "/characters/5/portraits?offset=24");
 });
 
 test("offline portrait operations explicitly reject instead of claiming persistence", async () => {
@@ -92,7 +94,7 @@ test("latest timeline refresh wins and a changed server invalidates old results"
 function panelFixture(api = {}) {
   const filename = path.resolve(__dirname, "../src/components/character/CharacterPortraitPanel.vue");
   const script = fs.readFileSync(filename, "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
-  const code = ts.transpileModule(script + "\nexport { selection, busy, error, choose };", {
+  const code = ts.transpileModule(script + "\nexport { selection, busy, error, choose, portraits, hasMore, loadMore };", {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText;
   const props = reactive({ characterId: 1, sessionId: 1, timeline: "candidate-A", disabled: false });
@@ -203,5 +205,33 @@ test("a late panel write after switching stories cannot refresh or unlock the ne
     await flush();
     assert.equal(panel.selection.value.session_id, 2);
     assert.equal(panel.busy.value, false);
+  } finally { panel.scope.stop(); }
+});
+
+test("portrait library loads pages on demand and ignores an old page after context changes", async () => {
+  const pending = deferred();
+  let delayed = false;
+  const offsets = [];
+  const panel = panelFixture({ getPortraits: async (_, offset = 0) => {
+    offsets.push(offset);
+    if (offset && delayed) return pending.promise;
+    return { portraits: Array.from({ length: offset ? 1 : 24 }, (_, index) => ({ id: offset + index + 1, name: "图", image_path: "p.png" })), has_more: !offset, total: 25 };
+  } });
+  try {
+    await flush();
+    assert.equal(panel.portraits.value.length, 24);
+    await panel.loadMore();
+    assert.equal(panel.portraits.value.length, 25);
+    assert.equal(panel.hasMore.value, false);
+    panel.props.timeline = "reset";
+    await flush();
+    delayed = true;
+    const old = panel.loadMore();
+    panel.props.sessionId = 2;
+    await flush();
+    pending.resolve({ portraits: [{ id: 999, name: "旧图", image_path: "old.png" }], has_more: false, total: 25 });
+    await old;
+    assert.equal(panel.portraits.value.some(item => item.id === 999), false);
+    assert.ok(offsets.includes(24));
   } finally { panel.scope.stop(); }
 });

@@ -2,6 +2,9 @@ export interface CharacterPortrait {
   id: number;
   name: string;
   image_path: string;
+  source_type?: string;
+  source_name?: string;
+  source_uri?: string;
 }
 
 export interface PortraitSelection {

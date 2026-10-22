@@ -5,9 +5,9 @@ function requireServer() {
   if (USE_MOCK) throw new Error("离线模式暂不支持多立绘，请连接后端使用。");
 }
 
-export async function getPortraits(characterId: number) {
+export async function getPortraits(characterId: number, offset = 0) {
   requireServer();
-  return request<{ portraits: CharacterPortrait[] }>(`/characters/${characterId}/portraits`);
+  return request<{ portraits: CharacterPortrait[]; total: number; has_more: boolean }>(`/characters/${characterId}/portraits${offset ? `?offset=${offset}` : ''}`);
 }
 
 export async function uploadPortrait(characterId: number, filePath: string): Promise<CharacterPortrait> {

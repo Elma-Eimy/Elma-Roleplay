@@ -26,6 +26,7 @@
         </view>
       </view>
     </view>
+    <button v-if="hasMore" size="mini" :disabled="busy || disabled" @tap="loadMore">加载更多立绘</button>
     <view v-if="editingId !== null" class="portrait-editor">
       <input v-model="editingName" :maxlength="80" placeholder="立绘名称" :disabled="busy" />
       <view class="portrait-actions"><button size="mini" :disabled="busy" @tap="editingId = null">取消</button><button size="mini" :disabled="busy || disabled || !editingName.trim()" @tap="saveName">保存名称</button></view>
@@ -44,6 +45,7 @@ import type { CharacterPortrait, PortraitSelection } from "@/types/portraits";
 const props = defineProps<{ characterId: number; sessionId?: number | null; disabled?: boolean; timeline?: string }>();
 const emit = defineEmits<{ (e: "changed"): void }>();
 const portraits = ref<CharacterPortrait[]>([]);
+const hasMore = ref(false);
 const selection = ref<PortraitSelection | null>(null);
 const busy = ref(false), error = ref("");
 const editingId = ref<number | null>(null), editingName = ref("");
@@ -61,10 +63,20 @@ async function load() {
   busy.value = true; error.value = "";
   try {
     const [library, current] = await Promise.all([getPortraits(ctx.cid), ctx.sid ? getPortraitSelection(ctx.sid) : Promise.resolve(null)]);
-    if (ctx.valid()) { portraits.value = library.portraits; selection.value = current; }
+    if (ctx.valid()) { portraits.value = library.portraits; hasMore.value = library.has_more ?? false; selection.value = current; }
   } catch (cause) {
     if (ctx.valid()) { error.value = cardImportError(cause); selection.value = null; }
   } finally { if (ctx.valid()) busy.value = false; }
+}
+async function loadMore() {
+  if (busy.value || props.disabled || !hasMore.value) return;
+  const ctx = context();
+  busy.value = true; error.value = "";
+  try {
+    const result = await getPortraits(ctx.cid, portraits.value.length);
+    if (ctx.valid()) { portraits.value.push(...result.portraits); hasMore.value = result.has_more; }
+  } catch (cause) { if (ctx.valid()) error.value = cardImportError(cause); }
+  finally { if (ctx.valid()) busy.value = false; }
 }
 async function mutate(action: () => Promise<unknown>) {
   if (busy.value || props.disabled) return;
@@ -122,7 +134,7 @@ function remove(portrait: CharacterPortrait) {
 }
 watch(() => [props.characterId, props.sessionId, getBaseUrl()], () => {
   writing = false; refreshAfterWrite = false;
-  portraits.value = []; selection.value = null; editingId.value = null; void load();
+  portraits.value = []; hasMore.value = false; selection.value = null; editingId.value = null; void load();
 }, { immediate: true });
 watch(() => props.timeline, () => {
   if (writing) { refreshAfterWrite = true; return; }

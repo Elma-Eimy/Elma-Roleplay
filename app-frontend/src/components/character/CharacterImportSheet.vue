@@ -1,5 +1,6 @@
 <template>
-  <view v-if="isOpen" class="import-overlay">
+  <CharxImportSheet v-if="isOpen && charxOpen" :character-id="characterId" @close="charxOpen = false" @imported="onCharxImported" />
+  <view v-if="isOpen && !charxOpen" class="import-overlay">
     <view class="sheet-backdrop" @tap="close"></view>
     <view class="import-sheet" role="dialog" aria-label="导入角色卡预览">
       <view class="sheet-header"
@@ -54,6 +55,7 @@
                     : "选择角色卡文件"
               }}
             </button>
+            <button :disabled="loading || picking || busy" @tap="charxOpen = true">CHARX 角色包（不超过 20 MB）</button>
             <view v-if="error" class="import-error"
               ><text class="error-title">未能导入这张角色卡</text
               ><text>{{ error }}</text
@@ -252,19 +254,29 @@ import type { CardImportMode } from "@/utils/characterCard";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import CharacterCardText from "./CharacterCardText.vue";
 import CharacterGreetings from "./CharacterGreetings.vue";
+import CharxImportSheet from "./CharxImportSheet.vue";
+import type { CharxImportResult } from "@/types/charx";
 const props = defineProps<{
   isOpen: boolean;
   current?: CharacterBase;
   busy?: boolean;
   saveImmediately?: boolean;
+  characterId?: number | null;
 }>();
 const emit = defineEmits<{
   (event: "update:isOpen", value: boolean): void;
   (event: "apply", card: CharacterBase): void;
+  (event: "charx-imported", id: number, result: CharxImportResult): void;
 }>();
 const { card, loading, error, reset, load } = useCharacterCardImport();
 const { translation, language, selectLanguage, translating, error: translationError, readingCard, translate } = useCharacterTranslation(() => props.isOpen ? card.value : null);
 const picking = ref(false);
+const charxOpen = ref(false);
+function onCharxImported(id: number, result: CharxImportResult) {
+  charxOpen.value = false;
+  emit("update:isOpen", false);
+  emit("charx-imported", id, result);
+}
 const fileName = ref("");
 const mode = ref<CardImportMode>("replace");
 const tab = ref("profile");
@@ -298,6 +310,7 @@ watch(
   () => props.isOpen,
   () => {
     session++;
+    charxOpen.value = false;
     reset();
     picking.value = false;
     mode.value = "replace";
