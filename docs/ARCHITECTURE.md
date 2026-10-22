@@ -7,8 +7,8 @@ main.py
   └─ application.factory.create_app()
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
-            ├─ 启动：Alembic 升级 → 创建 Outbox 任务 → 启动提示
-            └─ 关闭：取消并等待 Outbox 任务 → 清理后台对话 Worker
+            ├─ 启动：Alembic 升级 → 创建 Outbox 与 CHARX 清理任务 → 启动提示
+            └─ 关闭：取消并等待 Outbox 与 CHARX 清理任务 → 清理后台对话 Worker
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 维护命令 → scripts/ → core/ 与基础设施客户端
@@ -36,6 +36,8 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 | `tests/` | 自动回归和独立手动场景 | 生产业务实现 |
 
 `character_service.py`、`parse.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色、角色卡解析和 TTS 功能。后续可按领域继续组织，迁移时应同时更新调用方，避免保留多份实现。
+
+`application/charx_upload.py` 在读取 CHARX 请求体前完成鉴权，限制流式请求总字节与并发上传，再交给仅允许一个文件的 multipart 解析。`services/media/charx_plan.py` 明确 CCv3 字段映射与兼容性报告；`charx_import.py` 负责有界 ZIP 读取、短期预览、素材去重与确认保存。解压和像素解码在生命周期锁外运行，同一 ZIP 条目的失败也缓存；临时目录不公开。`application.lifecycle` 管理每 60 秒回收过期预览的任务。状态接口从 SQLite 幂等回执恢复已提交结果，不依赖临时文件；取消/过期仅保留短期状态标记。`character_portraits.content_sha256` 支持跨上传去重，旧资源按需填充，资源共享仍沿用 Outbox 引用检查。保持单进程部署，不引入额外任务队列。
 
 `schemas.py` 当前体量较小，仍集中管理；`core/models.py` 的 ORM 关系和迁移链保持原样。数据库、头像、音频、配置和虚拟环境位置不因代码目录整理而移动。
 

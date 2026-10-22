@@ -9,7 +9,7 @@
 | [项目说明](../README.md) | 产品功能、全栈架构、开发与部署入口 |
 | [项目协作约定](../AGENTS.md) | 编码代理的模块边界、核心约束、验证命令与文档同步要求 |
 | [角色卡导入](CHARACTER_CARDS.md) | 社区规范、导入与中文双版本阅读、元数据兼容、无损导出与资源清理 |
-| [多立绘与 CHARX 待办](CHARACTER_PORTRAITS_PLAN.md) | 手动多立绘首版边界，以及角色包、套图与自动联动待办 |
+| [多立绘与 CHARX 待办](CHARACTER_PORTRAITS_PLAN.md) | 手动多立绘与保守角色包导入边界，以及套图与自动联动待办 |
 | [后端架构](ARCHITECTURE.md) | 应用装配、生命周期、模块边界和维护约定 |
 | [持续集成](CI.md) | GitHub Actions 触发方式、运行环境、自动检查与失败排查 |
 | [模型与思考设置](MODEL_SELECTION.md) | 独立模型选择、故事覆盖、辅助任务策略与兼容 |

@@ -556,6 +556,8 @@ GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配�
 
 ## 注意事项
 
+- **保守 CHARX 导入**：`app.max_charx_size_mb` 默认 20 MiB，独立于 PNG/JSON 和头像限制，修改后重启生效。请求体解析前鉴权与累计限流量，只允许一个文件、最多三个并发上传；ZIP 条目校验失败也消耗预算并缓存。显式 CCv3 导入计划报告兼容性，创建角色与追加素材分开约束。素材按内容去重，新增摘要迁移并保留旧库升级链。单进程服务最多三个预览，有效期 15 分钟；lifespan 每 60 秒清理过期文件。保存响应丢失可查询回执恢复结果。固定大小、像素、状态与错误码见根目录 API 总表。
+
 - **手动多立绘**：`services/media/character_portraits.py` 管理独立图片资源与剧情节点选择；新增 `character_portraits`、Persona 初始选择和消息选择列，通过 Alembic 升级保留旧卡旧故事。图片用 Pillow 校验 PNG/JPEG/WebP 内容、大小和像素数，存入既有头像资源目录；删除沿用 Outbox 并复核头像和立绘引用。无额外资源时沿用头像，不触发情绪、开场或脚本规则。HTTP 契约见根目录 API 总表。
 
 - **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
@@ -563,3 +565,5 @@ GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配�
 - **缺失音频恢复**：重新请求 `POST /utils/tts` 并传入原 `message_id`、音色和语速可重新生成。直接下载缺失的版本化文件目前返回 `404`，不能承诺透明恢复；详见根目录 API 文档。
 - **历史分页性能**：通过 `/sessions/{id}/history` 查询历史记录时，参数 `before_id` 可作为分页游标，强烈建议前端在聊天页初始化时分步拉取（如每次获取 50 条），并在滚动触顶时按需往前拉取，避免长会话引起的内存暴涨。
 - **删除接口兼容**：角色、会话、消息和世界书删除提供 `DELETE` 与 `POST .../delete` 两种路径。记忆删除目前只有 `DELETE /sessions/{session_id}/memories/{memory_id}`，没有 POST 别名。
+
+CHARX 安全回归：`python -m tests --group infrastructure --pattern test_charx_upload.py` 覆盖鉴权前零读取、声明/流式总量限制、并发及空闲超时；`python -m tests --group parsing --pattern test_charx_import.py` 覆盖解析预算、去重、兼容计划、回执恢复和共享文件回收。
