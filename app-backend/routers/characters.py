@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as FormUploadFile
 from typing import Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
@@ -6,12 +8,14 @@ from core import models
 from services.media.character_card_import import import_character_card
 import services.character_service as character_service
 import services.media.character_portraits as portrait_service
+import services.media.charx_import as charx_service
 import services.memory.session_memory_query_service as session_memory_query_service
 from core.locking import cleanup_session_lock
-from schemas import CharacterCreate, CharacterTranslationRequest, PortraitNameUpdate
+from schemas import CharacterCreate, CharacterTranslationRequest, PortraitNameUpdate, CharxImportRequest
 import services.character_translation_service as translation_service
 import json
 import os
+import zipfile
 
 router = APIRouter()
 
@@ -26,10 +30,65 @@ ALLOWED_CARD_EXTENSIONS = {".png", ".json"}
 MAX_CARD_SIZE_BYTES = settings.SECURITY_MAX_CARD_SIZE_MB * 1024 * 1024
 
 
-@router.get("/{character_id}/portraits")
-def list_portraits(character_id: int, db: Session = Depends(get_db)):
+@router.post("/charx/preview")
+async def preview_charx(request: Request):
+    async with request.form(max_files=1, max_fields=0) as form:
+        file = form.get("file")
+        if not isinstance(file, FormUploadFile) or len(form) != 1:
+            raise HTTPException(422, detail="须上传且仅上传一个 file 文件")
+        if os.path.splitext(file.filename or "")[1].lower() not in (".charx", ".zip"):
+            raise HTTPException(422, detail="请选择 CHARX 或结构符合 CHARX 的 ZIP")
+        content = await file.read(charx_service.upload_limit() + 1)
+        if len(content) > charx_service.upload_limit():
+            raise HTTPException(413, detail=f"角色包不得超过 {charx_service.upload_limit() // 1024 // 1024} MB")
     try:
-        return portrait_service.list_portraits(character_id, db)
+        return await run_in_threadpool(charx_service.preview_package, content)
+    except charx_service.CharxConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    except (ValueError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.get("/charx/previews/{token}/images")
+def get_charx_preview_images(token: str, offset: int = Query(0, ge=0), limit: int = Query(12, ge=1, le=12)):
+    try:
+        return charx_service.preview_images(token, offset, limit)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.get("/charx/previews/{token}/status")
+def get_charx_status(token: str, db: Session = Depends(get_db)):
+    try:
+        return charx_service.preview_status(token, db)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.post("/charx/previews/{token}/cancel")
+def cancel_charx_preview(token: str):
+    try:
+        return charx_service.cancel_preview(token)
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.post("/charx/previews/{token}/import")
+def import_charx(token: str, request: CharxImportRequest, db: Session = Depends(get_db)):
+    try:
+        return charx_service.import_package(token, request.model_dump(), db)
+    except charx_service.CharxConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.get("/{character_id}/portraits")
+def list_portraits(character_id: int, offset: int = Query(0, ge=0), limit: int = Query(24, ge=1, le=100), db: Session = Depends(get_db)):
+    try:
+        return portrait_service.list_portraits(character_id, db, offset, limit)
     except LookupError as exc:
         raise HTTPException(404, detail=str(exc)) from exc
 

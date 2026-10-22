@@ -23,6 +23,35 @@ class PortraitNameUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
+class CharxImportRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    operation: Optional[Literal["create_character", "append_assets"]] = None
+    skip_duplicates: bool = True
+    character_id: Optional[int] = Field(default=None, gt=0)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    portrait_indices: list[int] = Field(default_factory=list, max_length=300)
+    avatar_index: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def valid_operation(self):
+        expected = "create_character" if self.character_id is None else "append_assets"
+        if self.operation is not None and self.operation != expected:
+            raise ValueError("操作类型与目标角色不匹配")
+        self.operation = expected
+        if expected == "append_assets" and self.name is not None:
+            raise ValueError("追加素材不能修改角色名称")
+        if expected == "append_assets" and not self.portrait_indices and self.avatar_index is None:
+            raise ValueError("请选择立绘或头像")
+        return self
+
+    @field_validator("portrait_indices")
+    @classmethod
+    def valid_portrait_indices(cls, value):
+        if any(index < 0 for index in value) or len(set(value)) != len(value):
+            raise ValueError("素材索引必须非负且不能重复")
+        return value
+
+
 class CharacterCreate(BaseModel):
     name: str
     avatar_path: str = ""

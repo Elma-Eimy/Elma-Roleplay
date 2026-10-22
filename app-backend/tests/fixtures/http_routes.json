@@ -1,4 +1,9 @@
 [
+  ["POST", "/characters/charx/preview"],
+  ["GET", "/characters/charx/previews/{token}/images"],
+  ["GET", "/characters/charx/previews/{token}/status"],
+  ["POST", "/characters/charx/previews/{token}/cancel"],
+  ["POST", "/characters/charx/previews/{token}/import"],
   ["GET", "/characters/{character_id}/portraits"],
   ["POST", "/characters/{character_id}/portraits"],
   ["PUT", "/characters/{character_id}/portraits/{portrait_id}"],

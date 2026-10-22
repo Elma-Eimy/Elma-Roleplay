@@ -24,12 +24,19 @@ def require_character(character_id, db):
 
 
 def serialize(portrait):
-    return {"id": portrait.id, "name": portrait.name, "image_path": portrait.image_path}
+    result = {"id": portrait.id, "name": portrait.name, "image_path": portrait.image_path}
+    for key in ("source_type", "source_name", "source_uri"):
+        if getattr(portrait, key):
+            result[key] = getattr(portrait, key)
+    return result
 
 
-def list_portraits(character_id, db):
+def list_portraits(character_id, db, offset=0, limit=24):
     require_character(character_id, db)
-    return {"portraits": [serialize(p) for p in db.query(CharacterPortrait).filter_by(character_id=character_id).order_by(CharacterPortrait.id).all()]}
+    query = db.query(CharacterPortrait).filter_by(character_id=character_id)
+    total = query.count()
+    return {"portraits": [serialize(p) for p in query.order_by(CharacterPortrait.id).offset(offset).limit(limit).all()],
+            "total": total, "has_more": offset + limit < total}
 
 
 def add_portrait(character_id, content, filename, db):
@@ -54,7 +61,8 @@ def add_portrait(character_id, content, filename, db):
     root.mkdir(parents=True, exist_ok=True)
     target = root / ("portrait_" + uuid.uuid4().hex + extension)
     name = Path((filename or "立绘").replace("\\", "/")).stem.strip()[:80] or "立绘"
-    portrait = CharacterPortrait(character_id=character_id, name=name, image_path=target.as_posix())
+    portrait = CharacterPortrait(character_id=character_id, name=name, image_path=target.as_posix(),
+                                 content_sha256=hashlib.sha256(content).hexdigest())
     try:
         target.write_bytes(content)
         db.add(portrait)

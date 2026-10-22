@@ -99,6 +99,20 @@ class CharacterPortrait(Base):
     character_id = Column(Integer, ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(80), nullable=False)
     image_path = Column(String(255), nullable=False)
+    source_type = Column(String(100), nullable=True)
+    source_name = Column(Text, nullable=True)
+    source_uri = Column(Text, nullable=True)
+    content_sha256 = Column(String(64), nullable=True)
+
+
+class CharacterPackageImport(Base):
+    __tablename__ = "character_package_imports"
+
+    token = Column(String(32), primary_key=True)
+    request_hash = Column(String(64), nullable=False)
+    # 回执独立于角色生命周期，删除后不能将旧导入请求误用于新角色。
+    character_id = Column(Integer, ForeignKey("characters.id", ondelete="SET NULL"), nullable=True)
+    result_json = Column(Text, nullable=False)
 
 
 class Session(Base):
