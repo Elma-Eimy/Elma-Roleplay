@@ -567,3 +567,5 @@ GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配�
 - **删除接口兼容**：角色、会话、消息和世界书删除提供 `DELETE` 与 `POST .../delete` 两种路径。记忆删除目前只有 `DELETE /sessions/{session_id}/memories/{memory_id}`，没有 POST 别名。
 
 CHARX 安全回归：`python -m tests --group infrastructure --pattern test_charx_upload.py` 覆盖鉴权前零读取、声明/流式总量限制、并发及空闲超时；`python -m tests --group parsing --pattern test_charx_import.py` 覆盖解析预算、去重、兼容计划、回执恢复和共享文件回收。
+
+CHARX 动图按原始字节保留 GIF/APNG/WebP，预览仅展示静态首帧；后端逐帧校验，单图最多 300 帧，所有帧计入累计 2.5 亿像素预算。播放效果需按客户端验收。
