@@ -215,7 +215,10 @@ def _parse_archive(content, directory):
             raise ValueError("角色包根目录须包含不超过 2 MB 的 card.json")
         try:
             raw = json.loads(_read(archive, names["card.json"], MAX_CARD).decode("utf-8-sig"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+            # Python 默认接受 NaN/Infinity，指数溢出也会生成 infinity；
+            # 必须在写暂存和返回 HTTP JSON 前拒绝，同时校验转义后的 Unicode。
+            json.dumps(raw, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (UnicodeError, ValueError) as exc:
             raise ValueError("card.json 不是有效的 UTF-8 JSON") from exc
         if not isinstance(raw, dict) or not isinstance(raw.get("data"), dict) or raw.get("spec") != "chara_card_v3" or raw.get("spec_version") != "3.0":
             raise ValueError("首版仅支持 CCv3 3.0 角色包")

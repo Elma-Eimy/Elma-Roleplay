@@ -258,6 +258,23 @@ class CharxImportTests(unittest.TestCase):
             self.assertEqual(422, response.status_code, response.text)
         self.assertEqual([], list(service.ROOT.iterdir()))
 
+    def test_nonfinite_numbers_and_invalid_unicode_are_rejected_before_staging(self):
+        for value in ('NaN', 'Infinity', '-Infinity', '1e999', '"\\ud800"'):
+            with self.subTest(value=value):
+                payload = ('{"spec":"chara_card_v3","spec_version":"3.0",'
+                           '"data":{"name":"invalid","extensions":{"custom":' + value + '}}}')
+                output = io.BytesIO()
+                with zipfile.ZipFile(output, 'w') as archive:
+                    archive.writestr('card.json', payload)
+                client = TestClient(self.app, raise_server_exceptions=False)
+                try:
+                    response = client.post('/characters/charx/preview', files={'file': ('invalid.charx', output.getvalue())})
+                finally:
+                    client.close()
+                self.assertEqual(422, response.status_code, response.text)
+                self.assertEqual([], list(service.ROOT.iterdir()))
+                self.assertEqual(0, self.db.query(Character).count())
+
     def test_expiry_preview_capacity_and_token_validation(self):
         previews = [service.preview_package(package()) for _ in range(service.MAX_PREVIEWS)]
         with self.assertRaises(service.CharxConflict):
