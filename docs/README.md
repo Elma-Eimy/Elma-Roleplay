@@ -20,6 +20,7 @@
 | [记忆整理质量验收](MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收、本地报告和人工审阅 |
 | [更新日志](../CHANGELOG.md) | 前后端功能和工程变更记录 |
 | [后端说明](../app-backend/README.md) | Python 环境、服务配置、后端模块与测试 |
+| [后端配置示例](../app-backend/config.yaml.example) | 不含密钥的常用配置、模型连接及存储路径示例 |
 | [后端测试指南](../app-backend/tests/README.md) | 按领域运行自动回归、临时工作区隔离和手动场景 |
 | [后端维护工具](../app-backend/scripts/README.md) | 数据诊断、会话查询和显式重置命令 |
 | [前端说明](../app-frontend/README.md) | 客户端开发、多端构建、运行时连接与页面组织 |

@@ -315,6 +315,8 @@ ACCESS_API_KEY=
 
 ### 3. 修改模型配置
 
+首次配置可复制 [config.yaml.example](config.yaml.example) 为 `config.yaml`（PowerShell：`Copy-Item config.yaml.example config.yaml`），再替换示例中的聊天/嵌入 API 地址与模型 ID。已有配置请先备份后合并，不要覆盖。示例仅列常用字段，不含密钥；密钥继续放在 `.env` 中，语音功能在示例中默认关闭。
+
 创建或编辑本地 `config.yaml`（见下方[配置说明](#配置说明)），至少填写 `chat_base_url` 和模型名称。可以只填写需要覆盖的配置项，启动时会自动补齐其余字段；文件不存在时会自动生成默认配置，但仍需按实际服务修改连接和模型。
 
 `config.yaml` 仅在本地保存，已从 Git 跟踪中移除并由后端 `.gitignore` 忽略。配置默认值和升级规则维护在 `core/config.py` 的 `CONFIG_SCHEMA` 与迁移逻辑中；新增字段自动补齐并回写，保留已有配置值。
