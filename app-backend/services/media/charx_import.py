@@ -1,5 +1,6 @@
 """受限 CHARX 预览与显式导入；不执行模块、不访问素材外链。"""
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -30,6 +31,7 @@ MAX_FILES = 1000
 MAX_IMAGES = 300
 MAX_STAGED_BYTES = 60 * MB
 MAX_TOTAL_PIXELS = 250_000_000
+MAX_ANIMATION_FRAMES = 300
 TTL = 15 * 60
 MAX_PREVIEWS = 3
 ROOT = Path(tempfile.gettempdir()) / ("ai-roleplay-charx-" + hashlib.sha256(str(settings.STORAGE_SQLITE_DB_PATH).encode()).hexdigest()[:16])
@@ -124,11 +126,74 @@ def preview_status(token, db):
             return {'status': 'not_found'}
 
 
+INLINE_REF_RE = re.compile(
+    r"(?:embeded|embedded)://([^\s\"'<>)\]]+)"
+    r"|<img\s*=\s*[\"']?([^\"'>\s]+)[\"']?\s*/?>"
+    r"|<img\b[^>]*\bsrc\s*=\s*[\"']([^\"']+)[\"'][^>]*>"
+    r"|\{\{(?:img|raw)::([^}]+)\}\}"
+    r"|!\[[^\]]*\]\(([^)]+)\)",
+    re.I,
+)
+CARD_TEXT_KEYS = (
+    "description", "personality", "scenario", "first_mes",
+    "mes_example", "creator_notes", "system_prompt_override", "post_history_instructions",
+)
+
+
 def _safe_path(name):
     path = PurePosixPath(name)
     if not name or "\\" in name or ":" in name or "\x00" in name or path.is_absolute() or any(part in (".", "..", "") for part in name.rstrip("/").split("/")):
         raise ValueError("角色包包含不安全的文件路径")
     return name
+
+
+def _embedded_path(uri):
+    for prefix in ("embeded://", "embedded://"):
+        if uri.startswith(prefix):
+            return _safe_path(uri[len(prefix):])
+    return None
+
+
+def _referenced_tokens(data):
+    texts = [str(data.get(key) or "") for key in (*CARD_TEXT_KEYS, "system_prompt")]
+    alternates = data.get("alternate_greetings") or (data.get("extensions") or {}).get("alternate_greetings") or []
+    if isinstance(alternates, list):
+        texts.extend(item for item in alternates if isinstance(item, str))
+    book = data.get("character_book") or (data.get("extensions") or {}).get("character_book")
+    if isinstance(book, dict) and isinstance(book.get("entries"), list):
+        texts.extend(str(entry.get("content") or "") for entry in book["entries"] if isinstance(entry, dict))
+    tokens = set()
+    for text_value in texts:
+        for match in INLINE_REF_RE.finditer(text_value):
+            raw_ref = next((group.strip() for group in match.groups() if group and group.strip()), "")
+            if not raw_ref:
+                continue
+            for prefix in ("embeded://", "embedded://"):
+                if raw_ref.lower().startswith(prefix):
+                    raw_ref = raw_ref[len(prefix):]
+                    break
+            folded = raw_ref.casefold()
+            tokens.add(folded)
+            posix = PurePosixPath(raw_ref)
+            if posix.name:
+                tokens.add(posix.name.casefold())
+            if posix.stem:
+                tokens.add(posix.stem.casefold())
+    return tokens
+
+
+def _is_asset_referenced(descriptor, source_name, tokens):
+    if not tokens:
+        return False
+    name = descriptor["name"].strip()
+    name_fold = name.casefold()
+    stem_fold = PurePosixPath(name).stem.casefold()
+    src_fold = source_name.casefold()
+    src_posix = PurePosixPath(source_name)
+    candidates = {name_fold, stem_fold, src_fold, src_posix.name.casefold(), src_posix.stem.casefold()}
+    if candidates & tokens:
+        return True
+    return any(stem_fold.endswith("." + token) or name_fold.endswith("." + token) for token in tokens if token)
 
 
 def _read(archive, info, maximum):
@@ -143,20 +208,35 @@ def _image(content, reserve_pixels):
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         with Image.open(io.BytesIO(content)) as image:
-            extension = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}.get(image.format)
+            extension = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "GIF": "gif"}.get(image.format)
             pixels = image.width * image.height
-            if not extension or image.width * image.height > 25_000_000 or getattr(image, "n_frames", 1) > 1:
-                raise ValueError("首版仅导入 2500 万像素以内的静态 PNG/JPEG/WebP")
+            frames = getattr(image, "n_frames", 1)
+            animated = frames > 1
+            if frames > MAX_ANIMATION_FRAMES:
+                raise ValueError("单张动图最多 300 帧")
+            if not extension or pixels > 25_000_000:
+                raise ValueError("首版仅导入 2500 万像素以内的 PNG/JPEG/WebP/GIF 图片")
             # 在校验和解码前占用预算；损坏图片失败后也不能返还已尝试的工作量。
             reserve_pixels(pixels)
             image.verify()
         with Image.open(io.BytesIO(content)) as image:
-            image.load()
+            # 不转码原图，逐帧校验，后续帧同样计入解码预算。
+            for frame in range(frames):
+                if frame:
+                    reserve_pixels(pixels)
+                image.seek(frame)
+                frame_pixels = image.width * image.height
+                if frame_pixels > 25_000_000:
+                    raise ValueError("动图帧超过 2500 万像素")
+                if frame_pixels > pixels:
+                    reserve_pixels(frame_pixels - pixels)
+                image.load()
+            image.seek(1 if image.info.get("default_image") and frames > 1 else 0)
             with ImageOps.exif_transpose(image) as oriented:
                 oriented.thumbnail((128, 160))
                 output = io.BytesIO()
                 oriented.convert("RGBA").save(output, format="PNG")
-    return extension, base64.b64encode(output.getvalue()).decode("ascii")
+    return extension, base64.b64encode(output.getvalue()).decode("ascii"), content, animated
 
 
 def preview_package(content):
@@ -233,7 +313,7 @@ def _parse_archive(content, directory):
         resources = data.get("assets", [])
         if not isinstance(resources, list) or len(resources) > MAX_FILES:
             raise ValueError("素材清单无效或超过 1000 项")
-        notices = ["仅导入角色设定与选中的静态图片；不开启情绪、换装或开场自动切换。"]
+        notices = ["仅导入角色设定与选中的图片（含动图）；不开启情绪、换装或开场自动切换。"]
         if "module.risum" in names:
             notices.append("包含 RisuAI 模块：正则、触发器及模块内世界书未导入，原平台效果不会完整还原。")
         if data.get("nickname") or data.get("group_only_greetings"):
@@ -246,6 +326,8 @@ def _parse_archive(content, directory):
         assets = []
         staged_bytes = 0
         decoded_pixels = 0
+        referenced_tokens = _referenced_tokens(data)
+        animated_count = 0
 
         def reserve_pixels(pixels):
             nonlocal decoded_pixels
@@ -268,16 +350,16 @@ def _parse_archive(content, directory):
             uri = descriptor["uri"]
             if max(len(descriptor[key]) for key in ("type", "name", "uri", "ext")) > 2048:
                 raise ValueError("素材描述字段过长")
-            if not uri.startswith("embeded://"):
+            source_name = _embedded_path(uri)
+            if source_name is None:
                 skip(descriptor, '外链或不支持的 URI；未访问网络')
                 continue
-            source_name = _safe_path(uri[len("embeded://"):])
             info = names.get(source_name)
             if info is None or info.is_dir() or info.file_size > MAX_IMAGE:
                 skip(descriptor, '引用缺失、不是文件或超过单图大小限制')
                 continue
-            if descriptor["ext"].lower() not in ("png", "jpg", "jpeg", "webp"):
-                skip(descriptor, '不是支持的静态图片类型')
+            if descriptor["ext"].lower() not in ("png", "jpg", "jpeg", "webp", "gif"):
+                skip(descriptor, '不是支持的图片类型')
                 continue
             if source_name not in cache:
                 # 读取前预留字节预算，失败不返还；同一条目成功或失败都只处理一次。
@@ -287,23 +369,36 @@ def _parse_archive(content, directory):
                 image_data = _read(archive, info, MAX_IMAGE)
                 checked.add(source_name)
                 try:
-                    extension, thumbnail = _image(image_data, reserve_pixels)
+                    extension, thumbnail, stored_bytes, animated = _image(image_data, reserve_pixels)
                 except CharxLimit:
                     raise
-                except (ValueError, OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+                except (ValueError, OSError, EOFError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
                     cache[source_name] = None
                 else:
-                    (directory / f"{index}.{extension}").write_bytes(image_data)
+                    (directory / f"{index}.{extension}").write_bytes(stored_bytes)
                     (directory / f"{index}.thumb").write_text(thumbnail, encoding="ascii")
-                    cache[source_name] = (extension, index, hashlib.sha256(image_data).hexdigest())
+                    cache[source_name] = (extension, index, hashlib.sha256(stored_bytes).hexdigest(), animated)
             if cache[source_name] is None:
-                skip(descriptor, '损坏、动态或像素超限的图片')
+                skip(descriptor, '损坏或像素超限的图片')
                 continue
             if len(assets) >= MAX_IMAGES:
                 raise ValueError("首版最多预览 300 张可用图片")
-            extension, storage_index, digest = cache[source_name]
-            assets.append({"index": index, "name": descriptor["name"], "type": descriptor["type"], "uri": uri,
-                           "ext": extension, 'storage_index': storage_index, 'sha256': digest})
+            extension, storage_index, digest, animated = cache[source_name]
+            if animated:
+                animated_count += 1
+            asset_entry = {
+                "index": index,
+                "name": descriptor["name"],
+                "type": descriptor["type"],
+                "uri": uri,
+                "ext": extension,
+                "storage_index": storage_index,
+                "sha256": digest,
+                "referenced": _is_asset_referenced(descriptor, source_name, referenced_tokens),
+            }
+            if animated:
+                asset_entry["animated"] = True
+            assets.append(asset_entry)
         # 对未导入的 ZIP 条目也执行有界流读取与 CRC 检查，不能信任清单长度。
         for name, info in names.items():
             if name in checked or info.is_dir():
@@ -314,9 +409,13 @@ def _parse_archive(content, directory):
                     consumed += len(block)
                     if consumed > info.file_size or consumed > MAX_EXPANDED:
                         raise ValueError("角色包实际解压大小超过限制")
+        if animated_count:
+            notices.append(f"{animated_count} 项动图保留原始动画，缩略图仅展示首帧；播放效果取决于客户端支持。")
         if skipped:
-            notices.append(f"{skipped} 项素材未导入：可能为缺失引用、外链、非静态图片、损坏图片或单图超过 8 MB。")
-        plan['compatibility'].append({'status': 'preserved', 'label': '可选静态图片', 'count': len(assets)})
+            notices.append(f"{skipped} 项素材未导入：可能为缺失引用、外链、不支持的格式、损坏图片、帧数超限或单图超过 8 MB。")
+        plan['compatibility'].append({'status': 'preserved', 'label': '可选图片', 'count': len(assets)})
+        if animated_count:
+            plan['compatibility'].append({'status': 'preserved', 'label': '动图原始文件（静态缩略图）', 'count': animated_count})
         plan['compatibility'].append({'status': 'skipped', 'label': '跳过的素材引用', 'count': skipped})
         unreferenced = sum(not info.is_dir() and name != 'card.json' and name not in checked for name, info in names.items())
         if unreferenced:
@@ -350,6 +449,87 @@ def _existing_image(path, root, known_digest=None):
     return digest
 
 
+def _parse_json_field(raw_value, default):
+    if not raw_value:
+        return copy.deepcopy(default)
+    try:
+        parsed = json.loads(raw_value)
+        return parsed if isinstance(parsed, type(default)) else copy.deepcopy(default)
+    except Exception:
+        return copy.deepcopy(default)
+
+
+def _fill_missing(current, incoming):
+    if current is None or current == "" or (isinstance(current, list) and not current):
+        return copy.deepcopy(incoming)
+    if isinstance(current, dict) and isinstance(incoming, dict):
+        merged = copy.deepcopy(current)
+        for key, val in incoming.items():
+            merged[key] = _fill_missing(merged.get(key), val)
+        return merged
+    return copy.deepcopy(current)
+
+
+def _apply_greeting_index(card, greeting_index):
+    extensions = copy.deepcopy(card.get("extensions") or {})
+    alternates = list(extensions.get("alternate_greetings") or [])
+    if not isinstance(greeting_index, int) or isinstance(greeting_index, bool) or greeting_index < 0 or greeting_index >= len(alternates):
+        raise ValueError("所选故事开场不存在")
+    original_first = card.get("first_mes") or ""
+    card["first_mes"] = alternates[greeting_index]
+    alternates[greeting_index] = original_first
+    extensions["alternate_greetings"] = alternates
+    card["extensions"] = extensions
+
+
+def _merge_existing_character(character, card, card_mode, sync_lorebook, has_greeting_selection):
+    mode = card_mode or "keep"
+    incoming_ext = copy.deepcopy(card.get("extensions") or {})
+    incoming_book = incoming_ext.get("character_book")
+    if sync_lorebook is True and not (isinstance(incoming_book, dict) and isinstance(incoming_book.get("entries"), list) and incoming_book["entries"]):
+        raise ValueError("角色包不包含有效的内嵌世界书，无法同步世界书")
+    existing_ext = _parse_json_field(character.extensions, {})
+    if mode == "replace":
+        for field in CARD_TEXT_KEYS:
+            setattr(character, field, card.get(field, ""))
+        character.tags = json.dumps(card.get("tags", []), ensure_ascii=False)
+        if sync_lorebook is not True:
+            if "character_book" in existing_ext:
+                incoming_ext["character_book"] = existing_ext["character_book"]
+            else:
+                incoming_ext.pop("character_book", None)
+        character.extensions = json.dumps(incoming_ext, ensure_ascii=False)
+    elif mode == "fill":
+        existing_tags = _parse_json_field(character.tags, [])
+        for field in CARD_TEXT_KEYS:
+            if field == "first_mes" and has_greeting_selection:
+                character.first_mes = card.get("first_mes", "")
+            elif not (getattr(character, field) or "").strip():
+                setattr(character, field, card.get(field, ""))
+        if not existing_tags:
+            character.tags = json.dumps(card.get("tags", []), ensure_ascii=False)
+        merged_ext = _fill_missing(existing_ext, incoming_ext)
+        if has_greeting_selection and "alternate_greetings" in incoming_ext:
+            merged_ext["alternate_greetings"] = incoming_ext["alternate_greetings"]
+        if sync_lorebook is True:
+            merged_ext["character_book"] = incoming_book
+        else:
+            if "character_book" in existing_ext:
+                merged_ext["character_book"] = existing_ext["character_book"]
+            else:
+                merged_ext.pop("character_book", None)
+        character.extensions = json.dumps(merged_ext, ensure_ascii=False)
+    else:
+        if has_greeting_selection:
+            character.first_mes = card.get("first_mes", "")
+            if "alternate_greetings" in incoming_ext:
+                existing_ext["alternate_greetings"] = incoming_ext["alternate_greetings"]
+        if sync_lorebook is True:
+            existing_ext["character_book"] = incoming_book
+        if has_greeting_selection or sync_lorebook is True:
+            character.extensions = json.dumps(existing_ext, ensure_ascii=False)
+
+
 def import_package(token, request, db):
     fingerprint = hashlib.sha256(json.dumps({**request, "portrait_indices": sorted(request["portrait_indices"])}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     paths = []
@@ -371,15 +551,36 @@ def import_package(token, request, db):
             if not selected.issubset(assets) or (avatar is not None and avatar not in assets):
                 raise ValueError("所选素材不存在或不受支持")
             target = request["character_id"]
-            operation = 'create_character' if target is None else 'append_assets'
+            card_mode = request.get("card_mode")
+            sync_lorebook = request.get("sync_lorebook")
+            greeting_index = request.get("greeting_index")
+            updating_card = (
+                card_mode in ("replace", "fill")
+                or sync_lorebook is True
+                or (target is not None and greeting_index is not None)
+            )
+            if target is None:
+                if card_mode in ("keep", "fill") or sync_lorebook is False:
+                    raise ValueError("新建角色不支持增量设定合并选项")
+                operation = "create_character"
+            else:
+                if request.get("name") is not None:
+                    raise ValueError("追加素材不能修改角色名称")
+                if not updating_card and not selected and avatar is None:
+                    raise ValueError("请选择立绘或头像")
+                operation = "update_character" if updating_card else "append_assets"
             if request.get('operation') not in (None, operation):
                 raise ValueError('操作类型与目标角色不匹配')
+            card = copy.deepcopy(value["card"])
+            if greeting_index is not None:
+                _apply_greeting_index(card, greeting_index)
             if target is not None:
                 character = db.get(Character, target)
                 if character is None:
                     raise LookupError("目标角色不存在")
+                if updating_card:
+                    _merge_existing_character(character, card, card_mode, sync_lorebook, greeting_index is not None)
             else:
-                card = dict(value["card"])
                 name = (request["name"] or card["name"]).strip()
                 if not name or len(name) > 50 or any(ord(c) < 32 for c in name):
                     raise ValueError("新角色名称须为 1–50 字")
@@ -430,6 +631,8 @@ def import_package(token, request, db):
                 character.avatar_path = saved[avatar]
             result = {"character_id": character.id, "created": target is None, "portraits_added": added,
                       'duplicates_skipped': duplicates, 'operation': operation, 'package_sha256': value['package_sha256']}
+            if target is not None and updating_card:
+                result["card_updated"] = True
             db.add(CharacterPackageImport(token=token, request_hash=fingerprint, character_id=character.id, result_json=json.dumps(result)))
             db.commit()
         except Exception:

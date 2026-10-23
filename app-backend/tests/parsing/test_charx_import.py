@@ -438,3 +438,148 @@ class CharxImportTests(unittest.TestCase):
                 finally:
                     resume.set()
                 pending.result(timeout=5)
+
+    def test_embedded_scheme_preserves_animation_and_inline_reference_detection(self):
+        gif_buf = io.BytesIO()
+        frame1 = Image.new("RGB", (10, 14), "red")
+        frame2 = Image.new("RGB", (10, 14), "blue")
+        frame1.save(gif_buf, format="GIF", save_all=True, append_images=[frame2])
+        raw = {
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "data": {
+                "name": "动图与双d协议",
+                "description": "背景包含 {{img::smile}}",
+                "first_mes": '开场<img="happy">',
+                "assets": [
+                    {"type": "icon", "name": "main", "uri": "embedded://assets/avatar.png", "ext": "png"},
+                    {"type": "emotion", "name": "角色.happy.png", "uri": "embeded://assets/happy.png.png", "ext": "png"},
+                    {"type": "emotion", "name": "smile", "uri": "embedded://assets/anim.gif", "ext": "gif"},
+                ],
+            },
+        }
+        preview = service.preview_package(package({"assets/anim.gif": gif_buf.getvalue()}, card=raw))
+        self.assertEqual([False, True, True], [a["referenced"] for a in preview["assets"]])
+        self.assertTrue(preview["assets"][2].get("animated"))
+        self.assertEqual("gif", preview["assets"][2]["ext"])
+        self.assertTrue(any("动图保留原始动画" in w for w in preview["warnings"]))
+        result = service.import_package(preview["token"], self.request(portrait_indices=[2], avatar_index=0), self.db)
+        portrait = self.db.query(CharacterPortrait).filter_by(character_id=result["character_id"]).one()
+        with Image.open(portrait.image_path) as saved_img:
+            self.assertEqual("GIF", saved_img.format)
+            self.assertEqual(2, getattr(saved_img, "n_frames", 1))
+
+    def test_animation_formats_keep_original_bytes_and_validate_all_frames(self):
+        for fmt, ext in (("GIF", "gif"), ("PNG", "png"), ("WEBP", "webp")):
+            with self.subTest(format=fmt):
+                output = io.BytesIO()
+                Image.new("RGBA", (12, 18), "red").save(
+                    output, format=fmt, save_all=True,
+                    append_images=[Image.new("RGBA", (12, 18), "blue")], duration=[80, 160], loop=0)
+                content = output.getvalue()
+                raw = {"spec": "chara_card_v3", "spec_version": "3.0", "data": {"name": fmt, "assets": [
+                    {"type": "icon", "name": "main", "uri": f"embeded://anim.{ext}", "ext": ext}]}}
+                archive = package({f"anim.{ext}": content}, card=raw)
+                with patch.object(service, "MAX_TOTAL_PIXELS", 12 * 18):
+                    with self.assertRaises(service.CharxLimit):
+                        service.preview_package(archive)
+                with patch.object(service, "MAX_ANIMATION_FRAMES", 1):
+                    rejected = service.preview_package(archive)
+                    self.assertEqual([], rejected["assets"])
+                    service.cancel_preview(rejected["token"])
+                preview = service.preview_package(archive)
+                self.assertTrue(preview["assets"][0]["animated"])
+                result = service.import_package(preview["token"], self.request(name=fmt, portrait_indices=[0]), self.db)
+                character = self.db.get(Character, result["character_id"])
+                self.assertEqual(content, Path(character.avatar_path).read_bytes())
+                with Image.open(character.avatar_path) as saved:
+                    self.assertEqual(2, saved.n_frames)
+                    saved.seek(1)
+                    saved.load()
+
+    def test_card_updates_preserve_lorebook_unless_explicitly_enabled(self):
+        old_book = {"entries": [{"content": "原世界书"}]}
+        character = Character(name="原角色", description="原设定", first_mes="原开场",
+                              extensions=json.dumps({"character_book": old_book}))
+        self.db.add(character)
+        self.db.commit()
+        for mode in ("replace", "fill"):
+            for sync in (None, False):
+                for incoming_book in (None, {"entries": [{"content": "新世界书"}]}):
+                    with self.subTest(mode=mode, sync=sync, book=incoming_book):
+                        raw = {"spec": "chara_card_v3", "spec_version": "3.0", "data": {"name": "包角色"}}
+                        if incoming_book is not None:
+                            raw["data"]["character_book"] = incoming_book
+                        preview = service.preview_package(package(card=raw))
+                        request = {"character_id": character.id, "portrait_indices": [], "card_mode": mode}
+                        if sync is not None:
+                            request["sync_lorebook"] = sync
+                        response = self.client.post(f"/characters/charx/previews/{preview['token']}/import", json=request)
+                        self.assertEqual(200, response.status_code, response.text)
+                        self.db.refresh(character)
+                        self.assertEqual(old_book, json.loads(character.extensions)["character_book"])
+
+    def test_greeting_index_and_existing_character_card_or_lorebook_updates(self):
+        raw = {
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "data": {
+                "name": "多开场与世界书",
+                "description": "新设定描述",
+                "personality": "新性格",
+                "first_mes": "开场一",
+                "alternate_greetings": ["开场二", "开场三"],
+                "tags": ["新标签"],
+                "character_book": {"entries": [{"keys": ["k"], "content": "新世界设定"}]},
+                "assets": [{"type": "icon", "name": "main", "uri": "embeded://assets/avatar.png", "ext": "png"}],
+            },
+        }
+        p1 = service.preview_package(package(card=raw))
+        with self.assertRaises(ValueError):
+            service.import_package(p1["token"], self.request(portrait_indices=[], greeting_index=5), self.db)
+        created = service.import_package(p1["token"], self.request(portrait_indices=[], greeting_index=1), self.db)
+        char = self.db.get(Character, created["character_id"])
+        self.assertEqual("开场三", char.first_mes)
+        self.assertEqual(["开场二", "开场一"], json.loads(char.extensions)["alternate_greetings"])
+
+        # 测试已有角色的 fill（仅补充空项）与单独同步世界书
+        char.description = "保留已有描述"
+        char.personality = ""
+        char.tags = json.dumps([])
+        char.extensions = json.dumps({"character_book": {"entries": [{"keys": ["old"], "content": "旧世界"}]}})
+        self.db.commit()
+
+        p2 = service.preview_package(package(card=raw))
+        fill_res = self.client.post(
+            f"/characters/charx/previews/{p2['token']}/import",
+            json={"character_id": char.id, "portrait_indices": [], "avatar_index": None, "card_mode": "fill", "sync_lorebook": False},
+        )
+        self.assertEqual(200, fill_res.status_code, fill_res.text)
+        self.assertTrue(fill_res.json().get("card_updated"))
+        self.db.refresh(char)
+        self.assertEqual("保留已有描述", char.description)
+        self.assertEqual("新性格", char.personality)
+        self.assertEqual(["新标签"], json.loads(char.tags))
+        self.assertEqual("旧世界", json.loads(char.extensions)["character_book"]["entries"][0]["content"])
+
+        # 测试保留原设定但单独同步内嵌世界书与指定默认开场
+        p3 = service.preview_package(package(card=raw))
+        sync_res = self.client.post(
+            f"/characters/charx/previews/{p3['token']}/import",
+            json={"character_id": char.id, "portrait_indices": [], "avatar_index": None, "card_mode": "keep", "sync_lorebook": True, "greeting_index": 0},
+        )
+        self.assertEqual(200, sync_res.status_code, sync_res.text)
+        self.db.refresh(char)
+        self.assertEqual("保留已有描述", char.description)
+        self.assertEqual("开场二", char.first_mes)
+        self.assertEqual("新世界设定", json.loads(char.extensions)["character_book"]["entries"][0]["content"])
+
+        # 测试 replace 替换设定
+        p4 = service.preview_package(package(card=raw))
+        rep_res = self.client.post(
+            f"/characters/charx/previews/{p4['token']}/import",
+            json={"character_id": char.id, "portrait_indices": [], "avatar_index": None, "card_mode": "replace"},
+        )
+        self.assertEqual(200, rep_res.status_code, rep_res.text)
+        self.db.refresh(char)
+        self.assertEqual("新设定描述", char.description)
