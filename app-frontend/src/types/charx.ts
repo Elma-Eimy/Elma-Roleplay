@@ -7,6 +7,8 @@ export interface CharxAsset {
   uri: string;
   ext: string;
   sha256: string;
+  referenced?: boolean;
+  animated?: boolean;
 }
 
 export interface CharxPreview {
@@ -21,13 +23,18 @@ export interface CharxPreview {
   skipped_assets: { name: string; reason: string }[];
 }
 
+export type CharxCardMode = "keep" | "replace" | "fill";
+
 export interface CharxImportRequest {
-  operation: "create_character" | "append_assets";
+  operation: "create_character" | "append_assets" | "update_character";
   skip_duplicates: boolean;
   character_id: number | null;
   name: string | null;
   portrait_indices: number[];
   avatar_index: number | null;
+  greeting_index?: number | null;
+  card_mode?: CharxCardMode;
+  sync_lorebook?: boolean;
 }
 
 export interface CharxImportResult {
@@ -35,6 +42,8 @@ export interface CharxImportResult {
   created: boolean;
   portraits_added: number;
   duplicates_skipped: number;
+  operation?: "create_character" | "append_assets" | "update_character";
+  card_updated?: boolean;
 }
 
 export interface CharxStatus {

@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import MarkdownIt from "markdown-it";
+import { formatCardInlineMedia } from "@/utils/characterCard";
 const props = withDefaults(
   defineProps<{ content?: string; source?: boolean; emptyText?: string }>(),
   { content: "", source: false, emptyText: "尚未填写" },
@@ -52,7 +53,7 @@ md.renderer.rules.image = (tokens, index) =>
   md.utils.escapeHtml(tokens[index].content || "[图片]");
 const rendered = computed(() =>
   md
-    .render(pageText.value)
+    .render(formatCardInlineMedia(pageText.value))
     .replace(/<p>/g, '<p style="margin:0 0 10px;">')
     .replace(
       /<pre>/g,

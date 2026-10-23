@@ -249,6 +249,7 @@ import {
   getCardMetadata,
   getEmbeddedEntries,
   mergeCharacterCard,
+  applyGreetingSelection,
 } from "@/utils/characterCard";
 import type { CardImportMode } from "@/utils/characterCard";
 import AvatarImage from "@/components/common/AvatarImage.vue";
@@ -357,7 +358,7 @@ const confirm = () => {
       "apply",
       mergeCharacterCard(
         props.current || { name: "", description: "" },
-        card.value,
+        applyGreetingSelection(card.value, greetingIndex.value),
         mode.value,
       ),
     );

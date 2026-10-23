@@ -624,7 +624,8 @@ const quickUpdateFromCard = () => { isImportOpen.value = true; };
 const onCharxImported = async (id: number, result: CharxImportResult) => {
   await Promise.all([personaStore.loadCharacters(), loadCharacterData(id)]);
   portraitLibraryRevision.value = String(Date.now());
-  uni.showToast({ title: `新增 ${result.portraits_added} 张，跳过重复 ${result.duplicates_skipped ?? 0} 张`, icon: "none" });
+  const prefix = result.card_updated ? "角色设定已同步，" : "";
+  uni.showToast({ title: `${prefix}新增 ${result.portraits_added} 张，跳过重复 ${result.duplicates_skipped ?? 0} 张`, icon: "none" });
 };
 const applyImportedCard = async (data: CharacterBase) => {
   if (characterId.value === null || isImportSaving.value) return;

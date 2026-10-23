@@ -230,5 +230,133 @@ test("validation errors unlock corrections only after checking the receipt", asy
   await state.choose(); await state.save();
   assert.equal(state.recoveryNeeded.value, false);
   assert.match(state.error.value, /duplicate name/);
+
+  const offsets = [];
+  const manyAssets = Array.from({ length: 14 }, (_, index) => ({
+    index,
+    name: index === 1 ? "角色.happy.png" : `img_${index}`,
+    type: index === 0 ? "icon" : index < 12 ? "emotion" : "background",
+    uri: `embeded://assets/${index}.png`,
+    referenced: index === 1,
+  }));
+  const cachedState = fixture({
+    previewCharx: async () => ({ ...preview("cache-token"), assets: manyAssets }),
+    getCharxImages: async (_, offset) => {
+      offsets.push(offset);
+      return {
+        images: manyAssets.slice(offset, offset + 12).map(a => ({ index: a.index, thumbnail: `thumb_${a.index}` })),
+        has_more: offset + 12 < manyAssets.length,
+      };
+    },
+  });
+  await cachedState.choose();
+  assert.deepEqual(offsets, [0]);
+  await cachedState.loadPage(1);
+  assert.deepEqual(offsets, [0, 12]);
+  assert.equal(cachedState.thumbnails.value[0], "thumb_0");
+  assert.equal(cachedState.thumbnails.value[13], "thumb_13");
+  await cachedState.loadPage(0);
+  assert.deepEqual(offsets, [0, 12]);
+
+  cachedState.assetType.value = "referenced";
+  await flush();
+  assert.deepEqual([...cachedState.filteredAssets.value.map(a => a.index)], [1]);
+  cachedState.selectFiltered();
+  assert.deepEqual([...cachedState.selected.value], [1]);
+
+  cachedState.assetType.value = "background";
+  await flush();
+  cachedState.selectFiltered();
+  assert.deepEqual([...cachedState.selected.value], [1, 12, 13]);
+  cachedState.deselectFiltered();
+  assert.deepEqual([...cachedState.selected.value], [1]);
+  cachedState.scope.stop();
+
+  const existing = fixture({
+    previewCharx: async () => ({
+      ...preview("update-token"),
+      card: { name: "包中角色", description: "新设定", extensions: { character_book: { entries: [{ content: "lore" }] } } },
+    }),
+  }, 9);
+  await existing.choose();
+  assert.equal(existing.hasEmbeddedLorebook.value, true);
+  existing.cardMode.value = "fill";
+  existing.syncLorebook.value = true;
+  existing.greetingIndex.value = 1;
+  await existing.save();
+  assert.deepEqual(JSON.parse(JSON.stringify(existing.saves[0][1])), {
+    operation: "update_character",
+    skip_duplicates: true,
+    character_id: 9,
+    name: null,
+    portrait_indices: [],
+    avatar_index: null,
+    greeting_index: 1,
+    card_mode: "fill",
+    sync_lorebook: true,
+  });
+  existing.scope.stop();
+  state.scope.stop();
+});
+
+
+test("unchecked lorebook switch is explicit when replacing a card", async () => {
+  const state = fixture({}, 9);
+  await state.choose();
+  state.cardMode.value = "replace";
+  await state.save();
+  assert.equal(state.saves[0][1].sync_lorebook, false);
+  state.scope.stop();
+});
+
+test("a changed query during pagination discards the old page and loads the current filter", async () => {
+  const pending = deferred();
+  const assets = Array.from({length: 25}, (_, index) => ({index, name: `image${index}`, type: "icon", uri: `embeded://${index}.png`}));
+  let reads = 0;
+  const state = fixture({
+    previewCharx: async () => ({...preview("filter-race"), assets}),
+    getCharxImages: async (_, offset) => {
+      reads++;
+      if (reads === 2) return pending.promise;
+      return {images: assets.slice(offset, offset + 12).map(a => ({index: a.index, thumbnail: `thumb${a.index}`})), has_more: true};
+    },
+  });
+  await state.choose();
+  const loading = state.loadPage(1);
+  state.assetQuery.value = "image24";
+  await flush();
+  pending.resolve({images: [{index:12, thumbnail:"stale"}], has_more:true});
+  await loading;
+  await flush();
+  assert.equal(state.page.value, 0);
+  assert.equal(state.thumbnails.value[24], "thumb24");
+  assert.equal(state.thumbnails.value[12], undefined);
+  state.scope.stop();
+});
+
+
+test("initial upload remains busy until a changed filter finishes loading", async () => {
+  const first = deferred(), latest = deferred();
+  const assets = Array.from({length:25}, (_, index) => ({index,name:`image${index}`,type:"icon"}));
+  let reads = 0, done = false;
+  const state = fixture({
+    previewCharx: async () => ({...preview("initial-filter"),assets}),
+    getCharxImages: () => ++reads === 1 ? first.promise : latest.promise,
+  });
+  const choosing = state.choose().then(() => { done = true; });
+  await flush();
+  state.assetQuery.value = "image24";
+  await flush();
+  first.resolve({images:[{index:0,thumbnail:"old"}],has_more:true});
+  await flush();
+  assert.equal(reads,2);
+  assert.equal(state.busy.value,true);
+  assert.equal(done,false);
+  await state.save();
+  assert.equal(state.saves.length,0);
+  latest.resolve({images:[{index:24,thumbnail:"latest"}],has_more:false});
+  await choosing;
+  assert.equal(state.busy.value,false);
+  assert.equal(state.thumbnails.value[24],"latest");
   state.scope.stop();
 });

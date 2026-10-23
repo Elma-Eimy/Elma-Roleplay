@@ -140,6 +140,16 @@ test("parse errors show server guidance and cannot be applied as a card", async 
   assert.equal(state.error.value, "PNG 中未找到角色数据");
   assert.equal(state.card.value, null);
   assert.match(cardImportError(new Error("request:fail timeout")), /连接/);
+  const { formatCardInlineMedia, applyGreetingSelection, plainCardText } = load("utils/characterCard.ts");
+  const normalized = formatCardInlineMedia('你好<img="happy"> <img src="embedded://assets/smile.png"> {{img::wave}} ![立绘](embeded://assets/bg.webp)');
+  assert.equal(normalized, "你好[立绘：happy] [立绘：smile.png] [立绘：wave] [立绘：立绘]");
+  assert.match(plainCardText('开场<img="happy">正文'), /\[立绘：happy\]/);
+  const swapped = applyGreetingSelection(
+    { name: "Role", description: "", first_mes: "A", extensions: { alternate_greetings: ["B", "C"] } },
+    1,
+  );
+  assert.equal(swapped.first_mes, "C");
+  assert.deepEqual(plain(swapped.extensions.alternate_greetings), ["B", "A"]);
 });
 
 for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
