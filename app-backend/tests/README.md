@@ -23,6 +23,8 @@ Windows 未激活虚拟环境时，可将命令中的 `python` 替换为 `.\venv
 
 测试使用内存/临时数据库以及模型和向量服务替身。新增自动测试时也应遵循这一约定，不调用真实服务。
 
+CHARX 专项：`python -m tests --group parsing --pattern test_charx_import.py` 覆盖非法 JSON、ZIP/图片预算、GIF/APNG/WebP 多帧原字节保留与帧数限制、设定合并/开场选择/独立世界书同步、事务回滚、幂等回执和共享图片回收。上传鉴权/流量限制及迁移分别见 `infrastructure/test_charx_upload.py`、`infrastructure/test_charx_migration.py`。
+
 ## 目录
 
 | 目录 | 范围 |
