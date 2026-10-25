@@ -66,6 +66,10 @@ python -m tests.manual.manual_lorebook
 
 `memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
 
+`memory/test_event_retention.py` 使用 `tests/fixtures/event_retention_cases.json` 回放八批赠书和四批修表，检查十二项已提取事实线索、三批/容量快照后的事件身份、重启及关闭边界。每批只提供新增片段，最后一批省略旧事实，以“只留最后摘要”为失败对照；输出的保留率不代表真实模型首次提取质量。`infrastructure/test_event_checkpoint_migration.py` 检查阶段外键、旧库升级、回退保留正文和身份删除行为。
+
+`memory/test_memory_write_admission.py` 检查高权重长反应归入事件、图谱下标和消息范围、持续状态及承诺保护、无效/歧义关联、超长保留、相容补全的旧条件与联合来源，以及明确取消不携带旧约定。候选门槛外的有限最近邻回归见 `test_memory_card_extraction.py`；测试均使用替身，不调用真实服务。
+
 `memory/test_graph_memory_consistency.py` 覆盖图谱消息与记忆证据、追加版本、分叉隔离、原数组下标关联、`same/replace`、人工修改/删除、整理后证据保留及原子回滚；`infrastructure/test_graph_evidence_migration.py` 验证旧库升降级保留原行且不猜测来源。优先使用隔离入口，不直接运行会写当前库的 `manual/manual_graph_rag.py`。
 
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
