@@ -409,7 +409,7 @@ const forceMemoryExtract = async () => {
     uni.showLoading({ title: "正在提取记忆元..." });
     const res = await triggerSummary(props.sessionId);
     uni.hideLoading();
-    uni.showToast({ title: res.message || "记忆提取完成", icon: "success" });
+    uni.showToast({ title: res.message || "记忆提取完成", icon: res.status === "completed" ? "success" : "none" });
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: "记忆提取失败", icon: "none" });
