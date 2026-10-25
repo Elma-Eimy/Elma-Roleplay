@@ -133,13 +133,13 @@ def review_group(session_id, batch_id, group_id, request, db):
         raise
 
 
-def validate_groups(raw, sources):
+def validate_groups(raw, sources, max_groups=12):
     if not isinstance(raw, dict):
         raise ConsolidationModelError("整理模型返回结构错误，应为包含 groups 数组的对象", "invalid_root")
     if not isinstance(raw.get("groups"), list):
         raise ConsolidationModelError("整理模型的 groups 字段缺失或不是数组", "invalid_groups_type")
-    if len(raw["groups"]) > 12:
-        raise ConsolidationModelError("整理模型返回超过 12 组建议，请重新预览", "too_many_groups")
+    if len(raw["groups"]) > max_groups:
+        raise ConsolidationModelError(f"整理模型返回超过 {max_groups} 组建议，请重新预览", "too_many_groups")
     by_id = {source["id"]: source for source in sources}
     used, groups = set(), []
     for index, group in enumerate(raw["groups"]):
@@ -174,8 +174,8 @@ def validate_groups(raw, sources):
     return groups
 
 
-def _generate_groups(system, sources):
-    request_id = uuid.uuid4().hex[:12]
+def _generate_groups(system, sources, *, max_groups=12, request_id=None):
+    request_id = request_id or uuid.uuid4().hex[:12]
     source_json = json.dumps(sources, ensure_ascii=False)
     source_chars = sum(len(source["content"]) for source in sources)
     retryable = {"invalid_json", "invalid_root", "invalid_groups_type", "too_many_groups",
@@ -185,7 +185,8 @@ def _generate_groups(system, sources):
         started = time.monotonic()
         metadata = {"request_id": request_id, "attempt": attempt, "model": settings.LLM_MEMORY_MODEL,
                     "source_count": len(sources), "source_chars": source_chars,
-                    "input_json_chars": len(source_json)}
+                    "input_json_chars": len(source_json), "group_limit": max_groups,
+                    "source_types": sorted({source["memory_type"] for source in sources})}
         logger.info("[MEMORY CONSOLIDATION] start %s", json.dumps(metadata, ensure_ascii=False))
         try:
             response = get_llm_provider().generate(
@@ -228,7 +229,7 @@ def _generate_groups(system, sources):
             returned = raw.get("groups") if isinstance(raw, dict) else None
             metadata["groups_type"] = type(returned).__name__
             metadata["returned_group_count"] = len(returned) if isinstance(returned, list) else None
-            groups = filter_safe_groups(validate_groups(raw, sources), sources)
+            groups = filter_safe_groups(validate_groups(raw, sources, max_groups), sources)
             metadata.update(accepted_group_count=len(groups),
                             elapsed_ms=round((time.monotonic() - started) * 1000))
             logger.info("[MEMORY CONSOLIDATION] completed %s", json.dumps(metadata, ensure_ascii=False))
@@ -250,7 +251,7 @@ def _generate_groups(system, sources):
                 raise
             correction = (f"\n上一轮返回未通过格式校验或来源类型校验（{exc.reason}）。重新检查相同输入，仅返回一个 JSON 对象，"
                           'groups 字段必须是数组；没有建议时返回 {"groups":[]}。'
-                          "最多返回12组，若候选更多只选择最有把握的12组；每组2到12张来源，来源不得重复。"
+                          f"本次最多返回{max_groups}组，若候选更多只选择最有把握的{max_groups}组；每组2到12张来源，来源不得重复。"
                           "逐组按 source_ids 回查输入的 memory_type；每组必须同一类型，event 组只能包含 event 卡。"
                           "其他类型仅在表达同一命题且可无损互换时使用 duplicate；无法满足时跳过，不能只改 kind 凑合法。")
         except Exception as exc:
@@ -258,6 +259,33 @@ def _generate_groups(system, sources):
             logger.warning("[MEMORY CONSOLIDATION] failed %s", json.dumps(metadata, ensure_ascii=False))
             raise ConsolidationModelError("整理模型响应处理失败，原记忆未改变，请重试",
                                           "response_processing_failed") from exc
+
+
+def _generate_typed_groups(system, sources):
+    """按类型隔离模型输入，共享整批 12 组预算，不共享其他类型的来源 ID。"""
+    partitions = {}
+    for source in sources:
+        partitions.setdefault(source["memory_type"], []).append(source)
+    request_id = uuid.uuid4().hex[:12]
+    logger.info("[MEMORY CONSOLIDATION] batch %s", json.dumps({
+        "request_id": request_id, "source_count": len(sources),
+        "source_type_counts": {kind: len(cards) for kind, cards in partitions.items()},
+    }, ensure_ascii=False))
+    groups = []
+    items = list(partitions.items())
+    for index, (memory_type, cards) in enumerate(items):
+        # 为后续可归并的类型各留一组，未使用的预算继续交给下一类。
+        reserved = sum(len(later) >= 2 for _, later in items[index + 1:])
+        limit = min(len(cards) // 2, 12 - len(groups) - reserved)
+        instruction = (f"\n本次输入仅包含 memory_type={memory_type} 的原卡，最多返回{limit}组。"
+                       "source_ids 只能引用本次输入中出现的真实 id，不能使用卡片序号或猜测其他来源。")
+        if memory_type != "event":
+            instruction += "本次只允许 duplicate 去重，禁止 event 事件归并；相关但互补的内容须各自保留。"
+        if limit == 0:
+            instruction += '本类型不足两张卡，不能归并；只返回 {"groups":[]}。'
+        groups.extend(_generate_groups(system + instruction, cards, max_groups=limit, request_id=request_id))
+    # 各类型独立校验成功后再统一编号，后续事务仍一次保存整批来源和建议。
+    return [{**group, "id": index} for index, group in enumerate(groups)]
 
 
 def preview(session_id, after_id, db, mode="full"):
@@ -286,7 +314,7 @@ duplicate 要求各卡表达同一个命题、可以相互替代；互补信息�
 合并正文须独立可理解，4到500字符；理由1到160字符。信息不足或不能无损归并时跳过。
 仅返回 JSON：{"groups":[{"kind":"duplicate|event","source_ids":[1,2],"content":"合并正文","reason":"为什么可以整理"}]}。
 没有可整理项时返回 {"groups":[]}。"""
-        groups = _generate_groups(system, sources)
+        groups = _generate_typed_groups(system, sources)
     # 模型调用结束后再开启写事务，扫描记录与预览原子保存。
     payload = {"sources": sources, "groups": groups, "scanned_count": len(sources),
                "remaining_count": remaining, "has_more": remaining > len(sources),

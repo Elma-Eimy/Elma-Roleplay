@@ -211,8 +211,9 @@ class MemoryConsolidationTests(unittest.TestCase):
                 provider.generate.side_effect = [self.model_response(json.dumps(invalid)),
                                                   self.model_response(json.dumps(self.payload()))]
                 with self.assertLogs(service.logger, level="INFO") as logs:
-                    batch = service.preview(self.session.id, 0, self.db)
-                self.assertEqual([self.one.id, self.two.id], batch["groups"][0]["source_ids"])
+                    groups = service._generate_groups("测试类型纠正", [service.snapshot(row) for row in
+                                                       (self.one, self.two, third)])
+                self.assertEqual([self.one.id, self.two.id], groups[0]["source_ids"])
                 self.assertIn('"reason": "' + code + '"', "\n".join(logs.output))
                 self.assertIn('"group_source_type_counts": {"event": 1, "fact": 1}', "\n".join(logs.output))
                 calls = provider.generate.call_args_list
@@ -224,6 +225,7 @@ class MemoryConsolidationTests(unittest.TestCase):
 
     def test_repeated_source_type_failure_does_not_save_or_advance_scan(self):
         self.one.memory_type = MemoryType.emotion
+        self.two.memory_type = MemoryType.emotion
         self.db.commit()
         with patch.object(service, "get_llm_provider") as factory:
             factory.return_value.generate.return_value = self.model_response(json.dumps(self.payload()))
@@ -235,6 +237,129 @@ class MemoryConsolidationTests(unittest.TestCase):
         self.assertEqual(0, self.db.query(MemoryConsolidation).count())
         self.assertEqual(0, self.db.query(MemoryConsolidationScan).count())
         self.assertEqual(2, service.scan_status(self.persona.id, self.db)["pending_count"])
+
+    def test_mixed_types_are_sent_separately_and_combined_with_unique_group_ids(self):
+        for kind in (MemoryType.fact, MemoryType.relationship, MemoryType.emotion):
+            for _ in range(2):
+                row = self.memory(f"相同的{kind.value}记忆内容。")
+                row.memory_type = kind
+        self.db.commit()
+        calls = []
+        def generate(**kwargs):
+            cards = json.loads(kwargs["messages"][1]["content"])
+            kinds = {card["memory_type"] for card in cards}
+            self.assertEqual(1, len(kinds))
+            calls.append(cards)
+            kind = cards[0]["memory_type"]
+            if kind == "event":
+                payload = self.payload()
+            else:
+                self.assertIn("本次只允许 duplicate 去重，禁止 event", kwargs["messages"][0]["content"])
+                payload = {"groups": [{"kind": "duplicate", "source_ids": [c["id"] for c in cards],
+                                       "content": cards[0]["content"], "reason": "同一命题的重复表达"}]}
+            return self.model_response(json.dumps(payload, ensure_ascii=False))
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.side_effect = generate
+            with self.assertLogs(service.logger, level="INFO") as logs:
+                batch = service.preview(self.session.id, 0, self.db, "incremental")
+        self.assertEqual(4, len(calls))
+        self.assertEqual([0, 1, 2, 3], [group["id"] for group in batch["groups"]])
+        self.assertEqual(8, batch["scanned_count"])
+        self.assertEqual(8, batch["recorded_count"])
+        self.assertEqual(0, batch["scan_status"]["pending_count"])
+        self.assertEqual(8, self.db.query(MemoryChunk).count())
+        ids = [card["id"] for cards in calls for card in cards]
+        self.assertEqual(8, len(set(ids)))
+        records = [json.loads(line.split("start ", 1)[1]) for line in logs.output if "start " in line]
+        self.assertEqual(1, len({record["request_id"] for record in records}))
+
+    def test_cross_type_ids_are_rejected_even_when_they_exist_in_the_full_batch(self):
+        facts = [self.memory("用户喜欢蓝色。") for _ in range(2)]
+        for row in facts:
+            row.memory_type = MemoryType.fact
+        self.db.commit()
+        invalid = self.payload()
+        invalid["groups"][0]["source_ids"] = [self.one.id, facts[0].id]
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.return_value = self.model_response(json.dumps(invalid))
+            with self.assertLogs(service.logger, level="WARNING"):
+                with self.assertRaises(service.ConsolidationModelError) as raised:
+                    service.preview(self.session.id, 0, self.db, "incremental")
+            self.assertEqual("unknown_source_id", raised.exception.reason)
+            sent = json.loads(factory.return_value.generate.call_args.kwargs["messages"][1]["content"])
+            self.assertEqual({self.one.id, self.two.id}, {card["id"] for card in sent})
+        self.assertEqual(0, self.db.query(MemoryConsolidation).count())
+        self.assertEqual(0, self.db.query(MemoryConsolidationScan).count())
+
+    def test_later_type_failure_does_not_persist_earlier_successful_type(self):
+        facts = [self.memory("用户喜欢蓝色。") for _ in range(2)]
+        for row in facts:
+            row.memory_type = MemoryType.fact
+        self.db.commit()
+        invalid = {"groups": [{"kind": "event", "source_ids": [row.id for row in facts],
+                               "content": "用户喜欢蓝色。", "reason": "错误的事件归并"}]}
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.side_effect = [self.model_response(json.dumps(self.payload())),
+                self.model_response(json.dumps(invalid)), self.model_response(json.dumps(invalid))]
+            with self.assertLogs(service.logger, level="WARNING"):
+                with self.assertRaises(service.ConsolidationModelError) as raised:
+                    service.preview(self.session.id, 0, self.db, "incremental")
+            self.assertEqual("non_event_source", raised.exception.reason)
+            self.assertEqual(3, factory.return_value.generate.call_count)
+        self.assertEqual(0, self.db.query(MemoryConsolidation).count())
+        self.assertEqual(0, self.db.query(MemoryConsolidationScan).count())
+        self.assertEqual(4, self.db.query(MemoryChunk).count())
+
+    def test_singletons_in_mixed_batch_get_zero_group_budget(self):
+        self.one.memory_type = MemoryType.fact
+        self.db.commit()
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.return_value = self.model_response('{"groups":[]}')
+            batch = service.preview(self.session.id, 0, self.db, "incremental")
+            self.assertEqual(2, factory.return_value.generate.call_count)
+            for call in factory.return_value.generate.call_args_list:
+                self.assertEqual(1, len(json.loads(call.kwargs["messages"][1]["content"])))
+                self.assertIn("最多返回0组", call.kwargs["messages"][0]["content"])
+        self.assertEqual([], batch["groups"])
+        self.assertEqual(2, batch["recorded_count"])
+        self.assertTrue(batch["model_checked"])
+
+    def test_type_calls_share_twelve_group_budget_and_reserve_later_types(self):
+        for index in range(22):
+            self.memory(f"第 {index // 2} 次在山顶相遇。")
+        for kind in (MemoryType.fact, MemoryType.emotion, MemoryType.relationship):
+            for _ in range(2):
+                row = self.memory(f"重复的{kind.value}记忆内容。")
+                row.memory_type = kind
+        self.db.commit()
+        event_attempts = 0
+        def generate(**kwargs):
+            nonlocal event_attempts
+            cards = json.loads(kwargs["messages"][1]["content"])
+            if cards[0]["memory_type"] == "event":
+                event_attempts += 1
+                self.assertIn("最多返回9组", kwargs["messages"][0]["content"])
+                groups = self.payload()["groups"]
+                groups += [{"kind": "duplicate", "source_ids": [cards[i]["id"], cards[i + 1]["id"]],
+                            "content": cards[i]["content"], "reason": "同一命题重复"} for i in range(2, 18, 2)]
+                if event_attempts == 1:
+                    groups.append({"kind": "duplicate", "source_ids": [cards[18]["id"], cards[19]["id"]],
+                                   "content": cards[18]["content"], "reason": "同一命题重复"})
+            else:
+                self.assertIn("最多返回1组", kwargs["messages"][0]["content"])
+                groups = [{"kind": "duplicate", "source_ids": [card["id"] for card in cards],
+                           "content": cards[0]["content"], "reason": "同一命题重复"}]
+            return self.model_response(json.dumps({"groups": groups}, ensure_ascii=False))
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.side_effect = generate
+            with self.assertLogs(service.logger, level="WARNING") as logs:
+                batch = service.preview(self.session.id, 0, self.db)
+            self.assertEqual(5, factory.return_value.generate.call_count)
+        self.assertEqual(12, len(batch["groups"]))
+        self.assertEqual(list(range(12)), [group["id"] for group in batch["groups"]])
+        self.assertEqual(30, batch["recorded_count"])
+        self.assertIn('"group_limit": 9', "\n".join(logs.output))
+        self.assertIn('"reason": "too_many_groups"', "\n".join(logs.output))
 
     def test_incremental_includes_modified_old_cards_and_new_cards_only(self):
         self.preview({"groups": []})
