@@ -15,7 +15,9 @@ from services.memory.session_memory_service import _get_persona
 from services.memory.memory_visibility import memory_view, memory_source_bound
 from services.memory.memory_manager import add_memory_chunk
 from services.memory.memory_facts import fact_sources_current
-from services.memory.memory_consolidation_guard import filter_safe_groups, has_source_conflict
+from services.memory.memory_consolidation_guard import (
+    build_consolidation_hints, filter_safe_groups, has_source_conflict, resolve_group_temporal,
+)
 from services.memory import memory_consolidation_scan as scan
 
 
@@ -283,6 +285,13 @@ def _generate_typed_groups(system, sources):
             instruction += "本次只允许 duplicate 去重，禁止 event 事件归并；相关但互补的内容须各自保留。"
         if limit == 0:
             instruction += '本类型不足两张卡，不能归并；只返回 {"groups":[]}。'
+        else:
+            hints = build_consolidation_hints(memory_type, cards, max_groups=limit)
+            if hints:
+                instruction += (
+                    f"高相关候选配对线索（仅供参考，仍须严格核对主体、时间、否定与因果，不符则跳过）："
+                    f"{json.dumps(hints, ensure_ascii=False)}。"
+                )
         groups.extend(_generate_groups(system + instruction, cards, max_groups=limit, request_id=request_id))
     # 各类型独立校验成功后再统一编号，后续事务仍一次保存整批来源和建议。
     return [{**group, "id": index} for index, group in enumerate(groups)]
@@ -388,6 +397,14 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
             raise ConsolidationConflict("整理建议存在不同日期或肯定/否定边界冲突，请重新预览")
         for group in groups:
             inputs = [originals[i] for i in group["source_ids"]]
+            resolved_status, resolved_note = resolve_group_temporal([snapshot(row) for row in inputs])
+            merged_evidence = None
+            if all(row.source_evidence_json for row in inputs):
+                by_mid = {}
+                for row in inputs:
+                    for item in json.loads(row.source_evidence_json):
+                        by_mid[item["id"]] = item
+                merged_evidence = [by_mid[mid] for mid in sorted(by_mid)]
             chunk = add_memory_chunk(
                 persona_id=persona.id, character_id=persona.character_id,
                 content=group["content"], memory_type=MemoryType(inputs[0].memory_type),
@@ -398,7 +415,8 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
                 source_start_message_id=min((row.source_start_message_id or row.source_message_id for row in inputs
                                              if row.source_start_message_id or row.source_message_id), default=None),
                 db=db, auto_commit=False,
-                temporal_status=inputs[0].temporal_status, temporal_note=inputs[0].temporal_note,
+                temporal_status=resolved_status, temporal_note=resolved_note,
+                source_evidence=merged_evidence,
             )
             chunk.consolidation_id = batch.id
             for source_id in group["source_ids"]:

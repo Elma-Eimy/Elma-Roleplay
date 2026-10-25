@@ -130,31 +130,48 @@ def load_graph_view(persona_id, db, before_message_id=None):
 
 class GraphEvidenceWriter:
     def __init__(self, persona_id, sources, bindings, db):
+        self.persona_id = persona_id
+        self.db = db
         self.sources = {item["id"]: item for item in sources or []}
         self.bindings = bindings or {}
         self.memories = _supporting_memories(persona_id, {
             item["memory_id"] for item in self.bindings.values()}, db) if self.bindings else {}
-        self.valid = sources_are_current(persona_id, sources, db)
+        self.valid = bool(self.sources)
 
     def evidence_for(self, item):
         if not self.valid or not self.bindings:
+            return None
+        if item.get("_pending_indices"):
             return None
         indices = item.get("memory_indices", sorted(self.bindings))
         if (not isinstance(indices, list) or not indices or
                 any(type(index) is not int or index not in self.bindings for index in indices)):
             return None
-        selected = [self.bindings[index] for index in sorted(set(indices))]
+        extra_bindings = item.get("_extra_bindings") or []
+        if not isinstance(extra_bindings, list):
+            return None
+        missing_ids = {
+            b["memory_id"] for b in extra_bindings
+            if isinstance(b, dict) and type(b.get("memory_id")) is int and b["memory_id"] not in self.memories
+        }
+        if missing_ids:
+            self.memories.update(_supporting_memories(self.persona_id, missing_ids, self.db))
+        selected = [self.bindings[index] for index in sorted(set(indices))] + list(extra_bindings)
         messages, memories = {}, {}
         for binding in selected:
-            memory = self.memories.get(binding["memory_id"])
-            if memory is None or content_fingerprint(memory.content) != binding["hash"]:
+            if not isinstance(binding, dict) or type(binding.get("memory_id")) is not int:
                 return None
-            start, end = binding["source_start"], binding["source_end"]
+            memory = self.memories.get(binding["memory_id"])
+            if memory is None or content_fingerprint(memory.content) != binding.get("hash"):
+                return None
+            start, end = binding.get("source_start"), binding.get("source_end")
             if start not in self.sources or end not in self.sources or start > end:
                 return None
             messages.update({mid: source for mid, source in self.sources.items() if start <= mid <= end})
             memories[memory.id] = {"id": memory.id, "hash": binding["hash"]}
         ids = sorted(messages)
+        if not sources_are_current(self.persona_id, list(messages.values()), self.db):
+            return None
         data = {"version": 1, "messages": [messages[mid] for mid in ids],
                 "memories": [memories[mid] for mid in sorted(memories)]}
         return {"source_start_message_id": ids[0], "source_message_id_bound": ids[-1],

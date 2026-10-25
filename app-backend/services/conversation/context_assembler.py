@@ -21,6 +21,8 @@ from services.memory.memory_extraction_service import get_memory_handoff_history
 from services.conversation.prompt_compiler import build_chat_messages
 from services.conversation.role_state_service import resolve_state
 from services.memory.joint_retrieval import retrieve_joint_memories
+from services.memory.memory_event_buffer import load_event_snapshot, event_context
+from services.memory.memory_extraction_jobs import pending_context
 from services.conversation.retrieval_query_service import build_contextual_retrieval_query
 from services.conversation.prompt_token_estimator import (
     estimate_prompt_tokens,
@@ -141,6 +143,8 @@ async def assemble_prompt_context(
         parent_history=parent_history,
         user_nickname=user_nickname,
         current_role_state=resolve_state(session_id, db, before_id=user_msg.id + 1)[0]["state"],
+        ongoing_events=event_context(load_event_snapshot(persona.id, db, before_message_id=user_msg.id)),
+        pending_memories=pending_context(persona.id, db, user_msg.id),
     )
 
     # Observation only: never rewrite or trim the model payload here.

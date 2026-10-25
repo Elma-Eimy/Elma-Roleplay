@@ -204,7 +204,7 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
                 return response
             provider.generate.side_effect = respond
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
-             patch.object(extraction, "retrieve_memories", return_value=candidates or []), \
+             patch.object(extraction, "retrieve_write_candidates", return_value=candidates or []), \
              patch.object(extraction.cognition_service, "update_cognition_state"):
             return extraction.summarize_and_store_memory(self.session_id, self.db)
 
@@ -244,14 +244,16 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
         self.db.refresh(self.persona)
         self.assertIsNone(self.persona.last_summarized_msg_id)
 
-    def test_graph_failure_rolls_back_memories_outbox_and_progress(self):
+    def test_graph_failure_rolls_back_only_dependent_component(self):
         from core.models import OutboxJob
         with patch.object(extraction, "upsert_graph_data", side_effect=RuntimeError("fixture graph write failed")):
-            self.assertEqual(0, self.run_extraction(self.payload()))
-        self.assertEqual(0, self.db.query(MemoryChunk).count())
-        self.assertEqual(0, self.db.query(OutboxJob).count())
+            self.assertEqual(1, self.run_extraction(self.payload()))
+        self.assertEqual(1, self.db.query(MemoryChunk).count())
+        self.assertEqual(1, self.db.query(OutboxJob).count())
         self.db.refresh(self.persona)
-        self.assertIsNone(self.persona.last_summarized_msg_id)
+        self.assertEqual(self.messages[-1].id, self.persona.last_summarized_msg_id)
+        from core.models import MemoryExtractionJob
+        self.assertEqual(1, self.db.query(MemoryExtractionJob).filter_by(status="retrying").count())
 
     def next_payload(self, name="Doubao"):
         message = ChatMessage(session_id=self.session_id, role=MessageRole.assistant,
@@ -271,7 +273,7 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
         old = self.db.query(MemoryChunk).filter(MemoryChunk.content.contains("Doubao")).one()
         payload = self.next_payload()
         with patch.object(extraction, "resolve_memory_relationship_via_llm", return_value={"relation":"same", "resolved_content":old.content}):
-            self.assertEqual(1, self.run_extraction(payload, candidates=[{"id":old.id,"content":old.content,"distance":0.0}]))
+            self.assertEqual(0, self.run_extraction(payload, candidates=[{"id":old.id,"content":old.content,"distance":0.0}]))
         self.assertEqual(2, self.db.query(MemoryChunk).count())
         evidence = json.loads(self.db.query(GraphRelation).order_by(GraphRelation.id.desc()).first().evidence_json)
         self.assertEqual([old.id], [item["id"] for item in evidence["memories"]])
@@ -315,7 +317,7 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
         self.assertEqual(2, self.db.query(MemoryChunk).count())
         self.assertEqual(1, self.db.query(GraphRelation).count())
         self.db.refresh(self.persona)
-        self.assertEqual(old_pointer, self.persona.last_summarized_msg_id)
+        self.assertEqual(payload["memories"][0]["source_end_message_id"], self.persona.last_summarized_msg_id)
 
     def test_replace_creates_new_graph_support_and_hides_old_target(self):
         self.run_extraction(self.payload())
@@ -342,7 +344,7 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
         self.assertEqual(2, self.db.query(MemoryChunk).count())
         self.assertEqual(1, self.db.query(GraphRelation).count())
         self.db.refresh(self.persona)
-        self.assertEqual(old_pointer, self.persona.last_summarized_msg_id)
+        self.assertEqual(payload["memories"][0]["source_end_message_id"], self.persona.last_summarized_msg_id)
 
     def test_memory_change_during_relationship_decision_cannot_advance_same(self):
         self.run_extraction(self.payload())
@@ -358,4 +360,4 @@ class GraphExtractionIntegrationTests(unittest.TestCase):
             self.assertEqual(0, self.run_extraction(payload, candidates=[{"id":old.id,"content":old_content,"distance":0.0}]))
         self.assertEqual(1, self.db.query(GraphRelation).count())
         self.db.refresh(self.persona)
-        self.assertEqual(old_pointer, self.persona.last_summarized_msg_id)
+        self.assertEqual(payload["memories"][0]["source_end_message_id"], self.persona.last_summarized_msg_id)

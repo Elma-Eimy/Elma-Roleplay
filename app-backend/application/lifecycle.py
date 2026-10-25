@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from application.banner import print_startup_banner
 from core.database import run_migrations
 from services.infrastructure.outbox_worker import run_outbox_worker
+from services.memory.memory_retry_worker import run_memory_retry_worker
 from routers.chat import cancel_all_stream_tasks
 from services.media.charx_import import cleanup_previews
 
@@ -29,10 +30,15 @@ async def lifespan(app: FastAPI):
     app.state.outbox_task = task
     cleanup_task = asyncio.create_task(run_charx_cleanup(), name="charx-cleanup")
     app.state.charx_cleanup_task = cleanup_task
+    memory_task = asyncio.create_task(run_memory_retry_worker(), name="memory-retry")
+    app.state.memory_retry_task = memory_task
     try:
         print_startup_banner()
         yield
     finally:
+        memory_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await memory_task
         cleanup_task.cancel()
         with suppress(asyncio.CancelledError):
             await cleanup_task

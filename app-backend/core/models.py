@@ -9,9 +9,9 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 
 from sqlalchemy import (
     Table, Column, Integer, String, Text, Float, Boolean,
-    ForeignKey, DateTime, Enum as SAEnum, Index
+    ForeignKey, DateTime, Enum as SAEnum, Index, text
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship, backref
 from sqlalchemy.sql import func
 import enum
 
@@ -275,6 +275,42 @@ class SessionPersona(Base):
 #      collection_name = f"persona_{persona_id}"
 #      document_id     = f"mem_{id}"（同步存入 chroma_doc_id 字段）
 # ──────────────────────────────────────────────
+
+class MemoryExtractionJob(Base):
+    """已提取候选及其重试状态，与长期记忆分开持久化。"""
+    __tablename__ = "memory_extraction_jobs"
+    __table_args__ = (Index("uq_memory_job_processing_persona", "persona_id", unique=True,
+                           sqlite_where=text("status = 'processing'")), {"sqlite_autoincrement": True})
+
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False, default="candidates")
+    dedupe_key = Column(String(80), nullable=True, unique=True)
+    status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)
+    payload_json = Column(Text, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    run_after = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    lease_until = Column(DateTime, nullable=True)
+    lease_token = Column(String(40), nullable=True)
+    last_error_code = Column(String(80), nullable=True)
+    written_count = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    persona = relationship("SessionPersona", backref=backref("extraction_jobs", cascade="all, delete-orphan"))
+
+
+class MemoryEventBuffer(Base):
+    """仅属于本故事的进行中事件；来源指纹与图谱候选随摘要保存。"""
+    __tablename__ = "memory_event_buffers"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
+    payload_json = Column(Text, nullable=False)
+    age_batches = Column(Integer, nullable=False, default=1, server_default="1")
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    persona = relationship("SessionPersona", backref=backref("event_buffers", cascade="all, delete-orphan"))
+
 
 class MemoryChunk(Base):
     __tablename__ = "memory_chunks"
