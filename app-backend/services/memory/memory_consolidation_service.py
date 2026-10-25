@@ -1,6 +1,9 @@
 """有界、可审阅、可撤销的记忆整理；模型仅生成建议，SQLite 决定可应用范围。"""
 
 import json
+import logging
+import time
+import uuid
 from sqlalchemy import text
 from core.models import (MemoryChunk, MemoryType, MemoryConsolidation,
                          MemoryConsolidationSource, MemoryConsolidationScope)
@@ -16,12 +19,18 @@ from services.memory.memory_consolidation_guard import filter_safe_groups, has_s
 from services.memory import memory_consolidation_scan as scan
 
 
+logger = logging.getLogger("uvicorn.error.memory_consolidation")
+
+
 class ConsolidationConflict(ValueError):
     pass
 
 
 class ConsolidationModelError(ValueError):
-    pass
+    def __init__(self, message, reason="invalid_group", group_index=None):
+        super().__init__(message)
+        self.reason = reason
+        self.group_index = group_index
 
 
 def snapshot(chunk):
@@ -125,31 +134,119 @@ def review_group(session_id, batch_id, group_id, request, db):
 
 
 def validate_groups(raw, sources):
-    if not isinstance(raw, dict) or not isinstance(raw.get("groups"), list) or len(raw["groups"]) > 12:
-        raise ConsolidationModelError("整理模型返回了无效的分组，请重新预览")
+    if not isinstance(raw, dict):
+        raise ConsolidationModelError("整理模型返回结构错误，应为包含 groups 数组的对象", "invalid_root")
+    if not isinstance(raw.get("groups"), list):
+        raise ConsolidationModelError("整理模型的 groups 字段缺失或不是数组", "invalid_groups_type")
+    if len(raw["groups"]) > 12:
+        raise ConsolidationModelError("整理模型返回超过 12 组建议，请重新预览", "too_many_groups")
     by_id = {source["id"]: source for source in sources}
     used, groups = set(), []
-    for group in raw["groups"]:
+    for index, group in enumerate(raw["groups"]):
         if not isinstance(group, dict):
-            raise ConsolidationModelError("整理建议格式无效")
+            raise ConsolidationModelError("整理建议格式无效", "invalid_group_type", index)
         ids = group.get("source_ids")
         kind, content, reason = group.get("kind"), group.get("content"), group.get("reason")
-        if (not isinstance(ids, list) or not 2 <= len(ids) <= 12
-                or any(type(i) is not int or i not in by_id for i in ids)
-                or len(set(ids)) != len(ids) or used.intersection(ids)
-                or kind not in {"duplicate", "event"}
-                or not isinstance(content, str) or not 4 <= len(content.strip()) <= 500
-                or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 160):
-            raise ConsolidationModelError("整理建议包含无效来源、重叠分组或不完整内容，请重新预览")
+        failure = None
+        if not isinstance(ids, list) or not 2 <= len(ids) <= 12:
+            failure = "invalid_source_count"
+        elif any(type(i) is not int or i not in by_id for i in ids):
+            failure = "unknown_source_id"
+        elif len(set(ids)) != len(ids) or used.intersection(ids):
+            failure = "overlapping_sources"
+        elif kind not in {"duplicate", "event"}:
+            failure = "invalid_kind"
+        elif not isinstance(content, str) or not 4 <= len(content.strip()) <= 500:
+            failure = "invalid_content_length"
+        elif not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 160:
+            failure = "invalid_reason_length"
+        if failure:
+            raise ConsolidationModelError("整理建议包含无效来源、重叠分组或不完整内容，请重新预览",
+                                          failure, index)
         # 同一经历归并只接收事件卡；不能借摘要把独立事实或情绪混成一个新事实。
         if kind == "event" and any(by_id[i]["memory_type"] != "event" for i in ids):
-            raise ConsolidationModelError("事件归并包含非事件卡，请重新预览")
+            raise ConsolidationModelError("事件归并包含非事件卡，请重新预览", "non_event_source", index)
         if len({by_id[i]["memory_type"] for i in ids}) != 1:
-            raise ConsolidationModelError("整理分组混合了不同记忆类型，请重新预览")
+            raise ConsolidationModelError("整理分组混合了不同记忆类型，请重新预览", "mixed_memory_types", index)
         used.update(ids)
         groups.append({"id": len(groups), "kind": kind, "source_ids": ids,
                        "content": content.strip(), "reason": reason.strip()})
     return groups
+
+
+def _generate_groups(system, sources):
+    request_id = uuid.uuid4().hex[:12]
+    source_json = json.dumps(sources, ensure_ascii=False)
+    source_chars = sum(len(source["content"]) for source in sources)
+    retryable = {"invalid_json", "invalid_root", "invalid_groups_type", "too_many_groups"}
+    correction = ""
+    for attempt in (1, 2):
+        started = time.monotonic()
+        metadata = {"request_id": request_id, "attempt": attempt, "model": settings.LLM_MEMORY_MODEL,
+                    "source_count": len(sources), "source_chars": source_chars,
+                    "input_json_chars": len(source_json)}
+        logger.info("[MEMORY CONSOLIDATION] start %s", json.dumps(metadata, ensure_ascii=False))
+        try:
+            response = get_llm_provider().generate(
+                model=settings.LLM_MEMORY_MODEL,
+                messages=[{"role": "system", "content": system + correction},
+                          {"role": "user", "content": source_json}],
+                **auxiliary_controls("memory", 0.0),
+            )
+        except Exception as exc:
+            metadata.update(reason="model_call_failed", error_type=type(exc).__name__,
+                            elapsed_ms=round((time.monotonic() - started) * 1000))
+            logger.warning("[MEMORY CONSOLIDATION] failed %s", json.dumps(metadata, ensure_ascii=False))
+            raise ConsolidationModelError("整理模型调用失败，原记忆未改变，请重试", "model_call_failed") from exc
+        try:
+            choices = getattr(response, "choices", None)
+            if not choices:
+                raise ConsolidationModelError("整理模型未返回候选结果，请重试", "missing_choices")
+            finish_reason = getattr(choices[0], "finish_reason", None)
+            # 只记录协议中已知的结束原因，不记录服务端扩展字段或原始响应。
+            metadata["finish_reason"] = finish_reason if finish_reason in {
+                "stop", "length", "content_filter", "tool_calls", "function_call", None} else "other"
+            output = getattr(choices[0].message, "content", None)
+            metadata["output_chars"] = len(output) if isinstance(output, str) else 0
+            if finish_reason == "length":
+                raise ConsolidationModelError("整理模型输出被截断，请检查模型输出长度设置后重试", "response_truncated")
+            if not isinstance(output, str) or not output.strip():
+                raise ConsolidationModelError("整理模型未返回正文，请重试", "empty_content")
+            output = output.strip()
+            if output.startswith("```") and "\n" in output:
+                output = output.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            try:
+                raw = json.loads(output)
+            except json.JSONDecodeError as exc:
+                metadata["json_error_position"] = exc.pos
+                raise ConsolidationModelError("整理模型返回的 JSON 无法解析，请重新预览", "invalid_json") from exc
+            metadata["root_type"] = type(raw).__name__
+            if isinstance(raw, list):
+                raw = {"groups": raw}
+                metadata["normalized_array"] = True
+            returned = raw.get("groups") if isinstance(raw, dict) else None
+            metadata["groups_type"] = type(returned).__name__
+            metadata["returned_group_count"] = len(returned) if isinstance(returned, list) else None
+            groups = filter_safe_groups(validate_groups(raw, sources), sources)
+            metadata.update(accepted_group_count=len(groups),
+                            elapsed_ms=round((time.monotonic() - started) * 1000))
+            logger.info("[MEMORY CONSOLIDATION] completed %s", json.dumps(metadata, ensure_ascii=False))
+            return groups
+        except ConsolidationModelError as exc:
+            metadata.update(reason=exc.reason, group_index=exc.group_index,
+                            elapsed_ms=round((time.monotonic() - started) * 1000),
+                            retry=attempt == 1 and exc.reason in retryable)
+            logger.warning("[MEMORY CONSOLIDATION] rejected %s", json.dumps(metadata, ensure_ascii=False))
+            if not metadata["retry"]:
+                raise
+            correction = (f"\n上一轮返回未通过格式校验（{exc.reason}）。重新检查相同输入，仅返回一个 JSON 对象，"
+                          'groups 字段必须是数组；没有建议时返回 {"groups":[]}。'
+                          "最多返回12组，若候选更多只选择最有把握的12组；每组2到12张来源，来源不得重复。")
+        except Exception as exc:
+            metadata.update(reason="response_processing_failed", error_type=type(exc).__name__)
+            logger.warning("[MEMORY CONSOLIDATION] failed %s", json.dumps(metadata, ensure_ascii=False))
+            raise ConsolidationModelError("整理模型响应处理失败，原记忆未改变，请重试",
+                                          "response_processing_failed") from exc
 
 
 def preview(session_id, after_id, db, mode="full"):
@@ -178,22 +275,7 @@ duplicate 要求各卡表达同一个命题、可以相互替代；互补信息�
 合并正文须独立可理解，4到500字符；理由1到160字符。信息不足或不能无损归并时跳过。
 仅返回 JSON：{"groups":[{"kind":"duplicate|event","source_ids":[1,2],"content":"合并正文","reason":"为什么可以整理"}]}。
 没有可整理项时返回 {"groups":[]}。"""
-        try:
-            response = get_llm_provider().generate(
-                model=settings.LLM_MEMORY_MODEL,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": json.dumps(sources, ensure_ascii=False)}],
-                **auxiliary_controls("memory", 0.0),
-            )
-            output = response.choices[0].message.content.strip()
-            if output.startswith("```"):
-                output = output.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-            groups = filter_safe_groups(validate_groups(json.loads(output), sources), sources)
-        except ConsolidationModelError:
-            raise
-        except Exception as exc:
-            # 不把可能含原卡、密钥或服务原始响应的异常写入用户提示/日志。
-            raise ConsolidationModelError("整理模型调用或解析失败，原记忆未改变，请重试") from exc
+        groups = _generate_groups(system, sources)
     # 模型调用结束后再开启写事务，扫描记录与预览原子保存。
     payload = {"sources": sources, "groups": groups, "scanned_count": len(sources),
                "remaining_count": remaining, "has_more": remaining > len(sources),
