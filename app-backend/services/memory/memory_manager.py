@@ -124,12 +124,14 @@ def add_memory_chunk(
     temporal_status: str = "unknown",
     temporal_note: Optional[str] = None,
     source_evidence: Optional[list] = None,
+    event_id: Optional[int] = None,
 ) -> MemoryChunk:
     """创建记忆，并在同一 SQLite 事务内登记向量同步任务。"""
     from services.memory.memory_facts import normalize_temporal
     temporal_status, temporal_note = normalize_temporal(temporal_status, temporal_note)
     chunk = MemoryChunk(
         persona_id=persona_id,
+        event_id=event_id,
         content=content,
         memory_type=memory_type,
         importance_score=importance_score,

@@ -46,6 +46,8 @@ def snapshot(chunk):
     }
     if chunk.temporal_status != "unknown" or chunk.temporal_note:
         result.update(temporal_status=chunk.temporal_status, temporal_note=chunk.temporal_note)
+    if chunk.event_id is not None:
+        result["event_id"] = chunk.event_id
     return result
 
 
@@ -394,7 +396,7 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
                                               or not fact_sources_current(row, db) for row in originals.values()):
             raise ConsolidationConflict("来源记忆已经改变，请重新预览后再应用")
         if any(has_source_conflict(group["kind"], [snapshot(originals[i]) for i in group["source_ids"]]) for group in groups):
-            raise ConsolidationConflict("整理建议存在不同日期或肯定/否定边界冲突，请重新预览")
+            raise ConsolidationConflict("整理建议存在事件身份、日期或肯定/否定边界冲突，请重新预览")
         for group in groups:
             inputs = [originals[i] for i in group["source_ids"]]
             resolved_status, resolved_note = resolve_group_temporal([snapshot(row) for row in inputs])
@@ -417,6 +419,7 @@ def apply(session_id, batch_id, selected_ids, db, expected_revision=0):
                 db=db, auto_commit=False,
                 temporal_status=resolved_status, temporal_note=resolved_note,
                 source_evidence=merged_evidence,
+                event_id=inputs[0].event_id if len({row.event_id for row in inputs}) == 1 else None,
             )
             chunk.consolidation_id = batch.id
             for source_id in group["source_ids"]:

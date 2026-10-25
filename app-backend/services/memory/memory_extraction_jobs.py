@@ -212,7 +212,7 @@ def _plan(data, db):
     sources = list({source["id"]: source for source in required}.values())
     plan = plan_events(valid_cards, payload["entities"], payload["relations"], sources, snapshot,
                        force=payload["force"], advance=payload["advance"], batch_id=payload["batch_id"])
-    plan["required_sources"] = sources
+    plan["required_sources"] = list(sources)
     for item in snapshot:
         if item["valid"]:
             sources += item["payload"]["sources"] + item["payload"].get("graph_sources", [])
@@ -220,6 +220,10 @@ def _plan(data, db):
     db.rollback()
     actions, virtual, superseded = [], [], set()
     for position, card in enumerate(plan["ready"]):
+        # Event checkpoints are append-only stages of a known event, never model replacements.
+        if "_event_id" in card:
+            actions.append({"card": card, "decision": None, "matched": None, "virtual_id": -1-position})
+            continue
         candidates = extraction.retrieve_write_candidates(
             persona_id=persona_id, character_id=character_id, query=card["content"], db=db,
             memory_type=card["memory_type"], temporal_status=card["temporal_status"], temporal_note=card["temporal_note"],
@@ -243,7 +247,9 @@ def _plan(data, db):
                 if decision["relation"] == "same" and merged != (matched.get("temporal_status", "unknown"), matched.get("temporal_note")):
                     decision = {"relation": "replace", "resolved_content": matched["content"]}
                 old_bound, new_bound = matched.get("source_message_id"), card["source_message_id"]
-                if decision["relation"] == "replace" and old_bound and new_bound and old_bound > new_bound:
+                if decision["relation"] == "replace" and matched.get("event_id") is not None:
+                    decision, matched = {"relation": "coexist"}, None
+                elif decision["relation"] == "replace" and old_bound and new_bound and old_bound > new_bound:
                     decision = {"relation": "coexist"}
                     matched = None
                     if card["temporal_status"] == "current":
@@ -280,7 +286,7 @@ def _commit(data, planned, db):
         if matched and matched["id"] > 0 and not memory_evidence_is_current(
                 data["persona_id"], matched["id"], content_fingerprint(matched["content"]), db):
             raise RuntimeError("candidate_changed")
-    apply_event_plan(data["persona_id"], plan, db)
+    event_ids = apply_event_plan(data["persona_id"], plan, db)
     bindings, virtual_ids = {}, {}
     stats = {"new": 0, "replaced": 0, "reused": 0}
     for action in actions:
@@ -298,6 +304,7 @@ def _commit(data, planned, db):
                 source_start_message_id=card["source_start_message_id"], source_message_id=card["source_message_id"],
                 supersedes_id=matched_id if relation == "replace" else None, auto_commit=False, db=db,
                 temporal_status=card["temporal_status"], temporal_note=card["temporal_note"],
+                event_id=event_ids.get(card.get("_event_id")),
                 source_evidence=card.get("_source_evidence", [source for source in data["payload"]["sources"]
                     if card["source_start_message_id"] <= source["id"] <= card["source_message_id"]]))
             memory_id = getattr(chunk, "id", None)
@@ -307,8 +314,13 @@ def _commit(data, planned, db):
             bindings[card["_extraction_index"]] = {"memory_id": memory_id, "hash": content_fingerprint(content),
                 "source_start": card["source_start_message_id"], "source_end": card["source_message_id"]}
     bind_buffered_graph_dependencies(data["persona_id"], bindings, db)
-    entities = resolve_graph_dependencies(data["payload"]["entities"] + plan["entities"], bindings)
-    relations = resolve_graph_dependencies(data["payload"]["relations"] + plan["relations"], bindings)
+    event_indices = {card["_extraction_index"] for card in data["payload"]["cards"]
+                     if card["memory_type"] == MemoryType.event and (
+                         card.get("_buffer_id") is not None or card.get("_event_status") == "ongoing")}
+    def direct_graph(key):
+        return [item for item in data["payload"][key] if not event_indices.intersection(item["memory_indices"])]
+    entities = resolve_graph_dependencies(direct_graph("entities") + plan["entities"], bindings)
+    relations = resolve_graph_dependencies(direct_graph("relations") + plan["relations"], bindings)
     if entities or relations:
         extraction.upsert_graph_data(persona_id=data["persona_id"], entities=entities, relations=relations,
                                      db=db, source_messages=sources, memory_bindings=bindings)

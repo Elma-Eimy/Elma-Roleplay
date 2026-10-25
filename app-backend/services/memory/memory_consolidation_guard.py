@@ -85,6 +85,8 @@ def resolve_group_temporal(sources):
 
 
 def has_source_conflict(kind, sources):
+    if len({source["event_id"] for source in sources if source.get("event_id") is not None}) > 1:
+        return True
     if has_temporal_conflict(sources):
         return True
     if has_conflicting_event_dates(sources):

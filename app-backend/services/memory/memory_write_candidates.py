@@ -37,7 +37,7 @@ def retrieve_write_candidates(persona_id, character_id, query, db, *, memory_typ
     references = eligible.with_entities(MemoryChunk.id, MemoryChunk.chroma_doc_id).all()
     by_doc = {row.chroma_doc_id: row.id for row in references if row.chroma_doc_id}
     selected_payload = {row.id: {"id": row.id, "content": row.content,
-        "memory_type": row.memory_type.value, "importance_score": row.importance_score,
+        "memory_type": row.memory_type.value, "importance_score": row.importance_score, "event_id": row.event_id,
         "temporal_status": row.temporal_status, "temporal_note": row.temporal_note,
         "source_start_message_id": row.source_start_message_id,
         "source_message_id": row.source_message_id_bound or row.source_message_id} for row in selected.values()}
@@ -54,7 +54,7 @@ def retrieve_write_candidates(persona_id, character_id, query, db, *, memory_typ
                     distances[by_doc[doc]] = distance
             for row in eligible.filter(MemoryChunk.id.in_(distances)).all():
                 selected_payload[row.id] = {"id": row.id, "content": row.content,
-                    "memory_type": row.memory_type.value, "importance_score": row.importance_score,
+                    "memory_type": row.memory_type.value, "importance_score": row.importance_score, "event_id": row.event_id,
                     "temporal_status": row.temporal_status, "temporal_note": row.temporal_note,
                     "source_start_message_id": row.source_start_message_id,
                     "source_message_id": row.source_message_id_bound or row.source_message_id}

@@ -80,6 +80,41 @@ class MemoryEventBufferTests(unittest.TestCase):
     def buffer(self):
         return self.db.query(MemoryEventBuffer).one()
 
+    def test_invented_new_event_id_is_corrected_once_without_losing_batch(self):
+        bad = self.card(buffer_id=1)
+        good = self.card(buffer_id=None)
+        responses = [SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content=json.dumps({"memories": [card], "entities": [], "relations": []}, ensure_ascii=False)))])
+            for card in (bad, good)]
+        provider = SimpleNamespace(generate=MagicMock(side_effect=responses))
+        with patch.object(extraction, "get_llm_provider", return_value=provider), self.assertLogs(
+                "uvicorn.error.memory_extraction", level="WARNING") as logs:
+            self.assertEqual(0, extraction.summarize_and_store_memory(self.session_id, self.db))
+        self.assertEqual(2, provider.generate.call_count)
+        self.assertEqual("open", self.buffer().status)
+        self.assertEqual(self.source_ids[-1], self.persona.last_summarized_msg_id)
+        corrected = provider.generate.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("已有事件 ID 仅为 []", corrected)
+        self.assertIn("invalid_event_reference", " ".join(logs.output))
+        self.assertNotIn(good["content"], " ".join(logs.output))
+
+    def test_repeated_invented_event_id_stays_deferred_without_creating_identity(self):
+        pointer = self.persona.last_summarized_msg_id
+        count, provider = self.extract([self.card(buffer_id=999)])
+        self.assertEqual(0, count)
+        self.assertEqual(2, provider.generate.call_count)
+        self.assertEqual(pointer, self.persona.last_summarized_msg_id)
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+
+    def test_stray_event_status_on_relationship_does_not_reject_independent_memories(self):
+        cards = [self.card("用户与林墨的信任关系得到确认。", memory_type="relationship", event_status="ongoing", buffer_id=999),
+                 self.card("用户与林墨完成海边散步。", event_status="complete")]
+        count, provider = self.extract(cards)
+        self.assertEqual(2, count)
+        self.assertEqual(1, provider.generate.call_count)
+        self.assertEqual({"relationship", "event"}, {row.memory_type.value for row in self.db.query(MemoryChunk).all()})
+        self.assertEqual(self.source_ids[-1], self.persona.last_summarized_msg_id)
+
     def test_three_batches_form_one_event_with_all_source_fingerprints(self):
         original_sources = list(self.source_ids)
         self.assertEqual(0, self.extract([self.card()])[0])
@@ -96,7 +131,7 @@ class MemoryEventBufferTests(unittest.TestCase):
             "用户与林墨的海边约会因雨转到咖啡馆，两人谈心并约定明年重游，随后结束约会。",
             event_status="complete", buffer_id=buffer_id)])
         self.assertEqual(1, count)
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         chunk = self.db.query(MemoryChunk).one()
         self.assertEqual(original_sources, [source["id"] for source in json.loads(chunk.source_evidence_json)])
         self.assertTrue(fact_sources_current(chunk, self.db))
@@ -107,7 +142,7 @@ class MemoryEventBufferTests(unittest.TestCase):
         cards = [self.card(), self.card("用户偏爱不加糖的红茶。", memory_type="fact", event_status="complete"),
                  self.card("用户与林墨约定明年重游海边。", temporal_status="planned", event_status="complete")]
         self.assertEqual(2, self.extract(cards)[0])
-        self.assertEqual(1, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(1, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         promise = self.db.query(MemoryChunk).filter_by(temporal_status="planned").one()
         self.assertIn("明年", promise.content)
 
@@ -118,13 +153,13 @@ class MemoryEventBufferTests(unittest.TestCase):
         self.assertEqual(2, self.buffer().age_batches)
         self.advance("两人开始讨论另一件事。")
         self.assertEqual(1, self.extract([])[0])
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         self.assertIn("约会", self.db.query(MemoryChunk).one().content)
 
     def test_event_capacity_flushes_oldest_without_losing_cards(self):
         cards = [self.card(f"用户与林墨正在参与独立事件 {index}。") for index in range(4)]
         self.assertEqual(1, self.extract(cards)[0])
-        self.assertEqual(3, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(3, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         self.assertIn("事件 0", self.db.query(MemoryChunk).one().content)
 
     def test_source_limit_closes_event_without_truncating_evidence(self):
@@ -135,7 +170,7 @@ class MemoryEventBufferTests(unittest.TestCase):
             self.assertEqual(1, self.extract([self.card(buffer_id=buffer_id)])[0])
         chunk = self.db.query(MemoryChunk).one()
         self.assertEqual(4, len(json.loads(chunk.source_evidence_json)))
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
 
     def test_manual_flush_survives_restart_and_needs_no_new_messages_or_model_call(self):
         self.extract([self.card()])
@@ -146,7 +181,7 @@ class MemoryEventBufferTests(unittest.TestCase):
         with patch.object(extraction, "get_llm_provider") as provider:
             self.assertEqual(1, extraction.summarize_and_store_memory(self.session_id, self.db, flush_events=True))
         provider.assert_not_called()
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         self.assertTrue(fact_sources_current(self.db.query(MemoryChunk).one(), self.db))
 
     def test_manual_route_flushes_pending_event(self):
@@ -159,7 +194,7 @@ class MemoryEventBufferTests(unittest.TestCase):
             from services.memory.memory_extraction_jobs import process_due_jobs
             process_due_jobs(self.db, self.persona.id)
             self.assertEqual(1, process_due_jobs(self.db, self.persona.id))
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         provider.assert_not_called()
 
     def test_pending_graph_is_published_only_when_event_is_admitted(self):
@@ -223,7 +258,7 @@ class MemoryEventBufferTests(unittest.TestCase):
         self.assertEqual([], event_context(load_event_snapshot(self.persona.id, self.db)))
         self.assertEqual(0, extraction.summarize_and_store_memory(self.session_id, self.db, flush_events=True))
         self.assertEqual(0, self.db.query(MemoryChunk).count())
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
 
     def test_chat_context_receives_valid_pending_event_before_long_term_promotion(self):
         self.extract([self.card()])
@@ -250,7 +285,7 @@ class MemoryEventBufferTests(unittest.TestCase):
     def test_fork_flushes_only_event_wholly_before_boundary(self):
         self.extract([self.card()])
         child_id = self.fork(self.current_user.id)
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(0, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         self.assertEqual(1, self.db.query(MemoryChunk).count())
         from services.memory.memory_visibility import memory_view
         visible, hidden = memory_view(child_id, self.db)
@@ -259,7 +294,7 @@ class MemoryEventBufferTests(unittest.TestCase):
     def test_fork_before_event_end_does_not_inherit_future_buffer(self):
         self.extract([self.card()])
         child_id = self.fork(self.source_ids[0])
-        self.assertEqual(1, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(1, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
         self.assertEqual(0, self.db.query(MemoryChunk).count())
         self.assertEqual([], event_context(load_event_snapshot(child_id, self.db)))
 
@@ -361,9 +396,11 @@ class MemoryEventBufferTests(unittest.TestCase):
         cards = [self.card(first_text, buffer_id=buffer_id), self.card(second_text, buffer_id=buffer_id)]
         self.assertEqual(2, self.extract(cards, entities=[{
             "name": "后续片段", "description": "第二段独立依据", "memory_indices": [1]}])[0])
-        self.assertEqual(0, self.db.query(MemoryEventBuffer).count())
+        self.assertEqual(1, self.db.query(MemoryEventBuffer).filter_by(status="open").count())
+        extraction.summarize_and_store_memory(self.session_id, self.db, flush_events=True)
         chunks = self.db.query(MemoryChunk).all()
-        self.assertEqual({first_text, second_text}, {chunk.content for chunk in chunks})
+        self.assertTrue({first_text, second_text} <= {chunk.content for chunk in chunks})
+        self.assertEqual({buffer_id}, {chunk.event_id for chunk in chunks})
         second_chunk = next(chunk for chunk in chunks if chunk.content == second_text)
         evidence = json.loads(self.db.query(GraphEntity).filter_by(name="后续片段").one().evidence_json)
         self.assertEqual([second_chunk.id], [item["id"] for item in evidence["memories"]])

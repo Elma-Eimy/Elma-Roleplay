@@ -307,6 +307,7 @@ class MemoryEventBuffer(Base):
     persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
     payload_json = Column(Text, nullable=False)
     age_batches = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(20), nullable=False, default="open", server_default="open", index=True)
     revision = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime, nullable=False, default=func.now())
     persona = relationship("SessionPersona", backref=backref("event_buffers", cascade="all, delete-orphan"))
@@ -316,6 +317,7 @@ class MemoryChunk(Base):
     __tablename__ = "memory_chunks"
 
     id         = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("memory_event_buffers.id", ondelete="SET NULL"), nullable=True, index=True)
     persona_id = Column(
         Integer,
         ForeignKey("session_personas.id", ondelete="CASCADE"),
