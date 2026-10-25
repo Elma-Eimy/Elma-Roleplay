@@ -21,6 +21,8 @@ Windows 未激活虚拟环境时，可将命令中的 `python` 替换为 `.\venv
 
 统一入口会将源码和自动测试复制到临时目录，生成测试配置、占位凭据、头像夹具，并迁移临时 SQLite 数据库，再运行测试。ChromaDB 和音频目录也位于临时目录；不复制开发用的 `.env`、`config.yaml`、数据库或媒体。子进程结束后清理临时目录，发现失败或没有匹配测试时返回非零退出码。
 
+`core/test_migration_logging.py` 在该临时副本的独立进程中配置 Uvicorn 日志，再执行真实应用内迁移；验证重复迁移不改变宿主日志状态，整理 INFO 诊断仍能输出。它使用现有源码与 Alembic 复制范围，不读取开发库。
+
 测试使用内存/临时数据库以及模型和向量服务替身。新增自动测试时也应遵循这一约定，不调用真实服务。
 
 CHARX 专项：`python -m tests --group parsing --pattern test_charx_import.py` 覆盖非法 JSON、ZIP/图片预算、GIF/APNG/WebP 多帧原字节保留与帧数限制、设定合并/开场选择/独立世界书同步、事务回滚、幂等回执和共享图片回收。上传鉴权/流量限制及迁移分别见 `infrastructure/test_charx_upload.py`、`infrastructure/test_charx_migration.py`。

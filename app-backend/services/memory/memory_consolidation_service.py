@@ -178,7 +178,8 @@ def _generate_groups(system, sources):
     request_id = uuid.uuid4().hex[:12]
     source_json = json.dumps(sources, ensure_ascii=False)
     source_chars = sum(len(source["content"]) for source in sources)
-    retryable = {"invalid_json", "invalid_root", "invalid_groups_type", "too_many_groups"}
+    retryable = {"invalid_json", "invalid_root", "invalid_groups_type", "too_many_groups",
+                 "non_event_source", "mixed_memory_types"}
     correction = ""
     for attempt in (1, 2):
         started = time.monotonic()
@@ -233,15 +234,25 @@ def _generate_groups(system, sources):
             logger.info("[MEMORY CONSOLIDATION] completed %s", json.dumps(metadata, ensure_ascii=False))
             return groups
         except ConsolidationModelError as exc:
+            if exc.reason in {"non_event_source", "mixed_memory_types"}:
+                ids = raw["groups"][exc.group_index]["source_ids"]
+                counts = {}
+                for source in sources:
+                    if source["id"] in ids:
+                        memory_type = source["memory_type"]
+                        counts[memory_type] = counts.get(memory_type, 0) + 1
+                metadata["group_source_type_counts"] = counts
             metadata.update(reason=exc.reason, group_index=exc.group_index,
                             elapsed_ms=round((time.monotonic() - started) * 1000),
                             retry=attempt == 1 and exc.reason in retryable)
             logger.warning("[MEMORY CONSOLIDATION] rejected %s", json.dumps(metadata, ensure_ascii=False))
             if not metadata["retry"]:
                 raise
-            correction = (f"\n上一轮返回未通过格式校验（{exc.reason}）。重新检查相同输入，仅返回一个 JSON 对象，"
+            correction = (f"\n上一轮返回未通过格式校验或来源类型校验（{exc.reason}）。重新检查相同输入，仅返回一个 JSON 对象，"
                           'groups 字段必须是数组；没有建议时返回 {"groups":[]}。'
-                          "最多返回12组，若候选更多只选择最有把握的12组；每组2到12张来源，来源不得重复。")
+                          "最多返回12组，若候选更多只选择最有把握的12组；每组2到12张来源，来源不得重复。"
+                          "逐组按 source_ids 回查输入的 memory_type；每组必须同一类型，event 组只能包含 event 卡。"
+                          "其他类型仅在表达同一命题且可无损互换时使用 duplicate；无法满足时跳过，不能只改 kind 凑合法。")
         except Exception as exc:
             metadata.update(reason="response_processing_failed", error_type=type(exc).__name__)
             logger.warning("[MEMORY CONSOLIDATION] failed %s", json.dumps(metadata, ensure_ascii=False))

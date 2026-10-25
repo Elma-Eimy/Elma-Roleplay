@@ -199,6 +199,43 @@ class MemoryConsolidationTests(unittest.TestCase):
         self.assertIn('"error_type": "RuntimeError"', output)
         self.assertNotIn("PRIVATE_API_KEY", output)
 
+    def test_source_type_errors_retry_with_constraints_and_keep_only_valid_suggestions(self):
+        third = self.memory("用户喜欢蓝色。")
+        third.memory_type = MemoryType.fact
+        self.db.commit()
+        for kind, code in (("event", "non_event_source"), ("duplicate", "mixed_memory_types")):
+            invalid = self.payload()
+            invalid["groups"][0].update(kind=kind, source_ids=[self.one.id, third.id])
+            with self.subTest(kind=kind), patch.object(service, "get_llm_provider") as factory:
+                provider = factory.return_value
+                provider.generate.side_effect = [self.model_response(json.dumps(invalid)),
+                                                  self.model_response(json.dumps(self.payload()))]
+                with self.assertLogs(service.logger, level="INFO") as logs:
+                    batch = service.preview(self.session.id, 0, self.db)
+                self.assertEqual([self.one.id, self.two.id], batch["groups"][0]["source_ids"])
+                self.assertIn('"reason": "' + code + '"', "\n".join(logs.output))
+                self.assertIn('"group_source_type_counts": {"event": 1, "fact": 1}', "\n".join(logs.output))
+                calls = provider.generate.call_args_list
+                self.assertEqual(2, len(calls))
+                correction = calls[1].kwargs["messages"][0]["content"]
+                self.assertIn("逐组按 source_ids 回查输入的 memory_type", correction)
+                self.assertIn("不能只改 kind 凑合法", correction)
+                self.assertEqual(calls[0].kwargs["messages"][1], calls[1].kwargs["messages"][1])
+
+    def test_repeated_source_type_failure_does_not_save_or_advance_scan(self):
+        self.one.memory_type = MemoryType.emotion
+        self.db.commit()
+        with patch.object(service, "get_llm_provider") as factory:
+            factory.return_value.generate.return_value = self.model_response(json.dumps(self.payload()))
+            with self.assertLogs(service.logger, level="WARNING"):
+                with self.assertRaises(service.ConsolidationModelError) as raised:
+                    service.preview(self.session.id, 0, self.db, "incremental")
+            self.assertEqual("non_event_source", raised.exception.reason)
+            self.assertEqual(2, factory.return_value.generate.call_count)
+        self.assertEqual(0, self.db.query(MemoryConsolidation).count())
+        self.assertEqual(0, self.db.query(MemoryConsolidationScan).count())
+        self.assertEqual(2, service.scan_status(self.persona.id, self.db)["pending_count"])
+
     def test_incremental_includes_modified_old_cards_and_new_cards_only(self):
         self.preview({"groups": []})
         self.one.content = "较早原卡已增加雨伞颜色信息。"
