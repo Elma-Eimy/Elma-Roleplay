@@ -1,6 +1,7 @@
 """写入查重候选：语义距离召回与 SQLite 近期卡补偿。"""
 
 import logging
+import math
 from sqlalchemy import or_
 
 from core.config import settings
@@ -45,13 +46,18 @@ def retrieve_write_candidates(persona_id, character_id, query, db, *, memory_typ
         release_read()
     if by_doc and not set(by_doc.values()) <= selected.keys():
         try:
+            older_docs = {doc for doc, memory_id in by_doc.items() if memory_id not in selected}
             result = get_character_collection(character_id).query(
-                query_texts=[query], ids=list(by_doc), n_results=min(6, len(by_doc)),
+                query_texts=[query], ids=sorted(older_docs), n_results=min(6, len(older_docs)),
                 include=["distances"],
             )
-            for doc, distance in zip(result["ids"][0], result["distances"][0]):
-                if doc in by_doc and distance < settings.APP_DEDUP_WRITE_THRESHOLD:
-                    distances[by_doc[doc]] = distance
+            ranked = sorted((distance, by_doc[doc])
+                            for doc, distance in zip(result["ids"][0], result["distances"][0])
+                            if doc in older_docs and isinstance(distance, (int, float)) and not isinstance(distance, bool)
+                            and math.isfinite(distance) and distance >= 0)
+            # 距离只选比较对象。不同向量度量下也至少比较两个最近邻，不直接判定重复。
+            distances = {memory_id: distance for rank, (distance, memory_id) in enumerate(ranked)
+                         if rank < 2 or distance < settings.APP_DEDUP_WRITE_THRESHOLD}
             for row in eligible.filter(MemoryChunk.id.in_(distances)).all():
                 selected_payload[row.id] = {"id": row.id, "content": row.content,
                     "memory_type": row.memory_type.value, "importance_score": row.importance_score, "event_id": row.event_id,

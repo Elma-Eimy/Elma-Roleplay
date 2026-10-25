@@ -489,7 +489,8 @@ class MemoryCardExtractionTests(unittest.TestCase):
         with patch.object(candidates, "get_character_collection", return_value=collection):
             result = self._candidate_query()
         self.assertIn(old.id, {item["id"] for item in result})
-        self.assertEqual(6, collection.query.call_args.kwargs["n_results"])
+        self.assertEqual(4, collection.query.call_args.kwargs["n_results"])
+        self.assertNotIn(f"mem_{old.id + 15}", collection.query.call_args.kwargs["ids"])
 
     def test_vector_lookup_failure_does_not_become_an_empty_candidate_set(self):
         from services.memory import memory_write_candidates as candidates
@@ -502,6 +503,22 @@ class MemoryCardExtractionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "candidate lookup unavailable"):
                 self._candidate_query()
         self.assertNotIn("private provider response", " ".join(logs.output))
+
+    def test_distant_nearest_neighbors_still_reach_comparison_with_a_bounded_budget(self):
+        from services.memory import memory_write_candidates as candidates
+        old = [self._write_candidate(f"较早的独立事实 {index}") for index in range(4)]
+        for index in range(15):
+            self._write_candidate(f"近期的独立事实 {index}")
+        collection = MagicMock()
+        collection.query.return_value = {"ids": [[row.chroma_doc_id for row in reversed(old)]],
+                                        "distances": [[.9, .7, .5, .3]]}
+        with patch.object(candidates, "get_character_collection", return_value=collection), \
+             patch.object(candidates.settings, "APP_DEDUP_WRITE_THRESHOLD", .15):
+            result = self._candidate_query()
+        selected = {item["id"] for item in result}
+        self.assertTrue({old[0].id, old[1].id} <= selected)
+        self.assertTrue({old[2].id, old[3].id}.isdisjoint(selected))
+        self.assertEqual(14, len(result))
 
     def test_write_candidates_exclude_hidden_and_different_time_cards(self):
         old = self._write_candidate("用户住在北京。")

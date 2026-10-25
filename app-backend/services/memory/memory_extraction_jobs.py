@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from core.config import settings
-from core.models import MemoryExtractionJob, SessionPersona, MemoryType
+from core.models import MemoryChunk, MemoryExtractionJob, SessionPersona, MemoryType
 from services.memory.graph_evidence import sources_are_current, memory_evidence_is_current, content_fingerprint
 from services.memory.memory_event_buffer import (
     load_event_snapshot, plan_events, apply_event_plan, bind_buffered_graph_dependencies,
@@ -220,6 +220,8 @@ def _plan(data, db):
     db.rollback()
     actions, virtual, superseded = [], [], set()
     for position, card in enumerate(plan["ready"]):
+        card.setdefault("_source_evidence", [source for source in payload["sources"]
+                        if card["source_start_message_id"] <= source["id"] <= card["source_message_id"]])
         # Event checkpoints are append-only stages of a known event, never model replacements.
         if "_event_id" in card:
             actions.append({"card": card, "decision": None, "matched": None, "virtual_id": -1-position})
@@ -255,17 +257,35 @@ def _plan(data, db):
                     if card["temporal_status"] == "current":
                         card["temporal_status"] = "historical"
                 elif decision["relation"] == "replace":
-                    card["temporal_status"], card["temporal_note"] = merged
-                    score = max(card["importance_score"], matched.get("importance_score", .5))
-                    card["importance_score"] = min(1., score + (1.-score)*.1)
-                    superseded.add(matched["id"])
-                    virtual = [item for item in virtual if item["id"] != matched["id"]]
+                    carries_old_details = (decision.get("change_kind") == "refinement" or (
+                        decision.get("change_kind") == "correction" and decision["resolved_content"] != card["content"]))
+                    if carries_old_details:
+                        previous = db.get(MemoryChunk, matched["id"]) if matched["id"] > 0 else None
+                        old_sources = (json.loads(previous.source_evidence_json)
+                                       if previous and previous.persona_id == persona_id and previous.source_evidence_json
+                                       else matched.get("_source_evidence", []) if matched["id"] < 0 else [])
+                        if not old_sources:
+                            # 祖先或无指纹旧卡不能伪装成本故事消息证据；分别保留。
+                            decision, matched = {"relation": "coexist"}, None
+                        else:
+                            evidence = {source["id"]: source for source in old_sources + card["_source_evidence"]}
+                            card["_source_evidence"] = [evidence[mid] for mid in sorted(evidence)]
+                            card["source_start_message_id"] = min(evidence)
+                            card["source_message_id"] = max(evidence)
+                            sources += old_sources
+                    if decision["relation"] == "replace":
+                        card["temporal_status"], card["temporal_note"] = merged
+                        score = max(card["importance_score"], matched.get("importance_score", .5))
+                        card["importance_score"] = min(1., score + (1.-score)*.1)
+                        superseded.add(matched["id"])
+                        virtual = [item for item in virtual if item["id"] != matched["id"]]
         action = {"card": card, "decision": decision, "matched": matched, "virtual_id": -1-position}
         actions.append(action)
         if not decision or decision["relation"] != "same":
             content = decision["resolved_content"] if decision and decision["relation"] == "replace" else card["content"]
             virtual.append({**card, "id": action["virtual_id"], "content": content})
-    return plan, actions, sources, character_id
+    db.rollback()
+    return plan, actions, list({source["id"]: source for source in sources}.values()), character_id
 
 
 def _commit(data, planned, db):

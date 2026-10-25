@@ -83,7 +83,7 @@ def _clean_memory_content(value: str) -> str:
 
 
 def _coalesce_batch_fragments(parsed: list[dict]) -> list[dict]:
-    """合并同批指向同一事件缓冲的更新，并将依附于同场景事件的瞬时低权重情绪碎片并入事件卡。"""
+    """合并同一事件的进展，把明确的即时反应连同来源保存在事件内。"""
     if len(parsed) < 2:
         return parsed
 
@@ -130,34 +130,42 @@ def _coalesce_batch_fragments(parsed: list[dict]) -> list[dict]:
             merged_by_buffer[buf_id] = card
         step_one.append(card)
 
-    # 2. 依附于同批事件区间内的低重要性瞬时情绪碎片吸附进对应事件卡
+    # 显式的 transient 不受模型重要性分数或短句长度限制；旧格式保留原有规则。
     events = [c for c in step_one if c["memory_type"] == MemoryType.event]
     if not events:
         return step_one
 
     result: list[dict] = []
+    by_event_index = {index: ev for ev in events
+                      for index in [ev["_extraction_index"], *ev.get("_absorbed_indices", [])]}
     for card in step_one:
-        if card["memory_type"] == MemoryType.emotion and card["importance_score"] < 0.55:
-            compact = re.sub(r"[\W_]+", "", card["content"], flags=re.UNICODE)
-            host = next(
-                (
-                    ev for ev in events
-                    if ev["source_start_message_id"] <= card["source_start_message_id"]
-                    and card["source_message_id"] <= ev["source_message_id"]
-                    and temporal_is_compatible(
-                        ev["temporal_status"], ev["temporal_note"],
-                        card["temporal_status"], card["temporal_note"],
-                    )
-                ),
-                None,
-            )
-            if host is not None and len(compact) <= 28:
+        explicit = card.get("_retention") == "transient" and card["memory_type"] != MemoryType.event
+        compact = re.sub(r"[\W_]+", "", card["content"], flags=re.UNICODE)
+        legacy = (card.get("_retention") is None and card["memory_type"] == MemoryType.emotion
+                  and card["importance_score"] < 0.55 and len(compact) <= 28)
+        if explicit or legacy:
+            event_index = card.get("_event_index")
+            if explicit and event_index is not None:
+                candidates = [by_event_index[event_index]] if type(event_index) is int and event_index in by_event_index else []
+            else:
+                candidates = [ev for ev in events
+                              if ev["source_start_message_id"] <= card["source_start_message_id"]
+                              and card["source_message_id"] <= ev["source_message_id"]]
+            candidates = [ev for ev in candidates if temporal_is_compatible(
+                ev["temporal_status"], ev["temporal_note"], card["temporal_status"], card["temporal_note"])]
+            host = candidates[0] if len(candidates) == 1 else None
+            if host is not None:
                 if card["content"] not in host["content"]:
                     combined = f"{host['content'].rstrip('。！!；;')}（{card['content'].rstrip('。！!')}）。"
                     if len(combined) > _MEMORY_MAX_CONTENT_CHARS:
                         result.append(card)
                         continue
                     host["content"] = combined
+                host["importance_score"] = max(host["importance_score"], card["importance_score"])
+                host["source_start_message_id"] = min(host["source_start_message_id"], card["source_start_message_id"])
+                host["source_message_id"] = max(host["source_message_id"], card["source_message_id"])
+                host["temporal_status"], host["temporal_note"] = merge_temporal(
+                    host["temporal_status"], host["temporal_note"], card["temporal_status"], card["temporal_note"])
                 host.setdefault("_absorbed_indices", []).append(card["_extraction_index"])
                 continue
         result.append(card)
@@ -196,7 +204,15 @@ def normalize_extracted_memories(
         ):
             continue
 
-        # 仅删除确定相同的记忆卡。对于否定对（例如“喜欢”/“不喜欢”），模糊文本相似度是不安全的；语义候选将在稍后通过受限的 LLM 关系检查进行解析。
+        raw_type = memory.get("memory_type", "fact")
+        try:
+            memory_type = MemoryType(raw_type)
+        except (ValueError, TypeError):
+            memory_type = MemoryType.fact
+        retention = memory.get("retention") if memory.get("retention") in ("state", "episode", "transient") else None
+        buffer_id = memory.get("buffer_id") if memory_type == MemoryType.event else None
+        event_status = memory.get("event_status", "complete") if memory_type == MemoryType.event else "complete"
+        # 仅删除同类型、同用途的确定重复，避免瞬态片段吞掉需要独立保留的状态。
         temporal_status, temporal_note = normalize_temporal(
             memory.get("temporal_status"), memory.get("temporal_note"))
         duplicate = False
@@ -206,18 +222,12 @@ def normalize_extracted_memories(
             ).casefold()
             if (compact == existing_compact and temporal_status == existing["temporal_status"]
                     and temporal_note == existing["temporal_note"]
-                    and memory.get("buffer_id") == existing["_buffer_id"]
-                    and memory.get("event_status", "complete") == existing["_event_status"]):
+                    and memory_type == existing["memory_type"] and retention == existing["_retention"]
+                    and buffer_id == existing["_buffer_id"] and event_status == existing["_event_status"]):
                 duplicate = True
                 break
         if duplicate:
             continue
-
-        raw_type = memory.get("memory_type", "fact")
-        try:
-            memory_type = MemoryType(raw_type)
-        except (ValueError, TypeError):
-            memory_type = MemoryType.fact
 
         try:
             importance = max(
@@ -240,8 +250,10 @@ def normalize_extracted_memories(
 
         parsed.append({
             "_extraction_index": extraction_index,
-            "_event_status": memory.get("event_status", "complete") if memory_type == MemoryType.event else "complete",
-            "_buffer_id": memory.get("buffer_id") if memory_type == MemoryType.event else None,
+            "_retention": retention,
+            "_event_index": memory.get("event_index"),
+            "_event_status": event_status,
+            "_buffer_id": buffer_id,
             "content": content,
             "memory_type": memory_type,
             "importance_score": importance,
@@ -367,23 +379,26 @@ def resolve_memory_relationship_via_llm(
     new_content: str | dict,
 ) -> dict[str, str | int | None]:
     """比较候选卡；模型故障和不合法决策必须阻止本批提交。"""
-    system_prompt = """你是一个长期记忆整理助手。比较一条已有记忆和一条新提取记忆，只能判断为以下三类之一：
-- same：两条表达实质相同，且新记忆没有值得保留的新细节。
-- replace：两条不能继续同时作为当前信息成立，或新记忆补充了应当成为默认表达的重要细节。
-- coexist：两条可以同时成立，或无法确定它们是否描述同一件事。
+    system_prompt = """你维护长期记忆的当前状态。先确定主体、状态或事实对象，再比较是否有新增长期信息，按以下顺序判断：
+- same：同一主体的同一持续状态被再次表达，没有新增条件、承诺、边界、身份或有效细节。不同措辞、情绪强度或发生场景本身不是新状态；再次表达信任、在意、希望对方留下，不能仅因换了动作或场景就新增状态卡。
+- replace：同一状态确实改变，或同一事实补充了需要保留的新条件、承诺或具体细节。必须额外返回 change_kind：refinement（相容补全）或 correction（纠正、撤销、变化）。
+- coexist：独立对象、独立有用的事实或不同次事件；或无法确定对应关系。不能仅因“两段话都能成立”就选择 coexist，先检查是否只是在重复同一状态。
 
 特别注意否定词、程度变化、时间变化和关系变化。“喜欢”与“不喜欢”、“已经”与“尚未”绝不是 same。
 判断不确定时必须选择 coexist。不要编造输入中没有的信息。
-只有描述同一对象的同一事实或同一次事件时才能 same/replace。不同对象、不同日期的类似经历必须 coexist。
+持续状态可以由不同时间的消息再次确认，不等同于合并不同次事件。事件的不同日期、对象和结果必须分别保留。
+retention=transient 表示当前场景反应，不能把一次情绪当成长期性格或用它覆盖已有持续状态。新增否定、明确承诺和限制条件必须保留，不能当作重复强化而忽略。
 
 只返回 JSON：
-{"relation":"same|replace|coexist","resolved_content":"..."}
+{"relation":"same|replace|coexist","change_kind":"refinement|correction","resolved_content":"..."}
 
 same 时 resolved_content 使用已有记忆；replace 时输出一条可独立理解、以新信息为准且保留仍有效细节的记忆；coexist 时使用新记忆。"""
     candidates = old_content if isinstance(old_content, list) else None
     new_card = ({key: new_content.get(key) for key in ("content", "memory_type", "temporal_status", "temporal_note",
                   "source_start_message_id", "source_message_id")} if isinstance(new_content, dict) else {"content": new_content})
     new_text = new_card["content"]
+    if isinstance(new_content, dict):
+        new_card["retention"] = new_content.get("_retention")
     if candidates is not None:
         system_prompt += """
 已有记忆是候选数组。先判断新信息是否对应其中某一张卡，再返回决策。
@@ -430,6 +445,9 @@ same/replace 必须额外返回 matched_memory_id，且只能引用输入中的�
             matched_content = matching[0]["content"]
         default_content = matched_content if relation == "same" else new_text
         resolved = payload.get("resolved_content") if relation == "replace" else default_content
+        change_kind = payload.get("change_kind") if relation == "replace" else None
+        if change_kind is not None and change_kind not in {"refinement", "correction"}:
+            raise ValueError("invalid change_kind")
         if relation == "replace" and (not isinstance(resolved, str) or not resolved.strip()
                                       or len(resolved.strip()) > _MEMORY_MAX_CONTENT_CHARS):
             raise ValueError("invalid replacement content")
@@ -438,7 +456,20 @@ same/replace 必须额外返回 matched_memory_id，且只能引用输入中的�
         resolved = _clean_memory_content(resolved)
         if not resolved:
             resolved = default_content
+        if relation == "replace" and change_kind == "refinement":
+            # 相容细节追加保存，不依赖模型重写旧条件；超长时分别保留。
+            if matched_content in new_text:
+                resolved = new_text
+            elif new_text in matched_content:
+                resolved = matched_content
+            else:
+                resolved = matched_content + "\n" + new_text
+            if len(resolved) > _MEMORY_MAX_CONTENT_CHARS:
+                relation, resolved = "coexist", new_text
+                matched_id = None
         decision = {"relation": relation, "resolved_content": resolved}
+        if relation == "replace" and change_kind is not None:
+            decision["change_kind"] = change_kind
         if candidates is not None:
             decision["matched_memory_id"] = matched_id
         return decision
@@ -561,6 +592,13 @@ def summarize_and_store_memory(session_id: int, db: DBSession, *, flush_events: 
 7. 每张卡建议为 1 到 3 句，最多 300 个字符；本批最多输出 8 张记忆卡。
 8. source_start_message_id 和 source_end_message_id 必须引用输入中真实存在的消息ID，并覆盖支持该记忆的最小连续消息范围。
 
+【长期写入准入】
+上限不是目标，没有新增长期信息时可以返回空数组。不要把每次开心、害羞、嘴硬、撒娇或再次表达在意分别写成持续状态。
+每条记忆增加 retention：state（持续事实、偏好、关系状态或明确约定）、episode（独立重要事件或转折）、transient（仅是本次场景的反应或状态强化）。重要性分数只用于排序，不决定是否值得新增卡。
+同一段互动的动作与即时情绪写入事件的完整进展。若仍输出独立 transient 片段，提供 event_index，引用本批 memories 数组中支持它的 event 卡下标；程序将保留片段全文并归入该事件。无法确定对应事件就使用 null，不得猜测。
+关系类型仅保存真正的新关系状态、边界和转折；已存在的信任或依恋在新场景再次体现，属于场景反应。持续状态目前明确成立时使用 current；过去某次事件仍用 historical，不得把一次反应扩写为长期性格。
+新的条件、承诺、否定、数量和人物归属不能省略，也不能以“仍然在意对方”这种笼统情绪代替。明确的新承诺或边界使用 state，单独保留。
+
 【身份与指代规则】
 1. 输入中的 User 始终代表“用户”；User 的第一人称应改写为“用户”。
 2. 输入中的 Assistant 始终代表上方角色名称所指的角色；Assistant 的第一人称，以及明确指向 Assistant 的“你/他/她”，应改写为角色名称或“角色本人”。
@@ -571,6 +609,7 @@ def summarize_and_store_memory(session_id: int, db: DBSession, *, flush_events: 
 1. memories：长期记忆片段列表。每个记忆包含：
    - content：记忆的自然语言描述（例如："用户最喜欢的食物是草莓蛋糕"）
    - memory_type：必须是 "event" (事件), "emotion" (角色情绪), "relationship" (关系变化), "fact" (客观事实/设定) 之一
+   - retention："state"、"episode" 或 "transient"；event_index 只用于将 transient 片段关联本批事件，值为事件卡的数组下标或 null
    - temporal_status："current"（明确目前成立）、"historical"（已发生的事件或过去状态）、"planned"（计划/约定/尚未兑现）、"unknown"（未明确时间）；不确定时用 unknown，不把计划当成已经发生
    - temporal_note：可选，原文有依据的故事内时间描述（如“下个月”“搬家前”），不换算成服务器日期，不猜测计划兑现
    - importance_score：0.0 到 1.0 之间的重要性评分
