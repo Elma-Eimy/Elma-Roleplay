@@ -648,12 +648,19 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
   ```
 
 #### POST `/sessions/{session_id}/trigger_summary`
+手动提纯只可靠入队，立即返回当前处理状态，不在 HTTP 请求内调用模型。Worker 会提取新消息并收尾本故事的有效进行中事件；没有新消息时也可处理已保存缓冲。缓冲本身不计入记忆列表或统计。
+
+`extracted_count` 保留兼容，但该异步入口本次固定返回 `0`；实际新增结果通过记忆列表与日志查看。候选可靠保存后推进接收指针，关系判断失败不必重新提取。`status` 为 `completed/pending/retrying/failed`，`pending_count` 表示尚未完成的任务数，`error_codes` 仅返回脱敏原因码；`failed` 表示最近任务因来源失效被取消。新请求通常返回 `pending`，前端不能把受理提示显示成整理完成。失败候选由独立 Worker 退避重试，无需继续聊天。
+
 * **Response (200 OK)**:
   ```json
   {
-    "message": "记忆提纯流程已完成",
+    "message": "记忆已接收，后台处理中",
     "session_id": 1,
-    "extracted_count": 3
+    "extracted_count": 0,
+    "status": "pending",
+    "pending_count": 1,
+    "error_codes": []
   }
   ```
 

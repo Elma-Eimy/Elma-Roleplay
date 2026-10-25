@@ -7,8 +7,8 @@ main.py
   └─ application.factory.create_app()
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
-            ├─ 启动：Alembic 升级 → 创建 Outbox 与 CHARX 清理任务 → 启动提示
-            └─ 关闭：取消并等待 Outbox 与 CHARX 清理任务 → 清理后台对话 Worker
+            ├─ 启动：Alembic 升级 → 创建 Outbox、记忆重试与 CHARX 清理任务 → 启动提示
+            └─ 关闭：等待记忆处理线程 → 取消 Outbox 与 CHARX 清理任务 → 清理后台对话 Worker
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 维护命令 → scripts/ → core/ 与基础设施客户端
@@ -60,6 +60,8 @@ CHARX 确认区分新建、追加素材和更新已有角色；设定合并、�
 `joint_retrieval.py` 编排向量种子、图谱扩展、SQLite 支持卡回查、整理摘要映射和共同预算；`memory_facts.py` 提供共用载荷、故事时间语义及自动卡来源校验。Prompt 接收统一事实卡，图谱不单独注入重复正文；ChromaDB 继续只作可重建索引。
 
 ## 后台任务
+
+进行中事件由 `memory_event_buffer.py` 纯内存规划并持久化到 `memory_event_buffers`。`memory_extraction_jobs.py` 先将候选与接收进度原子保存，再按依赖组件处理；所有外部调用位于写事务之外，提交时核对来源、旧卡、缓冲版本和租约。单独的 `memory_retry_worker.py` 退避重试，生命周期关闭会等待其线程结束。聊天装配向纯 Prompt 编译器传入有效事件和待处理候选；事件与图谱辅助来源分别失效。迁移和测试副本沿用现有复制范围，详见[进行中事件](MEMORY_EVENTS.md)。
 
 Outbox 任务保存在 `app.state.outbox_task` 中，由创建它的 lifespan 管理。关闭时取消并等待任务退出，不再靠应用入口修改 Worker 的全局开关。未完成的持久任务沿用 Outbox 原有租约与幂等重试机制。
 

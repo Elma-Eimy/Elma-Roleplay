@@ -4,6 +4,14 @@
 
 ## 自动回归
 
+`memory/test_memory_extraction_jobs.py` 覆盖外部调用无事务、独立写入、失败隔离与幂等恢复、时间补全、来源独立失效、无新聊天的捕获重试与真实接口状态。`infrastructure/test_memory_extraction_jobs_migration.py` 验证升级回退、唯一处理租约和级联清理；`test_memory_retry_worker.py` 验证关闭时等待工作线程释放资源。
+
+`memory/test_memory_event_buffer.py` 覆盖跨批次事件、事实与承诺直接写入、手动收尾、重启、图谱与 Outbox 原子回滚、来源和分叉边界；`infrastructure/test_memory_event_buffer_migration.py` 验证旧库升级、回退和外键清理。
+
+事件边界回归还覆盖长片段不丢正文、情绪超长时独立保留、容量收尾的完整跨卡依据及失效、未落库依赖拒绝发布和非法下标安全处理。
+
+`memory/test_memory_card_extraction.py` 覆盖写入专用召回、向量未同步时的批内语义去重、低重要性旧卡、分叉与时间边界、关系判断失败回滚及重试，使用本地模型和向量替身。
+
 `memory/test_joint_retrieval.py` 验证语义种子扩图、支持卡回查、去重、摘要映射、预算和故事边界；`test_memory_fact_semantics.py` 验证提纯时间语义及整理保留。`infrastructure/test_memory_fact_migration.py` 使用临时库验证共源字段升降级，不读取开发数据。
 
 ```bash

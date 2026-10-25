@@ -17,6 +17,7 @@
 | [图谱与记忆一致性](GRAPH_MEMORY_CONSISTENCY.md) | 共同事实、时间语义、联合检索、图谱证据、分叉边界与旧库策略 |
 | [HTTP API](../API_TABLE.md) | 前后端共享的接口总表、请求与响应格式 |
 | [记忆模块 API](api/MEMORY_API.md) | 记忆筛选、统计、继承、故事导航与可撤销整理的详细契约 |
+| [进行中事件](MEMORY_EVENTS.md) | 跨批次事件缓冲、长期准入、收尾边界、消息来源与分叉隔离 |
 | [记忆整理质量验收](MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收、本地报告和人工审阅 |
 | [更新日志](../CHANGELOG.md) | 前后端功能和工程变更记录 |
 | [后端说明](../app-backend/README.md) | Python 环境、服务配置、后端模块与测试 |
