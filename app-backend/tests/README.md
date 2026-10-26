@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`infrastructure/test_client_initialization.py` 在隔离副本的独立进程中验证导入服务和创建应用不会构造 ChromaDB 或 Embedding 函数，并覆盖并发首次访问复用、构造失败重试、配置传递及记忆集合与 Outbox 调用边界。测试替换资源构造器，不连接真实向量服务。
+
 `memory/test_memory_extraction_jobs.py` 覆盖外部调用无事务、独立写入、失败隔离与幂等恢复、时间补全、来源独立失效、无新聊天的捕获重试与真实接口状态。`infrastructure/test_memory_extraction_jobs_migration.py` 验证升级回退、唯一处理租约和级联清理；`test_memory_retry_worker.py` 验证关闭时等待工作线程释放资源。
 
 `memory/test_memory_event_buffer.py` 覆盖跨批次事件、事实与承诺直接写入、手动收尾、重启、图谱与 Outbox 原子回滚、来源和分叉边界；`infrastructure/test_memory_event_buffer_migration.py` 验证旧库升级、回退和外键清理。

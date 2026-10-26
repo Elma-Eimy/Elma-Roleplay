@@ -23,7 +23,7 @@ from core.models import (
     MemoryType,
     MessageRole,
 )
-from services.infrastructure.clients import chroma_client, openai_ef
+from services.infrastructure.clients import get_chroma_client, get_embedding_function
 import services.memory.persona_lineage as persona_lineage
 from core.config import settings
 
@@ -41,9 +41,9 @@ def get_character_collection(character_id: int):
     通过 metadata.persona_id 区分不同 Persona。
     """
     collection_name = f"character_{character_id}"
-    collection = chroma_client.get_or_create_collection(
+    collection = get_chroma_client().get_or_create_collection(
         name=collection_name,
-        embedding_function=openai_ef
+        embedding_function=get_embedding_function()
     )
 
     return collection

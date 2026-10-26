@@ -1,5 +1,6 @@
+from threading import Lock
+
 import chromadb
-from openai import OpenAI, AsyncOpenAI
 from chromadb.utils import embedding_functions
 from core.config import settings
 
@@ -8,9 +9,34 @@ class EmbeddingGenerationError(RuntimeError):
     """Embedding 服务未能为输入生成可用向量。"""
 
 
-# ChromaDB 持久化客户端
-CHROMA_DATA_PATH = settings.STORAGE_CHROMA_DB_PATH
-chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
+_chroma_client = None
+_embedding_function = None
+_chroma_lock = Lock()
+_embedding_lock = Lock()
+
+
+def get_chroma_client():
+    """首次使用时创建持久化客户端；创建失败不缓存，后续调用可重试。"""
+    global _chroma_client
+    with _chroma_lock:
+        if _chroma_client is None:
+            _chroma_client = chromadb.PersistentClient(
+                path=settings.STORAGE_CHROMA_DB_PATH
+            )
+        return _chroma_client
+
+
+def get_embedding_function():
+    """按现有连接配置创建并复用 Embedding 函数，不发起向量请求。"""
+    global _embedding_function
+    with _embedding_lock:
+        if _embedding_function is None:
+            _embedding_function = RobustOpenAIEmbeddingFunction(
+                api_key=settings.EMBEDDING_API_KEY,
+                api_base=settings.EMBEDDING_BASE_URL,
+                model_name=settings.LLM_EMBEDDING_MODEL,
+            )
+        return _embedding_function
 
 # OpenAI Compatible Robust Embedding Function
 class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction):
@@ -111,12 +137,6 @@ class RobustOpenAIEmbeddingFunction(embedding_functions.OpenAIEmbeddingFunction)
                 raise EmbeddingGenerationError(
                     f"Embedding generation failed: {e}"
                 ) from e
-
-openai_ef = RobustOpenAIEmbeddingFunction(
-    api_key=settings.EMBEDDING_API_KEY,
-    api_base=settings.EMBEDDING_BASE_URL,
-    model_name=settings.LLM_EMBEDDING_MODEL
-)
 
 # ── 大模型适配提供商兼容性代理 ──
 # 作用：保持系统其他辅助模块（如 cognition_service、tts_service）的历史导入接口兼容
