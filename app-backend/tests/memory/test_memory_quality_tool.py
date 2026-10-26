@@ -40,6 +40,8 @@ class MemoryQualityToolTests(unittest.TestCase):
             provider = MagicMock()
             if failure:
                 provider.generate.side_effect = failure
+            elif callable(response):
+                provider.generate.side_effect = response
             else:
                 provider.generate.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response, ensure_ascii=False)))])
             with patch("services.infrastructure.llm_provider.get_llm_provider", return_value=provider):
@@ -90,6 +92,25 @@ class MemoryQualityToolTests(unittest.TestCase):
         self.assertEqual(82, len(result["after"]))
         self.assertTrue(all(row["after"] for row in result["fact_cues"]))
 
+    def test_mixed_type_replay_preserves_every_call_and_merged_suggestions(self):
+        case = self.case("mixed_scene")
+        result = self.execute(case)
+        self.assertTrue(result["auto_passed"], result.get("error"))
+        self.assertEqual(2, len(result["generation_calls"]))
+        self.assertEqual(2, len(result["preview"]["groups"]))
+        self.assertEqual(2, len(json.loads(result["raw_response"])))
+        calls = result["generation_calls"]
+        self.assertFalse(set(calls[0]["source_ids"]) & set(calls[1]["source_ids"]))
+        self.assertTrue(all(call["raw_response"] and len(call["system_prompt_sha256"]) == 64 for call in calls))
+
+    def test_mixed_type_replay_does_not_hide_invalid_cross_type_group(self):
+        case = self.case("mixed_scene")
+        case["replay_groups"][0]["source_keys"] = ["a", "c"]
+        result = self.execute(case)
+        self.assertFalse(result["auto_passed"])
+        self.assertEqual("preview", result["error"]["stage"])
+        self.assertIn('"source_ids": [1, 3]', result["raw_response"])
+
     def test_suite_accepts_one_hundred_cards_and_rejects_one_hundred_one(self):
         suite, _ = load_suite(ROOT / "tests/fixtures/memory_fragment_cases.json")
         case = suite["cases"][1]
@@ -104,10 +125,15 @@ class MemoryQualityToolTests(unittest.TestCase):
         suite, _ = load_suite(ROOT / "tests/fixtures/memory_fragment_cases.json")
         case = suite["cases"][0]
         ids = {card["key"]: index + 1 for index, card in enumerate(case["cards"])}
-        result = self.execute(case, {"groups": [{"kind": "event",
+        wrong = {"groups": [{"kind": "event",
             "source_ids": [ids["station_0"], ids["keep_1"]],
             "content": "6月7日用户和林墨在南站相遇，6月8日用户独自到南站取充电器。",
-            "reason": "错误地按相同地点合并两次经历。"}]})
+            "reason": "错误地按相同地点合并两次经历。"}]}
+        def generate(**kwargs):
+            cards = json.loads(kwargs["messages"][1]["content"])
+            payload = wrong if cards[0]["memory_type"] == "event" else {"groups": []}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        result = self.execute(case, generate)
         self.assertNotIn("error", result)
         self.assertTrue(result["auto_passed"])
         self.assertEqual([], result["preview"]["groups"])

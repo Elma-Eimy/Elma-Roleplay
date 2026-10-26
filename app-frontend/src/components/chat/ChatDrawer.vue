@@ -50,6 +50,15 @@
         </view>
 
         <view class="panel-section"><RoleStatePanel :session-id="props.sessionId" /></view>
+        <view v-if="personaStore.activeCharacter?.id" class="panel-section">
+          <CharacterPortraitPanel
+            :character-id="personaStore.activeCharacter.id"
+            :session-id="props.sessionId"
+            :disabled="chatStore.isLoading"
+            :timeline="portraitTimeline"
+            @changed="emit('portrait-changed')"
+          />
+        </view>
 
         <!-- ③ 微观认知状态显示区 -->
         <view class="panel-section">
@@ -338,6 +347,7 @@ import { getAvatarUrl } from "@/api/characters";
 import { triggerSummary, triggerCognition } from "@/api/sessions";
 import GenerationPicker from "./GenerationPicker.vue";
 import RoleStatePanel from "./RoleStatePanel.vue";
+import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
 const props = defineProps<{
@@ -348,6 +358,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "close"): void;
+  (e: "portrait-changed"): void;
   (e: "delete-session"): void;
   (e: "open-branch-tree"): void;
   (e: "open-memory-view"): void;
@@ -356,6 +367,7 @@ const emit = defineEmits<{
 }>();
 
 const chatStore = useChatStore();
+const portraitTimeline = computed(() => `${chatStore.isLoading}:${chatStore.messages.map(message => message.id).join(',')}`);
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
 const isOpeningProfile = ref(false);

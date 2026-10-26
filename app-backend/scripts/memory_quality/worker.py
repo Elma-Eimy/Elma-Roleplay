@@ -80,6 +80,7 @@ class RecordedProvider:
         self.raw_response = None
         self.controls = None
         self.prompt_hash = None
+        self.calls = []
 
     def generate(self, model, messages, **kwargs):
         self.controls = {"model": model, **kwargs}
@@ -88,10 +89,22 @@ class RecordedProvider:
         if self.delegate:
             response = self.delegate.generate(model=model, messages=messages, **kwargs)
         else:
+            input_ids = {card["id"] for message in messages if message["role"] == "user"
+                         for card in json.loads(message["content"])}
+            # 按首张来源路由整组，保留跨类型的错误引用供真实校验拒绝。
             groups = [{"kind": group["kind"], "source_ids": [self.key_ids[key] for key in group["source_keys"]],
-                       "content": group["content"], "reason": group["reason"]} for group in self.case["replay_groups"]]
+                       "content": group["content"], "reason": group["reason"]} for group in self.case["replay_groups"]
+                      if self.key_ids[group["source_keys"][0]] in input_ids]
             response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"groups": groups}, ensure_ascii=False)))])
         self.raw_response = response.choices[0].message.content
+        self.calls.append({"raw_response": self.raw_response, "system_prompt_sha256": self.prompt_hash,
+                           "generation_controls": self.controls,
+                           "source_ids": [card["id"] for message in messages if message["role"] == "user"
+                                          for card in json.loads(message["content"])]})
+        if len(self.calls) > 1:
+            self.raw_response = json.dumps([call["raw_response"] for call in self.calls], ensure_ascii=False)
+            self.prompt_hash = hashlib.sha256(json.dumps(
+                [call["system_prompt_sha256"] for call in self.calls]).encode()).hexdigest()
         return response
 
 
@@ -206,6 +219,7 @@ def run_case(case, repeat, mode, db_path):
         result["raw_response"] = provider.raw_response if provider else None
         result["generation_controls"] = provider.controls if provider else None
         result["system_prompt_sha256"] = provider.prompt_hash if provider else None
+        result["generation_calls"] = provider.calls if provider else []
         result["elapsed_seconds"] = round(time.monotonic() - started, 3)
         db.close(); engine.dispose()
     return result

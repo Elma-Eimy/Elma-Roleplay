@@ -179,12 +179,13 @@
       <button v-if="!isEditMode" class="library-save" :disabled="!isFormValid || isSaving" @tap="saveCharacter(null)">存入画册</button>
       <button class="save-btn" :disabled="!isFormValid || isSaving" @tap="isEditMode ? saveCharacter(null) : isStoryPickerOpen = true"><text class="save-text">{{ isSaving ? '正在保存…' : isEditMode ? '保存修改' : '保存并开启故事' }}</text></button>
     </view>
-    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="{ ...form, avatar_path: avatarPreview }" @apply="applyImportedCard" />
+    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="{ ...form, avatar_path: avatarPreview }" :character-id="editingCharId" @apply="applyImportedCard" @charx-imported="onCharxImported" />
     <NewSessionModal v-model:isOpen="isStoryPickerOpen" :character-name="form.name" :first-mes="form.first_mes" :alternate-greetings="alternateGreetings" @confirm="saveCharacter" />
   </view>
 </template>
 
 <script setup lang="ts">
+import type { CharxImportResult } from "@/types/charx";
 import { ref, computed } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
 import { uploadAvatar, createCharacter, updateCharacter, getAvatarUrl, getCharacter } from "@/api/characters";
@@ -352,6 +353,12 @@ const chooseAvatar = () => {
 };
 
 const importCharacterCard = () => { isImportOpen.value = true; };
+const onCharxImported = async (id: number, result: CharxImportResult) => {
+  await personaStore.loadCharacters();
+  uni.redirectTo({ url: `/pages/character/detail?id=${id}`, success: () => {
+    uni.showToast({ title: `${result.created ? "角色已创建" : "图片已补充"}，新增 ${result.portraits_added} 张立绘，跳过重复 ${result.duplicates_skipped ?? 0} 张`, icon: "none" });
+  } });
+};
           
 const saveCharacter = async (story: { title: string; greeting_index: number | null } | null) => {
   if (!isFormValid.value || isSaving.value) return;

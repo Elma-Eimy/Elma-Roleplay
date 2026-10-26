@@ -1,0 +1,61 @@
+# 复制为 config.yaml 后填写实际模型服务地址和模型 ID。
+# PowerShell（在 app-backend 中执行）：
+#   Copy-Item config.yaml.example config.yaml
+# 若已有 config.yaml，请先备份后合并配置，不要直接覆盖。
+# 此文件不含个人配置；所有密钥仅填写在 .env 中：
+# CHAT_API_KEY / EMBEDDING_API_KEY / MIMO_API_KEY / ACCESS_API_KEY。
+# 只列出常用配置，其余字段在启动时按 core/config.py 的 CONFIG_SCHEMA 自动补齐。
+
+llm:
+  # OpenAI 兼容服务的基础 URL；按服务商要求填写，通常以 /v1 结尾。
+  # 下列地址及模型名均为占位值，必须替换后才能调用模型。
+  chat_base_url: https://chat.example.invalid/v1
+  embedding_base_url: https://embedding.example.invalid/v1
+  default_chat_model: your-chat-model
+  embedding_model: your-embedding-model
+
+  # 记忆、阅读翻译和语音预处理使用的聊天模型，可使用同一服务下的不同模型。
+  memory_model: your-chat-model
+  translation_model: your-chat-model
+  tts_preprocess_model: your-chat-model
+
+  # 兼容旧客户端的模型槽位；新客户端以 default_chat_model 为默认模型。
+  chat_model: your-chat-model
+  non_reasoning_chat_model: your-chat-model
+  model_profiles: []
+  reasoning_mode: false
+  reasoning_effort: null
+  memory_thinking_mode: disabled
+  memory_reasoning_effort: high
+  tts_thinking_mode: disabled
+  tts_reasoning_effort: high
+
+  temperature: 0.7
+  memory_temperature: 0.3
+  max_tokens: 4096
+  timeout: 60.0
+
+app:
+  # 相对路径均基于 app-backend 目录，不是执行命令时的工作目录。
+  sqlite_db_path: data.db
+  chroma_db_path: ./chroma_data
+  upload_avatar_dir: ./assets/avatars
+  cors_origins: ["*"]
+
+  context_history_limit: 10
+  retrieval_top_k: 3
+  memory_extract_history_limit: 20
+  memory_handoff_margin: 2
+  lorebook_scan_depth: 5
+  lorebook_token_budget: 3000
+  max_card_size_mb: 10
+  max_charx_size_mb: 20
+
+tts:
+  # 默认关闭；需要语音时配置 .env 中的 MIMO_API_KEY，再改为 true。
+  enabled: false
+  base_url: https://api.xiaomimimo.com/v1
+  model: mimo-v2.5-tts
+  default_voice: 冰糖
+  cache_dir: data/audio_cache
+  max_cache_files: 500

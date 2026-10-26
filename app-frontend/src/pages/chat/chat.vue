@@ -81,6 +81,7 @@
       :background-mode="backgroundMode"
       @close="isStatusPanelOpen = false"
       @update:background-mode="updateBackgroundMode"
+      @portrait-changed="refreshPortrait"
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
       @open-memory-view="isMemoryPanelOpen = true"
@@ -161,6 +162,7 @@ import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
+import { usePortraitSelection } from "@/composables/usePortraitSelection";
 import type { TokenEstimate } from "@/api/sessions";
 import type { BranchSession } from "@/types/chat";
 
@@ -189,6 +191,11 @@ const {
 
 // 状态变量与视图状态
 const currentSessionId = ref<number | null>(null);
+const { selection: portraitSelection, refresh: refreshPortrait, dispose: disposePortrait } = usePortraitSelection(
+  () => currentSessionId.value,
+  () => `${chatStore.isLoading}:${chatStore.messages.map(message => message.id).join(',')}`,
+);
+onShow(() => { void refreshPortrait(); });
 const inputText = ref("");
 const isInputFocused = ref(false);
 const isWideScreen = ref(uni.getSystemInfoSync().windowWidth >= 900);
@@ -472,6 +479,7 @@ onLoad(async (options) => {
 });
 
 onUnload(() => {
+  disposePortrait();
   console.log("[chat.vue] onUnload page - resetting chatStore");
   chatStore.$reset();
   personaStore.cancelSessionLoad();
@@ -521,11 +529,11 @@ const onSend = async () => {
 };
 
 const characterBackgroundUrl = computed(() =>
-  getAvatarUrl(personaStore.activeCharacter?.avatar_path || "")
+  getAvatarUrl(portraitSelection.value?.image_path || personaStore.activeCharacter?.avatar_path || "")
 );
 const portraitLoadFailed = ref(false);
 const hasPortrait = computed(() =>
-  !!personaStore.activeCharacter?.avatar_path &&
+  !!(portraitSelection.value?.image_path || personaStore.activeCharacter?.avatar_path) &&
   characterBackgroundUrl.value !== DEFAULT_AVATAR_URL &&
   !portraitLoadFailed.value
 );

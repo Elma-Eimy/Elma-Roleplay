@@ -12,6 +12,8 @@
 
 每次在 Git 忽略的 `docs/local/memory-quality/<时间-随机编号>/` 新建 `index.html` 和 `report.json`，不覆盖旧结果。默认 12 个场景各运行一次。终端的“自动检查通过”只表示规则检查通过；语义结论全部待人工审阅。离线建议来自样本中的固定响应，不能据此认定模型质量。
 
+混合类型场景沿用生产流程，按记忆类型分别调用，整批最多 12 组。报告的 `generation_calls` 保存每次响应、来源 ID、实际参数与 Prompt 哈希，涵盖纠正重试；单次调用保留原 `raw_response` 格式，多次调用时该字段为所有响应字符串组成的 JSON 数组，`system_prompt_sha256` 为各次哈希序列的汇总哈希。离线回放按分组首张来源路由完整建议，跨类型错误引用仍交给真实服务拒绝，不裁剪分组掩盖错误。
+
 ```powershell
 # 只检查两个场景，重复两次
 .\venv\Scripts\python.exe -m scripts.memory_quality --case station_event --case negation --repeat 2

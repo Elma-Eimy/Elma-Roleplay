@@ -89,6 +89,7 @@ CONFIG_SCHEMA = {
         "cors_origins": {"type": list, "default": ["*"], "dynamic": False, "attr": "SECURITY_CORS_ORIGINS", "is_list": True},
         # 角色卡（如SillyTavern卡片）允许上传的最大文件大小 (MB)
         "max_card_size_mb": {"type": int, "default": 10, "dynamic": False, "attr": "SECURITY_MAX_CARD_SIZE_MB"},
+        "max_charx_size_mb": {"type": int, "default": 20, "dynamic": False, "attr": "SECURITY_MAX_CHARX_SIZE_MB"},
         # 会话历史消息拉取接口返回的默认消息数
         "history_fetch_default": {"type": int, "default": 50, "dynamic": False, "attr": "APP_HISTORY_FETCH_DEFAULT"},
         # 会话历史消息拉取接口允许单次返回的最大消息上限

@@ -6,6 +6,8 @@
 | --- | --- | --- | --- |
 | `sessions.ts` | 创建、列表、分支、详情、标题、删除与认知更新 | `../types/sessions.ts` | `mock/sessions.ts` |
 | `roleStates.ts` | 当前角色状态读取和携带版本的增量校正 | `../types/roleState.ts` | 明确提示暂不支持，不伪造成功 |
+| `portraits.ts` | 角色多立绘上传、管理与当前剧情节点的手动选择 | `../types/portraits.ts` | 明确提示暂不支持，不伪造成功 |
+| `charx.ts` | 有界角色包上传预览、缩略图分页、取消、回执恢复与幂等新建/追加素材/更新设定 | `../types/charx.ts` | 明确提示暂不支持，不伪造成功 |
 | `messages.ts` | 历史分页、消息编辑/删除与候选切换 | `../types/messages.ts` | `mock/messages.ts` |
 | `memories.ts` | 记忆提纯、列表筛选、角色概览、增删改与整理预览/逐组审阅/应用/撤销 | `../types/memories.ts` | `mock/memories.ts`；模型整理与审阅明确不支持 |
 | `prompts.ts` | 编译提示词预览与 Token 估算结果 | `../types/prompts.ts` | `mock/prompts.ts` |

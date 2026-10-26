@@ -39,7 +39,7 @@
           
           <view class="change-portrait-btn" @tap="changePortrait">
             <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
-            <text class="change-portrait-text">更换立绘</text>
+            <text class="change-portrait-text">更换头像</text>
           </view>
         </view>
 
@@ -192,6 +192,9 @@
         </view>
 
         <!-- Tab 2: 人设细节卡片 -->
+        <view v-if="activeTab === 'profile'" class="char-header-section">
+          <CharacterPortraitPanel :character-id="character.id" :timeline="portraitLibraryRevision" />
+        </view>
         <CharacterProfileTab 
           v-if="activeTab === 'profile'" 
           :character="character" 
@@ -378,7 +381,7 @@
       @confirm="startNewBranch"
     />
 
-    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="character" :busy="isImportSaving" save-immediately @apply="applyImportedCard" />
+    <CharacterImportSheet v-model:isOpen="isImportOpen" :current="character" :character-id="characterId" :busy="isImportSaving" save-immediately @apply="applyImportedCard" @charx-imported="onCharxImported" />
 
     <!-- 重命名会话分支模态框 -->
     <RenameSessionModal
@@ -391,6 +394,8 @@
 </template>
 
 <script setup lang="ts">
+import type { CharxImportResult } from "@/types/charx";
+import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
 import { getCharacter, updateCharacter, uploadAvatar, getAvatarUrl } from "@/api/characters";
@@ -614,7 +619,14 @@ const goToEdit = () => {
 
 const isImportOpen = ref(false);
 const isImportSaving = ref(false);
+const portraitLibraryRevision = ref("0");
 const quickUpdateFromCard = () => { isImportOpen.value = true; };
+const onCharxImported = async (id: number, result: CharxImportResult) => {
+  await Promise.all([personaStore.loadCharacters(), loadCharacterData(id)]);
+  portraitLibraryRevision.value = String(Date.now());
+  const prefix = result.card_updated ? "角色设定已同步，" : "";
+  uni.showToast({ title: `${prefix}新增 ${result.portraits_added} 张，跳过重复 ${result.duplicates_skipped ?? 0} 张`, icon: "none" });
+};
 const applyImportedCard = async (data: CharacterBase) => {
   if (characterId.value === null || isImportSaving.value) return;
   isImportSaving.value = true;

@@ -49,6 +49,8 @@ def run_migrations(db_engine=engine):
     tables = inspector.get_table_names()
     
     alembic_cfg = Config(os.path.join(BASE_DIR, "alembic.ini"))
+    # 应用内迁移沿用宿主日志配置，避免禁用 Uvicorn 和业务日志器。
+    alembic_cfg.attributes["configure_logging"] = False
     alembic_cfg.set_main_option(
         "script_location", os.path.join(BASE_DIR, "alembic")
     )

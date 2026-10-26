@@ -13,6 +13,60 @@ class RoleStateUpdate(BaseModel):
         return validate_patch(value, manual=True)
 
 
+class PortraitSelectionUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    portrait_id: Optional[int] = Field(default=None, gt=0)
+    expected_revision: str = Field(min_length=64, max_length=64)
+
+
+class PortraitNameUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class CharxImportRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    operation: Optional[Literal["create_character", "append_assets", "update_character"]] = None
+    skip_duplicates: bool = True
+    character_id: Optional[int] = Field(default=None, gt=0)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    portrait_indices: list[int] = Field(default_factory=list, max_length=300)
+    avatar_index: Optional[int] = Field(default=None, ge=0)
+    greeting_index: Optional[int] = Field(default=None, ge=0)
+    card_mode: Optional[Literal["keep", "replace", "fill"]] = None
+    sync_lorebook: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def valid_operation(self):
+        updating_card = (
+            self.card_mode in ("replace", "fill")
+            or self.sync_lorebook is True
+            or (self.character_id is not None and self.greeting_index is not None)
+        )
+        if self.character_id is None:
+            if self.operation is not None and self.operation != "create_character":
+                raise ValueError("操作类型与目标角色不匹配")
+            if self.card_mode in ("keep", "fill") or self.sync_lorebook is False:
+                raise ValueError("新建角色不支持增量设定合并选项")
+            self.operation = "create_character"
+        else:
+            expected = "update_character" if updating_card else "append_assets"
+            if self.operation is not None and self.operation != expected:
+                raise ValueError("操作类型与目标角色不匹配")
+            self.operation = expected
+            if self.name is not None:
+                raise ValueError("追加素材不能修改角色名称")
+            if not updating_card and not self.portrait_indices and self.avatar_index is None:
+                raise ValueError("请选择立绘或头像")
+        return self
+
+    @field_validator("portrait_indices")
+    @classmethod
+    def valid_portrait_indices(cls, value):
+        if any(index < 0 for index in value) or len(set(value)) != len(value):
+            raise ValueError("素材索引必须非负且不能重复")
+        return value
+
+
 class CharacterCreate(BaseModel):
     name: str
     avatar_path: str = ""

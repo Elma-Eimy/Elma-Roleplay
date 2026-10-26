@@ -8,8 +8,56 @@ export interface GreetingOption {
   preview: string;
 }
 
-export function plainCardText(value = ""): string {
+function cleanAssetLabel(raw = ""): string {
+  const trimmed = raw
+    .trim()
+    .replace(/^(?:embeded|embedded):\/\//i, "")
+    .replace(/^.*\//, "");
+  return trimmed || "图片";
+}
+
+export function formatCardInlineMedia(value = ""): string {
+  if (!value) return "";
   return value
+    .replace(
+      /<img\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'>/]+))\s*\/?>/gi,
+      (_, d, s, u) => `[立绘：${cleanAssetLabel(d || s || u)}]`,
+    )
+    .replace(
+      /<img\b[^>]*\bsrc\s*=\s*(?:"((?:embeded|embedded):\/\/[^"]+)"|'((?:embeded|embedded):\/\/[^']+)')[^>]*\/?>/gi,
+      (_, d, s) => `[立绘：${cleanAssetLabel(d || s)}]`,
+    )
+    .replace(
+      /!\[([^\]]*)\]\(((?:embeded|embedded):\/\/[^)]+)\)/gi,
+      (_, alt, uri) => `[立绘：${(alt || "").trim() || cleanAssetLabel(uri)}]`,
+    )
+    .replace(
+      /\{\{(?:img|raw)::([^}]+)\}\}/gi,
+      (_, name) => `[立绘：${cleanAssetLabel(name)}]`,
+    );
+}
+
+export function applyGreetingSelection(
+  card: CharacterBase,
+  greetingIndex: number | null,
+): CharacterBase {
+  if (greetingIndex === null || greetingIndex < 0) return card;
+  const alternates = [...getCardGreetings(card)];
+  if (greetingIndex >= alternates.length) return card;
+  const nextFirst = alternates[greetingIndex];
+  alternates[greetingIndex] = card.first_mes || "";
+  return {
+    ...card,
+    first_mes: nextFirst,
+    extensions: {
+      ...(card.extensions || {}),
+      alternate_greetings: alternates,
+    },
+  };
+}
+
+export function plainCardText(value = ""): string {
+  return formatCardInlineMedia(value)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/<[^>]*>/g, "")

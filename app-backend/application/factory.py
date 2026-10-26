@@ -14,6 +14,8 @@ def create_app() -> FastAPI:
     from application.lifecycle import lifespan
 
     app = FastAPI(title="AI Roleplay Backend", version="2.0", lifespan=lifespan)
+    from application.charx_upload import CharxUploadMiddleware
+    app.add_middleware(CharxUploadMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=".*",

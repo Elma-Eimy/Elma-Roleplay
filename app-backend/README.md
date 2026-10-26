@@ -166,6 +166,10 @@
 
 记忆库支持用户手动“检查新增与变更”和“重新检查全部”、逐组审阅、应用与撤销。`services/memory/memory_consolidation_service.py` 处理有界模型建议和事务校验，`memory_consolidation_scan.py` 比对原卡指纹并独立记录扫描进度，`memory_visibility.py` 处理原卡/整理结果可见性及分支快照；原卡和来源关联保留，继承卡暂不参与整理。服务启动沿现有迁移链新增整理及扫描进度表，无需清库；旧预览保留，首次增量从未检查开始。仅增量范围内的卡相互比较，不做跨批关联。详细契约见 [记忆 API](../docs/api/MEMORY_API.md#可预览的存量记忆整理)。
 
+整理失败时，在后端 Uvicorn 输出中搜索 `[MEMORY CONSOLIDATION]`：日志按 `request_id` 关联尝试，记录输入规模、返回结构、结束原因及校验原因码，不记录记忆正文和模型原文，也不写入 `llm_debug.log`。格式、分组数量或来源类型错误最多纠正重试一次；直接返回的分组数组会经过归一和完整校验。输入原卡长度不受整理建议正文 500 字符的限制，模型服务截断则单独提示。字段与重试范围见上述记忆 API 文档。应用内 Alembic 迁移保留宿主日志配置，命令行迁移也不禁用已有日志器。
+
+同批原卡按记忆类型分别送检，非事件类型只做同类型去重，返回来源限定在该次输入中。各类型共用整批 12 组预算和 `request_id`，全部成功后统一编号并原子保存预览与扫描进度；任一类型失败不保存部分结果。最多四种类型串行调用，每种类型最多纠正重试一次；全批少于两张仍不调用模型。
+
 本轮维护重点解决了分支时间线泄漏、短长期记忆交接空档、检索查询脱离语境，以及长期记忆切片过碎的问题。当前完整链路如下：
 
 ```text
@@ -315,6 +319,8 @@ ACCESS_API_KEY=
 
 ### 3. 修改模型配置
 
+首次配置可复制 [config.yaml.example](config.yaml.example) 为 `config.yaml`（PowerShell：`Copy-Item config.yaml.example config.yaml`），再替换示例中的聊天/嵌入 API 地址与模型 ID。已有配置请先备份后合并，不要覆盖。示例仅列常用字段，不含密钥；密钥继续放在 `.env` 中，语音功能在示例中默认关闭。
+
 创建或编辑本地 `config.yaml`（见下方[配置说明](#配置说明)），至少填写 `chat_base_url` 和模型名称。可以只填写需要覆盖的配置项，启动时会自动补齐其余字段；文件不存在时会自动生成默认配置，但仍需按实际服务修改连接和模型。
 
 `config.yaml` 仅在本地保存，已从 Git 跟踪中移除并由后端 `.gitignore` 忽略。配置默认值和升级规则维护在 `core/config.py` 的 `CONFIG_SCHEMA` 与迁移逻辑中；新增字段自动补齐并回写，保留已有配置值。
@@ -333,81 +339,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 所有非敏感配置集中在 `config.yaml`，修改后重启生效；部分参数也可通过 `PUT /utils/settings` API 热更新并自动持久化。
 
-```yaml
-llm:
-  default_chat_model: deepseek-flash           # 默认模型，与思考开关独立
-  chat_model: deepseek-v4-pro                  # 旧客户端思考模型槽
-  non_reasoning_chat_model: deepseek-v4-flash  # 旧客户端非思考模型槽
-  model_profiles: []                          # id / label / adapter
-  memory_thinking_mode: disabled
-  memory_reasoning_effort: high
-  tts_preprocess_model: deepseek-flash
-  tts_thinking_mode: disabled
-  tts_reasoning_effort: high
-  memory_model: deepseek-v4-flash              # 记忆提纯专用模型
-  embedding_model: doubao-embedding-vision-251215
-  chat_base_url: https://api.deepseek.com/v1
-  embedding_base_url: https://ark.cn-beijing.volces.com/api/v3
-  temperature: 0.7
-  memory_temperature: 0.3
-  max_tokens: 4096
-  reasoning_mode: false                        # 默认模型的思考开关，不再切换模型
-  timeout: 60                                  # LLM 请求超时秒数
-  top_p: 1.0
-  presence_penalty: 0.0
-  frequency_penalty: 0.0
-  repetition_penalty: 1.0
-  reasoning_effort: high
+常用配置见 [config.yaml.example](config.yaml.example)，完整字段、类型及默认值以 [CONFIG_SCHEMA](core/config.py) 为准。示例的地址与模型名必须替换，TTS 在示例中默认关闭；缺少 YAML 时自动生成的配置使用 Schema 默认值，两者不应混为可直接连接服务的个人配置。
 
-app:
-  context_history_limit: 15                    # 注入 LLM 的最近对话条数
-  retrieval_top_k: 3                           # RAG 最终召回条数
-  retrieval_context_turns: 3                   # 构造检索查询时承接的最近用户轮数
-  retrieval_query_max_chars: 2400              # 上下文化检索查询字符预算
-  memory_extract_history_limit: 20             # 记忆提纯扫描的历史条数上限
-  memory_handoff_margin: 2                     # 短期窗口淘汰前预留的提纯缓冲消息数
-  retrieval_min_importance: 0.3                # 记忆重要性过滤阈值（0~1）
-  retrieval_max_distance: 1.2                  # 向量余弦距离上限；0 仅允许精确距离，负数禁用本轮召回
-  cognition_update_interval: 30                # 认知更新触发间隔（消息条数）
-  cognition_importance_threshold: 0.8          # 触发认知更新所需的记忆重要性门槛
-  cognition_max_words: 200                     # 认知状态文本最大字数
-  lorebook_scan_depth: 5                       # Lorebook 扫描最近 N 条消息
-  lorebook_token_budget: 3000                  # Lorebook 注入 Token 总预算
-  lorebook_max_recursive_passes: 3             # Lorebook 递归触发最大轮数
+聊天、记忆、翻译和语音预处理使用 `llm.chat_base_url`，嵌入使用 `llm.embedding_base_url`；各自密钥由 `.env` 提供。`default_chat_model` 与思考开关独立；旧模型槽用于兼容和初始化回退。`model_profiles` 可补充模型显示名称与适配信息。
 
-  # 混合打分权重（三项之和建议为 1.0）
-  retrieval_weight_similarity: 0.6
-  retrieval_weight_importance: 0.2
-  retrieval_weight_time: 0.2
-  retrieval_half_life_turns: 50                # 时间衰减半衰期（轮次）
-  retrieval_candidate_multiplier: 3            # 粗排候选数 = top_k × multiplier
-  retrieval_ancestor_weight: 0.8               # 父代记忆的权重衰减系数
-  dedup_write_threshold: 0.15                  # 写时关系判断候选的向量距离门槛
-  graph_min_importance: 0.5                    # 图谱检索关系过滤最低重要性
-  graph_max_relations: 12                      # 图谱检索单次最大装填关系数量
-
-  # 存储路径
-  sqlite_db_path: data/data.db
-  chroma_db_path: data/chroma_data
-  upload_avatar_dir: ./assets/avatars
-
-  # 安全与限制
-  cors_origins:
-    - "*"                                      # 预留的 CORS 配置；当前应用工厂仍允许所有 Origin
-  max_card_size_mb: 10
-
-  # 历史消息拉取
-  history_fetch_default: 50
-  history_fetch_max: 500
-
-tts:
-  enabled: true                                # 是否启用 TTS 语音播报
-  base_url: "https://api.xiaomimimo.com/v1"    # MIMO API 地址
-  model: "mimo-v2.5-tts"                       # 合成模型
-  default_voice: "冰糖"                        # 默认角色音色
-  cache_dir: "data/audio_cache"                # 音频缓存本地文件夹
-  max_cache_files: 500                         # 按修改时间清理缓存的最大文件数
-```
+修改监听端口直接使用 Uvicorn 的 `--port`，例如 `uvicorn main:app --host 127.0.0.1 --port 8080`，并在前端「设置 → 连接与安全 → 服务器连接地址」填写 `http://127.0.0.1:8080`。前端页面端口与后端 API 端口分别配置。
 
 ### 动态可调参数（通过 `PUT /utils/settings` 无需重启）
 
@@ -448,6 +384,7 @@ tts:
 app-backend/
 ├── main.py                  # ASGI 入口：app = create_app()
 ├── config.yaml              # 自动生成的本地运行时配置（Git 忽略）
+├── config.yaml.example      # 不含密钥的常用配置示例
 ├── .env                     # 敏感密钥（不提交）
 ├── requirements.txt
 ├── application/
@@ -556,8 +493,16 @@ GitHub Actions 在 Python 3.12 / Ubuntu 24.04 上运行同一隔离入口；配�
 
 ## 注意事项
 
+- **保守 CHARX 导入**：`app.max_charx_size_mb` 默认 20 MiB，独立于 PNG/JSON 和头像限制，修改后重启生效。请求体解析前鉴权与累计限流量，只允许一个文件、最多三个并发上传；ZIP 条目校验失败也消耗预算并缓存。显式 CCv3 导入计划报告兼容性，新建、追加素材和更新已有角色设定分开约束。素材按内容去重，新增摘要迁移并保留旧库升级链。单进程服务最多三个预览，有效期 15 分钟；lifespan 每 60 秒清理过期文件。保存响应丢失可查询回执恢复结果。固定大小、像素、状态与错误码见根目录 API 总表。
+
+- **手动多立绘**：`services/media/character_portraits.py` 管理独立图片资源与剧情节点选择；新增 `character_portraits`、Persona 初始选择和消息选择列，通过 Alembic 升级保留旧卡旧故事。图片用 Pillow 校验 PNG/JPEG/WebP 内容、大小和像素数，存入既有头像资源目录；删除沿用 Outbox 并复核头像和立绘引用。无额外资源时沿用头像，不触发情绪、开场或脚本规则。HTTP 契约见根目录 API 总表。
+
 - **单用户私有部署限制**：本项目为单用户私有部署设计，未隔离多租户的数据库与 ChromaDB 集合。如果在公网或多端部署，请务必在 `.env` 中指定 `ACCESS_API_KEY` 以保护接口安全。
 - **密钥传输边界**：长期 `ACCESS_API_KEY` 只允许放在 `X-API-Key` 请求头中，禁止拼接到头像、音频或其他 URL。生产环境还必须启用 HTTPS，避免请求头在传输途中被窃听。
 - **缺失音频恢复**：重新请求 `POST /utils/tts` 并传入原 `message_id`、音色和语速可重新生成。直接下载缺失的版本化文件目前返回 `404`，不能承诺透明恢复；详见根目录 API 文档。
 - **历史分页性能**：通过 `/sessions/{id}/history` 查询历史记录时，参数 `before_id` 可作为分页游标，强烈建议前端在聊天页初始化时分步拉取（如每次获取 50 条），并在滚动触顶时按需往前拉取，避免长会话引起的内存暴涨。
 - **删除接口兼容**：角色、会话、消息和世界书删除提供 `DELETE` 与 `POST .../delete` 两种路径。记忆删除目前只有 `DELETE /sessions/{session_id}/memories/{memory_id}`，没有 POST 别名。
+
+CHARX 安全回归：`python -m tests --group infrastructure --pattern test_charx_upload.py` 覆盖鉴权前零读取、声明/流式总量限制、并发及空闲超时；`python -m tests --group parsing --pattern test_charx_import.py` 覆盖解析预算、去重、兼容计划、回执恢复和共享文件回收。
+
+CHARX 动图按原始字节保留 GIF/APNG/WebP，预览仅展示静态首帧；后端逐帧校验，单图最多 300 帧，所有帧计入累计 2.5 亿像素预算。播放效果需按客户端验收。
