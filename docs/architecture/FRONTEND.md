@@ -46,3 +46,5 @@ src/main.ts + App.vue + pages.json
 跨端能力沿用 uni-app 条件编译和现有适配。浏览器的 `fetch`、DOM 与文件能力不能直接推广到 App 和小程序。UI 复用语义变量与通用反馈，保留安全区和减少动画适配。
 
 回归入口见 [前端测试说明](../../app-frontend/tests/README.md)。逻辑变更运行离线测试与类型检查；网络、流式、平台或共享 UI 变更按影响执行三个目标平台构建，真机行为另行验收。
+
+初评发现、已完成的边界修复和后续拆分顺序见 [生命周期评估](../plans/CHAT_LIFECYCLE_REVIEW.md)。继续拆分 Store 的工作尚未实施。
