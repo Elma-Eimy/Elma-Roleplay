@@ -14,6 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  documentation:
+    name: Documentation links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Test documentation checker
+        run: python -m unittest discover -s tools/tests
+      - name: Check tracked documentation links
+        run: python tools/check_docs.py
+
   backend:
     name: Backend tests
     runs-on: ubuntu-24.04

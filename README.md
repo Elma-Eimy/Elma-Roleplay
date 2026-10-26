@@ -277,7 +277,7 @@ python -m tests
 
 统一入口在临时工作区中运行自动回归，使用临时配置和数据。按领域执行、单模块调试及手动场景的说明见 [后端测试指南](app-backend/tests/README.md)。
 
-GitHub Actions 的 [CI 工作流](.github/workflows/ci.yml) 在 PR 和 `main` 分支推送时并行执行后端回归，以及前端测试、类型检查和 H5 构建。运行环境、手动触发与失败排查见 [持续集成说明](docs/development/CI.md)。
+GitHub Actions 的 [CI 工作流](.github/workflows/ci.yml) 在 PR 和 `main` 分支推送时并行执行文档本地链接检查、后端回归，以及前端测试、类型检查和 H5 构建。文档检查只需 Python 标准库与 Git，可在根目录运行 `python tools/check_docs.py`；运行环境、检查边界与失败排查见 [持续集成说明](docs/development/CI.md)。
 
 ---
 

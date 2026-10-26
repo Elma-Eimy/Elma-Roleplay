@@ -41,7 +41,7 @@
 | [后端测试指南](../app-backend/tests/README.md) | 隔离测试入口、领域分组和手动场景 |
 | [前端回归检查](../app-frontend/tests/README.md) | 离线回归、类型检查与跨端验证 |
 | [记忆整理质量验收](testing/MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收与人工审阅 |
-| [持续集成](development/CI.md) | GitHub Actions 环境、检查范围与失败排查 |
+| [持续集成](development/CI.md) | GitHub Actions 环境、本地文档链接检查、回归范围与失败排查 |
 | [后端维护工具](../app-backend/scripts/README.md) | 诊断、查询与显式重置操作 |
 
 ## 规划与本地资料
