@@ -21,7 +21,7 @@
 - 素材可按类型、正文引用标记或名称/路径关键词筛选；筛选只影响展示及批量选图范围，不改变原素材索引。「正文引用」是对支持的行内标记进行匹配，不等同于执行原平台变量或自动显示插图。阅读视图会将支持的行内图像语法转为可读立绘标记；不能保证已在后端文本规范化中移除的标签仍可还原。
 - 预览只暂存可用图片、静态缩略图和清单，目录为系统临时目录下 `ai-roleplay-charx-<数据库路径摘要>/<token>/`，不按原 ZIP 路径完整解压。确认后仅所选立绘及头像保存到 `app.upload_avatar_dir`（默认 `app-backend/assets/avatars/`），使用 `portrait_<随机ID>.<真实格式>` 文件名；设定和素材关联保存在 SQLite。删除沿用 Outbox 异步回收，仍有头像或立绘引用的共享文件会保留。
 - 手动添加立绘沿用独立上传入口，目前支持 PNG/JPEG/WebP；CHARX 新增的 GIF 导入能力不代表所有上传入口都已支持 GIF。H5 已实测 GIF 头像播放；APNG/动态 WebP 的浏览器播放及 App/微信真机播放、文件选择仍需验收。
-- 具体 HTTP 契约及配置入口见 [API 总表](../../API_TABLE.md#conservative-charx-import)。现有 PNG/JSON 导入流程继续沿用下述规则。
+- 具体 HTTP 契约及配置入口见 [CHARX 接口详情](../api/CHARACTERS.md#conservative-charx-import)。现有 PNG/JSON 导入流程继续沿用下述规则。
 
 ## 导入流程
 
