@@ -23,6 +23,8 @@ pip 与 npm 下载缓存分别按依赖清单更新；每次仍安装依赖，np
 
 后端沿用[隔离测试入口](../../app-backend/tests/README.md)，在临时工作区生成测试配置和占位凭据，迁移临时 SQLite 数据库并运行自动回归；不运行 `tests/manual/` 中的脚本。前端使用[离线测试](../../app-frontend/tests/README.md)，构建使用仓库默认配置，不复制本地 `.env.production`。
 
+Backend tests 包含 [API 文档校验](../api/README.md)：比较索引与真实路由，验证标记请求样本符合当前模型，并要求所有 JSON 请求接口都有样本。查询参数说明、未出现在样本中的默认值和动态响应语义不在此检查范围内。
+
 CI 无需配置模型或部署 Secrets，不调用真实模型或 TTS 服务。工作流只申请 `contents: read` 权限。首版不发布构建、不部署应用，也不执行 App Plus 或微信小程序构建；涉及跨端行为时，仍按项目协作约定补充对应构建和真机验收。
 
 ## 文档链接检查

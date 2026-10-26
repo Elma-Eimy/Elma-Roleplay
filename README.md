@@ -81,14 +81,14 @@
 ```text
 /APP
 ├── README.md         # 全栈项目入口与部署概览
-├── API_TABLE.md      # 前后端共享 HTTP 接口总表
+├── API_TABLE.md      # 前后端共享 HTTP 路由索引与领域入口
 ├── CHANGELOG.md      # 近期变更摘要与月度历史索引
 ├── docs/
 │   ├── README.md     # 文档导航与维护约定
 │   ├── guides/       # Agent 上手与任务定位
 │   ├── architecture/ # 前后端模块职责与调用链
 │   ├── features/     # 已实现功能与业务规则
-│   ├── api/          # 模块接口补充规范（MEMORY_API.md）
+│   ├── api/          # 分领域接口详情、记忆补充规则与校验说明
 │   ├── development/  # 开发流程与持续集成
 │   ├── testing/      # 专项质量验收
 │   ├── plans/        # 未完成规划与研究

@@ -62,7 +62,7 @@
 
 ## 文档同步
 
-- HTTP 接口契约统一维护在根目录 `API_TABLE.md`；涉及记忆筛选、统计或继承规则时同步更新 `docs/api/MEMORY_API.md`。
+- HTTP 接口统一从根目录 `API_TABLE.md` 索引，详细契约在 `docs/api/` 对应领域维护，不重复保存正文；涉及记忆筛选、统计或继承规则时同步更新 `docs/api/MEMORY_API.md`。接口文档变更运行后端隔离回归 `python -m tests --group api --pattern test_api_documentation.py`，校验路由覆盖与 JSON 请求样本，边界见 `docs/api/README.md`。
 - 启动、测试、目录或职责变更更新相应组件 README 与架构说明，不在前后端重复维护 API 总表。
 - 新增功能、修复或工程调整在 `docs/changelog/YYYY-MM.md` 按日期倒序记录，每项用 1–2 条简述；根 `CHANGELOG.md` 只保留最多 10 条近期摘要和按年分组的月度索引，超限移除最旧摘要。跨月创建新文件并更新索引，完整历史保留在月度文件中。
 - 新增文档同步 `docs/README.md` 导航；月度更新记录由根 `CHANGELOG.md` 索引，无需逐月重复登记到文档导航。文档链接使用仓库相对路径。
