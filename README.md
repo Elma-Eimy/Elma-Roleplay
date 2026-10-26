@@ -82,7 +82,7 @@
 /APP
 ├── README.md         # 全栈项目入口与部署概览
 ├── API_TABLE.md      # 前后端共享 HTTP 接口总表
-├── CHANGELOG.md      # 统一更新日志
+├── CHANGELOG.md      # 近期变更摘要与月度历史索引
 ├── docs/
 │   ├── README.md     # 文档导航与维护约定
 │   ├── guides/       # Agent 上手与任务定位
@@ -92,6 +92,7 @@
 │   ├── development/  # 开发流程与持续集成
 │   ├── testing/      # 专项质量验收
 │   ├── plans/        # 未完成规划与研究
+│   ├── changelog/    # 按月保存的完整更新记录
 │   └── local/        # 本地草稿与参考副本（Git 忽略）
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
 │   ├── main.py       # ASGI 入口
