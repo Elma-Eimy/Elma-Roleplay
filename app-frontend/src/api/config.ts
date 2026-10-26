@@ -3,6 +3,8 @@
  * 统一的 API 全局配置 — 从环境变量读取或默认回退到本地开发服务器。
  */
 
+import { notifyServerChange } from "../utils/connectionEvents";
+
 // 动态获取及保存 API 基础 URL 逻辑，方便在部署时 runtime 修改端口及地址
 export function getSavedBaseUrl(): string {
   try {
@@ -17,12 +19,15 @@ export function getBaseUrl(): string {
 }
 
 export function setSavedBaseUrl(newUrl: string) {
+  const previousUrl = getSavedBaseUrl().replace(/\/+$/, "");
+  const trimmedUrl = newUrl.replace(/\/+$/, "");
   try {
-    const trimmedUrl = newUrl.replace(/\/+$/, "");
     uni.setStorageSync("api_base_url", trimmedUrl);
   } catch (e) {
     console.error("Failed to save base URL", e);
+    throw e;
   }
+  if (trimmedUrl !== previousUrl) notifyServerChange();
 }
 
 export const DEFAULT_HEADERS: Record<string, string> = {

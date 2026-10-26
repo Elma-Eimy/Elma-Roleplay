@@ -241,7 +241,8 @@ const switchCandidateVersion = async (direction: number) => {
     try {
       uni.vibrateShort({ success: () => {} });
     } catch (_) {}
-    await chatStore.switchActiveCandidate(props.message.id, targetCandidate.id);
+    const result = await chatStore.switchActiveCandidate(props.message.id, targetCandidate.id);
+    if (result.status === "error") uni.showToast({ title: result.message, icon: "none" });
   }
 };
 
