@@ -1,6 +1,6 @@
 # 持续集成
 
-工作流定义位于 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)。首版使用 GitHub 托管的 Ubuntu 24.04，运行两个独立任务；任一检查失败时，该任务失败。
+工作流定义位于 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。首版使用 GitHub 托管的 Ubuntu 24.04，运行两个独立任务；任一检查失败时，该任务失败。
 
 ## 触发方式
 
@@ -20,7 +20,7 @@
 
 pip 与 npm 下载缓存分别按依赖清单更新；每次仍安装依赖，npm 使用已提交的 `package-lock.json`。缓存不包含数据库、音频或构建产物。
 
-后端沿用[隔离测试入口](../app-backend/tests/README.md)，在临时工作区生成测试配置和占位凭据，迁移临时 SQLite 数据库并运行自动回归；不运行 `tests/manual/` 中的脚本。前端使用[离线测试](../app-frontend/tests/README.md)，构建使用仓库默认配置，不复制本地 `.env.production`。
+后端沿用[隔离测试入口](../../app-backend/tests/README.md)，在临时工作区生成测试配置和占位凭据，迁移临时 SQLite 数据库并运行自动回归；不运行 `tests/manual/` 中的脚本。前端使用[离线测试](../../app-frontend/tests/README.md)，构建使用仓库默认配置，不复制本地 `.env.production`。
 
 CI 无需配置模型或部署 Secrets，不调用真实模型或 TTS 服务。工作流只申请 `contents: read` 权限。首版不发布构建、不部署应用，也不执行 App Plus 或微信小程序构建；涉及跨端行为时，仍按项目协作约定补充对应构建和真机验收。
 

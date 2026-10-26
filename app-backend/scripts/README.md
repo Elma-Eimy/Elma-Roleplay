@@ -12,6 +12,6 @@
 
 查询工具会读取实际消息和角色内容。清库工具保留原有终端确认步骤；它会永久删除数据，执行前应停止服务并备份。上述查询/清库工具使用当前 `core.config` 和 `core.database`。
 
-`memory_quality` 是独立隔离入口，不读取开发配置和数据库。默认固定响应回放不评价模型质量；仅 `--online` 加显式模型、地址和环境变量密钥才会发送样本。报告默认写入 Git 忽略的 `docs/local/memory-quality/`。用法与样本格式见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
+`memory_quality` 是独立隔离入口，不读取开发配置和数据库。默认固定响应回放不评价模型质量；仅 `--online` 加显式模型、地址和环境变量密钥才会发送样本。报告默认写入 Git 忽略的 `docs/local/memory-quality/`。用法与样本格式见 [记忆整理质量验收](../../docs/testing/MEMORY_QUALITY.md)。
 
 这些命令只在显式执行时运行，不由 HTTP 服务启动过程或自动测试调用。

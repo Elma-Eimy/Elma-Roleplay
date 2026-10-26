@@ -22,4 +22,4 @@ SQLite 的 `SessionPersona.role_state_base` 保存分支起点之前的独立状
 
 迁移 `a6b7c8d9e0f1` 以可空列升级旧库，旧消息保持不变，不回溯调用模型补填历史状态。启动会沿用现有 Alembic 机制升级；降级只移除新增状态列。
 
-接口与字段限制见 [HTTP API](../API_TABLE.md)。
+接口与字段限制见 [HTTP API](../../API_TABLE.md)。

@@ -100,7 +100,7 @@ illustrative; configurable values depend on the running backend.
 
 ### 5. Conversations & Inference (`/chat`)
 
-Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/MODEL_SELECTION.md).
+Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/features/MODEL_SELECTION.md).
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **POST** | `/chat` | Submit message, run RAG, compile prompt, write response (blocking) |
@@ -130,7 +130,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 - Returns the updated GET shape. Omitted fields remain unchanged; manual `null` or empty string clears a field. Clearing all known fields removes that character's state. Scene limit: 300 characters; character names: 1–50 characters; posture/clothing/location: 1–200 characters; at most 8 characters in the resulting state. Up to 16 character entries are allowed in a manual patch to clear old entries while adding new ones. Unknown keys, invalid types, oversized payloads or invalid revisions return `422`.
 - Missing session/persona returns `404`. A stale revision or a session currently generating a reply returns `409`. Corrections attach to the latest active local message, or the baseline when no messages exist, and affect subsequent prompt assembly. Reads do not call an LLM.
 - Chat generation must append an increment such as `<state_update>{"scene":"客厅","characters":{"露娜":{"posture":"站着"}}}</state_update>` after reply/status when state changes or is first explicitly described; the entire increment may be omitted when nothing changes. This is an internal model-output protocol, not an extra SSE event. Only changed or first explicitly described fields are emitted; omitted updates preserve state. LLM patches cannot clear fields or use nulls. Invalid patches are ignored atomically while reply/status are retained; raw state tags never enter stored reply text or streamed body chunks.
-- Active candidates determine state. Regeneration starts before the replaced candidate; branches snapshot only their selected message boundary. Editing assistant text invalidates that message's model-derived patch, preserving manual corrections. Existing emotion/affection behavior remains separate. See [role-state behavior](docs/ROLE_STATE.md) for scope and limitations.
+- Active candidates determine state. Regeneration starts before the replaced candidate; branches snapshot only their selected message boundary. Editing assistant text invalidates that message's model-derived patch, preserving manual corrections. Existing emotion/affection behavior remains separate. See [role-state behavior](docs/features/ROLE_STATE.md) for scope and limitations.
 
 ### 1. General & Utilities
 
@@ -240,7 +240,7 @@ Both `/chat` and `/chat/stream` accept independent model settings, including reg
 #### POST `/characters/parse`
 * **Request**: `multipart/form-data`
   - `file`: PNG Character Card containing SillyTavern metadata (tEXt/zTXt/iTXt) or standard JSON config file.
-* **Storage**: Parsing does not create a database record. Valid PNGs are retained as content-addressed avatars; identical uploads reuse the same path. Clients should use the returned `avatar_path` without uploading the image again. JSON uploads and failed parses are temporary and leave no avatar file. With multiple valid `chara` chunks, the first is used. See [character card compatibility](docs/CHARACTER_CARDS.md).
+* **Storage**: Parsing does not create a database record. Valid PNGs are retained as content-addressed avatars; identical uploads reuse the same path. Clients should use the returned `avatar_path` without uploading the image again. JSON uploads and failed parses are temporary and leave no avatar file. With multiple valid `chara` chunks, the first is used. See [character card compatibility](docs/features/CHARACTER_CARDS.md).
 * **Metadata**: `data.extensions.ai_roleplay_card` preserves `creator`, `character_version`, `spec` and `spec_version` when supplied by the card. `extensions.alternate_greetings` and `extensions.character_book` remain the persisted opening and embedded-lorebook fields. Clients preview the parsed data before applying it.
 * **Response (200 OK)**:
   ```json
@@ -1068,7 +1068,7 @@ Errors: `404` for missing story/local record; `422` for invalid request; `409` f
 
 ### 5. Conversations & Inference (`/chat`)
 
-Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/MODEL_SELECTION.md).
+Both `/chat` and `/chat/stream` accept independent model settings, including regeneration. Supplying `model` or `thinking_mode` takes precedence over legacy `use_reasoning`. Invalid combinations fail with `400` before writing a user message. Story overrides are client-local; global defaults persist on the server. See [model settings](docs/features/MODEL_SELECTION.md).
 
 #### POST `/chat`
 * **Request (JSON)**:

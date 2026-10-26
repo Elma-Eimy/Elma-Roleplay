@@ -64,7 +64,7 @@ python -m tests.manual.manual_lorebook
 
 ## 新增与调试
 
-`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
+`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/testing/MEMORY_QUALITY.md)。
 
 `memory/test_event_retention.py` 使用 `tests/fixtures/event_retention_cases.json` 回放八批赠书和四批修表，检查十二项已提取事实线索、三批/容量快照后的事件身份、重启及关闭边界。每批只提供新增片段，最后一批省略旧事实，以“只留最后摘要”为失败对照；输出的保留率不代表真实模型首次提取质量。`infrastructure/test_event_checkpoint_migration.py` 检查阶段外键、旧库升级、回退保留正文和身份删除行为。
 

@@ -8,8 +8,8 @@
 
 - `app-backend/`：FastAPI、SQLAlchemy、SQLite、ChromaDB；负责对话、Prompt、世界书、记忆、图谱与 TTS。
 - `app-frontend/`：Vue 3、uni-app、TypeScript、Pinia；目标平台为 H5、App 和微信小程序。
-- 修改前先阅读相关模块及其测试，避免仅凭 README 推断实现。项目概览见 `README.md`，文档入口见 `docs/README.md`。
-- 后端分层见 `docs/ARCHITECTURE.md`，前端 API 边界见 `app-frontend/src/api/README.md`。细节在对应文档维护，本文件只保留执行约定。
+- 修改前先阅读相关模块及其测试，避免仅凭 README 推断实现。项目概览见 [README](README.md)，文档入口见 [文档导航](docs/README.md)，按任务定位代码和测试见 [Agent 上手指南](docs/guides/AGENT_ONBOARDING.md)。
+- 模块分层见 [后端架构](docs/architecture/BACKEND.md) 与 [前端架构](docs/architecture/FRONTEND.md)，前端 API 边界见 [API 模块约定](app-frontend/src/api/README.md)。细节在对应文档维护，本文件只保留执行约定。
 
 ## 开发与模块边界
 
@@ -65,3 +65,4 @@
 - HTTP 接口契约统一维护在根目录 `API_TABLE.md`；涉及记忆筛选、统计或继承规则时同步更新 `docs/api/MEMORY_API.md`。
 - 启动、测试、目录或职责变更更新相应组件 README 与架构说明，不在前后端重复维护 API 总表。
 - 新增功能、修复或工程调整在 `CHANGELOG.md` 记录；新增文档同步 `docs/README.md` 导航。文档链接使用仓库相对路径。
+- 文档按 `docs/README.md` 的用途分类：当前行为放 `features/`，模块职责放 `architecture/`，未完成规划放 `plans/`；移动文档同步修正引用，避免将待办当作已实现契约。
