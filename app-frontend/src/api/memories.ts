@@ -5,6 +5,7 @@ import type {
   GetSessionMemoriesResponse,
   CharacterMemoryOverviewResponse,
   TriggerSummaryResponse,
+  MemoryProcessingStatus,
   MemoryCreateResponse,
   MemoryUpdateResponse,
   MemoryDeleteResponse,
@@ -14,10 +15,13 @@ import type {
   ConsolidationScanMode,
 } from "../types/memories";
 
-/**
- * 手动触发新消息的记忆提纯（记忆元提取）。
- * POST /sessions/{session_id}/trigger_summary
- */
+/** 只读当前故事的记忆后台处理状态。 */
+export async function getMemoryProcessingStatus(sessionId: number): Promise<MemoryProcessingStatus> {
+  if (USE_MOCK) return mock.getMemoryProcessingStatus(sessionId);
+  return request<MemoryProcessingStatus>(`/sessions/${sessionId}/memory-processing`, { method: "GET" });
+}
+
+/** 提交当前故事的记忆提取请求，由后台处理。 */
 export async function triggerSummary(
   sessionId: number
 ): Promise<TriggerSummaryResponse> {

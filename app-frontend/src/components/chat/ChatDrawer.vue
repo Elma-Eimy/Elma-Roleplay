@@ -305,10 +305,7 @@
             <image class="btn-icon" src="/static/icons/settings_database.svg" mode="aspectFit" />
             <text class="btn-text">查看向量记忆库</text>
           </view>
-          <view class="action-btn outline" @tap="forceMemoryExtract">
-            <image class="btn-icon" src="/static/icons/drawer_brain.svg" mode="aspectFit" />
-            <text class="btn-text">手动提取记忆元</text>
-          </view>
+          <MemoryProcessingPanel :session-id="props.sessionId" />
           <view class="action-btn outline" @tap="updateCognition">
             <image class="btn-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
             <text class="btn-text">更新微观认知</text>
@@ -344,7 +341,8 @@ import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getAvatarUrl } from "@/api/characters";
-import { triggerSummary, triggerCognition } from "@/api/sessions";
+import { triggerCognition } from "@/api/sessions";
+import MemoryProcessingPanel from "./MemoryProcessingPanel.vue";
 import GenerationPicker from "./GenerationPicker.vue";
 import RoleStatePanel from "./RoleStatePanel.vue";
 import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
@@ -400,20 +398,6 @@ const saveUserNickname = () => {
     personaStore.updateUserNickname(name, characterId);
   } else {
     userNicknameInput.value = personaStore.userNickname;
-  }
-};
-
-const forceMemoryExtract = async () => {
-  if (props.sessionId === null) return;
-  try {
-    uni.showLoading({ title: "正在提取记忆元..." });
-    const res = await triggerSummary(props.sessionId);
-    uni.hideLoading();
-    uni.showToast({ title: res.message || "记忆提取完成", icon: res.status === "completed" ? "success" : "none" });
-  } catch (e) {
-    uni.hideLoading();
-    uni.showToast({ title: "记忆提取失败", icon: "none" });
-    console.error(e);
   }
 };
 

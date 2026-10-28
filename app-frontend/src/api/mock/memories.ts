@@ -5,12 +5,18 @@ import type {
   GetSessionMemoriesResponse,
   CharacterMemoryOverviewResponse,
   TriggerSummaryResponse,
+  MemoryProcessingStatus,
   MemoryCreateResponse,
   MemoryUpdateResponse,
   MemoryDeleteResponse,
 } from "../../types/memories";
 import { getMockDB, setMockDB } from "../config";
 import { getSessions } from "./sessions";
+
+export async function getMemoryProcessingStatus(sessionId: number): Promise<MemoryProcessingStatus> {
+  return { session_id: sessionId, status: "completed", pending_count: 0, processing_count: 0,
+    error_codes: [], last_completed_at: null };
+}
 
 export async function triggerSummary(
   sessionId: number
@@ -21,6 +27,8 @@ export async function triggerSummary(
     extracted_count: 0,
     status: "completed",
     pending_count: 0,
+    processing_count: 0,
+    last_completed_at: null,
     error_codes: [],
   };
 }

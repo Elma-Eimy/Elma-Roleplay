@@ -86,7 +86,7 @@
       @portrait-changed="refreshPortrait"
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
-      @open-memory-view="isMemoryPanelOpen = true"
+      @open-memory-view="isStatusPanelOpen = false; isMemoryPanelOpen = true"
       @open-prompt-preview="openPromptPreview"
     />
 

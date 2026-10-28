@@ -64,14 +64,19 @@ export interface CharacterMemoryOverviewResponse {
   has_more: boolean;
 }
 
-export interface TriggerSummaryResponse {
-  message: string;
+export interface MemoryProcessingStatus {
   session_id: number;
-  /** 保留兼容；异步入队入口固定为 0，处理结果看 status 和记忆列表。 */
-  extracted_count: number;
   status: "completed" | "pending" | "retrying" | "failed";
   pending_count: number;
+  processing_count: number;
   error_codes: string[];
+  last_completed_at: string | null;
+}
+
+export interface TriggerSummaryResponse extends MemoryProcessingStatus {
+  message: string;
+  /** 保留兼容；异步入队入口固定为 0，处理结果看 status 和记忆列表。 */
+  extracted_count: number;
 }
 
 export interface MemoryCreateResponse {
