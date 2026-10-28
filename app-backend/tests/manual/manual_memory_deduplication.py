@@ -51,8 +51,8 @@ def test_multi_level_fork_cow():
     char_id = char.id
 
     try:
-        from services.infrastructure.clients import chroma_client
-        chroma_client.delete_collection(name=f"character_{char_id}")
+        from services.infrastructure.clients import get_chroma_client
+        get_chroma_client().delete_collection(name=f"character_{char_id}")
     except Exception:
         pass
 
@@ -120,8 +120,8 @@ def run_integration_test():
     char_id = char.id
 
     try:
-        from services.infrastructure.clients import chroma_client
-        chroma_client.delete_collection(name=f"character_{char_id}")
+        from services.infrastructure.clients import get_chroma_client
+        get_chroma_client().delete_collection(name=f"character_{char_id}")
     except Exception:
         pass
 

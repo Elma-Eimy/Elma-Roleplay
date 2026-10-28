@@ -217,8 +217,8 @@ def run_tests():
     # 测试清理：删除临时的 ChromaDB collection
     # ──────────────────────────────────────────────────
     try:
-        from services.infrastructure.clients import chroma_client
-        chroma_client.delete_collection("lorebook_999")
+        from services.infrastructure.clients import get_chroma_client
+        get_chroma_client().delete_collection("lorebook_999")
         print("[INFO] 成功清理测试向量集合: lorebook_999")
     except Exception as e:
         print(f"[WARN] 清理测试向量集合失败: {e}")

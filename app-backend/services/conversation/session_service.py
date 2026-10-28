@@ -517,6 +517,9 @@ def create_session_service(
     if parent_session_id:
         from services.memory.memory_visibility import inherit_consolidation_scope
         db.flush()
+        if session.fork_message_id is not None:
+            from services.memory.memory_event_buffer import flush_before_fork
+            flush_before_fork(parent_persona, session.fork_message_id, db)
         inherit_consolidation_scope(parent_persona.id, persona.id, db)
 
     db.commit()

@@ -16,9 +16,12 @@ export async function triggerSummary(
   sessionId: number
 ): Promise<TriggerSummaryResponse> {
   return {
-    message: "记忆提纯流程已完成 (Mock)",
+    message: "离线模式不执行记忆提纯 (Mock)",
     session_id: sessionId,
-    extracted_count: 2,
+    extracted_count: 0,
+    status: "completed",
+    pending_count: 0,
+    error_codes: [],
   };
 }
 

@@ -34,4 +34,4 @@ DeepSeek 强度兼容转换：minimal → low，medium/xhigh → high，ultra �
 
 旧配置首次加载会根据旧思考开关选中的模型槽填入并保存 `default_chat_model`，保持当前模型。旧 `chat_model` / `non_reasoning_chat_model` 保留给只传 `use_reasoning` 的客户端；新客户端使用 `model` / `thinking_mode`。没有显式 TTS 模型时，沿用旧非思考模型作为初始值。
 
-接口见 [HTTP API](../API_TABLE.md)。参数依据 [DeepSeek 思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode/)。
+接口见 [HTTP API](../../API_TABLE.md)。参数依据 [DeepSeek 思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode/)。

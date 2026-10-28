@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, onScopeDispose } from "vue";
+import { getBaseUrl } from "@/api/config";
+import { onServerChange } from "@/utils/connectionEvents";
 import { getCharacters, getCharacter, deleteCharacter } from "@/api/characters";
 import type { CharacterDetail, CharacterSummary } from "@/api/characters";
 import { getSession } from "@/api/sessions";
@@ -7,6 +9,7 @@ import type { PersonaDetail, SessionDetail } from "@/api/sessions";
 
 export const usePersonaStore = defineStore("persona", () => {
   let detailVersion = 0;
+  let characterVersion = 0;
 
   function cancelSessionLoad() {
     detailVersion++;
@@ -89,9 +92,13 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 从后端 API 异步加载角色设定列表 (支持分页与追加模式) */
   async function loadCharacters(limit?: number, offset?: number, append = false) {
+    const version = characterVersion;
+    const endpoint = getBaseUrl();
+    const current = () => version === characterVersion && endpoint === getBaseUrl();
     isLoadingCharacters.value = true;
     try {
       const res = await getCharacters(limit, offset);
+      if (!current()) return 0;
       if (append) {
         characterList.value = [...characterList.value, ...res.characters];
       } else {
@@ -102,27 +109,29 @@ export const usePersonaStore = defineStore("persona", () => {
       console.error("Failed to load characters", e);
       return 0;
     } finally {
-      isLoadingCharacters.value = false;
+      if (current()) isLoadingCharacters.value = false;
     }
   }
 
   /** 根据会话 ID 异步加载会话详情与关联的角色设定信息 */
   async function loadSessionDetail(sessionId: number) {
     const version = ++detailVersion;
+    const endpoint = getBaseUrl();
+    const current = () => version === detailVersion && endpoint === getBaseUrl();
     isLoadingPersona.value = true;
     try {
       const session = await getSession(sessionId);
-      if (version !== detailVersion) return;
+      if (!current()) return;
       
       // Load full character details to populate activeCharacter
       const fullChar = await getCharacter(session.character.id);
-      if (version !== detailVersion) return;
+      if (!current()) return;
       currentPersona.value = session.persona;
       activeCharacter.value = fullChar;
     } catch (e) {
       console.error(`Failed to load session ${sessionId} detail`, e);
     } finally {
-      if (version === detailVersion) isLoadingPersona.value = false;
+      if (current()) isLoadingPersona.value = false;
     }
   }
 
@@ -213,6 +222,7 @@ export const usePersonaStore = defineStore("persona", () => {
 
   /** 重置整个 Store 的状态变量 */
   function $reset() {
+    characterVersion++;
     cancelSessionLoad();
     activeCharacter.value = null;
     characterList.value = [];
@@ -220,6 +230,8 @@ export const usePersonaStore = defineStore("persona", () => {
     isLoadingCharacters.value = false;
     isLoadingPersona.value = false;
   }
+
+  onScopeDispose(onServerChange($reset));
 
   return {
     // State

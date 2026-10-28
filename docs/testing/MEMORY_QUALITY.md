@@ -79,11 +79,13 @@
 
 ## 增加样本
 
-默认夹具：[memory_quality_cases.json](../app-backend/tests/fixtures/memory_quality_cases.json)。覆盖重复偏好、事件碎片、否定、计划与已发生、两次生日、关系变化、独立事实、人物归属、精确承诺、情绪上下文、地点变化和混合分组。
+跨批提取与事件阶段另有固定虚构对话 [event_retention_cases.json](../../app-backend/tests/fixtures/event_retention_cases.json)，运行 `python -m tests --group memory --pattern test_event_retention.py`。它用预录的新进展响应检查已提取内容在后续批次、阶段保存和重启后的字面事实线索保留，不调用真实模型，也不使用本页的卡片整理输入格式。指标与局限见[事件生命周期](../features/MEMORY_EVENTS.md#日志与验证)。
+
+默认夹具：[memory_quality_cases.json](../../app-backend/tests/fixtures/memory_quality_cases.json)。覆盖重复偏好、事件碎片、否定、计划与已发生、两次生日、关系变化、独立事实、人物归属、精确承诺、情绪上下文、地点变化和混合分组。
 
 格式为 `version=1`，每个文件 1–50 个场景，每个场景 2–100 张卡，保证由当前整理接口单次完整检查。
 
-另有聚焦百张以内碎片整理的 [混合故事夹具](../app-backend/tests/fixtures/memory_fragment_cases.json)：48 张和 96 张两个场景，每个包含 8 组可归并碎片，交错混入应独立保留的事实、身份、否定和时间变化。猫名重复卡固定放在首尾，覆盖原来 80 张分批会隔开的来源。96 张场景在 48 张基础上增加 48 条独立事实，便于观察干扰增加后的整理表现。
+另有聚焦百张以内碎片整理的 [混合故事夹具](../../app-backend/tests/fixtures/memory_fragment_cases.json)：48 张和 96 张两个场景，每个包含 8 组可归并碎片，交错混入应独立保留的事实、身份、否定和时间变化。猫名重复卡固定放在首尾，覆盖原来 80 张分批会隔开的来源。96 张场景在 48 张基础上增加 48 条独立事实，便于观察干扰增加后的整理表现。
 
 ```powershell
 # 离线检查夹具与执行链路；不代表模型质量
@@ -127,4 +129,4 @@
 .\venv\Scripts\python.exe -m tests --group memory --pattern test_memory_quality_tool.py
 ```
 
-[回归用例](../app-backend/tests/memory/test_memory_quality_tool.py) 覆盖重复性、隔离启动、在线凭据替身、错误记录、误合并、保守不合并、HTML 转义与指标边界，不调用真实模型。
+[回归用例](../../app-backend/tests/memory/test_memory_quality_tool.py) 覆盖重复性、隔离启动、在线凭据替身、错误记录、误合并、保守不合并、HTML 转义与指标边界，不调用真实模型。

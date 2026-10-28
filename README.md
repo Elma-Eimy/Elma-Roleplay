@@ -6,6 +6,8 @@
 
 前后端在本仓库中统一管理，共享接口文档只维护一份。运行与构建命令分别在对应组件目录执行。
 
+参与开发的 agent 先读 [协作约定](AGENTS.md) 与 [上手指南](docs/guides/AGENT_ONBOARDING.md)，按任务查找代码、领域文档和测试。模块职责见 [后端架构](docs/architecture/BACKEND.md) 与 [前端架构](docs/architecture/FRONTEND.md)。
+
 ---
 
 ## 项目初衷与应用场景
@@ -50,7 +52,7 @@
 ### 6. 记忆与知识图谱审查 (Memory & Graph RAG)
 * **按故事线隔离的语义记忆管理**：长期记忆按会话故事线独立保存并支持继承链追溯。记忆管理界面支持服务端精准搜索、基于后端 `facets` 统计的多分类筛选（全部、当前故事、继承、已替代）、手动新增、编辑与删除；记忆卡片展示中文类型、权重、消息来源区间（`source_start_message_id` - `source_message_id`）与版本替代标记（`supersedes_id`）。
 * **人物档案故事记忆导航**：人物档案中的“记忆”区域作为故事线导航入口，提供故事线概览（`/characters/{id}/memory-overview`），选择具体故事线后拉取并打开对应记忆库。
-* **知识图谱关系网络 (Graph RAG)**：支持实体别名（`aliases`）、两层邻接遍历（2-hop）与实体关系检索。图谱追加版本关联消息与记忆证据，按分叉边界及记忆替代链筛选；无来源旧行保留但不召回。语义准确性仍依赖提纯与记忆判定，详见[一致性说明](docs/GRAPH_MEMORY_CONSISTENCY.md)。
+* **知识图谱关系网络 (Graph RAG)**：支持实体别名（`aliases`）、两层邻接遍历（2-hop）与实体关系检索。图谱追加版本关联消息与记忆证据，按分叉边界及记忆替代链筛选；无来源旧行保留但不召回。语义准确性仍依赖提纯与记忆判定，详见[一致性说明](docs/features/GRAPH_MEMORY_CONSISTENCY.md)。
 * **事实共源与联合召回**：语义命中记忆作为图谱种子，沿关系回查支持卡，统一去重和预算；计划、历史与当前事实保留各自时间语义。同一事实最终使用 SQLite 记忆正文，避免两路在 Prompt 中重复描述。
 * **实时 Prompt 组装预览**：调试模式下可一键预览实际提交给模型的完整 system / user 消息与注入背景。
 
@@ -79,11 +81,18 @@
 ```text
 /APP
 ├── README.md         # 全栈项目入口与部署概览
-├── API_TABLE.md      # 前后端共享 HTTP 接口总表
-├── CHANGELOG.md      # 统一更新日志
+├── API_TABLE.md      # 前后端共享 HTTP 路由索引与领域入口
+├── CHANGELOG.md      # 近期变更摘要与月度历史索引
 ├── docs/
 │   ├── README.md     # 文档导航与维护约定
-│   ├── api/          # 模块接口补充规范（MEMORY_API.md）
+│   ├── guides/       # Agent 上手与任务定位
+│   ├── architecture/ # 前后端模块职责与调用链
+│   ├── features/     # 已实现功能与业务规则
+│   ├── api/          # 分领域接口详情、记忆补充规则与校验说明
+│   ├── development/  # 开发流程与持续集成
+│   ├── testing/      # 专项质量验收
+│   ├── plans/        # 未完成规划与研究
+│   ├── changelog/    # 按月保存的完整更新记录
 │   └── local/        # 本地草稿与参考副本（Git 忽略）
 ├── app-backend/       # 后端服务核心 (FastAPI + SQLAlchemy + ChromaDB)
 │   ├── main.py       # ASGI 入口
@@ -104,7 +113,8 @@
 │   └── README.md      # 后端环境、配置、模块与测试说明
 └── app-frontend/      # 前端多端应用核心 (Vue 3 + UniApp + TypeScript)
     ├── src/
-    │   ├── api/       # API 请求客户端、类型定义与 Mock 配置
+    │   ├── api/       # 领域请求、连接、传输与 Mock 实现
+    │   ├── types/     # 共享领域类型
     │   ├── components/# 通用 UI 组件（character, chat, common）
     │   ├── composables/# 组合式函数（音频播放、聊天滚动等）
     │   ├── pages/     # 故事首页、角色画册/档案、叙事聊天、设置中心
@@ -267,7 +277,7 @@ python -m tests
 
 统一入口在临时工作区中运行自动回归，使用临时配置和数据。按领域执行、单模块调试及手动场景的说明见 [后端测试指南](app-backend/tests/README.md)。
 
-GitHub Actions 的 [CI 工作流](.github/workflows/ci.yml) 在 PR 和 `main` 分支推送时并行执行后端回归，以及前端测试、类型检查和 H5 构建。运行环境、手动触发与失败排查见 [持续集成说明](docs/CI.md)。
+GitHub Actions 的 [CI 工作流](.github/workflows/ci.yml) 在 PR 和 `main` 分支推送时并行执行文档本地链接检查、后端回归，以及前端测试、类型检查和 H5 构建。文档检查只需 Python 标准库与 Git，可在根目录运行 `python tools/check_docs.py`；运行环境、检查边界与失败排查见 [持续集成说明](docs/development/CI.md)。
 
 ---
 
