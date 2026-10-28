@@ -83,6 +83,7 @@
 | **PUT** | `/sessions/{session_id}/title` | Rename a session's title |
 | **DELETE** | `/sessions/{session_id}` | Delete a session and safely relink children |
 | **POST** | `/sessions/{session_id}/delete` | Alternative POST method for session deletion |
+| **GET** | `/sessions/{session_id}/memory-processing` | Read story-local memory queue progress without triggering extraction |
 | **POST** | `/sessions/{session_id}/trigger_summary` | Manually extract memories from new messages |
 | **POST** | `/sessions/{session_id}/trigger_cognition` | Manually update character micro-cognition |
 | **PUT** | `/sessions/messages/{message_id}` | Edit content of a single message |

@@ -277,6 +277,18 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/{session_id}/memory-processing")
+def get_memory_processing_status(session_id: int, db: Session = Depends(get_db)):
+    """只读本故事的提纯任务状态，不入队或调用模型。"""
+    session = db.get(models.Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.persona is None:
+        raise HTTPException(status_code=409, detail="Session has no persona")
+    from services.memory.memory_extraction_jobs import processing_status
+    return {"session_id": session_id, **processing_status(session.persona.id, db)}
+
+
 @router.post("/{session_id}/trigger_summary")
 def trigger_memory_summary(session_id: int, db: Session = Depends(get_db)):
     """手动触发指定会话的记忆提纯流程"""
