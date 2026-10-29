@@ -1,20 +1,39 @@
 <template>
   <view class="role-state-panel">
     <view class="state-heading">
-      <view class="state-heading-left">
+      <view
+        class="state-heading-left"
+        role="button"
+        :aria-expanded="!collapsed"
+        @tap="collapsed = editing ? false : !collapsed"
+      >
         <text class="state-title">当前状态</text>
         <text v-if="busy" class="state-sync-pill">同步中…</text>
+        <image
+          v-if="!editing"
+          class="state-chevron"
+          :class="{ 'is-active': !collapsed }"
+          src="/static/icons/settings_chevron.svg"
+          mode="aspectFit"
+        />
       </view>
       <button
         v-if="!editing"
         class="state-btn state-btn-soft"
         :disabled="busy || generating || !snapshot"
-        @tap="beginEdit"
+        @tap.stop="beginEdit()"
       >
         编辑
       </button>
     </view>
-    <text class="state-hint">{{ generating ? '回复生成中，完成后更新状态。' : '未变化的状态会沿用；你可以手动校正。' }}</text>
+    <text class="state-hint">
+      <template v-if="collapsed && !editing && snapshot">
+        场景：{{ snapshot.state.scene || '未描述' }} · {{ Object.keys(snapshot.state.characters || {}).length }} 人 · 点击展开
+      </template>
+      <template v-else>
+        {{ generating ? '回复生成中，完成后更新状态。' : '未变化的状态会沿用；你可以手动校正。' }}
+      </template>
+    </text>
     <view v-if="error" class="state-error">
       <text class="state-error-text">{{ error }}</text>
       <button v-if="!editing" class="state-btn state-btn-retry" @tap="load">重试</button>
@@ -41,7 +60,7 @@
         <button class="state-btn state-btn-primary" :disabled="busy || generating" @tap="save">保存状态</button>
       </view>
     </template>
-    <template v-else-if="snapshot">
+    <template v-else-if="snapshot && !collapsed">
       <view class="state-scene-card">
         <text class="state-line"><text class="state-line-key">场景：</text>{{ snapshot.state.scene || '未描述' }}</text>
       </view>
@@ -57,10 +76,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useChatStore } from "@/store/chatStore";
 import { useRoleState } from "@/composables/useRoleState";
 const props = defineProps<{ sessionId: number | null }>();
+const collapsed = ref(false);
 const chatStore = useChatStore();
 const generating = computed(() => chatStore.isLoading);
 const { snapshot, busy, error, editing, scene, actors, newName, load, beginEdit, addActor, cancel, save } = useRoleState(() => props.sessionId, () => generating.value);
@@ -96,11 +116,23 @@ watch(() => [chatStore.isLoading, chatStore.messages.map(message => `${message.i
   align-items: center;
   gap: 10rpx;
   min-width: 0;
+  cursor: pointer;
 }
 
 .state-title {
   font-size: 28rpx;
   font-weight: 700;
+}
+
+.state-chevron {
+  width: 26rpx;
+  height: 26rpx;
+  opacity: 0.55;
+  transition: transform 0.22s ease;
+}
+
+.state-chevron.is-active {
+  transform: rotate(180deg);
 }
 
 .state-sync-pill {

@@ -62,8 +62,24 @@
 
         <!-- ③ 微观认知状态显示区 -->
         <view class="panel-section">
-          <text class="section-title">微观认知</text>
-          <view class="cognition-box">
+          <view
+            class="section-collapse-header cursor-pointer"
+            role="button"
+            :aria-expanded="showCognition"
+            @tap="showCognition = !showCognition"
+          >
+            <text class="section-title">微观认知</text>
+            <view class="section-collapse-right">
+              <text v-if="!showCognition" class="section-collapse-summary">{{ (personaStore.cognitionState || '暂无认知记录').slice(0, 14) }}{{ (personaStore.cognitionState || '').length > 14 ? '…' : '' }}</text>
+              <image
+                class="advanced-chevron"
+                :class="{ 'is-active': showCognition }"
+                src="/static/icons/settings_chevron.svg"
+                mode="aspectFit"
+              />
+            </view>
+          </view>
+          <view v-if="showCognition" class="cognition-box">
             <text class="cognition-text">{{ personaStore.cognitionState || '暂无认知记录。' }}</text>
           </view>
         </view>
@@ -103,56 +119,75 @@
           <GenerationPicker v-if="!chatSettingsStore.isLoadingModels && chatSettingsStore.modelId" v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
           <text v-if="chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
           <view class="reading-setting">
-            <view class="background-setting-header">
-              <text class="setting-row-label">阅读偏好</text>
-              <text class="background-setting-hint">本机全局保存</text>
-            </view>
-            <view class="reading-row">
-              <text class="reading-row-label">字号</text>
-              <view class="reading-pills">
-                <view
-                  v-for="item in FONT_SCALE_OPTIONS"
-                  :key="item.value"
-                  class="reading-pill"
-                  :class="{ 'is-active': chatSettingsStore.readingPrefs.fontScale === item.value }"
-                  @tap="chatSettingsStore.updateReadingPrefs({ fontScale: item.value })"
-                >{{ item.label }}</view>
+            <view
+              class="setting-row cursor-pointer reading-collapse-trigger"
+              role="button"
+              :aria-expanded="showReadingPrefs"
+              @tap="showReadingPrefs = !showReadingPrefs"
+            >
+              <view class="setting-row-copy">
+                <text class="setting-row-label">阅读偏好</text>
+                <text class="setting-row-hint">本机全局保存</text>
+              </view>
+              <view class="reading-collapse-right">
+                <text class="reading-collapse-summary">{{ readingPrefsSummary }}</text>
+                <image
+                  class="advanced-chevron"
+                  :class="{ 'is-active': showReadingPrefs }"
+                  src="/static/icons/settings_chevron.svg"
+                  mode="aspectFit"
+                />
               </view>
             </view>
-            <view class="reading-row">
-              <text class="reading-row-label">行距</text>
-              <view class="reading-pills">
-                <view
-                  v-for="item in LINE_SPACING_OPTIONS"
-                  :key="item.value"
-                  class="reading-pill"
-                  :class="{ 'is-active': chatSettingsStore.readingPrefs.lineSpacing === item.value }"
-                  @tap="chatSettingsStore.updateReadingPrefs({ lineSpacing: item.value })"
-                >{{ item.label }}</view>
+
+            <view v-if="showReadingPrefs" class="reading-collapse-body">
+              <view class="reading-row">
+                <text class="reading-row-label">字号</text>
+                <view class="reading-pills">
+                  <view
+                    v-for="item in FONT_SCALE_OPTIONS"
+                    :key="item.value"
+                    class="reading-pill"
+                    :class="{ 'is-active': chatSettingsStore.readingPrefs.fontScale === item.value }"
+                    @tap="chatSettingsStore.updateReadingPrefs({ fontScale: item.value })"
+                  >{{ item.label }}</view>
+                </view>
               </view>
-            </view>
-            <view class="reading-row">
-              <text class="reading-row-label">排版</text>
-              <view class="reading-pills">
-                <view
-                  v-for="item in BUBBLE_STYLE_OPTIONS"
-                  :key="item.value"
-                  class="reading-pill"
-                  :class="{ 'is-active': chatSettingsStore.readingPrefs.bubbleStyle === item.value }"
-                  @tap="chatSettingsStore.updateReadingPrefs({ bubbleStyle: item.value })"
-                >{{ item.label }}</view>
+              <view class="reading-row">
+                <text class="reading-row-label">行距</text>
+                <view class="reading-pills">
+                  <view
+                    v-for="item in LINE_SPACING_OPTIONS"
+                    :key="item.value"
+                    class="reading-pill"
+                    :class="{ 'is-active': chatSettingsStore.readingPrefs.lineSpacing === item.value }"
+                    @tap="chatSettingsStore.updateReadingPrefs({ lineSpacing: item.value })"
+                  >{{ item.label }}</view>
+                </view>
               </view>
-            </view>
-            <view class="reading-row">
-              <text class="reading-row-label">色调</text>
-              <view class="reading-pills">
-                <view
-                  v-for="item in COLOR_THEME_OPTIONS"
-                  :key="item.value"
-                  class="reading-pill"
-                  :class="{ 'is-active': chatSettingsStore.readingPrefs.colorTheme === item.value }"
-                  @tap="chatSettingsStore.updateReadingPrefs({ colorTheme: item.value })"
-                >{{ item.label }}</view>
+              <view class="reading-row">
+                <text class="reading-row-label">排版</text>
+                <view class="reading-pills">
+                  <view
+                    v-for="item in BUBBLE_STYLE_OPTIONS"
+                    :key="item.value"
+                    class="reading-pill"
+                    :class="{ 'is-active': chatSettingsStore.readingPrefs.bubbleStyle === item.value }"
+                    @tap="chatSettingsStore.updateReadingPrefs({ bubbleStyle: item.value })"
+                  >{{ item.label }}</view>
+                </view>
+              </view>
+              <view class="reading-row">
+                <text class="reading-row-label">色调</text>
+                <view class="reading-pills">
+                  <view
+                    v-for="item in COLOR_THEME_OPTIONS"
+                    :key="item.value"
+                    class="reading-pill"
+                    :class="{ 'is-active': chatSettingsStore.readingPrefs.colorTheme === item.value }"
+                    @tap="chatSettingsStore.updateReadingPrefs({ colorTheme: item.value })"
+                  >{{ item.label }}</view>
+                </view>
               </view>
             </view>
           </view>
@@ -445,6 +480,17 @@ const openCharacterProfile = () => {
 };
 
 const showAdvancedParams = ref(false);
+const showReadingPrefs = ref(false);
+const showCognition = ref(true);
+
+const readingPrefsSummary = computed(() => {
+  const prefs = chatSettingsStore.readingPrefs;
+  const fontLabel = FONT_SCALE_OPTIONS.find(i => i.value === prefs.fontScale)?.label || "标准";
+  const spacingLabel = LINE_SPACING_OPTIONS.find(i => i.value === prefs.lineSpacing)?.label || "舒适";
+  const styleLabel = BUBBLE_STYLE_OPTIONS.find(i => i.value === prefs.bubbleStyle)?.label || "气泡";
+  const themeLabel = COLOR_THEME_OPTIONS.find(i => i.value === prefs.colorTheme)?.label || "跟随系统";
+  return `${fontLabel} · ${spacingLabel} · ${styleLabel} · ${themeLabel}`;
+});
 const userNicknameInput = ref(personaStore.userNickname);
 
 // 当前角色或该角色的名字变化时，同步输入框
@@ -1058,10 +1104,17 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
 
 <style scoped>
 .generation-scope { display: block; font-size: 22rpx; color: #7c8983; line-height: 1.8; margin: 14rpx 0 24rpx; }
+.section-collapse-header { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.section-collapse-right { display: flex; align-items: center; gap: 10rpx; min-width: 0; }
+.section-collapse-summary { font-size: 22rpx; color: #8e8e93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280rpx; }
 .reading-setting { display: flex; flex-direction: column; gap: 14rpx; margin-top: 8rpx; padding-top: 18rpx; border-top: 1px solid rgba(0, 0, 0, 0.05); }
+.reading-collapse-trigger { padding: 4rpx 0; }
+.reading-collapse-right { display: flex; align-items: center; gap: 10rpx; min-width: 0; }
+.reading-collapse-summary { font-size: 22rpx; font-weight: 500; color: #64716b; background-color: rgba(0, 0, 0, 0.03); padding: 6rpx 14rpx; border-radius: 999rpx; white-space: nowrap; }
+.reading-collapse-body { display: flex; flex-direction: column; gap: 16rpx; padding: 18rpx; background-color: rgba(0, 0, 0, 0.02); border: 1px solid rgba(0, 0, 0, 0.04); border-radius: 16rpx; }
 .reading-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
 .reading-row-label { color: #64716b; font-size: 24rpx; font-weight: 550; flex-shrink: 0; }
 .reading-pills { display: flex; flex-wrap: wrap; gap: 8rpx; justify-content: flex-end; }
-.reading-pill { min-width: 72rpx; height: 52rpx; padding: 0 20rpx; display: inline-flex; align-items: center; justify-content: center; border-radius: 999rpx; border: 1px solid rgba(38, 51, 46, 0.1); background-color: rgba(247, 249, 247, 0.9); color: #64716b; font-size: 23rpx; font-weight: 560; }
+.reading-pill { min-width: 72rpx; height: 50rpx; padding: 0 18rpx; display: inline-flex; align-items: center; justify-content: center; border-radius: 999rpx; border: 1px solid rgba(38, 51, 46, 0.1); background-color: #ffffff; color: #64716b; font-size: 22rpx; font-weight: 560; }
 .reading-pill.is-active { border-color: rgba(79, 142, 124, 0.45); background-color: rgba(112, 174, 155, 0.14); color: #3f7e6d; font-weight: 650; }
 </style>

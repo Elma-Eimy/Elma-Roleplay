@@ -1,20 +1,36 @@
 <template>
   <view class="portraits-panel">
     <view class="portraits-heading">
-      <view class="portraits-heading-main">
+      <view
+        class="portraits-heading-main"
+        role="button"
+        :aria-expanded="!collapsed"
+        @tap="collapsed = !collapsed"
+      >
         <view class="portraits-title-row">
           <text class="portraits-title">角色立绘</text>
           <text v-if="portraits.length" class="portraits-count">{{ portraits.length }}</text>
           <text v-if="busy" class="portraits-sync-badge">同步中…</text>
+          <image
+            class="portraits-chevron"
+            :class="{ 'is-active': !collapsed }"
+            src="/static/icons/settings_chevron.svg"
+            mode="aspectFit"
+          />
         </view>
         <text class="portraits-hint">
-          {{ sessionId ? '手动指定当前故事背景，随剧情节点保存（角色共用素材库）。' : '上传角色立绘素材后，可在聊天侧栏切换为故事背景。' }}
+          <template v-if="collapsed && sessionId">
+            {{ selection?.portrait_id !== null && selection ? '当前：已启用故事专属立绘' : '当前：沿用角色默认头像' }} · 点击展开
+          </template>
+          <template v-else>
+            {{ sessionId ? '手动指定当前故事背景，随剧情节点保存（角色共用素材库）。' : '上传角色立绘素材后，可在聊天侧栏切换为故事背景。' }}
+          </template>
         </text>
       </view>
       <button
         class="portrait-btn portrait-btn-upload"
         :disabled="busy || disabled"
-        @tap="add"
+        @tap.stop="add()"
       >
         + 添加图片
       </button>
@@ -25,106 +41,108 @@
       <button class="portrait-btn portrait-btn-retry" :disabled="busy" @tap="load">重试</button>
     </view>
 
-    <view v-if="sessionId && selection" class="portraits-status-bar">
-      <view class="portraits-status-info">
-        <view class="portraits-status-dot" :class="{ 'is-custom': selection.portrait_id !== null }"></view>
-        <text class="portraits-status-text">
-          {{ selection.portrait_id === null ? '当前背景：沿用角色默认头像' : '当前背景：已启用故事专属立绘' }}
-        </text>
-      </view>
-      <button
-        v-if="selection.portrait_id !== null"
-        class="portrait-btn portrait-btn-reset"
-        :disabled="busy || disabled"
-        @tap="choose(null)"
-      >
-        恢复头像
-      </button>
-    </view>
-
-    <view v-if="!busy && !error && !portraits.length" class="portraits-empty">
-      <text class="portraits-empty-text">还没有额外立绘，当前默认沿用角色头像</text>
-    </view>
-
-    <view v-if="portraits.length" class="portraits-grid">
-      <view
-        v-for="portrait in portraits"
-        :key="portrait.id"
-        class="portrait-item"
-        :class="{ selected: selection?.portrait_id === portrait.id }"
-      >
-        <button class="portrait-preview" :aria-label="`预览${portrait.name}`" @tap="preview(portrait)">
-          <AvatarImage class="portrait-image" :src="getAvatarUrl(portrait.image_path)" mode="aspectFit" />
-          <view v-if="selection?.portrait_id === portrait.id" class="portrait-active-pill">
-            <text class="portrait-active-pill-text">使用中</text>
-          </view>
-        </button>
-
-        <view v-if="editingId === portrait.id" class="portrait-editor-inline">
-          <input
-            v-model="editingName"
-            class="portrait-editor-input"
-            :maxlength="80"
-            placeholder="输入立绘名称"
-            :disabled="busy"
-          />
-          <view class="portrait-actions">
-            <button
-              class="portrait-btn portrait-btn-ghost"
-              :disabled="busy"
-              @tap="editingId = null"
-            >
-              取消
-            </button>
-            <button
-              class="portrait-btn portrait-btn-primary"
-              :disabled="busy || disabled || !editingName.trim()"
-              @tap="saveName"
-            >
-              保存
-            </button>
-          </view>
+    <template v-if="!collapsed">
+      <view v-if="sessionId && selection" class="portraits-status-bar">
+        <view class="portraits-status-info">
+          <view class="portraits-status-dot" :class="{ 'is-custom': selection.portrait_id !== null }"></view>
+          <text class="portraits-status-text">
+            {{ selection.portrait_id === null ? '当前背景：沿用角色默认头像' : '当前背景：已启用故事专属立绘' }}
+          </text>
         </view>
-
-        <template v-else>
-          <text class="portrait-name">{{ portrait.name }}</text>
-          <button
-            v-if="sessionId"
-            class="portrait-btn portrait-btn-use"
-            :class="{ 'is-active': selection?.portrait_id === portrait.id }"
-            :disabled="busy || disabled || !selection || selection?.portrait_id === portrait.id"
-            @tap="choose(portrait.id)"
-          >
-            {{ selection?.portrait_id === portrait.id ? '当前立绘' : '设为背景' }}
-          </button>
-          <view class="portrait-actions">
-            <button
-              class="portrait-btn portrait-btn-ghost"
-              :disabled="busy || disabled"
-              @tap="edit(portrait)"
-            >
-              改名
-            </button>
-            <button
-              class="portrait-btn portrait-btn-danger"
-              :disabled="busy || disabled"
-              @tap="remove(portrait)"
-            >
-              删除
-            </button>
-          </view>
-        </template>
+        <button
+          v-if="selection.portrait_id !== null"
+          class="portrait-btn portrait-btn-reset"
+          :disabled="busy || disabled"
+          @tap="choose(null)"
+        >
+          恢复头像
+        </button>
       </view>
-    </view>
 
-    <button
-      v-if="hasMore"
-      class="portrait-btn portrait-btn-more"
-      :disabled="busy || disabled"
-      @tap="loadMore"
-    >
-      加载更多立绘
-    </button>
+      <view v-if="!busy && !error && !portraits.length" class="portraits-empty">
+        <text class="portraits-empty-text">还没有额外立绘，当前默认沿用角色头像</text>
+      </view>
+
+      <view v-if="portraits.length" class="portraits-grid">
+        <view
+          v-for="portrait in portraits"
+          :key="portrait.id"
+          class="portrait-item"
+          :class="{ selected: selection?.portrait_id === portrait.id }"
+        >
+          <button class="portrait-preview" :aria-label="`预览${portrait.name}`" @tap="preview(portrait)">
+            <AvatarImage class="portrait-image" :src="getAvatarUrl(portrait.image_path)" mode="aspectFit" />
+            <view v-if="selection?.portrait_id === portrait.id" class="portrait-active-pill">
+              <text class="portrait-active-pill-text">使用中</text>
+            </view>
+          </button>
+
+          <view v-if="editingId === portrait.id" class="portrait-editor-inline">
+            <input
+              v-model="editingName"
+              class="portrait-editor-input"
+              :maxlength="80"
+              placeholder="输入立绘名称"
+              :disabled="busy"
+            />
+            <view class="portrait-actions">
+              <button
+                class="portrait-btn portrait-btn-ghost"
+                :disabled="busy"
+                @tap="editingId = null"
+              >
+                取消
+              </button>
+              <button
+                class="portrait-btn portrait-btn-primary"
+                :disabled="busy || disabled || !editingName.trim()"
+                @tap="saveName"
+              >
+                保存
+              </button>
+            </view>
+          </view>
+
+          <template v-else>
+            <text class="portrait-name">{{ portrait.name }}</text>
+            <button
+              v-if="sessionId"
+              class="portrait-btn portrait-btn-use"
+              :class="{ 'is-active': selection?.portrait_id === portrait.id }"
+              :disabled="busy || disabled || !selection || selection?.portrait_id === portrait.id"
+              @tap="choose(portrait.id)"
+            >
+              {{ selection?.portrait_id === portrait.id ? '当前立绘' : '设为背景' }}
+            </button>
+            <view class="portrait-actions">
+              <button
+                class="portrait-btn portrait-btn-ghost"
+                :disabled="busy || disabled"
+                @tap="edit(portrait)"
+              >
+                改名
+              </button>
+              <button
+                class="portrait-btn portrait-btn-danger"
+                :disabled="busy || disabled"
+                @tap="remove(portrait)"
+              >
+                删除
+              </button>
+            </view>
+          </template>
+        </view>
+      </view>
+
+      <button
+        v-if="hasMore"
+        class="portrait-btn portrait-btn-more"
+        :disabled="busy || disabled"
+        @tap="loadMore"
+      >
+        加载更多立绘
+      </button>
+    </template>
   </view>
 </template>
 
@@ -138,6 +156,7 @@ import { getPortraits, uploadPortrait, renamePortrait, deletePortrait, getPortra
 import type { CharacterPortrait, PortraitSelection } from "@/types/portraits";
 const props = defineProps<{ characterId: number; sessionId?: number | null; disabled?: boolean; timeline?: string }>();
 const emit = defineEmits<{ (e: "changed"): void }>();
+const collapsed = ref(!!props.sessionId);
 const portraits = ref<CharacterPortrait[]>([]);
 const hasMore = ref(false);
 const selection = ref<PortraitSelection | null>(null);
@@ -265,6 +284,7 @@ onScopeDispose(() => { disposed = true; version++; });
   display: flex;
   flex-direction: column;
   gap: 6rpx;
+  cursor: pointer;
 }
 
 .portraits-title-row {
@@ -278,6 +298,17 @@ onScopeDispose(() => { disposed = true; version++; });
   font-size: 28rpx;
   font-weight: 700;
   color: var(--app-color-text-primary, #26332e);
+}
+
+.portraits-chevron {
+  width: 26rpx;
+  height: 26rpx;
+  opacity: 0.55;
+  transition: transform 0.22s ease;
+}
+
+.portraits-chevron.is-active {
+  transform: rotate(180deg);
 }
 
 .portraits-count {
