@@ -2,7 +2,7 @@
   <view class="memory-processing">
     <view class="status-row">
       <text class="status-title">{{ title }}</text>
-      <button size="mini" :disabled="loading || submitting" @tap="refresh">刷新</button>
+      <button class="memory-refresh-btn" :disabled="loading || submitting" @tap="refresh">刷新</button>
     </view>
     <text v-if="state && state.pending_count > 0" class="status-detail">还有 {{ state.pending_count }} 项任务，完成后自动更新</text>
     <text v-if="reason" class="status-detail">{{ reason }}</text>
@@ -54,11 +54,82 @@ const completedTime = computed(() => {
 </script>
 
 <style scoped>
-.memory-processing { display: flex; flex-direction: column; gap: 12rpx; padding: 20rpx; border-radius: var(--app-radius-sm); background: var(--app-color-background); }
-.status-row { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; }
-.status-title { font-size: 25rpx; font-weight: 600; color: var(--app-color-text-primary); }
-.status-row button { flex-shrink: 0; margin: 0; }
-.status-detail, .status-error { font-size: 23rpx; line-height: 1.6; color: var(--app-color-text-secondary); overflow-wrap: anywhere; }
-.status-error { color: var(--app-color-danger); }
-.extract-button { margin: 4rpx 0 0; font-size: 25rpx; }
+.memory-processing {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+  padding: 20rpx;
+  border-radius: 16rpx;
+  background: var(--app-color-surface-soft, #f3f6f4);
+}
+
+.memory-processing button::after {
+  border: 0;
+  display: none;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.status-title {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: var(--app-color-text-primary, #26332e);
+}
+
+.memory-refresh-btn {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 20rpx;
+  height: 48rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #4c5d56;
+  font-size: 22rpx;
+  font-weight: 600;
+  line-height: 1;
+  border: 2rpx solid rgba(38, 51, 46, 0.08);
+}
+
+.memory-refresh-btn[disabled],
+.extract-button[disabled] {
+  opacity: 0.48;
+}
+
+.status-detail,
+.status-error {
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: var(--app-color-text-secondary, #7c8983);
+  overflow-wrap: anywhere;
+}
+
+.status-error {
+  color: var(--app-color-danger, #c6534c);
+}
+
+.extract-button {
+  margin: 4rpx 0 0;
+  height: 58rpx;
+  padding: 0 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  border-radius: 14rpx;
+  background: rgba(112, 174, 155, 0.16);
+  color: #3b7666;
+  font-size: 24rpx;
+  font-weight: 600;
+  line-height: 1;
+  border: none;
+}
 </style>
