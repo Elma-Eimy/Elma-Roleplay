@@ -164,6 +164,13 @@ test("custom action sheet state exposes items and invalidates on session or serv
   actions.onMessageLongPress(latest);
   assert.equal(actions.actionSheetItems.value.some(item => item.key === "regenerate"), true);
   assert.equal(actions.actionSheetItems.value.find(item => item.key === "delete").danger, true);
+  actions.closeActionSheet();
+
+  // 生成中长按历史最新回复时不显示“重新生成回复”
+  store.isLoading = true;
+  actions.onMessageLongPress(latest);
+  assert.equal(actions.actionSheetItems.value.some(item => item.key === "regenerate"), false);
+  store.isLoading = false;
 
   // 切服后旧面板自动关闭，即使调用 selectActionSheetItem 也不会触发操作
   server = "https://two.test";

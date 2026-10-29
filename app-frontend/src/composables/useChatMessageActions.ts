@@ -166,7 +166,7 @@ export function useChatMessageActions(
       { key: "branch", label: "创建分支（多宇宙）", icon: "/static/icons/char_branch.svg" }
     );
     const isLatestAssistant = message.id === chatStore.lastAssistantMessage?.id;
-    if (message.role === "assistant" && isLatestAssistant) {
+    if (message.role === "assistant" && isLatestAssistant && !chatStore.isLoading) {
       items.push({ key: "regenerate", label: "重新生成回复", icon: "/static/icons/drawer_sync.svg" });
     }
     items.push({ key: "delete", label: "删除此消息", icon: "/static/icons/drawer_trash.svg", danger: true });

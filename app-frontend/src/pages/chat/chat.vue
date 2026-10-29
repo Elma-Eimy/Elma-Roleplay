@@ -70,6 +70,7 @@
           :scroll-with-animation="scrollWithAnimation"
           :show-jump-button="!isPinnedToBottom && chatStore.messages.length > 0"
           :has-unread="hasUnreadBelow"
+          :maintain-scroll-position="maintainScrollPosition"
           @load-more="onLoadMore"
           @longpress-message="onMessageLongPress"
           @retry-failed="onRetryFailed"
@@ -327,7 +328,7 @@ const {
   regenerateLatestReply,
   cancelEdit,
   saveEdit,
-} = useChatMessageActions(currentSessionId, scrollToBottom);
+} = useChatMessageActions(currentSessionId, async () => { pinToBottom(); });
 
 watch(() => chatStore.activeSessionId, (id) => {
   if (id === null) currentSessionId.value = null;
@@ -569,12 +570,18 @@ watch(() => chatStore.messages.length, () => {
   followNewContent();
 });
 
-// 流式输出时，使用节流控制置底并临时关闭动画以防卡顿
-watch(() => chatStore.streamingText, () => {
-  if (isInitLoading.value) return;
-  scrollWithAnimation.value = false;
-  followNewContent(true);
-});
+// 流式输出（含思考过程展开）时，使用节流控制置底并临时关闭动画以防卡顿
+watch(
+  [
+    () => chatStore.streamingText,
+    () => chatStore.lastAssistantMessage?.reasoning_content,
+  ],
+  () => {
+    if (isInitLoading.value) return;
+    scrollWithAnimation.value = false;
+    followNewContent(true);
+  }
+);
 
 // 对话彻底结束或状态变动时置底
 watch(() => chatStore.isLoading, (loading) => {
@@ -653,6 +660,10 @@ watch([isImmersive, currentSessionId], () => {
 });
 const onScrollMetrics = (metrics: ScrollMetrics) => {
   updateScrollMetrics(metrics);
+  if (isInitLoading.value || isHistoryLoading.value) {
+    lastScrollTop = metrics.scrollTop;
+    return;
+  }
   isHeaderFaded.value = shouldFadeHeaderOnScroll({
     currentHidden: isHeaderFaded.value,
     scrollTop: metrics.scrollTop,

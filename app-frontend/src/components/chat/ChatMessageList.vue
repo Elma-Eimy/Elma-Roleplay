@@ -90,9 +90,11 @@ const props = withDefaults(defineProps<{
   scrollWithAnimation: boolean;
   showJumpButton?: boolean;
   hasUnread?: boolean;
+  maintainScrollPosition?: (anchorId: string) => Promise<void>;
 }>(), {
   showJumpButton: false,
   hasUnread: false,
+  maintainScrollPosition: undefined,
 });
 
 const emit = defineEmits<{
@@ -130,7 +132,11 @@ const visibleMessages = computed(() =>
 );
 
 const expandRenderWindow = () => {
+  const anchorId = visibleMessages.value[0]?.clientId;
   renderWindowSize.value += RENDER_WINDOW_STEP;
+  if (anchorId && props.maintainScrollPosition) {
+    void props.maintainScrollPosition(anchorId);
+  }
 };
 
 const onReachTop = () => {
