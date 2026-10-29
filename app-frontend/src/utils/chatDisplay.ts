@@ -64,3 +64,67 @@ export function lastNonEmptyLine(text: string | null | undefined): string {
   }
   return "";
 }
+
+export type ChatFontScale = "sm" | "md" | "lg" | "xl";
+export type ChatLineSpacing = "compact" | "comfortable";
+export type ChatBubbleStyle = "bubble" | "novel";
+
+export interface ChatReadingPrefs {
+  fontScale: ChatFontScale;
+  lineSpacing: ChatLineSpacing;
+  bubbleStyle: ChatBubbleStyle;
+}
+
+export const DEFAULT_READING_PREFS: ChatReadingPrefs = {
+  fontScale: "md",
+  lineSpacing: "comfortable",
+  bubbleStyle: "bubble",
+};
+
+export const FONT_SCALE_OPTIONS: ReadonlyArray<{ value: ChatFontScale; label: string }> = [
+  { value: "sm", label: "小" },
+  { value: "md", label: "标准" },
+  { value: "lg", label: "大" },
+  { value: "xl", label: "特大" },
+];
+
+export const LINE_SPACING_OPTIONS: ReadonlyArray<{ value: ChatLineSpacing; label: string }> = [
+  { value: "compact", label: "紧凑" },
+  { value: "comfortable", label: "舒适" },
+];
+
+export const BUBBLE_STYLE_OPTIONS: ReadonlyArray<{ value: ChatBubbleStyle; label: string }> = [
+  { value: "bubble", label: "气泡" },
+  { value: "novel", label: "小说" },
+];
+
+export function normalizeReadingPrefs(raw: unknown): ChatReadingPrefs {
+  const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const fontScale = FONT_SCALE_OPTIONS.some((item) => item.value === record.fontScale)
+    ? (record.fontScale as ChatFontScale)
+    : DEFAULT_READING_PREFS.fontScale;
+  const lineSpacing = LINE_SPACING_OPTIONS.some((item) => item.value === record.lineSpacing)
+    ? (record.lineSpacing as ChatLineSpacing)
+    : DEFAULT_READING_PREFS.lineSpacing;
+  const bubbleStyle = BUBBLE_STYLE_OPTIONS.some((item) => item.value === record.bubbleStyle)
+    ? (record.bubbleStyle as ChatBubbleStyle)
+    : DEFAULT_READING_PREFS.bubbleStyle;
+  return { fontScale, lineSpacing, bubbleStyle };
+}
+
+/** 沉浸模式下根据滚动增量决定头部显隐；顶部附近始终显示。 */
+export const HEADER_FADE_MIN_SCROLL_TOP = 80;
+export const HEADER_FADE_DELTA = 18;
+
+export function shouldFadeHeaderOnScroll(options: {
+  currentHidden: boolean;
+  scrollTop: number;
+  previousScrollTop: number;
+  isImmersive: boolean;
+}): boolean {
+  if (!options.isImmersive || options.scrollTop <= HEADER_FADE_MIN_SCROLL_TOP) return false;
+  const delta = options.scrollTop - options.previousScrollTop;
+  if (delta >= HEADER_FADE_DELTA) return true;
+  if (delta <= -HEADER_FADE_DELTA) return false;
+  return options.currentHidden;
+}

@@ -12,6 +12,11 @@ import {
   effortLabel,
   modelOptionLabel,
 } from "@/utils/generation";
+import {
+  DEFAULT_READING_PREFS,
+  normalizeReadingPrefs,
+  type ChatReadingPrefs,
+} from "@/utils/chatDisplay";
 
 export const useChatSettingsStore = defineStore("chatSettings", () => {
   const defaults = ref({ ...DEFAULT_SETTINGS });
@@ -175,6 +180,38 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
   const presence_penalty = ref<number | null>(null);
   const frequency_penalty = ref<number | null>(null);
   const repetition_penalty = ref<number | null>(null);
+
+  // 阅读偏好为本机全局设置，不随故事或服务器重置。
+  const READING_STORAGE_KEY = "chat_reading_prefs_v1";
+  const readReadingPrefs = (): ChatReadingPrefs => {
+    try {
+      const raw = uni.getStorageSync(READING_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_READING_PREFS };
+      const parsed = typeof raw === "object" ? raw : JSON.parse(String(raw));
+      return normalizeReadingPrefs(parsed);
+    } catch {
+      return { ...DEFAULT_READING_PREFS };
+    }
+  };
+  const readingPrefs = ref<ChatReadingPrefs>(readReadingPrefs());
+  watch(
+    readingPrefs,
+    (value) => {
+      try {
+        uni.setStorageSync(READING_STORAGE_KEY, JSON.stringify(normalizeReadingPrefs(value)));
+      } catch {
+        // 存储不可用时保留内存值
+      }
+    },
+    { deep: true, flush: "sync" }
+  );
+  function updateReadingPrefs(patch: Partial<ChatReadingPrefs>) {
+    readingPrefs.value = normalizeReadingPrefs({ ...readingPrefs.value, ...patch });
+  }
+  function resetReadingPrefs() {
+    readingPrefs.value = { ...DEFAULT_READING_PREFS };
+  }
+
   function clearParameters() {
     temperature.value = null;
     top_p.value = null;
@@ -213,6 +250,9 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
     presence_penalty,
     frequency_penalty,
     repetition_penalty,
+    readingPrefs,
+    updateReadingPrefs,
+    resetReadingPrefs,
     clearParameters,
     $reset,
   };

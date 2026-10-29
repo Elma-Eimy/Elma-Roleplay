@@ -96,11 +96,49 @@
         </view>
       </view>
 
+      <!-- 最新回复常驻操作条 -->
+      <view
+        v-if="!isUser && isLatestAssistant && message.status === 'done'"
+        class="latest-action-bar"
+        @longpress.stop=""
+        @contextmenu.prevent.stop=""
+      >
+        <view
+          class="action-bar-btn"
+          :class="{ 'is-disabled': chatStore.isLoading }"
+          @tap.stop="!chatStore.isLoading && emit('regenerate-message')"
+        >
+          <image class="action-bar-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+          <text class="action-bar-label">重新生成</text>
+        </view>
+        <view
+          class="action-bar-btn"
+          :class="{ 'is-playing': activeAudioMessageId === message.id }"
+          @tap.stop="playTTS"
+        >
+          <view v-if="activeAudioMessageId === message.id" class="waveform">
+            <view class="wave-bar bar-1"></view>
+            <view class="wave-bar bar-2"></view>
+            <view class="wave-bar bar-3"></view>
+          </view>
+          <image v-else class="action-bar-icon tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
+          <text class="action-bar-label">{{ activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
+        </view>
+        <view class="action-bar-btn" @tap.stop="emit('copy-message', message)">
+          <image class="action-bar-icon" src="/static/icons/char_list.svg" mode="aspectFit" />
+          <text class="action-bar-label">复制</text>
+        </view>
+        <view class="action-bar-btn" @tap.stop="emit('longpress-message', message)">
+          <text class="action-bar-more">···</text>
+          <text class="action-bar-label">更多</text>
+        </view>
+      </view>
+
       <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
       <view v-if="!isUser && isMetaVisible" class="meta-area">
-        <!-- 语音播报按钮 -->
+        <!-- 语音播报按钮（最新回复已由操作条承载） -->
         <view 
-          v-if="message.status === 'done'"
+          v-if="message.status === 'done' && !isLatestAssistant"
           class="meta-tag tts-btn" 
           :class="{ 'is-playing': activeAudioMessageId === message.id }"
           @tap="playTTS"
@@ -184,6 +222,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: "longpress-message", message: ChatMessage): void;
   (e: "retry-failed", message: ChatMessage): void;
+  (e: "copy-message", message: ChatMessage): void;
+  (e: "regenerate-message"): void;
 }>();
 
 // 元数据默认只在最新回复展示；点按其他 AI 气泡可临时展开（含模型名）。
@@ -621,20 +661,20 @@ onUnmounted(() => {
   box-shadow: 0 8rpx 24rpx rgba(79, 142, 124, 0.08);
 }
 
-/* ===== 文本渲染样式 ===== */
+/* ===== 文本渲染样式（可由页面阅读偏好覆盖） ===== */
 .plain-text {
-  font-size: 28rpx;
-  line-height: 1.58;
+  font-size: var(--chat-font-size, 28rpx);
+  line-height: var(--chat-user-line-height, 1.58);
 }
 
 .markdown-content {
-  font-size: 28rpx;
-  line-height: 1.72;
+  font-size: var(--chat-font-size, 28rpx);
+  line-height: var(--chat-line-height, 1.72);
 }
 
 .markdown-content :deep(.md-p) {
   margin: 12rpx 0;
-  line-height: 1.72;
+  line-height: var(--chat-line-height, 1.72);
 }
 
 .markdown-content :deep(.md-strong) {
@@ -735,6 +775,64 @@ onUnmounted(() => {
 .markdown-content :deep(.md-status-spacer),
 .thought-markdown-content :deep(.md-status-spacer) {
   height: 8rpx;
+}
+
+/* ===== 最新回复操作条 ===== */
+.latest-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 10rpx;
+  margin-left: 6rpx;
+}
+
+.action-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  min-height: 48rpx;
+  padding: 0 18rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: rgba(255, 255, 255, 0.64);
+  color: var(--app-color-text-secondary, #64716b);
+  transition:
+    transform var(--app-motion-fast, 160ms) ease,
+    background-color var(--app-motion-fast, 160ms) ease;
+}
+
+.action-bar-btn:active {
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  transform: scale(0.95);
+}
+
+.action-bar-btn.is-disabled {
+  opacity: 0.45;
+}
+
+.action-bar-btn.is-playing {
+  color: var(--app-color-primary-strong, #4f8e7c);
+  border-color: rgba(112, 174, 155, 0.2);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+}
+
+.action-bar-icon {
+  width: 22rpx;
+  height: 22rpx;
+  flex-shrink: 0;
+  opacity: 0.78;
+}
+
+.action-bar-more {
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.action-bar-label {
+  font-size: 21rpx;
+  font-weight: 560;
 }
 
 /* ===== 元数据区域 ===== */

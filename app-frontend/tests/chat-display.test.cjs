@@ -95,3 +95,80 @@ test("discarding a failed message only removes local unsent user messages", t =>
   assert.equal(store.errorMessage, null);
   assert.equal(store.discardFailedMessage("user-1"), null);
 });
+
+test("reading preferences normalize invalid values and persist across story resets", () => {
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel" })),
+    { fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel" });
+  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "huge", lineSpacing: null, bubbleStyle: 123 })),
+    plain(display.DEFAULT_READING_PREFS));
+
+  setActivePinia(createPinia());
+  const storage = new Map([["chat_reading_prefs_v1", JSON.stringify({ fontScale: "xl", bubbleStyle: "novel" })]]);
+  const load = createLoader({
+    mocks: {
+      "@/api/config": { getBaseUrl: () => "https://one.test" },
+      "@/api/settings": { getSettings: async () => ({}), DEFAULT_SETTINGS: { default_chat_model: "m", model_profiles: [], model_catalog: [], reasoning_mode: false, reasoning_effort: "high" } },
+    },
+    globals: { uni: { getStorageSync: key => storage.get(key), setStorageSync: (key, val) => storage.set(key, val) } },
+  });
+  const settings = load("store/chatSettingsStore.ts").useChatSettingsStore();
+  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "xl", lineSpacing: "comfortable", bubbleStyle: "novel" });
+  settings.updateReadingPrefs({ lineSpacing: "compact", fontScale: "bad" });
+  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "md", lineSpacing: "compact", bubbleStyle: "novel" });
+  settings.$reset();
+  assert.equal(settings.readingPrefs.bubbleStyle, "novel", "device reading prefs survive session reset");
+  assert.deepEqual(JSON.parse(storage.get("chat_reading_prefs_v1")), plain(settings.readingPrefs));
+});
+
+test("immersive header fades on downward scroll and restores near the top or on upward scroll", () => {
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: false, scrollTop: 200, previousScrollTop: 100, isImmersive: false }), false);
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: false, scrollTop: 50, previousScrollTop: 0, isImmersive: true }), false);
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: false, scrollTop: 200, previousScrollTop: 150, isImmersive: true }), true);
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: true, scrollTop: 205, previousScrollTop: 200, isImmersive: true }), true);
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: true, scrollTop: 160, previousScrollTop: 205, isImmersive: true }), false);
+  assert.equal(display.shouldFadeHeaderOnScroll({ currentHidden: true, scrollTop: 40, previousScrollTop: 30, isImmersive: true }), false);
+});
+
+test("custom action sheet state exposes items and invalidates on session or server change", t => {
+  setActivePinia(createPinia());
+  const { ref } = require("vue");
+  let server = "https://one.test", modals = 0;
+  const load = createLoader({
+    mocks: {
+      "@/api/sessions": { getSessionHistory: async () => ({ messages: [] }), createSession: async () => ({ session_id: 2 }) },
+      "@/api/chat": { sendMessageStream: async () => {} },
+      "@/api/config": { getBaseUrl: () => server, getSavedApiKey: () => "" },
+      "./personaStore": { usePersonaStore: () => ({ userNickname: "u", activeCharacter: { id: 1, name: "Luna" }, loadSessionDetail: async () => {}, applyAffectionChange() {} }) },
+      "@/store/personaStore": { usePersonaStore: () => ({ userNickname: "u", activeCharacter: { id: 1, name: "Luna" }, loadSessionDetail: async () => {}, applyAffectionChange() {} }) },
+      "./chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, activateSession() {}, inheritSession() {}, requestGeneration: () => ({}), $reset() {} }) },
+      "@/store/chatSettingsStore": { useChatSettingsStore: () => ({ clearParameters() {}, activateSession() {}, inheritSession() {}, requestGeneration: () => ({}), $reset() {} }) },
+      "@/composables/useAudioPlayer": { useAudioPlayer: () => ({ stopMessageTTS() {}, playMessageTTS() {} }) },
+    },
+    globals: { uni: { showModal: () => { modals++; }, showToast() {} } },
+  });
+  const store = load("store/chatStore.ts").useChatStore();
+  store.setActiveSession(1);
+  const first = { id: 1, role: "assistant", content: "earlier", created_at: "2026-10-29" };
+  const latest = { id: 2, role: "assistant", content: "latest", created_at: "2026-10-29" };
+  store.setHistory([first, latest]);
+  const sessionId = ref(1);
+  const scope = effectScope();
+  const actions = scope.run(() => load("composables/useChatMessageActions.ts").useChatMessageActions(sessionId, async () => {}));
+  t.after(() => { scope.stop(); store.$dispose(); });
+
+  actions.onMessageLongPress(first);
+  assert.equal(actions.actionSheetItems.value.some(item => item.key === "regenerate"), false);
+  actions.closeActionSheet();
+
+  actions.onMessageLongPress(latest);
+  assert.equal(actions.actionSheetItems.value.some(item => item.key === "regenerate"), true);
+  assert.equal(actions.actionSheetItems.value.find(item => item.key === "delete").danger, true);
+
+  // 切服后旧面板自动关闭，即使调用 selectActionSheetItem 也不会触发操作
+  server = "https://two.test";
+  load("utils/connectionEvents.ts").notifyServerChange();
+  assert.equal(actions.actionSheetMessage.value, null);
+  actions.selectActionSheetItem("delete");
+  assert.equal(modals, 0);
+});

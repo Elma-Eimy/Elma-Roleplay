@@ -23,6 +23,8 @@
         :animate-entry="shouldAnimateMessageEntry(message.clientId)"
         @longpress-message="emit('longpress-message', $event)"
         @retry-failed="emit('retry-failed', $event)"
+        @copy-message="emit('copy-message', $event)"
+        @regenerate-message="emit('regenerate-message')"
       />
 
       <view v-if="messages.length === 0" class="empty-chat">
@@ -76,6 +78,8 @@ const emit = defineEmits<{
   (event: "load-more"): void;
   (event: "longpress-message", message: ChatMessage): void;
   (event: "retry-failed", message: ChatMessage): void;
+  (event: "copy-message", message: ChatMessage): void;
+  (event: "regenerate-message"): void;
   (event: "scroll-metrics", metrics: ScrollMetrics): void;
   (event: "jump-to-bottom"): void;
 }>();

@@ -1,5 +1,8 @@
 <template>
-  <view class="custom-header" :class="{ 'is-android': isAndroid }">
+  <view
+    class="custom-header"
+    :class="{ 'is-android': isAndroid, 'is-faded': isFaded }"
+  >
     <view class="header-btn left-btn" @tap="emit('back')">
       <image
         class="back-icon"
@@ -8,11 +11,27 @@
       />
     </view>
 
-    <view class="header-center">
-      <text class="character-name">{{ characterName || "未选角色" }}</text>
-      <view class="status-indicator">
-        <view class="status-dot"></view>
-        <text class="status-text">{{ currentMood || "在线" }}</text>
+    <view class="header-center" @tap="emit('open-status')">
+      <AvatarImage
+        v-if="avatarUrl"
+        class="header-avatar"
+        :src="avatarUrl"
+      />
+      <view class="header-titles">
+        <text class="character-name">{{ characterName || "未选角色" }}</text>
+        <view class="status-indicator">
+          <view class="status-dot"></view>
+          <text class="status-text">{{ currentMood || "在线" }}</text>
+          <template v-if="typeof affectionScore === 'number'">
+            <text class="status-sep">·</text>
+            <image
+              class="header-heart-icon"
+              src="/static/icons/meta_heart.svg"
+              mode="aspectFit"
+            />
+            <text class="status-affection">{{ affectionScore }}</text>
+          </template>
+        </view>
       </view>
     </view>
 
@@ -27,10 +46,15 @@
 </template>
 
 <script setup lang="ts">
+import AvatarImage from "@/components/common/AvatarImage.vue";
+
 defineProps<{
   characterName?: string;
   currentMood?: string;
+  affectionScore?: number;
+  avatarUrl?: string;
   isAndroid: boolean;
+  isFaded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -53,6 +77,14 @@ const emit = defineEmits<{
   border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   position: relative;
   z-index: 50;
+  transition:
+    opacity var(--app-motion-normal, 240ms) ease,
+    transform var(--app-motion-normal, 240ms) ease;
+}
+
+.custom-header.is-faded {
+  opacity: 0.18;
+  transform: translateY(-8rpx);
 }
 
 .custom-header.is-android {
@@ -91,13 +123,29 @@ const emit = defineEmits<{
 
 .header-center {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5rpx;
+  gap: 16rpx;
+  min-width: 0;
+}
+
+.header-avatar {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 22rpx;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  flex-shrink: 0;
+}
+
+.header-titles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4rpx;
+  min-width: 0;
 }
 
 .character-name {
-  max-width: 360rpx;
+  max-width: 340rpx;
   overflow: hidden;
   color: var(--app-color-text-primary, #26332e);
   font-size: 30rpx;
@@ -108,11 +156,11 @@ const emit = defineEmits<{
 }
 
 .status-indicator {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8rpx;
-  min-height: 32rpx;
-  padding: 0 12rpx;
+  min-height: 36rpx;
+  padding: 0 14rpx;
   border-radius: var(--app-radius-pill, 999rpx);
   background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
@@ -125,10 +173,22 @@ const emit = defineEmits<{
   box-shadow: 0 0 0 5rpx rgba(112, 174, 155, 0.1);
 }
 
-.status-text {
-  font-size: 18rpx;
+.status-text,
+.status-affection {
+  font-size: var(--app-font-size-caption, 22rpx);
   color: var(--app-color-primary-strong, #4f8e7c);
   font-weight: 600;
+}
+
+.status-sep {
+  color: var(--app-color-text-muted, #89958f);
+  font-size: 20rpx;
+}
+
+.header-heart-icon {
+  width: 20rpx;
+  height: 20rpx;
+  flex-shrink: 0;
 }
 
 .back-icon {

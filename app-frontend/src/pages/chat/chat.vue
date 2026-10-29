@@ -1,5 +1,13 @@
 <template>
-  <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid, 'is-immersive': isImmersive }">
+  <view
+    class="page-container app-motion-enter"
+    :class="[
+      `font-${chatSettingsStore.readingPrefs.fontScale}`,
+      `spacing-${chatSettingsStore.readingPrefs.lineSpacing}`,
+      `style-${chatSettingsStore.readingPrefs.bubbleStyle}`,
+      { 'is-android': isAndroid, 'is-immersive': isImmersive },
+    ]"
+  >
     <view
       class="chat-bg"
       :class="`mode-${backgroundMode}`"
@@ -29,7 +37,10 @@
     <ChatHeader
       :character-name="personaStore.characterName"
       :current-mood="personaStore.currentMood"
+      :affection-score="personaStore.currentPersona ? personaStore.affectionScore : undefined"
+      :avatar-url="characterAvatarUrl"
       :is-android="isAndroid"
+      :is-faded="isHeaderFaded"
       @back="goBack"
       @open-status="isStatusPanelOpen = true"
     />
@@ -38,7 +49,7 @@
       <view class="chat-conversation">
         <ChatMessageList
           :messages="chatStore.messages"
-          :avatar-url="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+          :avatar-url="characterAvatarUrl"
           :character-name="personaStore.characterName"
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
@@ -48,7 +59,9 @@
           @load-more="onLoadMore"
           @longpress-message="onMessageLongPress"
           @retry-failed="onRetryFailed"
-          @scroll-metrics="updateScrollMetrics"
+          @copy-message="copyMessageContent"
+          @regenerate-message="regenerateLatestReply"
+          @scroll-metrics="onScrollMetrics"
           @jump-to-bottom="onJumpToBottom"
         />
 
@@ -60,6 +73,8 @@
           :is-android="isAndroid"
           :keyboard-height="keyboardHeight"
           :wrapper-style="inputWrapperStyle"
+          :is-generating="chatStore.isLoading"
+          :character-name="personaStore.characterName"
           @open-model-settings="isModelSettingsOpen = true"
           @focus-change="isInputFocused = $event"
           @line-change="scrollToBottom"
@@ -78,6 +93,15 @@
       :error="editError"
       @cancel="cancelEdit"
       @save="saveEdit"
+    />
+
+    <AppActionSheet
+      :is-open="actionSheetMessage !== null"
+      :items="actionSheetItems"
+      :is-android="isAndroid"
+      title="消息操作"
+      @select="selectActionSheetItem"
+      @close="closeActionSheet"
     />
 
     <!-- 记忆与微观认知状态右侧抽屉面板 -->
@@ -165,7 +189,9 @@ import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import BranchTreePanel from "@/components/chat/BranchTreePanel.vue";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
+import AppActionSheet from "@/components/common/AppActionSheet.vue";
 import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
+import { shouldFadeHeaderOnScroll, type ScrollMetrics } from "@/utils/chatDisplay";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
@@ -278,7 +304,13 @@ const {
   editMessageContent,
   editError,
   isSavingEdit,
+  actionSheetMessage,
+  actionSheetItems,
   onMessageLongPress,
+  selectActionSheetItem,
+  closeActionSheet,
+  copyMessageContent,
+  regenerateLatestReply,
   cancelEdit,
   saveEdit,
 } = useChatMessageActions(currentSessionId, scrollToBottom);
@@ -581,6 +613,9 @@ const onRetryFailed = (message: ChatMessage) => {
   });
 };
 
+const characterAvatarUrl = computed(() =>
+  getAvatarUrl(personaStore.activeCharacter?.avatar_path || "")
+);
 const characterBackgroundUrl = computed(() =>
   getAvatarUrl(portraitSelection.value?.image_path || personaStore.activeCharacter?.avatar_path || "")
 );
@@ -592,6 +627,24 @@ const hasPortrait = computed(() =>
 );
 watch(characterBackgroundUrl, () => { portraitLoadFailed.value = false; });
 const isImmersive = computed(() => backgroundMode.value === 'character' && hasPortrait.value);
+
+// 沉浸模式下阅读滚动时淡化顶部栏，上滑或回到顶部附近自动恢复。
+const isHeaderFaded = ref(false);
+let lastScrollTop = 0;
+watch([isImmersive, currentSessionId], () => {
+  isHeaderFaded.value = false;
+  lastScrollTop = 0;
+});
+const onScrollMetrics = (metrics: ScrollMetrics) => {
+  updateScrollMetrics(metrics);
+  isHeaderFaded.value = shouldFadeHeaderOnScroll({
+    currentHidden: isHeaderFaded.value,
+    scrollTop: metrics.scrollTop,
+    previousScrollTop: lastScrollTop,
+    isImmersive: isImmersive.value,
+  });
+  lastScrollTop = metrics.scrollTop;
+};
 const onPortraitUnavailable = (event: Event) => {
   const target = event.currentTarget as unknown as { dataset?: { source?: string } } | null;
   if (target?.dataset?.source === characterBackgroundUrl.value) {

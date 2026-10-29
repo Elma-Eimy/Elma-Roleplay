@@ -102,6 +102,49 @@
           <text v-if="chatSettingsStore.settingsError" class="generation-scope">{{ chatSettingsStore.settingsError }}</text>
           <GenerationPicker v-if="!chatSettingsStore.isLoadingModels && chatSettingsStore.modelId" v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
           <text v-if="chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
+          <view class="reading-setting">
+            <view class="background-setting-header">
+              <text class="setting-row-label">阅读偏好</text>
+              <text class="background-setting-hint">本机全局保存</text>
+            </view>
+            <view class="reading-row">
+              <text class="reading-row-label">字号</text>
+              <view class="reading-pills">
+                <view
+                  v-for="item in FONT_SCALE_OPTIONS"
+                  :key="item.value"
+                  class="reading-pill"
+                  :class="{ 'is-active': chatSettingsStore.readingPrefs.fontScale === item.value }"
+                  @tap="chatSettingsStore.updateReadingPrefs({ fontScale: item.value })"
+                >{{ item.label }}</view>
+              </view>
+            </view>
+            <view class="reading-row">
+              <text class="reading-row-label">行距</text>
+              <view class="reading-pills">
+                <view
+                  v-for="item in LINE_SPACING_OPTIONS"
+                  :key="item.value"
+                  class="reading-pill"
+                  :class="{ 'is-active': chatSettingsStore.readingPrefs.lineSpacing === item.value }"
+                  @tap="chatSettingsStore.updateReadingPrefs({ lineSpacing: item.value })"
+                >{{ item.label }}</view>
+              </view>
+            </view>
+            <view class="reading-row">
+              <text class="reading-row-label">排版</text>
+              <view class="reading-pills">
+                <view
+                  v-for="item in BUBBLE_STYLE_OPTIONS"
+                  :key="item.value"
+                  class="reading-pill"
+                  :class="{ 'is-active': chatSettingsStore.readingPrefs.bubbleStyle === item.value }"
+                  @tap="chatSettingsStore.updateReadingPrefs({ bubbleStyle: item.value })"
+                >{{ item.label }}</view>
+              </view>
+            </view>
+          </view>
+
           <view class="background-setting">
             <view class="background-setting-header">
               <text class="setting-row-label">聊天背景</text>
@@ -347,6 +390,11 @@ import GenerationPicker from "./GenerationPicker.vue";
 import RoleStatePanel from "./RoleStatePanel.vue";
 import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
+import {
+  FONT_SCALE_OPTIONS,
+  LINE_SPACING_OPTIONS,
+  BUBBLE_STYLE_OPTIONS,
+} from "@/utils/chatDisplay";
 
 const props = defineProps<{
   isOpen: boolean;
@@ -997,4 +1045,10 @@ isAndroid = uni.getSystemInfoSync().platform === "android";
 
 <style scoped>
 .generation-scope { display: block; font-size: 22rpx; color: #7c8983; line-height: 1.8; margin: 14rpx 0 24rpx; }
+.reading-setting { display: flex; flex-direction: column; gap: 14rpx; margin-top: 8rpx; padding-top: 18rpx; border-top: 1px solid rgba(0, 0, 0, 0.05); }
+.reading-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.reading-row-label { color: #64716b; font-size: 24rpx; font-weight: 550; flex-shrink: 0; }
+.reading-pills { display: flex; flex-wrap: wrap; gap: 8rpx; justify-content: flex-end; }
+.reading-pill { min-width: 72rpx; height: 52rpx; padding: 0 20rpx; display: inline-flex; align-items: center; justify-content: center; border-radius: 999rpx; border: 1px solid rgba(38, 51, 46, 0.1); background-color: rgba(247, 249, 247, 0.9); color: #64716b; font-size: 23rpx; font-weight: 560; }
+.reading-pill.is-active { border-color: rgba(79, 142, 124, 0.45); background-color: rgba(112, 174, 155, 0.14); color: #3f7e6d; font-weight: 650; }
 </style>
