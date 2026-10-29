@@ -1,4 +1,5 @@
 <template>
+  <view class="chat-list-shell">
   <scroll-view
     class="chat-scroll-area"
     scroll-y
@@ -6,6 +7,7 @@
     :scroll-into-view="scrollIntoViewId"
     :scroll-with-animation="scrollWithAnimation"
     @scrolltoupper="emit('load-more')"
+    @scroll="onScroll"
   >
     <view class="chat-list-padding">
       <ChatBubble
@@ -17,7 +19,10 @@
         :character-name="characterName"
         :show-avatar="shouldShowAiIdentity(message, index)"
         :show-name="shouldShowAiIdentity(message, index)"
+        :is-latest-assistant="index === latestAssistantIndex"
+        :animate-entry="shouldAnimateMessageEntry(message.clientId)"
         @longpress-message="emit('longpress-message', $event)"
+        @retry-failed="emit('retry-failed', $event)"
       />
 
       <view v-if="messages.length === 0" class="empty-chat">
@@ -30,25 +35,84 @@
       </view>
     </view>
   </scroll-view>
+
+  <view
+    v-if="showJumpButton"
+    class="jump-to-bottom"
+    :class="{ 'has-unread': hasUnread }"
+    @tap="emit('jump-to-bottom')"
+  >
+    <text class="jump-arrow">↓</text>
+    <text class="jump-text">{{ hasUnread ? "新回复" : "回到底部" }}</text>
+  </view>
+  </view>
 </template>
 
 <script setup lang="ts">
+import { computed, getCurrentInstance, onMounted } from "vue";
 import ChatBubble from "./ChatBubble.vue";
 import type { ChatMessage } from "@/store/chatStore";
+import {
+  findLatestAssistantIndex,
+  shouldAnimateMessageEntry,
+  type ScrollMetrics,
+} from "@/utils/chatDisplay";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   messages: ChatMessage[];
   avatarUrl: string;
   characterName: string;
   scrollTop: number;
   scrollIntoViewId: string;
   scrollWithAnimation: boolean;
-}>();
+  showJumpButton?: boolean;
+  hasUnread?: boolean;
+}>(), {
+  showJumpButton: false,
+  hasUnread: false,
+});
 
 const emit = defineEmits<{
   (event: "load-more"): void;
   (event: "longpress-message", message: ChatMessage): void;
+  (event: "retry-failed", message: ChatMessage): void;
+  (event: "scroll-metrics", metrics: ScrollMetrics): void;
+  (event: "jump-to-bottom"): void;
 }>();
+
+const latestAssistantIndex = computed(() => findLatestAssistantIndex(props.messages));
+
+// scroll 事件不携带可视高度；按需测量并缓存，键盘与窗口变化后会在后续滚动中刷新。
+const instance = getCurrentInstance();
+const VIEWPORT_MEASURE_INTERVAL = 500;
+let viewportHeight = 0;
+let lastMeasuredAt = 0;
+
+const measureViewport = () => {
+  lastMeasuredAt = Date.now();
+  const query = uni.createSelectorQuery();
+  if (instance?.proxy) query.in(instance.proxy);
+  query
+    .select(".chat-scroll-area")
+    .boundingClientRect((rect) => {
+      const node = (Array.isArray(rect) ? rect[0] : rect) as UniApp.NodeInfo | null;
+      if (node?.height) viewportHeight = node.height;
+    })
+    .exec();
+};
+
+onMounted(measureViewport);
+
+const onScroll = (event: Event) => {
+  const detail = (event as unknown as { detail?: { scrollTop?: number; scrollHeight?: number } }).detail;
+  if (!detail || typeof detail.scrollTop !== "number" || typeof detail.scrollHeight !== "number") return;
+  if (Date.now() - lastMeasuredAt > VIEWPORT_MEASURE_INTERVAL) measureViewport();
+  emit("scroll-metrics", {
+    scrollTop: detail.scrollTop,
+    scrollHeight: detail.scrollHeight,
+    viewportHeight,
+  });
+};
 
 const shouldShowAiIdentity = (message: ChatMessage, index: number) => {
   if (message.role !== "assistant") return false;
@@ -60,6 +124,59 @@ const messagesAt = (index: number) => props.messages[index];
 </script>
 
 <style scoped>
+.chat-list-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.jump-to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 16rpx;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  min-height: 56rpx;
+  padding: 0 24rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
+  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.08));
+  transform: translateX(-50%);
+  animation: jump-fade-in var(--app-motion-normal, 240ms) ease both;
+}
+
+.jump-to-bottom:active {
+  transform: translateX(-50%) scale(0.95);
+}
+
+.jump-to-bottom.has-unread {
+  border-color: rgba(112, 174, 155, 0.3);
+  background-color: var(--app-color-primary, #70ae9b);
+}
+
+.jump-arrow,
+.jump-text {
+  color: var(--app-color-text-secondary, #64716b);
+  font-size: var(--app-font-size-body-sm, 24rpx);
+  font-weight: 600;
+}
+
+.has-unread .jump-arrow,
+.has-unread .jump-text {
+  color: #ffffff;
+}
+
+@keyframes jump-fade-in {
+  from { opacity: 0; transform: translate(-50%, 12rpx); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 .chat-scroll-area {
   flex: 1;
   width: 100%;

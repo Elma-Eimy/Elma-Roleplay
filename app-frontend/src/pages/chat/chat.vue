@@ -43,8 +43,13 @@
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
           :scroll-with-animation="scrollWithAnimation"
+          :show-jump-button="!isPinnedToBottom && chatStore.messages.length > 0"
+          :has-unread="hasUnreadBelow"
           @load-more="onLoadMore"
           @longpress-message="onMessageLongPress"
+          @retry-failed="onRetryFailed"
+          @scroll-metrics="updateScrollMetrics"
+          @jump-to-bottom="onJumpToBottom"
         />
 
         <ChatComposer
@@ -167,6 +172,7 @@ import { useChatMessageActions } from "@/composables/useChatMessageActions";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
 import type { TokenEstimate } from "@/api/sessions";
 import type { BranchSession } from "@/types/chat";
+import type { ChatMessage } from "@/store/chatStore";
 
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
@@ -180,8 +186,13 @@ const {
   scrollWithAnimation,
   keyboardHeight,
   isAndroid,
+  isPinnedToBottom,
+  hasUnreadBelow,
   scrollToBottom,
-  scrollToBottomThrottled,
+  pinToBottom,
+  followNewContent,
+  updateScrollMetrics,
+  resetPinState,
   triggerPhasedScroll,
   maintainScrollPosition,
 } = useChatScroll();
@@ -336,6 +347,7 @@ const switchSession = async (session: Pick<BranchSession, "id">) => {
   currentSessionId.value = session.id;
   backgroundMode.value = readBackgroundMode(session.id);
   isInitLoading.value = true;
+  resetPinState();
   scrollWithAnimation.value = false;
   
   try {
@@ -505,17 +517,17 @@ const goBack = () => {
   }
 };
 
-// 监听消息长度变化以自动置底
+// 新消息到达：停留在底部时跟随，用户上翻阅读时只显示“新回复”浮标
 watch(() => chatStore.messages.length, () => {
   if (isInitLoading.value || isHistoryLoading.value) return;
-  scrollToBottom();
+  followNewContent();
 });
 
 // 流式输出时，使用节流控制置底并临时关闭动画以防卡顿
 watch(() => chatStore.streamingText, () => {
   if (isInitLoading.value) return;
   scrollWithAnimation.value = false;
-  scrollToBottomThrottled();
+  followNewContent(true);
 });
 
 // 对话彻底结束或状态变动时置底
@@ -523,9 +535,14 @@ watch(() => chatStore.isLoading, (loading) => {
   if (isInitLoading.value || isHistoryLoading.value) return;
   if (!loading) {
     scrollWithAnimation.value = true;
-    scrollToBottom();
+    followNewContent();
   }
 });
+
+const onJumpToBottom = () => {
+  scrollWithAnimation.value = true;
+  pinToBottom();
+};
 
 const onSend = async () => {
   const text = inputText.value.trim();
@@ -533,7 +550,35 @@ const onSend = async () => {
 
   inputText.value = "";
   chatStore.sendChatMessage(currentSessionId.value, text);
-  scrollToBottom();
+  pinToBottom();
+};
+
+// 失败消息“编辑后重发”：只回填输入框，不自动重新提交。
+const onRetryFailed = (message: ChatMessage) => {
+  if (chatStore.isLoading) {
+    uni.showToast({ title: "请等待当前回复结束", icon: "none" });
+    return;
+  }
+  const sessionId = currentSessionId.value;
+  const restore = () => {
+    if (sessionId === null || sessionId !== currentSessionId.value || chatStore.activeSessionId !== sessionId) return;
+    const content = chatStore.discardFailedMessage(message.clientId);
+    if (content === null) return;
+    inputText.value = content;
+  };
+  const draft = inputText.value.trim();
+  if (!draft || draft === message.content.trim()) {
+    restore();
+    return;
+  }
+  uni.showModal({
+    title: "替换草稿",
+    content: "输入框中已有内容，是否用失败的消息替换？",
+    confirmColor: "#70AE9B",
+    success: (res) => {
+      if (res.confirm) restore();
+    },
+  });
 };
 
 const characterBackgroundUrl = computed(() =>
