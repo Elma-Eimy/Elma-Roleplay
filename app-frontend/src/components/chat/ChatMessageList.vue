@@ -6,26 +6,43 @@
     :scroll-top="scrollTop"
     :scroll-into-view="scrollIntoViewId"
     :scroll-with-animation="scrollWithAnimation"
-    @scrolltoupper="emit('load-more')"
+    @scrolltoupper="onReachTop"
     @scroll="onScroll"
   >
     <view class="chat-list-padding">
-      <ChatBubble
-        v-for="(message, index) in messages"
-        :id="message.clientId"
+      <view
+        v-if="renderSlice.hiddenCount > 0"
+        class="window-expand-pill"
+        @tap="expandRenderWindow"
+      >
+        <text class="window-expand-text">展开更早的 {{ renderSlice.hiddenCount }} 条已加载消息</text>
+      </view>
+
+      <template
+        v-for="(message, offset) in visibleMessages"
         :key="message.clientId || message.id"
-        :message="message"
-        :avatar-url="avatarUrl"
-        :character-name="characterName"
-        :show-avatar="shouldShowAiIdentity(message, index)"
-        :show-name="shouldShowAiIdentity(message, index)"
-        :is-latest-assistant="index === latestAssistantIndex"
-        :animate-entry="shouldAnimateMessageEntry(message.clientId)"
-        @longpress-message="emit('longpress-message', $event)"
-        @retry-failed="emit('retry-failed', $event)"
-        @copy-message="emit('copy-message', $event)"
-        @regenerate-message="emit('regenerate-message')"
-      />
+      >
+        <view
+          v-if="timeDividers[renderSlice.startIndex + offset]"
+          class="time-divider"
+        >
+          <text class="time-divider-text">{{ timeDividers[renderSlice.startIndex + offset] }}</text>
+        </view>
+        <ChatBubble
+          :id="message.clientId"
+          :message="message"
+          :avatar-url="avatarUrl"
+          :character-name="characterName"
+          :show-avatar="shouldShowAiIdentity(message, renderSlice.startIndex + offset)"
+          :show-name="shouldShowAiIdentity(message, renderSlice.startIndex + offset)"
+          :is-latest-assistant="renderSlice.startIndex + offset === latestAssistantIndex"
+          :animate-entry="shouldAnimateMessageEntry(message.clientId)"
+          @longpress-message="emit('longpress-message', $event)"
+          @retry-failed="emit('retry-failed', $event)"
+          @copy-message="emit('copy-message', $event)"
+          @regenerate-message="emit('regenerate-message')"
+        />
+      </template>
 
       <view v-if="messages.length === 0" class="empty-chat">
         <view class="empty-chat-mark">
@@ -51,10 +68,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, getCurrentInstance, onMounted } from "vue";
+import { ref, computed, watch, getCurrentInstance, onMounted } from "vue";
 import ChatBubble from "./ChatBubble.vue";
 import type { ChatMessage } from "@/store/chatStore";
 import {
+  INITIAL_RENDER_WINDOW,
+  RENDER_WINDOW_STEP,
+  computeRenderWindow,
+  computeTimeDividers,
   findLatestAssistantIndex,
   shouldAnimateMessageEntry,
   type ScrollMetrics,
@@ -85,6 +106,40 @@ const emit = defineEmits<{
 }>();
 
 const latestAssistantIndex = computed(() => findLatestAssistantIndex(props.messages));
+const timeDividers = computed(() => computeTimeDividers(props.messages));
+
+// 长会话仅挂载最近 N 条消息；向上触顶时优先展开本地已加载的旧消息，再向后端请求更早分页。
+const renderWindowSize = ref(INITIAL_RENDER_WINDOW);
+watch(
+  () => props.messages.length,
+  (nextLen, prevLen) => {
+    if (nextLen === 0) {
+      renderWindowSize.value = INITIAL_RENDER_WINDOW;
+    } else if (prevLen > 0 && nextLen - prevLen > 1 && renderWindowSize.value >= prevLen) {
+      // 后端分页追加历史时同步扩大挂载窗口，保证新拉取的更早消息可见。
+      renderWindowSize.value += nextLen - prevLen;
+    }
+  }
+);
+
+const renderSlice = computed(() =>
+  computeRenderWindow(props.messages.length, renderWindowSize.value)
+);
+const visibleMessages = computed(() =>
+  props.messages.slice(renderSlice.value.startIndex)
+);
+
+const expandRenderWindow = () => {
+  renderWindowSize.value += RENDER_WINDOW_STEP;
+};
+
+const onReachTop = () => {
+  if (renderSlice.value.hiddenCount > 0) {
+    expandRenderWindow();
+    return;
+  }
+  emit("load-more");
+};
 
 // scroll 事件不携带可视高度；按需测量并缓存，键盘与窗口变化后会在后续滚动中刷新。
 const instance = getCurrentInstance();
@@ -120,7 +175,8 @@ const onScroll = (event: Event) => {
 
 const shouldShowAiIdentity = (message: ChatMessage, index: number) => {
   if (message.role !== "assistant") return false;
-  if (index === 0) return true;
+  if (index === 0 || index === renderSlice.value.startIndex) return true;
+  if (timeDividers.value[index]) return true;
   return messagesAt(index - 1)?.role !== "assistant";
 };
 
@@ -135,6 +191,36 @@ const messagesAt = (index: number) => props.messages[index];
   flex: 1;
   min-height: 0;
   width: 100%;
+}
+
+.window-expand-pill {
+  align-self: center;
+  margin: 8rpx 0 18rpx;
+  padding: 8rpx 24rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.78));
+}
+
+.window-expand-text {
+  color: var(--app-color-text-secondary, #64716b);
+  font-size: var(--app-font-size-caption, 22rpx);
+  font-weight: 560;
+}
+
+.time-divider {
+  display: flex;
+  justify-content: center;
+  padding: 20rpx 32rpx 10rpx;
+}
+
+.time-divider-text {
+  padding: 4rpx 18rpx;
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.56));
+  color: var(--app-color-text-muted, #89958f);
+  font-size: 20rpx;
+  font-weight: 550;
 }
 
 .jump-to-bottom {

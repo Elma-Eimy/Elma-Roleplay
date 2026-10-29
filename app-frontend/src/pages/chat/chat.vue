@@ -5,7 +5,8 @@
       `font-${chatSettingsStore.readingPrefs.fontScale}`,
       `spacing-${chatSettingsStore.readingPrefs.lineSpacing}`,
       `style-${chatSettingsStore.readingPrefs.bubbleStyle}`,
-      { 'is-android': isAndroid, 'is-immersive': isImmersive },
+      `theme-${chatSettingsStore.readingPrefs.colorTheme}`,
+      { 'is-android': isAndroid, 'is-immersive': isImmersive, 'is-portrait-only': isImmersive && isPortraitOnly },
     ]"
   >
     <view
@@ -41,9 +42,22 @@
       :avatar-url="characterAvatarUrl"
       :is-android="isAndroid"
       :is-faded="isHeaderFaded"
+      :show-portrait-toggle="isImmersive"
       @back="goBack"
       @open-status="isStatusPanelOpen = true"
+      @toggle-portrait-view="isPortraitOnly = true"
     />
+
+    <!-- 立绘独占欣赏模式：隐藏顶部栏与对话区，点击任意处恢复 -->
+    <view
+      v-if="isImmersive && isPortraitOnly"
+      class="portrait-only-overlay"
+      @tap="isPortraitOnly = false"
+    >
+      <view class="portrait-exit-pill">
+        <text class="portrait-exit-text">返回对话</text>
+      </view>
+    </view>
 
     <view class="chat-workspace">
       <view class="chat-conversation">
@@ -628,11 +642,13 @@ const hasPortrait = computed(() =>
 watch(characterBackgroundUrl, () => { portraitLoadFailed.value = false; });
 const isImmersive = computed(() => backgroundMode.value === 'character' && hasPortrait.value);
 
-// 沉浸模式下阅读滚动时淡化顶部栏，上滑或回到顶部附近自动恢复。
+// 沉浸模式下阅读滚动时淡化顶部栏，上滑或回到顶部附近自动恢复；支持一键进入立绘独占模式。
 const isHeaderFaded = ref(false);
+const isPortraitOnly = ref(false);
 let lastScrollTop = 0;
 watch([isImmersive, currentSessionId], () => {
   isHeaderFaded.value = false;
+  isPortraitOnly.value = false;
   lastScrollTop = 0;
 });
 const onScrollMetrics = (metrics: ScrollMetrics) => {

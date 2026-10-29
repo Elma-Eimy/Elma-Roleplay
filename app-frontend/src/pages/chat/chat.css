@@ -54,6 +54,7 @@
 .is-immersive :deep(.header-btn) { background: rgba(15,27,24,.26); border-color: rgba(255,255,255,.22); }
 .is-immersive :deep(.back-icon),
 .is-immersive :deep(.info-icon),
+.is-immersive :deep(.camera-icon),
 .is-immersive :deep(.tts-icon),
 .is-immersive :deep(.action-bar-icon),
 .is-immersive :deep(.send-icon) { filter: brightness(0) invert(1); }
@@ -110,4 +111,115 @@
   border-left: 4rpx solid rgba(157, 207, 179, 0.58);
   border-radius: 0 18rpx 18rpx 0;
   background: rgba(15, 25, 22, 0.5);
+}
+
+/* 沉浸模式顶部柔和渐隐（让出立绘面部）与立绘独占模式。 */
+.is-immersive:not(.is-android) :deep(.chat-scroll-area) {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 64rpx, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 64rpx, #000 100%);
+}
+.page-container.is-portrait-only :deep(.custom-header),
+.page-container.is-portrait-only .chat-workspace {
+  opacity: 0;
+  pointer-events: none;
+}
+.portrait-only-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: calc(env(safe-area-inset-bottom, 16rpx) + 36rpx);
+}
+.portrait-exit-pill {
+  min-height: 60rpx;
+  padding: 0 32rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999rpx;
+  background: rgba(15, 25, 22, 0.62);
+  box-shadow: 0 8rpx 28rpx rgba(0, 0, 0, 0.2);
+}
+.portrait-exit-text {
+  color: #fbfaf5;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+/* 夜间深色阅读色调（支持手动深色与跟随系统 prefers-color-scheme）。 */
+.page-container.theme-dark:not(.is-immersive) {
+  --app-color-background: #141c19;
+  --app-color-surface: #1c2723;
+  --app-color-surface-soft: rgba(28, 39, 35, 0.84);
+  --app-color-surface-translucent: rgba(28, 39, 35, 0.92);
+  --app-color-text-primary: #e7efe9;
+  --app-color-text-secondary: #a8b8b0;
+  --app-color-text-muted: #788881;
+  --app-color-primary: #70ae9b;
+  --app-color-primary-strong: #9ad1bf;
+  --app-color-primary-soft: rgba(112, 174, 155, 0.18);
+  --app-color-border: rgba(255, 255, 255, 0.09);
+  --app-color-border-strong: rgba(255, 255, 255, 0.16);
+  --app-color-bubble-ai: rgba(28, 39, 35, 0.9);
+  --app-color-bubble-ai-border: rgba(255, 255, 255, 0.08);
+  --app-color-bubble-user: rgba(45, 79, 67, 0.88);
+  --app-color-bubble-user-border: rgba(154, 209, 191, 0.22);
+  --app-color-thought-bg: rgba(22, 31, 28, 0.85);
+  --app-color-thought-expanded-bg: rgba(28, 42, 37, 0.92);
+  background-color: #141c19;
+}
+.page-container.theme-dark:not(.is-immersive) :deep(.custom-header.is-android) {
+  background-color: #19231f;
+}
+.page-container.theme-dark:not(.is-immersive) :deep(.input-area-wrapper),
+.page-container.theme-dark:not(.is-immersive) :deep(.input-area-wrapper.is-android) {
+  background: linear-gradient(180deg, rgba(20, 28, 25, 0) 0%, rgba(20, 28, 25, 0.92) 24%, #141c19 100%);
+}
+.page-container.theme-dark:not(.is-immersive) :deep(.back-icon),
+.page-container.theme-dark:not(.is-immersive) :deep(.info-icon),
+.page-container.theme-dark:not(.is-immersive) :deep(.tts-icon),
+.page-container.theme-dark:not(.is-immersive) :deep(.action-bar-icon),
+.page-container.theme-dark:not(.is-immersive) :deep(.send-icon) {
+  filter: brightness(0) invert(0.88);
+}
+
+@media (prefers-color-scheme: dark) {
+  .page-container.theme-system:not(.is-immersive) {
+    --app-color-background: #141c19;
+    --app-color-surface: #1c2723;
+    --app-color-surface-soft: rgba(28, 39, 35, 0.84);
+    --app-color-surface-translucent: rgba(28, 39, 35, 0.92);
+    --app-color-text-primary: #e7efe9;
+    --app-color-text-secondary: #a8b8b0;
+    --app-color-text-muted: #788881;
+    --app-color-primary: #70ae9b;
+    --app-color-primary-strong: #9ad1bf;
+    --app-color-primary-soft: rgba(112, 174, 155, 0.18);
+    --app-color-border: rgba(255, 255, 255, 0.09);
+    --app-color-border-strong: rgba(255, 255, 255, 0.16);
+    --app-color-bubble-ai: rgba(28, 39, 35, 0.9);
+    --app-color-bubble-ai-border: rgba(255, 255, 255, 0.08);
+    --app-color-bubble-user: rgba(45, 79, 67, 0.88);
+    --app-color-bubble-user-border: rgba(154, 209, 191, 0.22);
+    --app-color-thought-bg: rgba(22, 31, 28, 0.85);
+    --app-color-thought-expanded-bg: rgba(28, 42, 37, 0.92);
+    background-color: #141c19;
+  }
+  .page-container.theme-system:not(.is-immersive) :deep(.custom-header.is-android) {
+    background-color: #19231f;
+  }
+  .page-container.theme-system:not(.is-immersive) :deep(.input-area-wrapper),
+  .page-container.theme-system:not(.is-immersive) :deep(.input-area-wrapper.is-android) {
+    background: linear-gradient(180deg, rgba(20, 28, 25, 0) 0%, rgba(20, 28, 25, 0.92) 24%, #141c19 100%);
+  }
+  .page-container.theme-system:not(.is-immersive) :deep(.back-icon),
+  .page-container.theme-system:not(.is-immersive) :deep(.info-icon),
+  .page-container.theme-system:not(.is-immersive) :deep(.tts-icon),
+  .page-container.theme-system:not(.is-immersive) :deep(.action-bar-icon),
+  .page-container.theme-system:not(.is-immersive) :deep(.send-icon) {
+    filter: brightness(0) invert(0.88);
+  }
 }

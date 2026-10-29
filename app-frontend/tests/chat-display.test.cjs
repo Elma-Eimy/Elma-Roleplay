@@ -98,13 +98,13 @@ test("discarding a failed message only removes local unsent user messages", t =>
 
 test("reading preferences normalize invalid values and persist across story resets", () => {
   const plain = value => JSON.parse(JSON.stringify(value));
-  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel" })),
-    { fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel" });
-  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "huge", lineSpacing: null, bubbleStyle: 123 })),
+  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel", colorTheme: "dark" })),
+    { fontScale: "lg", lineSpacing: "compact", bubbleStyle: "novel", colorTheme: "dark" });
+  assert.deepEqual(plain(display.normalizeReadingPrefs({ fontScale: "huge", lineSpacing: null, bubbleStyle: 123, colorTheme: "neon" })),
     plain(display.DEFAULT_READING_PREFS));
 
   setActivePinia(createPinia());
-  const storage = new Map([["chat_reading_prefs_v1", JSON.stringify({ fontScale: "xl", bubbleStyle: "novel" })]]);
+  const storage = new Map([["chat_reading_prefs_v1", JSON.stringify({ fontScale: "xl", bubbleStyle: "novel", colorTheme: "dark" })]]);
   const load = createLoader({
     mocks: {
       "@/api/config": { getBaseUrl: () => "https://one.test" },
@@ -113,9 +113,9 @@ test("reading preferences normalize invalid values and persist across story rese
     globals: { uni: { getStorageSync: key => storage.get(key), setStorageSync: (key, val) => storage.set(key, val) } },
   });
   const settings = load("store/chatSettingsStore.ts").useChatSettingsStore();
-  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "xl", lineSpacing: "comfortable", bubbleStyle: "novel" });
+  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "xl", lineSpacing: "comfortable", bubbleStyle: "novel", colorTheme: "dark" });
   settings.updateReadingPrefs({ lineSpacing: "compact", fontScale: "bad" });
-  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "md", lineSpacing: "compact", bubbleStyle: "novel" });
+  assert.deepEqual(plain(settings.readingPrefs), { fontScale: "md", lineSpacing: "compact", bubbleStyle: "novel", colorTheme: "dark" });
   settings.$reset();
   assert.equal(settings.readingPrefs.bubbleStyle, "novel", "device reading prefs survive session reset");
   assert.deepEqual(JSON.parse(storage.get("chat_reading_prefs_v1")), plain(settings.readingPrefs));
@@ -171,4 +171,38 @@ test("custom action sheet state exposes items and invalidates on session or serv
   assert.equal(actions.actionSheetMessage.value, null);
   actions.selectActionSheetItem("delete");
   assert.equal(modals, 0);
+});
+
+test("time dividers appear only across 30-minute gaps and format relative dates", () => {
+  const now = new Date(2026, 9, 29, 18, 0, 0);
+  const iso = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm, 0).toISOString();
+  assert.equal(display.formatMessageTimestamp(iso(2026, 10, 29, 9, 5), now), "09:05");
+  assert.equal(display.formatMessageTimestamp(iso(2026, 10, 28, 21, 30), now), "昨天 21:30");
+  assert.equal(display.formatMessageTimestamp(iso(2026, 10, 12, 8, 0), now), "10-12 08:00");
+  assert.equal(display.formatMessageTimestamp(iso(2025, 12, 31, 23, 59), now), "2025-12-31 23:59");
+  assert.equal(display.formatMessageTimestamp("invalid", now), "");
+
+  const messages = [
+    { created_at: iso(2026, 10, 29, 10, 0) },
+    { created_at: iso(2026, 10, 29, 10, 12) },
+    { created_at: "not-a-date" },
+    { created_at: iso(2026, 10, 29, 10, 45) },
+  ];
+  assert.deepEqual(Array.from(display.computeTimeDividers(messages, { now })), [null, null, null, "10:45"]);
+});
+
+test("render window slicing and bounded LRU cache cap work for long sessions", () => {
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(display.computeRenderWindow(50, 80)), { startIndex: 0, hiddenCount: 0 });
+  assert.deepEqual(plain(display.computeRenderWindow(140, 80)), { startIndex: 60, hiddenCount: 60 });
+
+  const cache = display.createBoundedCache(2);
+  cache.set("a", 1);
+  cache.set("b", 2);
+  assert.equal(cache.get("a"), 1); // 刷新 a 的最近访问顺序
+  cache.set("c", 3);
+  assert.equal(cache.get("b"), undefined);
+  assert.equal(cache.get("a"), 1);
+  assert.equal(cache.get("c"), 3);
+  assert.equal(cache.size, 2);
 });

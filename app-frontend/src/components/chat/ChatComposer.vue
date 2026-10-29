@@ -150,7 +150,7 @@ const handleInput = (event: Event) => {
   padding: 0 16rpx;
   border-radius: var(--app-radius-pill, 999rpx);
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  background-color: rgba(255, 255, 255, 0.56);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.56));
   transition:
     transform var(--app-motion-normal, 0.25s) cubic-bezier(0.16, 1, 0.3, 1),
     background-color var(--app-motion-normal, 0.25s),
@@ -187,9 +187,9 @@ const handleInput = (event: Event) => {
   display: flex;
   align-items: flex-end;
   padding: 7rpx 7rpx 7rpx 26rpx;
-  border: 1px solid rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--app-color-border, rgba(255, 255, 255, 0.78));
   border-radius: 34rpx;
-  background-color: rgba(255, 255, 255, 0.92);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.92));
   box-shadow:
     0 16rpx 42rpx rgba(45, 72, 62, 0.13),
     inset 0 0 0 1px var(--app-color-border, rgba(38, 51, 46, 0.08));

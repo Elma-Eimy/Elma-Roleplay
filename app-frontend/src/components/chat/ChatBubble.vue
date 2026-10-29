@@ -178,7 +178,11 @@ import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { renderRoleplayStateBlock } from "@/utils/markdown";
-import { formatThoughtTitle, lastNonEmptyLine } from "@/utils/chatDisplay";
+import {
+  createBoundedCache,
+  formatThoughtTitle,
+  lastNonEmptyLine,
+} from "@/utils/chatDisplay";
 import MarkdownIt from "markdown-it";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
@@ -194,6 +198,8 @@ md.renderer.rules.fence = (tokens, index) =>
   renderRoleplayStateBlock(tokens[index].content);
 
 const STREAM_MARKDOWN_RENDER_DELAY = 48;
+// 已完成消息的 Markdown 渲染结果按内容键缓存，避免翻页或重排时重复解析。
+const markdownCache = createBoundedCache<string>(240);
 
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
@@ -448,6 +454,17 @@ const renderedMarkdown = ref("");
 const renderedThought = ref("");
 let markdownRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
+const renderCachedMarkdown = (scope: "reply" | "thought", raw: string): string => {
+  if (!raw) return "";
+  if (props.message?.status !== "done") return renderMarkdown(raw);
+  const key = `${scope}:${props.message.id ?? 0}:${raw}`;
+  const hit = markdownCache.get(key);
+  if (hit !== undefined) return hit;
+  const rendered = renderMarkdown(raw);
+  markdownCache.set(key, rendered);
+  return rendered;
+};
+
 const updateRenderedMarkdown = () => {
   if (markdownRenderTimer !== null) {
     clearTimeout(markdownRenderTimer);
@@ -458,12 +475,12 @@ const updateRenderedMarkdown = () => {
     const replyContent = parsedContent.value.reply;
     renderedMarkdown.value =
       !isUser.value && replyContent
-        ? renderMarkdown(String(replyContent))
+        ? renderCachedMarkdown("reply", String(replyContent))
         : "";
 
     const thoughtContent = parsedContent.value.thought;
     renderedThought.value = thoughtContent
-      ? renderMarkdown(String(thoughtContent))
+      ? renderCachedMarkdown("thought", String(thoughtContent))
       : "";
   } catch (err) {
     console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
@@ -642,11 +659,11 @@ onUnmounted(() => {
 
 /* ===== AI 轻纸片 ===== */
 .ai-bubble {
-  background-color: rgba(255, 255, 255, 0.62);
+  background-color: var(--app-color-bubble-ai, rgba(255, 255, 255, 0.62));
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: var(--app-color-text-primary, #26332e);
-  border: 1px solid rgba(255, 255, 255, 0.56);
+  border: 1px solid var(--app-color-bubble-ai-border, rgba(255, 255, 255, 0.56));
   border-top-left-radius: 10rpx;
   box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.04);
 }
@@ -654,9 +671,9 @@ onUnmounted(() => {
 /* ===== 用户浅薄荷气泡 ===== */
 .user-bubble {
   padding: 18rpx 24rpx;
-  background-color: rgba(215, 236, 228, 0.9);
+  background-color: var(--app-color-bubble-user, rgba(215, 236, 228, 0.9));
   color: var(--app-color-text-primary, #26332e);
-  border: 1px solid rgba(112, 174, 155, 0.16);
+  border: 1px solid var(--app-color-bubble-user-border, rgba(112, 174, 155, 0.16));
   border-top-right-radius: 10rpx;
   box-shadow: 0 8rpx 24rpx rgba(79, 142, 124, 0.08);
 }
@@ -795,7 +812,7 @@ onUnmounted(() => {
   padding: 0 18rpx;
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: var(--app-radius-pill, 999rpx);
-  background-color: rgba(255, 255, 255, 0.64);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.64));
   color: var(--app-color-text-secondary, #64716b);
   transition:
     transform var(--app-motion-fast, 160ms) ease,
@@ -848,7 +865,7 @@ onUnmounted(() => {
   font-size: 20rpx;
   padding: 3rpx 12rpx;
   border-radius: 40rpx;
-  background-color: rgba(255, 255, 255, 0.5);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.5));
   color: var(--app-color-text-secondary, #7c8983);
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
@@ -1086,7 +1103,7 @@ onUnmounted(() => {
 
 /* ===== 推理思考容器 ===== */
 .thought-container {
-  background-color: rgba(247, 249, 247, 0.72);
+  background-color: var(--app-color-thought-bg, rgba(247, 249, 247, 0.72));
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-left: 4rpx solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 16rpx;
@@ -1096,7 +1113,7 @@ onUnmounted(() => {
 }
 
 .thought-container.is-expanded {
-  background-color: rgba(238, 246, 241, 0.82);
+  background-color: var(--app-color-thought-expanded-bg, rgba(238, 246, 241, 0.82));
   border-left-color: var(--app-color-primary, #70ae9b);
 }
 

@@ -143,6 +143,18 @@
                 >{{ item.label }}</view>
               </view>
             </view>
+            <view class="reading-row">
+              <text class="reading-row-label">色调</text>
+              <view class="reading-pills">
+                <view
+                  v-for="item in COLOR_THEME_OPTIONS"
+                  :key="item.value"
+                  class="reading-pill"
+                  :class="{ 'is-active': chatSettingsStore.readingPrefs.colorTheme === item.value }"
+                  @tap="chatSettingsStore.updateReadingPrefs({ colorTheme: item.value })"
+                >{{ item.label }}</view>
+              </view>
+            </view>
           </view>
 
           <view class="background-setting">
@@ -394,6 +406,7 @@ import {
   FONT_SCALE_OPTIONS,
   LINE_SPACING_OPTIONS,
   BUBBLE_STYLE_OPTIONS,
+  COLOR_THEME_OPTIONS,
 } from "@/utils/chatDisplay";
 
 const props = defineProps<{

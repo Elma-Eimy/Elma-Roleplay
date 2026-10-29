@@ -35,12 +35,26 @@
       </view>
     </view>
 
-    <view class="header-btn right-btn" @tap="emit('open-status')">
-      <image
-        class="info-icon"
-        src="/static/icons/header_info.svg"
-        mode="aspectFit"
-      />
+    <view class="header-right-actions">
+      <view
+        v-if="showPortraitToggle"
+        class="header-btn"
+        aria-label="查看立绘"
+        @tap="emit('toggle-portrait-view')"
+      >
+        <image
+          class="camera-icon"
+          src="/static/icons/char_camera.svg"
+          mode="aspectFit"
+        />
+      </view>
+      <view class="header-btn right-btn" @tap="emit('open-status')">
+        <image
+          class="info-icon"
+          src="/static/icons/header_info.svg"
+          mode="aspectFit"
+        />
+      </view>
     </view>
   </view>
 </template>
@@ -55,11 +69,13 @@ defineProps<{
   avatarUrl?: string;
   isAndroid: boolean;
   isFaded?: boolean;
+  showPortraitToggle?: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: "back"): void;
   (event: "open-status"): void;
+  (event: "toggle-portrait-view"): void;
 }>();
 </script>
 
@@ -72,7 +88,7 @@ const emit = defineEmits<{
   justify-content: space-between;
   padding-left: var(--app-page-gutter, 36rpx);
   padding-right: var(--app-page-gutter, 36rpx);
-  background-color: rgba(250, 252, 250, 0.78);
+  background-color: var(--app-color-surface-soft, rgba(250, 252, 250, 0.78));
   backdrop-filter: blur(24px);
   border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   position: relative;
@@ -102,7 +118,7 @@ const emit = defineEmits<{
   justify-content: center;
   border-radius: 50%;
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  background-color: rgba(255, 255, 255, 0.62);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.62));
   transition:
     transform var(--app-motion-fast, 160ms) ease,
     background-color var(--app-motion-fast, 160ms) ease;
@@ -117,8 +133,19 @@ const emit = defineEmits<{
   margin-left: -10rpx;
 }
 
+.header-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
 .right-btn {
   margin-right: -10rpx;
+}
+
+.camera-icon {
+  width: 36rpx;
+  height: 36rpx;
 }
 
 .header-center {
