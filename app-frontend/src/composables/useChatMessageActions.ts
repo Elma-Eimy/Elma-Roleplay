@@ -12,6 +12,7 @@ import type { ActionSheetItem } from "@/components/common/AppActionSheet.vue";
 
 export type MessageActionKey =
   | "copy"
+  | "keepsake"
   | "tts"
   | "edit"
   | "branch"
@@ -26,7 +27,8 @@ interface PendingActionContext {
 
 export function useChatMessageActions(
   currentSessionId: Ref<number | null>,
-  scrollToBottom: () => Promise<void>
+  scrollToBottom: () => Promise<void>,
+  saveKeepsake?: (message: ChatMessage) => void
 ) {
   const chatStore = useChatStore();
   const personaStore = usePersonaStore();
@@ -158,6 +160,9 @@ export function useChatMessageActions(
     const items: ActionSheetItem[] = [
       { key: "copy", label: "复制内容", icon: "/static/icons/char_list.svg" },
     ];
+    if (saveKeepsake && message.id > 0 && message.content.trim() && (!message.status || message.status === "done")) {
+      items.push({ key: "keepsake", label: "收藏这一刻", icon: "/static/icons/meta_heart.svg" });
+    }
     if (message.role === "assistant") {
       items.push({ key: "tts", label: "朗读消息", icon: "/static/icons/tts_play.svg" });
     }
@@ -178,7 +183,9 @@ export function useChatMessageActions(
   );
 
   const runAction = (action: MessageActionKey | string, message: ChatMessage) => {
-    if (action === "copy" || action === "复制内容") {
+    if (action === "keepsake" || action === "收藏这一刻") {
+      saveKeepsake?.(message);
+    } else if (action === "copy" || action === "复制内容") {
       copyMessageContent(message);
     } else if (action === "tts" || action === "朗读消息") {
       void playMessageTTS(message);

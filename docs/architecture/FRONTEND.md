@@ -41,6 +41,8 @@ src/main.ts + App.vue + pages.json
 
 ## 接口与平台边界
 
+`useStoryKeepsakes.ts` 管理本机收藏快照与角色配色，`StoryKeepsakeSheet.vue` 展示回忆册。收藏键包含服务器与故事 ID，配色键包含服务器与角色 ID；换故事或服务器关闭面板并清理当前视图，不继承其他故事的收藏。写入失败保留旧值并反馈，不调用后端或进入记忆检索链路。
+
 服务器地址、`X-API-Key` 与通用请求由 `api/config.ts` 管理。接口变更要同时核对领域 API、`types/`、调用方及对应 Mock；有些功能在 Mock 下明确不支持，不能用离线行为推断后端完整规则。
 
 跨端能力沿用 uni-app 条件编译和现有适配。浏览器的 `fetch`、DOM 与文件能力不能直接推广到 App 和小程序。UI 复用语义变量与通用反馈，保留安全区和减少动画适配。

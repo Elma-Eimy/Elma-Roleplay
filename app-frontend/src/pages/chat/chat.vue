@@ -1,6 +1,7 @@
 <template>
   <view
     class="page-container app-motion-enter"
+    :style="paletteStyle"
     :class="[
       `font-${chatSettingsStore.readingPrefs.fontScale}`,
       `spacing-${chatSettingsStore.readingPrefs.lineSpacing}`,
@@ -61,6 +62,10 @@
 
     <view class="chat-workspace">
       <view class="chat-conversation">
+        <view v-if="currentSessionId !== null && !isInitLoading" class="story-ribbon">
+          <view class="story-ribbon-mark"><view class="story-color-dot"></view><text>此刻，故事仍在继续</text></view>
+          <button class="keepsake-entry" @tap="isKeepsakeOpen = true">回忆册 <text class="keepsake-count">{{ keepsakes.length ? String(keepsakes.length).padStart(2, '0') : '＋' }}</text></button>
+        </view>
         <ChatMessageList
           :messages="chatStore.messages"
           :avatar-url="characterAvatarUrl"
@@ -98,6 +103,8 @@
       </view>
     </view>
 
+    <StoryKeepsakeSheet v-if="isKeepsakeOpen" :cards="keepsakes" :character-name="personaStore.characterName"
+      :palette-id="paletteId" @close="isKeepsakeOpen = false" @palette="selectPalette" @rename="renameKeepsake" @remove="removeKeepsake" />
     <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
 
     <EditMessageModal
@@ -210,6 +217,8 @@ import { shouldFadeHeaderOnScroll, type ScrollMetrics } from "@/utils/chatDispla
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
+import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
+import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
 import type { TokenEstimate } from "@/api/sessions";
 import type { BranchSession } from "@/types/chat";
@@ -245,6 +254,10 @@ const {
 
 // 状态变量与视图状态
 const currentSessionId = ref<number | null>(null);
+const {
+  cards: keepsakes, paletteId, paletteStyle, isOpen: isKeepsakeOpen,
+  save: saveKeepsake, rename: renameKeepsake, remove: removeKeepsake, selectPalette,
+} = useStoryKeepsakes(currentSessionId, () => personaStore.activeCharacter?.id);
 const { selection: portraitSelection, refresh: refreshPortrait, dispose: disposePortrait } = usePortraitSelection(
   () => currentSessionId.value,
   () => `${chatStore.isLoading}:${chatStore.messages.map(message => message.id).join(',')}`,
@@ -328,7 +341,8 @@ const {
   regenerateLatestReply,
   cancelEdit,
   saveEdit,
-} = useChatMessageActions(currentSessionId, async () => { pinToBottom(); });
+} = useChatMessageActions(currentSessionId, async () => { pinToBottom(); },
+  message => saveKeepsake(message, message.role === "user" ? personaStore.userNickname || "我" : personaStore.characterName || "角色"));
 
 watch(() => chatStore.activeSessionId, (id) => {
   if (id === null) currentSessionId.value = null;

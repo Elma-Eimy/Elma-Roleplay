@@ -223,3 +223,41 @@
     filter: brightness(0) invert(0.88);
   }
 }
+
+/* 角色配色只改变聊天强调色，阅读主题继续控制明暗。 */
+.page-container { --story-readable: var(--story-accent); }
+.page-container:not(.is-immersive) :deep(.custom-header),
+.page-container:not(.is-immersive) :deep(.input-area-wrapper),
+.page-container:not(.is-immersive) :deep(.chat-bubble-wrapper) {
+  --app-color-primary: var(--story-accent);
+  --app-color-primary-strong: var(--story-readable);
+  --app-color-primary-soft: var(--story-soft);
+}
+.page-container:not(.is-immersive) :deep(.user-bubble) { background: var(--story-soft); }
+.page-container:not(.is-immersive) :deep(.input-area.is-focused) { border-color: var(--story-accent); }
+.page-container.style-novel :deep(.ai-bubble) { border-left-color: var(--story-mist); }
+.page-container :deep(.send-btn.is-active) { background: var(--story-accent); }
+.page-container.is-immersive :deep(.user-bubble) { background: rgba(20, 30, 28, .82); border-color: var(--story-mist); }
+.page-container.is-immersive :deep(.status-dot) { background: var(--story-mist); }
+.story-ribbon { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12rpx; padding: 12rpx 28rpx; border-bottom: 1px solid var(--app-color-border); }
+.story-ribbon-mark { display: flex; align-items: center; gap: 12rpx; color: var(--app-color-text-secondary); font-size: 20rpx; letter-spacing: 2rpx; }
+.story-color-dot { width: 10rpx; height: 10rpx; border-radius: 50%; background: var(--story-accent); }
+.keepsake-entry { margin: 0; padding: 0 18rpx; min-height: 64rpx; display: flex; align-items: center; gap: 14rpx; border-radius: 999rpx; background: var(--app-color-surface); color: var(--story-readable); font-size: 23rpx; line-height: normal; }
+.keepsake-entry::after { border: 1px solid var(--app-color-border); border-radius: 999rpx; }
+.keepsake-count { font-size: 20rpx; }
+.is-immersive .story-ribbon { border-bottom-color: transparent; }
+.is-immersive .story-ribbon-mark { color: #eef2ed; text-shadow: 0 1px 4px #17231c; }
+.is-immersive .keepsake-entry { color: #fff; background: rgba(19, 29, 27, .76); }
+.is-immersive .keepsake-entry::after { border-color: rgba(255, 255, 255, .24); }
+.page-container.theme-dark { --story-readable: var(--story-mist); }
+.page-container.theme-dark:not(.is-immersive) :deep(.custom-header),
+.page-container.theme-dark:not(.is-immersive) :deep(.input-area-wrapper),
+.page-container.theme-dark:not(.is-immersive) :deep(.chat-bubble-wrapper) { --app-color-primary-soft: rgba(255, 255, 255, .08); }
+.page-container.theme-dark:not(.is-immersive) :deep(.user-bubble) { background: #293731; border-color: var(--story-mist); }
+@media (prefers-color-scheme: dark) {
+  .page-container.theme-system { --story-readable: var(--story-mist); }
+  .page-container.theme-system:not(.is-immersive) :deep(.custom-header),
+  .page-container.theme-system:not(.is-immersive) :deep(.input-area-wrapper),
+  .page-container.theme-system:not(.is-immersive) :deep(.chat-bubble-wrapper) { --app-color-primary-soft: rgba(255, 255, 255, .08); }
+  .page-container.theme-system:not(.is-immersive) :deep(.user-bubble) { background: #293731; border-color: var(--story-mist); }
+}
