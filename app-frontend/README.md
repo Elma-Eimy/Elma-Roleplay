@@ -4,7 +4,7 @@
 
 模块职责与流式调用链见 [前端架构](../docs/architecture/FRONTEND.md)，按任务定位前后端代码与测试见 [Agent 上手指南](../docs/guides/AGENT_ONBOARDING.md)。
 
-聊天 Store 的发送与重新生成共用请求参数装配，分别保留新消息占位和候选重新生成流程；三端传输继续沿用现有适配。
+聊天 Store 的发送与重新生成共用请求参数装配，分别保留新消息占位和候选重新生成流程。正文与思考文本由独立缓冲工具合并刷新，请求有效性和终态仍由 Store 管理；三端传输继续沿用现有适配。
 
 面向手机端的跨平台 AI 角色扮演客户端，基于 Vue 3、uni-app、Vite、Pinia 和 TypeScript 构建，可运行于 Android/iOS App、H5 与微信小程序。
 
