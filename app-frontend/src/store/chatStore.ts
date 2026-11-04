@@ -2,6 +2,7 @@ import type { ActiveStreamRequest } from "@/types/chatStream";
 import { defineStore } from "pinia";
 import { ref, computed, onScopeDispose } from "vue";
 import type { MessageActionResult } from "@/types/chat";
+import type { GenerationOverride } from "@/types/generation";
 import { onServerChange } from "@/utils/connectionEvents";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
@@ -418,6 +419,26 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  function buildChatRequest(
+    sessionId: number,
+    text: string,
+    generation: GenerationOverride,
+    userNickname: string
+  ): ChatRequest {
+    const settingsStore = useChatSettingsStore();
+    return {
+      session_id: sessionId,
+      user_message: text,
+      ...generation,
+      user_nickname: userNickname,
+      temperature: settingsStore.temperature ?? undefined,
+      top_p: settingsStore.top_p ?? undefined,
+      presence_penalty: settingsStore.presence_penalty ?? undefined,
+      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
+      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
+    };
+  }
+
   /** 重新生成最后一次 AI 回复（支持无感重发，避免出现双重用户气泡的 Bug） */
   async function regenerateChatMessage(sessionId: number) {
     if (isLoading.value || activeSessionId.value !== sessionId) return;
@@ -457,18 +478,9 @@ export const useChatStore = defineStore("chat", () => {
     const streamPlaceholderId = addStreamingPlaceholder();
     streamBaselines.set(streamPlaceholderId, afterMessageId);
 
-    const settingsStore = useChatSettingsStore();
-    const requestParams: ChatRequest = { 
-      session_id: sessionId, 
-      user_message: lastUserMsg.content,
-      ...generation,
+    const requestParams: ChatRequest = {
+      ...buildChatRequest(sessionId, lastUserMsg.content, generation, personaStore.userNickname),
       is_regenerate: true,
-      user_nickname: personaStore.userNickname,
-      temperature: settingsStore.temperature ?? undefined,
-      top_p: settingsStore.top_p ?? undefined,
-      presence_penalty: settingsStore.presence_penalty ?? undefined,
-      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
-      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
     };
 
     // #ifdef APP-PLUS
@@ -513,18 +525,7 @@ export const useChatStore = defineStore("chat", () => {
     const tempId = addOptimisticUserMessage(text);
     const streamPlaceholderId = addStreamingPlaceholder();
 
-    const settingsStore = useChatSettingsStore();
-    const requestParams: ChatRequest = { 
-      session_id: sessionId, 
-      user_message: text,
-      ...generation,
-      user_nickname: personaStore.userNickname,
-      temperature: settingsStore.temperature ?? undefined,
-      top_p: settingsStore.top_p ?? undefined,
-      presence_penalty: settingsStore.presence_penalty ?? undefined,
-      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
-      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
-    };
+    const requestParams = buildChatRequest(sessionId, text, generation, personaStore.userNickname);
 
     // #ifdef APP-PLUS
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;

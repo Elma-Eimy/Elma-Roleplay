@@ -31,6 +31,8 @@ src/main.ts + App.vue + pages.json
 
 普通发送从 `store/chatStore.ts` 调用 `api/chat.ts`。H5 与小程序接收逻辑见 `api/chatStream.ts`；App 经 `composables/useChatStreamBridge.ts`、`components/chat/ChatStreamBridge.vue` 与 `api/transports/appStream.ts` 接入。三端共用 `utils/chatStreamProtocol.ts` 解释 SSE 事件和终态。
 
+发送与重新生成在模型配置加载完成、会话上下文校验后，通过 Store 内的 `buildChatRequest()` 统一装配模型、昵称和采样参数；重新生成单独设置标记，消息占位、候选恢复与传输生命周期仍由各自流程协调。
+
 `chatStore.ts` 使用会话版本和取消对象使旧请求失效。切换故事、退出页面或恢复流时，必须检查迟到的历史响应、流回调和终态能否覆盖当前故事。不要通过重复发送聊天 POST 恢复接收。后端断连后的持久化行为见 [后端架构](BACKEND.md#后台任务)。
 
 编辑、删除和候选切换在发起时捕获故事、会话代际与服务器地址，成功和失败回写均校验上下文。它们返回 `success`、`error` 或 `stale`，迟到结果不修改消息、人格或新任务的加载状态；当前修改失败通过调用方反馈，不使用会终止加载的流错误收尾。
