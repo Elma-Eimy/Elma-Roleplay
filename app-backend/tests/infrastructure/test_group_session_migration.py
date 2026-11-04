@@ -68,7 +68,7 @@ class GroupSessionMigrationTests(unittest.TestCase):
 
     def test_upgrade_and_downgrade_preserve_all_old_values_and_indexes(self):
         indexes = {table: inspect(self.engine).get_indexes(table) for table in ("sessions", "session_personas")}
-        command.upgrade(self.config, "head")
+        command.upgrade(self.config, NEW_HEAD)
         self.assert_integrity(NEW_HEAD)
         with self.engine.connect() as connection:
             self.assertEqual([("single",), ("single",)], connection.execute(text("SELECT kind FROM sessions ORDER BY id")).all())
@@ -80,7 +80,7 @@ class GroupSessionMigrationTests(unittest.TestCase):
                          {tuple(c["column_names"]) for c in constraints})
         command.downgrade(self.config, OLD_HEAD)
         self.assert_integrity(OLD_HEAD)
-        command.upgrade(self.config, "head")
+        command.upgrade(self.config, NEW_HEAD)
         self.assert_integrity(NEW_HEAD)
 
     def test_failed_rebuild_rolls_back_ddl_data_and_revision_then_can_retry(self):
@@ -91,13 +91,13 @@ class GroupSessionMigrationTests(unittest.TestCase):
         event.listen(self.engine, "before_cursor_execute", fail_rebuild)
         try:
             with self.assertRaisesRegex(RuntimeError, "injected rebuild failure"):
-                command.upgrade(self.config, "head")
+                command.upgrade(self.config, NEW_HEAD)
         finally:
             event.remove(self.engine, "before_cursor_execute", fail_rebuild)
         self.assert_integrity(OLD_HEAD)
         self.assertNotIn("kind", [c["name"] for c in inspect(self.engine).get_columns("sessions")])
         self.assertFalse(any(name.startswith("_alembic_tmp") for name in inspect(self.engine).get_table_names()))
-        command.upgrade(self.config, "head")
+        command.upgrade(self.config, NEW_HEAD)
         self.assert_integrity(NEW_HEAD)
 
     def test_foreign_key_violation_rolls_back_migration(self):
@@ -108,13 +108,13 @@ class GroupSessionMigrationTests(unittest.TestCase):
         event.listen(self.engine, "before_cursor_execute", corrupt_reference)
         try:
             with self.assertRaisesRegex(RuntimeError, "外键校验失败"):
-                command.upgrade(self.config, "head")
+                command.upgrade(self.config, NEW_HEAD)
         finally:
             event.remove(self.engine, "before_cursor_execute", corrupt_reference)
         self.assert_integrity(OLD_HEAD)
 
     def test_downgrade_refuses_group_data_without_changing_anything(self):
-        command.upgrade(self.config, "head")
+        command.upgrade(self.config, NEW_HEAD)
         with self.engine.begin() as connection:
             connection.execute(text("INSERT INTO sessions (id,title,kind) VALUES (30,'group','group')"))
             connection.execute(text("INSERT INTO session_personas (id,session_id,character_id,member_slot) VALUES (300,30,1,1),(400,30,2,2)"))

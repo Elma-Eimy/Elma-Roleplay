@@ -1,4 +1,8 @@
 [
+  ["POST", "/group-sessions"],
+  ["GET", "/group-sessions"],
+  ["GET", "/group-sessions/{session_id}"],
+  ["POST", "/group-sessions/{session_id}/delete"],
   ["POST", "/characters/charx/preview"],
   ["GET", "/characters/charx/previews/{token}/images"],
   ["GET", "/characters/charx/previews/{token}/status"],

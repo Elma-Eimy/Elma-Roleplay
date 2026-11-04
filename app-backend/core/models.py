@@ -272,6 +272,10 @@ class SessionPersona(Base):
         cascade="all, delete-orphan",
         order_by="MemoryChunk.created_at"
     )
+    group_origin = relationship("GroupPersonaOrigin", back_populates="persona", uselist=False,
+                                cascade="all, delete-orphan")
+    inherited_memory_snapshots = relationship("GroupInheritedMemorySnapshot", back_populates="persona",
+                                              cascade="all, delete-orphan")
     children_personas = relationship(
         "SessionPersona",
         backref="parent_persona",
@@ -292,6 +296,54 @@ class SessionPersona(Base):
 #      collection_name = f"persona_{persona_id}"
 #      document_id     = f"mem_{id}"（同步存入 chroma_doc_id 字段）
 # ──────────────────────────────────────────────
+
+class GroupPersonaOrigin(Base):
+    __tablename__ = "group_persona_origins"
+    __table_args__ = (
+        CheckConstraint("mode IN ('card', 'single_snapshot')", name="ck_group_origin_mode"),
+        CheckConstraint("snapshot_version >= 1", name="ck_group_origin_version"),
+    )
+
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), primary_key=True)
+    mode = Column(String(20), nullable=False)
+    snapshot_version = Column(Integer, nullable=False, default=1, server_default="1")
+    captured_at = Column(DateTime, nullable=False, default=func.now())
+    initial_state_json = Column(Text, nullable=False)
+    # 来源是审计标识，删除来源不能改变已经冻结的群聊起点。
+    source_session_id = Column(Integer, nullable=True)
+    source_persona_id = Column(Integer, nullable=True)
+    source_last_active_message_id = Column(Integer, nullable=True)
+    source_confirmed_before_id = Column(Integer, nullable=True)
+    content_fingerprint = Column(String(64), nullable=False)
+    persona = relationship("SessionPersona", back_populates="group_origin")
+
+
+class GroupInheritedMemorySnapshot(Base):
+    __tablename__ = "group_inherited_memory_snapshots"
+    __table_args__ = (
+        UniqueConstraint("persona_id", "source_memory_id", name="uq_group_snapshot_source"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    memory_type = Column(String(20), nullable=False)
+    importance_score = Column(Float, nullable=True)
+    temporal_status = Column(String(20), nullable=False)
+    temporal_note = Column(String(120), nullable=True)
+    source_evidence_json = Column(Text, nullable=True)
+    source_memory_id = Column(Integer, nullable=False)
+    source_persona_id = Column(Integer, nullable=False)
+    source_session_id = Column(Integer, nullable=True)
+    source_start_message_id = Column(Integer, nullable=True)
+    source_message_id = Column(Integer, nullable=True)
+    source_message_id_bound = Column(Integer, nullable=True)
+    source_created_at = Column(DateTime, nullable=True)
+    captured_at = Column(DateTime, nullable=False, default=func.now())
+    content_fingerprint = Column(String(64), nullable=False)
+    persona = relationship("SessionPersona", back_populates="inherited_memory_snapshots")
+
 
 class MemoryExtractionJob(Base):
     """已提取候选及其重试状态，与长期记忆分开持久化。"""

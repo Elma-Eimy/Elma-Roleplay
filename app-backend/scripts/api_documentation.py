@@ -5,7 +5,7 @@ import re
 from typing import get_args, get_origin
 
 
-DOMAIN_DOCUMENTS = ("GENERAL.md", "CHARACTERS.md", "SESSIONS.md", "LOREBOOKS.md", "CHAT.md")
+DOMAIN_DOCUMENTS = ("GENERAL.md", "CHARACTERS.md", "SESSIONS.md", "LOREBOOKS.md", "CHAT.md", "GROUP_SESSIONS.md")
 ROUTE_ROW = re.compile(r'^\|\s*\*\*([A-Z /]+)\*\*\s*\|\s*`([^`]+)`', re.MULTILINE)
 REQUEST_EXAMPLE = re.compile(
     r'<!-- request-example:\s*([^\n]+?)\s*-->\s*```json\s*\n(.*?)^\s*```',
@@ -44,8 +44,9 @@ def unknown_model_fields(value, model, location="body"):
         ]
     if not isinstance(value, dict) or not hasattr(model, "model_fields"):
         return []
-    errors = [f"{location}.{name}" for name in value if name not in model.model_fields]
-    for name, field in model.model_fields.items():
+    fields = {field.alias or name: field for name, field in model.model_fields.items()}
+    errors = [f"{location}.{name}" for name in value if name not in fields]
+    for name, field in fields.items():
         if name not in value:
             continue
         errors.extend(unknown_model_fields(value[name], field.annotation, f"{location}.{name}"))

@@ -3,6 +3,7 @@
 import json
 
 from sqlalchemy.orm import Session as DBSession
+from sqlalchemy import text
 
 from services.conversation.session_access import SessionKindConflict
 from core.models import Character, CharacterPortrait, ChatMessage, OutboxJob, Session, SessionPersona
@@ -70,6 +71,21 @@ def update_character(character_id: int, data: dict, db: DBSession) -> dict:
 
 
 def delete_character_service(character_id: int, db: DBSession) -> dict:
+    """在同一写事务中检查群聊引用并删除角色聚合。"""
+    # 与群聊创建串行化“检查引用→删除”，不能在检查后被新成员引用插入。
+    if db.new or db.dirty or db.deleted:
+        raise ValueError("角色删除需要没有待提交修改的数据库会话")
+    try:
+        db.rollback()
+        db.execute(text("BEGIN IMMEDIATE"))
+        db.expire_all()
+        return _delete_character(character_id, db)
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def _delete_character(character_id: int, db: DBSession) -> dict:
     """在 SQL 中删除角色，并登记可重试的外部资源清理任务。
 
     ChromaDB 和文件系统不会在 SQL 提交前被直接修改；相关清理任务与角色删除

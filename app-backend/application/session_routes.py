@@ -1,4 +1,4 @@
-"""默认单聊的 HTTP 边界，使用 FastAPI 校验后的参数检查资源归属。"""
+"""使用 FastAPI 校验后的参数执行显式的单聊或群聊访问策略。"""
 import inspect
 from functools import wraps
 
@@ -7,21 +7,26 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
-from services.conversation.session_access import check_single_chat_arguments
+from services.conversation.session_access import check_chat_arguments
 
 
-class SingleChatRoute(APIRoute):
+class SessionAccessRoute(APIRoute):
+    session_kind = "single"
+
     def __init__(self, path, endpoint, **kwargs):
-        if not getattr(endpoint, "__single_chat_boundary__", False):
+        policy = getattr(endpoint, "__session_access_policy__", None)
+        if policy is not None and policy != self.session_kind:
+            raise RuntimeError("同一业务入口不能同时使用单聊与群聊访问策略")
+        if policy is None:
             signature = inspect.signature(endpoint)
             original_endpoint = endpoint
 
             def check(arguments):
-                check_single_chat_arguments(arguments, arguments.get("db"))
+                check_chat_arguments(arguments, arguments.get("db"), self.session_kind)
                 def check_model(value):
                     if isinstance(value, BaseModel):
                         fields = {name: getattr(value, name) for name in type(value).model_fields}
-                        check_single_chat_arguments(fields, arguments.get("db"))
+                        check_chat_arguments(fields, arguments.get("db"), self.session_kind)
                         for field in fields.values():
                             check_model(field)
                     elif isinstance(value, (list, tuple)):
@@ -48,9 +53,18 @@ class SingleChatRoute(APIRoute):
                     name, parameter.annotation))
                 for name, parameter in signature.parameters.items()
             ], return_annotation=annotations.get("return", signature.return_annotation))
-            guarded.__single_chat_boundary__ = True
+            guarded.__session_access_policy__ = self.session_kind
+            guarded.__single_chat_boundary__ = self.session_kind == "single"
             endpoint = guarded
         super().__init__(path, endpoint, **kwargs)
+
+
+class SingleChatRoute(SessionAccessRoute):
+    session_kind = "single"
+
+
+class GroupChatRoute(SessionAccessRoute):
+    session_kind = "group"
 
 
 class SessionAPIRouter(APIRouter):
@@ -59,8 +73,14 @@ class SessionAPIRouter(APIRouter):
         super().__init__(*args, **kwargs)
 
 
+class GroupSessionAPIRouter(SessionAPIRouter):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("route_class", GroupChatRoute)
+        super().__init__(*args, **kwargs)
+
+
 def validate_session_routes(app):
     """装配时阻止普通 APIRouter 绕过默认边界，不依赖手写路由名单。"""
     for route in app.routes:
-        if isinstance(route, APIRoute) and not isinstance(route, SingleChatRoute):
+        if isinstance(route, APIRoute) and not isinstance(route, (SingleChatRoute, GroupChatRoute)):
             raise RuntimeError(f"接口 {route.path} 未经过会话访问边界，请使用 SessionAPIRouter")

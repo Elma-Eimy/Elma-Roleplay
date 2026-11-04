@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
-from application.session_routes import SessionAPIRouter, SingleChatRoute, validate_session_routes
+from application.session_routes import SessionAPIRouter, SessionAccessRoute, validate_session_routes
 from core.database import get_db
 from services.conversation.session_access import RESOURCE_ARGUMENTS, SessionKindConflict
 from tests.api import test_group_session_boundary as fixtures
@@ -42,8 +42,8 @@ class SessionAccessArchitectureTests(unittest.TestCase):
         self.assertTrue(routes)
         for route in routes:
             with self.subTest(path=route.path):
-                self.assertIsInstance(route, SingleChatRoute)
-                self.assertTrue(getattr(route.endpoint, "__single_chat_boundary__", False))
+                self.assertIsInstance(route, SessionAccessRoute)
+                self.assertEqual(route.session_kind, getattr(route.endpoint, "__session_access_policy__", None))
 
     def test_new_endpoints_are_guarded_without_business_checks(self):
         router = SessionAPIRouter()
@@ -136,7 +136,10 @@ class SessionAccessArchitectureTests(unittest.TestCase):
                 parameters = inspect.signature(operation).parameters
                 arguments = {key: 1 for key, value in parameters.items()
                              if value.default is inspect.Parameter.empty}
-                arguments.update({key: {"session": 20, "persona": 200, "message": 2}[kind]
+                wrong_kind = ({"session": 10, "persona": 100, "message": 999, "source_session": 20}
+                              if getattr(operation, "__session_kind__", None) == "group"
+                              else {"session": 20, "persona": 200, "message": 2, "source_session": 20})
+                arguments.update({key: wrong_kind[kind]
                                   for key, kind in RESOURCE_ARGUMENTS.items() if key in parameters})
                 arguments["db"] = self.db
                 with self.subTest(operation=f"{module_name}.{name}"):

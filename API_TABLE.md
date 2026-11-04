@@ -7,6 +7,7 @@
 | 连接、鉴权、配置与语音 | [通用接口](docs/api/GENERAL.md) |
 | 角色卡、翻译、CHARX 与立绘 | [角色接口](docs/api/CHARACTERS.md) |
 | 故事分支、消息、状态与长期记忆 | [会话接口](docs/api/SESSIONS.md)、[记忆规则补充](docs/api/MEMORY_API.md) |
+| 固定成员群聊、来源快照与整群删除 | [群聊接口](docs/api/GROUP_SESSIONS.md) |
 | 独立世界书、词条与绑定 | [世界书接口](docs/api/LOREBOOKS.md) |
 | 模型对话、SSE 与候选切换 | [聊天接口](docs/api/CHAT.md) |
 | 修改接口或排查文档漂移 | [维护与校验说明](docs/api/README.md) |
@@ -66,6 +67,17 @@
 | **PUT** | `/characters/{character_id}` | Update settings of an existing character |
 | **DELETE** | `/characters/{character_id}` | Delete character and cascade wipe all sessions/memories |
 | **POST** | `/characters/{character_id}/delete` | Alternative POST method for deletion (to avoid HTTP/HTTPS redirect downgrades) |
+
+### 群聊管理 API
+
+[请求与响应详情](docs/api/GROUP_SESSIONS.md)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **POST** | `/group-sessions` | 原子创建固定成员群聊与来源快照 |
+| **GET** | `/group-sessions` | 群聊摘要稳定分页 |
+| **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
+| **POST** | `/group-sessions/{session_id}/delete` | 删除整个群聊并登记资源清理 |
 
 ### 会话、消息与记忆 API
 

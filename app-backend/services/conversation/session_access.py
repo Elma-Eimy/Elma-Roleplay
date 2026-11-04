@@ -1,4 +1,4 @@
-"""单聊资源加载入口；内部步骤复用已加载对象，不重复做类型判断。"""
+"""按会话类型加载资源；内部步骤复用已加载对象，不重复做类型判断。"""
 from core.models import Session, SessionPersona, ChatMessage
 from sqlalchemy.orm import Session as DBSession
 
@@ -10,6 +10,7 @@ class SessionKindConflict(Exception):
 RESOURCE_ARGUMENTS = {
     "session_id": "session", "parent_session_id": "session",
     "persona_id": "persona", "message_id": "message",
+    "source_session_id": "source_session",
 }
 
 
@@ -24,22 +25,31 @@ def session_kind_agnostic(reason):
     return declare
 
 
-def check_single_chat_arguments(arguments, db):
+def check_chat_arguments(arguments, db, kind="single"):
     """HTTP 边界统一解析资源 ID；缺少数据库依赖时拒绝继续执行。"""
     loaders = {"session": get_single_session, "persona": get_single_persona,
-               "message": get_single_message}
+               "message": get_single_message, "source_session": get_single_session}
     for name, resource in RESOURCE_ARGUMENTS.items():
         value = arguments.get(name)
         if value is not None:
             if db is None:
-                raise RuntimeError(f"单聊入口包含 {name}，但未声明 db 依赖")
-            loaders[resource](value, db)
+                raise RuntimeError(f"会话入口包含 {name}，但未声明 db 依赖")
+            if kind == "group" and name not in ("source_session_id", "parent_session_id"):
+                model = {"session": Session, "persona": SessionPersona, "message": ChatMessage}[resource]
+                item = db.get(model, value)
+                _of_kind(item if resource == "session" else item.session if item else None, "group")
+            else:
+                loaders[resource](value, db)
+
+
+def _of_kind(session, kind):
+    if session is not None and session.kind != kind:
+        raise SessionKindConflict("此操作仅支持单聊" if kind == "single" else "此操作仅支持群聊")
+    return session
 
 
 def _single(session: Session | None) -> Session | None:
-    if session is not None and session.kind != "single":
-        raise SessionKindConflict("此操作仅支持单聊，请使用群聊入口")
-    return session
+    return _of_kind(session, "single")
 
 
 def get_single_session(session_id: int, db: DBSession) -> Session | None:
@@ -58,3 +68,14 @@ def get_single_message(message_id: int, db: DBSession) -> ChatMessage | None:
     if message is not None:
         _single(message.session)
     return message
+
+
+def group_session_operation(function):
+    """声明群聊专用服务，入口回归会使用单聊资源验证反向隔离。"""
+    function.__session_kind__ = "group"
+    return function
+
+
+@group_session_operation
+def get_group_session(session_id: int, db: DBSession) -> Session | None:
+    return _of_kind(db.get(Session, session_id), "group")

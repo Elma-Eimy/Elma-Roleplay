@@ -12,6 +12,7 @@ def create_app() -> FastAPI:
     from core.auth import verify_api_key
     from routers import characters_router, chat_router, lorebooks_router, sessions_router, utils_router
     from routers.audio import router as audio_router
+    from routers.group_sessions import router as group_sessions_router
     from application.lifecycle import lifespan
     from application.session_routes import SingleChatRoute, validate_session_routes
 
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(utils_router, dependencies=dependencies)
     app.include_router(characters_router, prefix="/characters", tags=["characters"], dependencies=dependencies)
     app.include_router(sessions_router, prefix="/sessions", tags=["sessions"], dependencies=dependencies)
+    app.include_router(group_sessions_router, prefix="/group-sessions", tags=["group-sessions"], dependencies=dependencies)
     app.include_router(chat_router, prefix="/chat", tags=["chat"], dependencies=dependencies)
     app.include_router(lorebooks_router, prefix="/lorebooks", tags=["lorebooks"], dependencies=dependencies)
     validate_session_routes(app)

@@ -28,6 +28,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [HTTP API 总表](../API_TABLE.md) | 前后端共享的路由清单与领域契约入口 |
+| [群聊管理 API](api/GROUP_SESSIONS.md) | 固定成员创建、来源快照、列表详情、整群删除与类型隔离 |
 | [API 阅读与校验](api/README.md) | 各领域请求、响应、兼容规则的导航及隔离检查方法 |
 | [记忆模块 API](api/MEMORY_API.md) | 筛选、统计、继承、导航、整理预览与撤销 |
 | [前端 API 模块](../app-frontend/src/api/README.md) | 领域请求封装、共享类型、兼容导出与 Mock 边界 |
@@ -51,7 +52,7 @@
 
 [群聊模块实施计划](plans/group-chat/README.md) 是大型群聊开发的接续入口，维护六个模块的依赖、状态、专项设计组织方式与验收记录要求。
 
-[M1 群聊数据与人格设计](plans/group-chat/M1_DATA_AND_PERSONAS.md) 明确多 Persona、来源快照、单聊兼容、迁移、删除保护和实施批次；附 M1-A 实现与隔离验证记录，其余批次待实现。
+[M1 群聊数据与人格设计](plans/group-chat/M1_DATA_AND_PERSONAS.md) 明确多 Persona、来源快照、单聊兼容、迁移、删除保护和实施批次；附 M1-A/B/C 实现与隔离验证记录，最小界面待实现。
 
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 

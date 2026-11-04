@@ -89,6 +89,55 @@ class SessionCreate(BaseModel):
     start_message_id: Optional[int] = None
 
 
+class GroupMemberOrigin(BaseModel):
+    model_config = {"extra": "forbid"}
+    mode: Literal["card", "single_snapshot"]
+    # 对外保持 origin.session_id；内部名称表明它始终是单聊来源。
+    source_session_id: Optional[int] = Field(None, alias="session_id", gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def valid_source(self):
+        if self.mode == "card" and self.source_session_id is not None:
+            raise ValueError("原卡起步不能指定来源故事")
+        if self.mode == "single_snapshot" and self.source_session_id is None:
+            raise ValueError("导入快照需要来源单聊 ID")
+        return self
+
+
+class GroupMemberCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    character_id: int = Field(gt=0, strict=True)
+    origin: GroupMemberOrigin
+
+
+class GroupSessionCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    title: str = Field(default="新的群聊", min_length=1, max_length=50)
+    user_nickname: str = Field(default="用户", min_length=1, max_length=50)
+    shared_setting: Optional[str] = Field(default=None, max_length=20000)
+    members: list[GroupMemberCreate] = Field(min_length=2, max_length=3)
+
+    @field_validator("title", "user_nickname", mode="before")
+    @classmethod
+    def nonblank_text(cls, value):
+        if not isinstance(value, str):
+            return value
+        if not value.strip():
+            raise ValueError("标题和昵称不能为空白")
+        return value.strip()
+
+    @field_validator("shared_setting")
+    @classmethod
+    def normalize_setting(cls, value):
+        return value.strip() or None if value is not None else None
+
+    @model_validator(mode="after")
+    def unique_members(self):
+        if len({member.character_id for member in self.members}) != len(self.members):
+            raise ValueError("同一角色卡不能重复加入群聊")
+        return self
+
+
 class CharacterTranslationRequest(BaseModel):
     card: CharacterCreate
     force: bool = False
