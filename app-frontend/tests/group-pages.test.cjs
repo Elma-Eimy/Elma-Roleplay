@@ -1,0 +1,285 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { effectScope } = require("vue");
+const fs = require("node:fs");
+const path = require("node:path");
+const { createLoader, deferred, sourceRoot } = require("./helpers/load-ts.cjs");
+
+const plain = value => JSON.parse(JSON.stringify(value));
+const character = id => ({ id, name: `actor${id}`, avatar_path: "" });
+const group = (id, title = `group${id}`) => ({ kind: "group", session_id: id, title, members: [], can_generate: false });
+const page = (items = [], more = false, offset = 0) => ({ sessions: items, total: items.length, has_more: more, offset, limit: 20 });
+const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+function fixture(kind, overrides = {}, mock = false, platform = "H5") {
+  let server = "https://a.invalid";
+  const listeners = new Set();
+  const navigations = [];
+  const calls = [];
+  const api = {
+    getGroupSessions: async () => page(), getGroupSession: async id => group(id),
+    createGroupSession: async value => { calls.push(value); return group(50); },
+    deleteGroupSession: async id => { calls.push(id); return { deleted_session_id: id }; },
+    ...overrides,
+  };
+  const load = createLoader({ platform, mocks: {
+    "@/api/config": { getBaseUrl: () => server, USE_MOCK: mock },
+    "@/api/characters": { getCharacters: overrides.getCharacters ?? (async () => ({ characters: [1, 2, 3, 4].map(character) })) },
+    "@/api/sessions": { getSessions: overrides.getSessions ?? (async () => page()) },
+    "@/api/groupSessions": api,
+    "@/utils/connectionEvents": { onServerChange: callback => { listeners.add(callback); return () => listeners.delete(callback); } },
+  } });
+  const scope = effectScope();
+  const hooks = scope.run(() => load("composables/useGroupSessions.ts"));
+  const state = scope.run(() => kind === "create" ? hooks.useGroupSessionCreate(value => navigations.push(value.session_id))
+    : kind === "detail" ? hooks.useGroupSessionDetail(() => navigations.push("deleted")) : hooks.useGroupSessionList());
+  const setServer = value => { server = value; for (const listener of [...listeners]) listener(); };
+  return { state, scope, setServer, navigations, calls, listeners };
+}
+function fill(f) {
+  f.state.title.value = "group";
+  f.state.toggleCharacter(character(1));
+  f.state.toggleCharacter(character(2));
+}
+
+test("group pages are registered without changing the default home or exposing a send control", () => {
+  const routes = JSON.parse(fs.readFileSync(path.join(sourceRoot, "pages.json"), "utf8"));
+  assert.equal(routes.pages[0].path, "pages/index/index");
+  for (const name of ["index", "create", "detail"]) {
+    assert.ok(routes.pages.some(page => page.path === `pages/group/${name}`));
+  }
+  const home = fs.readFileSync(path.join(sourceRoot, "pages/index/index.vue"), "utf8");
+  assert.match(home, /@tap="goToGroups"/);
+  const detail = fs.readFileSync(path.join(sourceRoot, "pages/group/detail.vue"), "utf8");
+  assert.doesNotMatch(detail, /<input|<textarea|sendMessage|chatStore/);
+});
+
+for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
+  test(`${platform}: duplicate submission is blocked and payload is frozen while the request runs`, async () => {
+    const pending = deferred(), requests = [];
+    const f = fixture("create", { createGroupSession: value => { requests.push(value); return pending.promise; } }, false, platform);
+    f.state.show(); await flush(); fill(f);
+    const saving = f.state.submit();
+    await f.state.submit();
+    f.state.title.value = "changed locally";
+    f.state.toggleCharacter(character(3));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].title, "group");
+    assert.equal(f.state.members.value.length, 2);
+    pending.resolve(group(50)); await saving;
+    assert.deepEqual(f.navigations, [50]);
+    await f.state.submit(); assert.equal(requests.length, 1);
+    f.scope.stop(); assert.equal(f.listeners.size, 0);
+  });
+}
+
+test("validation retains the draft, caps members and requires an explicit snapshot source", async () => {
+  const f = fixture("create"); f.state.show(); await flush();
+  await f.state.submit(); assert.equal(f.calls.length, 0);
+  fill(f);
+  f.state.toggleCharacter(character(3)); f.state.toggleCharacter(character(4));
+  assert.equal(f.state.members.value.length, 3);
+  const member = f.state.members.value[0];
+  f.state.setMode(member, "single_snapshot"); await flush();
+  assert.match(f.state.validation.value, /来源单聊/);
+  await f.state.submit(); assert.equal(f.calls.length, 0);
+  f.scope.stop();
+});
+
+test("a removed and re-added member cannot receive an old source list", async () => {
+  const pending = deferred();
+  const f = fixture("create", { getSessions: () => pending.promise });
+  f.state.show(); await flush(); fill(f);
+  const old = f.state.members.value[0]; f.state.setMode(old, "single_snapshot");
+  f.state.toggleCharacter(character(1)); f.state.toggleCharacter(character(1));
+  pending.resolve(page([{ id: 99, title: "old source" }])); await flush();
+  const current = f.state.members.value.find(member => member.character.id === 1);
+  assert.equal(current.mode, "card"); assert.equal(current.sources.length, 0);
+  f.scope.stop();
+});
+
+test("snapshot source pagination is scoped to its member and serializes the selected story", async () => {
+  const requests = [];
+  const f = fixture("create", { getSessions: async (id, limit, offset, last) => {
+    requests.push([id, limit, offset, last]);
+    return { ...page([{ id: offset + 10, title: `source ${offset}` }]), has_more: offset === 0 };
+  } });
+  f.state.show(); await flush(); fill(f);
+  const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot"); await flush();
+  await f.state.loadSources(member, true);
+  member.sourceSessionId = member.sources[1].id;
+  await f.state.submit();
+  assert.deepEqual(requests, [[1, 20, 0, false], [1, 20, 1, false]]);
+  assert.deepEqual(plain(f.calls[0].members[0].origin), { mode: "single_snapshot", session_id: 11 });
+  f.scope.stop();
+});
+
+for (const more of [false, true]) {
+  test(`interrupted source ${more ? "pagination" : "initial loading"} resumes without accepting the old reply`, async () => {
+    const old = deferred(), resumed = deferred(), offsets = [];
+    const f = fixture("create", { getSessions: async (_, limit, offset) => {
+      offsets.push(offset);
+      if (more && offsets.length === 1) return page([{ id: 10, title: "selected source" }], true);
+      return offsets.length === (more ? 2 : 1) ? old.promise : resumed.promise;
+    } });
+    f.state.show(); await flush(); fill(f);
+    const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot");
+    if (more) {
+      await flush(); member.sourceSessionId = 10;
+      void f.state.loadSources(member, true);
+    }
+    f.state.hide(); f.state.hide(); f.state.show();
+    assert.deepEqual(offsets, more ? [0, 1, 1] : [0, 0]);
+    assert.equal(member.loadingSources, true);
+    old.resolve(page([{ id: 99, title: "stale source" }])); await flush();
+    assert.equal(member.loadingSources, true);
+    assert.deepEqual(plain(member.sources.map(source => source.id)), more ? [10] : []);
+    resumed.resolve(page([{ id: 11, title: "resumed source" }], false, more ? 1 : 0)); await flush();
+    assert.equal(member.loadingSources, false);
+    assert.equal(member.pendingSourcePage, null);
+    assert.deepEqual(plain(member.sources.map(source => source.id)), more ? [10, 11] : [11]);
+    assert.equal(member.sourceSessionId, more ? 10 : null);
+    f.state.hide(); f.state.show(); await flush();
+    assert.equal(offsets.length, more ? 3 : 2);
+    f.scope.stop();
+  });
+}
+
+test("confirming an unchanged origin mode preserves pending reads, selection and pagination", async () => {
+  const pending = deferred(); let reads = 0;
+  const f = fixture("create", { getSessions: () => { reads++; return pending.promise; } });
+  f.state.show(); await flush(); fill(f);
+  const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot");
+  f.state.setMode(member, "single_snapshot");
+  assert.equal(reads, 1); assert.equal(member.loadingSources, true);
+  pending.resolve(page([{ id: 11, title: "selected source" }], true)); await flush();
+  member.sourceSessionId = 11;
+  f.state.setMode(member, "single_snapshot"); await flush();
+  assert.equal(reads, 1); assert.equal(member.sourceSessionId, 11);
+  assert.equal(member.sourceOffset, 1); assert.equal(member.hasMoreSources, true);
+  assert.deepEqual(plain(member.sources.map(source => source.id)), [11]);
+  f.state.setMode(member, "card");
+  assert.equal(member.sourceSessionId, null); assert.equal(member.sources.length, 0);
+  f.scope.stop();
+});
+
+test("known validation failure permits correction while uncertain creation never resends", async () => {
+  for (const [failure, uncertain] of [[new Error('[API Error 422] /group-sessions: {"detail":"bad source"}'), false], [new Error("timeout"), true]]) {
+    let calls = 0;
+    const f = fixture("create", { createGroupSession: async () => { calls++; throw failure; } });
+    f.state.show(); await flush(); fill(f);
+    await f.state.submit();
+    assert.equal(f.state.uncertain.value, uncertain);
+    assert.equal(f.state.title.value, "group");
+    if (uncertain) { await f.state.submit(); assert.equal(calls, 1); }
+    else assert.match(f.state.error.value, /bad source/);
+    f.scope.stop();
+  }
+});
+
+test("hiding during creation marks the result uncertain and ignores success or failure after return", async () => {
+  for (const failed of [false, true]) {
+    const pending = deferred();
+    const f = fixture("create", { createGroupSession: () => pending.promise });
+    f.state.show(); await flush(); fill(f); const saving = f.state.submit();
+    f.state.hide(); f.state.show();
+    if (failed) pending.reject(new Error("late")); else pending.resolve(group(50));
+    await saving;
+    assert.equal(f.state.uncertain.value, true);
+    assert.equal(f.navigations.length, 0);
+    assert.equal(f.state.created.value, null);
+    f.scope.stop();
+  }
+});
+
+test("A→B→A clears creation data and old completion cannot navigate or unlock a new submit", async () => {
+  const old = deferred(), current = deferred(); let count = 0;
+  const f = fixture("create", { createGroupSession: () => (++count === 1 ? old : current).promise });
+  f.state.show(); await flush(); fill(f); const savingOld = f.state.submit();
+  f.setServer("https://b.invalid"); f.setServer("https://a.invalid"); await flush();
+  assert.equal(f.state.members.value.length, 0); assert.equal(f.state.title.value, "");
+  fill(f); const savingCurrent = f.state.submit();
+  old.resolve(group(50)); await savingOld;
+  assert.equal(f.state.submitting.value, true); assert.equal(f.navigations.length, 0);
+  current.resolve(group(51)); await savingCurrent;
+  assert.deepEqual(f.navigations, [51]); f.scope.stop();
+});
+
+test("character reads are invalidated on server changes and offline mode never offers snapshots", async () => {
+  const pending = deferred(); let reads = 0;
+  const f = fixture("create", { getCharacters: () => ++reads === 1 ? pending.promise : Promise.resolve({ characters: [character(3)] }) }, true);
+  f.state.show(); f.setServer("https://b.invalid"); await flush();
+  pending.resolve({ characters: [character(1)] }); await flush();
+  assert.deepEqual(plain(f.state.characters.value.map(item => item.id)), [3]);
+  assert.equal(f.state.supportsSnapshots, false);
+  f.state.toggleCharacter(character(3)); const member = f.state.members.value[0];
+  f.state.setMode(member, "single_snapshot"); assert.equal(member.mode, "card");
+  f.scope.stop();
+});
+
+test("list pagination deduplicates rows but advances by the server page and preserves data on errors", async () => {
+  const offsets = [];
+  const f = fixture("list", { getGroupSessions: async (_, offset) => {
+    offsets.push(offset);
+    if (offset === 0) return page([group(1)], true, 0);
+    if (offset === 1) return page([group(1), group(2)], true, 1);
+    throw new Error("network failed");
+  } });
+  f.state.show(); await flush(); await f.state.load(true); await f.state.load(true);
+  assert.deepEqual(offsets, [0, 1, 3]);
+  assert.deepEqual(plain(f.state.groups.value.map(item => item.session_id)), [1, 2]);
+  assert.match(f.state.error.value, /network failed/); f.scope.stop();
+});
+
+test("list stale replies after A→B→A or hide cannot clear the current request's busy state", async () => {
+  const old = deferred(), next = deferred(); let reads = 0;
+  const f = fixture("list", { getGroupSessions: () => (++reads === 1 ? old : next).promise });
+  f.state.show(); f.setServer("https://b.invalid"); f.setServer("https://a.invalid");
+  old.resolve(page([group(1)])); await flush();
+  assert.equal(f.state.loading.value, true); assert.equal(f.state.groups.value.length, 0);
+  next.resolve(page([group(2)])); await flush();
+  assert.deepEqual(plain(f.state.groups.value.map(item => item.session_id)), [2]);
+  f.scope.stop(); assert.equal(f.listeners.size, 0);
+});
+
+test("details never reuse a same-number story after changing servers", async () => {
+  const pending = deferred(); let reads = 0;
+  const f = fixture("detail", { getGroupSession: () => { reads++; return pending.promise; } });
+  f.state.setSessionId(1); f.state.show(); f.setServer("https://b.invalid"); f.setServer("https://a.invalid");
+  pending.resolve(group(1)); await flush();
+  assert.equal(f.state.group.value, null); assert.equal(f.state.serverChanged.value, true);
+  assert.equal(reads, 1); f.scope.stop();
+});
+
+test("invalid detail IDs return to selection without issuing an invalid request", async () => {
+  let reads = 0;
+  const f = fixture("detail", { getGroupSession: async id => { reads++; return group(id); } });
+  f.state.setSessionId(Number.NaN); f.state.show(); await flush();
+  assert.equal(reads, 0); assert.equal(f.state.needsSelection.value, true);
+  assert.match(f.state.error.value, /编号无效/);
+  f.scope.stop();
+});
+
+test("a stale delete confirmation cannot send POST and a stale delete completion cannot navigate", async () => {
+  const confirmation = deferred(), removal = deferred();
+  let deletes = 0;
+  const f = fixture("detail", { deleteGroupSession: () => { deletes++; return removal.promise; } });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  const asking = f.state.remove(() => confirmation.promise);
+  f.state.setSessionId(2); await f.state.load();
+  confirmation.resolve(true); await asking;
+  assert.equal(deletes, 0); assert.equal(f.state.deleting.value, false);
+  const deleting = f.state.remove(async () => true); await flush();
+  assert.equal(deletes, 1);
+  f.state.hide(); f.state.show(); await flush();
+  removal.resolve({ deleted_session_id: 2 }); await deleting;
+  assert.equal(f.navigations.length, 0); f.scope.stop();
+});
+
+test("leaving a scope unsubscribes and prevents pending writes from producing UI effects", async () => {
+  const pending = deferred();
+  const f = fixture("create", { createGroupSession: () => pending.promise });
+  f.state.show(); await flush(); fill(f); const saving = f.state.submit();
+  f.scope.stop(); pending.resolve(group(50)); await saving;
+  assert.equal(f.navigations.length, 0); assert.equal(f.listeners.size, 0);
+});

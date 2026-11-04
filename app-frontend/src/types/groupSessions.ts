@@ -1,5 +1,12 @@
 import type { RoleState } from "./roleState";
 
+export interface GroupCharacterOption {
+  id: number;
+  name: string;
+  avatar_path: string | null;
+  description?: string;
+}
+
 export type GroupMemberOrigin =
   | { mode: "card"; session_id?: null }
   | { mode: "single_snapshot"; session_id: number };

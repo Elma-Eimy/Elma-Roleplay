@@ -7,6 +7,18 @@
 			}
 		},
 		{
+			"path": "pages/group/index",
+			"style": { "navigationStyle": "custom" }
+		},
+		{
+			"path": "pages/group/create",
+			"style": { "navigationStyle": "custom" }
+		},
+		{
+			"path": "pages/group/detail",
+			"style": { "navigationStyle": "custom" }
+		},
+		{
 			"path": "pages/character/index",
 			"style": {
 				"navigationStyle": "custom"
