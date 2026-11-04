@@ -182,12 +182,13 @@ def run_post_turn_maintenance(session_id: int, persona_id: int) -> None:
                 memory_extraction_service.get_effective_memory_extract_limit()
             )
             if unsummarized >= effective_limit:
-                count = memory_extraction_service.summarize_and_store_memory(
-                    session_id, db
-                )
+                from services.memory.memory_extraction_jobs import processing_status, request_capture
+                request_capture(persona_id, db)
+                memory_status = processing_status(persona_id, db)
                 print(
-                    f"[INFO] 自动记忆提纯: 提取了 {count} 条记忆 "
-                    f"(session_id={session_id}, trigger={effective_limit})"
+                    f"[INFO] 自动记忆提纯已入队 "
+                    f"(session_id={session_id}, trigger={effective_limit}, "
+                    f"status={memory_status['status']}, pending={memory_status['pending_count']})"
                 )
         except Exception as exc:
             db.rollback()

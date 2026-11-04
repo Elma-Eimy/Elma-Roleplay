@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from core.database import get_db
 from core.models import (Base, Character, Session, SessionPersona, ChatMessage, MessageRole,
                          MemoryChunk, MemoryType, MemoryConsolidation, MemoryConsolidationSource,
-                         MemoryConsolidationScope, MemoryConsolidationScan, OutboxJob)
+                         MemoryConsolidationScope, MemoryConsolidationScan, OutboxJob, MemoryEventBuffer)
 from routers.sessions import router
 from services.memory import memory_consolidation_service as service, memory_manager
 from services.memory.session_memory_query_service import query_session_memories, get_character_memory_overview
@@ -97,6 +97,26 @@ class MemoryConsolidationTests(unittest.TestCase):
     def model_response(self, content, finish_reason="stop"):
         return SimpleNamespace(choices=[SimpleNamespace(
             message=SimpleNamespace(content=content), finish_reason=finish_reason)])
+
+    def test_event_identity_is_preserved_when_stages_are_consolidated(self):
+        identity = MemoryEventBuffer(persona_id=self.persona.id, payload_json="{}", status="closed")
+        self.db.add(identity)
+        self.db.flush()
+        self.one.event_id = self.two.event_id = identity.id
+        self.db.commit()
+        batch = self.preview()
+        service.apply(self.session.id, batch["id"], [0], self.db)
+        summary = self.db.query(MemoryChunk).filter_by(consolidation_id=batch["id"]).one()
+        self.assertEqual(identity.id, summary.event_id)
+
+    def test_distinct_event_identities_cannot_be_merged_even_with_identical_time(self):
+        for chunk in (self.one, self.two):
+            identity = MemoryEventBuffer(persona_id=self.persona.id, payload_json="{}", status="closed")
+            self.db.add(identity)
+            self.db.flush()
+            chunk.event_id = identity.id
+        self.db.commit()
+        self.assertEqual([], self.preview()["groups"])
 
     def test_bare_arrays_and_fenced_json_are_validated_before_preview(self):
         payload = self.payload()

@@ -4,6 +4,18 @@
 
 ## 自动回归
 
+`api/test_api_documentation.py` 校验根 API 总表与真实路由集合一致，并使用真实请求模型校验每个 JSON 请求接口的文档样本。隔离入口将总表和 `scripts/api_documentation.py` 固定清单中的领域契约复制到临时副本的 `project_docs/`，不读取开发配置或本地草稿；检查边界与样本写法见 [API 维护说明](../../docs/api/README.md)。单独运行：`python -m tests --group api --pattern test_api_documentation.py`。
+
+`infrastructure/test_client_initialization.py` 在隔离副本的独立进程中验证导入服务和创建应用不会构造 ChromaDB 或 Embedding 函数，并覆盖并发首次访问复用、构造失败重试、配置传递及记忆集合与 Outbox 调用边界。测试替换资源构造器，不连接真实向量服务。
+
+`memory/test_memory_extraction_jobs.py` 覆盖外部调用无事务、独立写入、失败隔离与幂等恢复、时间补全、来源独立失效、无新聊天的捕获重试与真实接口状态。`infrastructure/test_memory_extraction_jobs_migration.py` 验证升级回退、唯一处理租约和级联清理；`test_memory_retry_worker.py` 验证关闭时等待工作线程释放资源。
+
+`memory/test_memory_event_buffer.py` 覆盖跨批次事件、事实与承诺直接写入、手动收尾、重启、图谱与 Outbox 原子回滚、来源和分叉边界；`infrastructure/test_memory_event_buffer_migration.py` 验证旧库升级、回退和外键清理。
+
+事件边界回归还覆盖长片段不丢正文、情绪超长时独立保留、容量收尾的完整跨卡依据及失效、未落库依赖拒绝发布和非法下标安全处理。
+
+`memory/test_memory_card_extraction.py` 覆盖写入专用召回、向量未同步时的批内语义去重、低重要性旧卡、分叉与时间边界、关系判断失败回滚及重试，使用本地模型和向量替身。
+
 `memory/test_joint_retrieval.py` 验证语义种子扩图、支持卡回查、去重、摘要映射、预算和故事边界；`test_memory_fact_semantics.py` 验证提纯时间语义及整理保留。`infrastructure/test_memory_fact_migration.py` 使用临时库验证共源字段升降级，不读取开发数据。
 
 ```bash
@@ -56,7 +68,11 @@ python -m tests.manual.manual_lorebook
 
 ## 新增与调试
 
-`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/MEMORY_QUALITY.md)。
+`memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/testing/MEMORY_QUALITY.md)。
+
+`memory/test_event_retention.py` 使用 `tests/fixtures/event_retention_cases.json` 回放八批赠书和四批修表，检查十二项已提取事实线索、三批/容量快照后的事件身份、重启及关闭边界。每批只提供新增片段，最后一批省略旧事实，以“只留最后摘要”为失败对照；输出的保留率不代表真实模型首次提取质量。`infrastructure/test_event_checkpoint_migration.py` 检查阶段外键、旧库升级、回退保留正文和身份删除行为。
+
+`memory/test_memory_write_admission.py` 检查高权重长反应归入事件、图谱下标和消息范围、持续状态及承诺保护、无效/歧义关联、超长保留、相容补全的旧条件与联合来源，以及明确取消不携带旧约定。候选门槛外的有限最近邻回归见 `test_memory_card_extraction.py`；测试均使用替身，不调用真实服务。
 
 `memory/test_graph_memory_consistency.py` 覆盖图谱消息与记忆证据、追加版本、分叉隔离、原数组下标关联、`same/replace`、人工修改/删除、整理后证据保留及原子回滚；`infrastructure/test_graph_evidence_migration.py` 验证旧库升降级保留原行且不猜测来源。优先使用隔离入口，不直接运行会写当前库的 `manual/manual_graph_rag.py`。
 

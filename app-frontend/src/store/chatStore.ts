@@ -1,6 +1,8 @@
 import type { ActiveStreamRequest } from "@/types/chatStream";
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, onScopeDispose } from "vue";
+import type { MessageActionResult } from "@/types/chat";
+import { onServerChange } from "@/utils/connectionEvents";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
 import { sendMessageStream } from "@/api/chat";
@@ -36,6 +38,13 @@ export const useChatStore = defineStore("chat", () => {
     activeStreamRequest.value = null;
     clearPendingStreamChunks();
     streamingText.value = "";
+  }
+
+  function captureContext() {
+    const version = sessionVersion;
+    const sessionId = activeSessionId.value;
+    const endpoint = getBaseUrl();
+    return () => version === sessionVersion && sessionId === activeSessionId.value && endpoint === getBaseUrl();
   }
   // ===== 状态变量 =====
 
@@ -144,7 +153,9 @@ export const useChatStore = defineStore("chat", () => {
   ) {
     const MAX_NETWORK_ERRORS = 15;
     let networkErrors = 0;
+    const endpoint = getBaseUrl();
     const current = () => version === sessionVersion && activeSessionId.value === sessionId &&
+      endpoint === getBaseUrl() &&
       (!options.placeholderId || messages.value.some((message) =>
         message.tempId === options.placeholderId && message.status === "streaming"));
 
@@ -233,6 +244,7 @@ export const useChatStore = defineStore("chat", () => {
     invalidateRequests();
     const version = sessionVersion;
     activeSessionId.value = sessionId;
+    const current = captureContext();
     messages.value = [];
     errorMessage.value = null;
     lastMeta.value = null;
@@ -247,7 +259,7 @@ export const useChatStore = defineStore("chat", () => {
     let isStillGenerating = false;
     try {
       const res = await getSessionHistory(sessionId);
-      if (version !== sessionVersion) return;
+      if (!current()) return;
       setHistory(res.messages);
 
       if (res.is_generating) {
@@ -256,10 +268,10 @@ export const useChatStore = defineStore("chat", () => {
         void pollPendingGeneration(sessionId, version, { placeholderId });
       }
     } catch (e: any) {
-      if (version !== sessionVersion) return;
+      if (!current()) return;
       setError(e.message || "Failed to load chat history");
     } finally {
-      if (version === sessionVersion && !isStillGenerating) isLoading.value = false;
+      if (current() && !isStillGenerating) isLoading.value = false;
     }
   }
 
@@ -292,22 +304,30 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   /** 在后端修改单条消息的内容并更新本地 store 缓存 */
-  async function editMessage(id: number, content: string) {
+  async function editMessage(id: number, content: string): Promise<MessageActionResult> {
+    if (activeSessionId.value === null) return { status: "stale" };
+    const current = captureContext();
     try {
       await apiUpdateMessage(id, content);
+      if (!current()) return { status: "stale" };
       const idx = messages.value.findIndex((m) => m.id === id);
       if (idx !== -1) {
         messages.value[idx].content = content;
       }
-    } catch (e: any) {
-      console.error("Failed to update message", e);
+      return { status: "success" };
+    } catch (e: unknown) {
+      if (!current()) return { status: "stale" };
+      return { status: "error", message: e instanceof Error ? e.message : "消息保存失败，请重试" };
     }
   }
 
   /** 在后端删除单条消息并同步从本地移除 */
-  async function deleteMessageById(id: number) {
+  async function deleteMessageById(id: number): Promise<MessageActionResult> {
+    if (activeSessionId.value === null) return { status: "stale" };
+    const current = captureContext();
     try {
       const res = await apiDeleteMessage(id);
+      if (!current()) return { status: "stale" };
       
       // 1. 查找此消息在本地列表中对应的气泡对象
       const idx = messages.value.findIndex((m) => m.id === id);
@@ -345,7 +365,7 @@ export const useChatStore = defineStore("chat", () => {
                 res.current_mood || undefined
               );
             }
-            return;
+            return { status: "success" };
           }
         }
       }
@@ -362,16 +382,20 @@ export const useChatStore = defineStore("chat", () => {
           res.current_mood || undefined
         );
       }
-    } catch (e: any) {
-      console.error("Failed to delete message", e);
+      return { status: "success" };
+    } catch (e: unknown) {
+      if (!current()) return { status: "stale" };
+      const message = e instanceof Error ? e.message : "消息删除失败，请重试";
+      errorMessage.value = message;
+      return { status: "error", message };
     }
   }
 
   async function receiveCurrentStream(params: ChatRequest, placeholderId: string, userTempId?: string) {
-    const version = sessionVersion;
+    const contextIsCurrent = captureContext();
     const cancellation = createCancellation();
     streamCancellation = cancellation;
-    const current = () => version === sessionVersion && !cancellation.cancelled;
+    const current = () => contextIsCurrent() && !cancellation.cancelled;
     try {
       await sendMessageStream(
         params,
@@ -688,12 +712,15 @@ export const useChatStore = defineStore("chat", () => {
     errorMessage.value = null;
   }
 
-  async function switchActiveCandidate(messageId: number, targetCandidateId: number) {
+  async function switchActiveCandidate(messageId: number, targetCandidateId: number): Promise<MessageActionResult> {
+    if (activeSessionId.value === null) return { status: "stale" };
+    const current = captureContext();
     const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS(); // 切换候选版本时立刻停止当前播放的音频，避免音画不同步
     errorMessage.value = null;
     try {
       const res = await apiSwitchCandidate(targetCandidateId);
+      if (!current()) return { status: "stale" };
       
       const msgIdx = messages.value.findIndex((m) => m.id === messageId);
       if (msgIdx !== -1) {
@@ -720,8 +747,12 @@ export const useChatStore = defineStore("chat", () => {
           res.current_mood || undefined
         );
       }
-    } catch (e: any) {
-      setError(e.message || "Failed to switch reply version");
+      return { status: "success" };
+    } catch (e: unknown) {
+      if (!current()) return { status: "stale" };
+      const message = e instanceof Error ? e.message : "候选切换失败，请重试";
+      errorMessage.value = message;
+      return { status: "error", message };
     }
   }
 
@@ -733,13 +764,13 @@ export const useChatStore = defineStore("chat", () => {
     if (validMessages.length === 0) return false;
     
     const oldestMsgId = validMessages[0].id;
-    const version = sessionVersion;
     const sessionId = activeSessionId.value;
+    const current = captureContext();
     isLoading.value = true;
     
     try {
       const res = await getSessionHistory(sessionId, 50, oldestMsgId);
-      if (version !== sessionVersion) return false;
+      if (!current()) return false;
       if (res.messages && res.messages.length > 0) {
         const newMsgs = res.messages.map((m) => ({
           ...m,
@@ -753,7 +784,7 @@ export const useChatStore = defineStore("chat", () => {
     } catch (e: any) {
       console.error("Failed to load more chat history", e);
     } finally {
-      if (version === sessionVersion) isLoading.value = false;
+      if (current()) isLoading.value = false;
     }
     return false;
   }
@@ -776,6 +807,8 @@ export const useChatStore = defineStore("chat", () => {
 
     activeStreamRequest.value = null;
   }
+
+  onScopeDispose(onServerChange($reset));
 
   return {
     // State

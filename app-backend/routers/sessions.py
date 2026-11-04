@@ -284,12 +284,19 @@ def trigger_memory_summary(session_id: int, db: Session = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    extracted_count = memory_extraction_service.summarize_and_store_memory(session_id, db)
+    from services.memory.memory_extraction_jobs import processing_status, request_capture
+    if session.persona is None:
+        raise HTTPException(status_code=409, detail="Session has no persona")
+    request_capture(session.persona.id, db, force=True)
+    state = processing_status(session.persona.id, db)
 
     return {
-        "message": "记忆提纯流程已完成",
+        "message": ("记忆提纯已完成" if state["status"] == "completed" else
+                    "消息来源已变化，旧候选已取消" if state["status"] == "failed" else
+                    "部分记忆待重试，将自动重试" if state["status"] == "retrying" else "记忆已接收，后台处理中"),
         "session_id": session_id,
-        "extracted_count": extracted_count,
+        "extracted_count": 0,
+        **state,
     }
 
 

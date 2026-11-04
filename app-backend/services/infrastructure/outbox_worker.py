@@ -178,7 +178,7 @@ def handle_delete_vector(payload_str: str):
 def handle_delete_vector_collection(payload_str: str):
     """幂等删除已被删除角色所拥有的所有向量。"""
     from chromadb.errors import NotFoundError
-    from services.infrastructure.clients import chroma_client
+    from services.infrastructure.clients import get_chroma_client
 
     payload = json.loads(payload_str)
     character_id = payload.get("character_id")
@@ -187,7 +187,7 @@ def handle_delete_vector_collection(payload_str: str):
 
     collection_name = f"character_{character_id}"
     try:
-        chroma_client.delete_collection(collection_name)
+        get_chroma_client().delete_collection(collection_name)
         print(f"[OUTBOX] Deleted ChromaDB collection: {collection_name}")
     except NotFoundError:
         # 成功删除后的重试，或者从未拥有过记忆的角色，目前已经处于所需的最终状态。

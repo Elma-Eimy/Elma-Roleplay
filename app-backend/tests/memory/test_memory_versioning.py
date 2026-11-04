@@ -230,7 +230,7 @@ class MemoryVersioningTests(unittest.TestCase):
         self.db.refresh(latest)
         self.assertEqual(first.id, latest.supersedes_id)
 
-    def test_relationship_resolver_parses_replace_and_falls_back_to_coexist(self):
+    def test_relationship_resolver_parses_replace_and_defers_provider_failure(self):
         provider = SimpleNamespace(
             generate=MagicMock(
                 return_value=SimpleNamespace(
@@ -265,13 +265,8 @@ class MemoryVersioningTests(unittest.TestCase):
             "get_llm_provider",
             return_value=failing_provider,
         ):
-            fallback = memory_extraction_service.resolve_memory_relationship_via_llm(
-                "旧信息", "新信息"
-            )
-        self.assertEqual(
-            {"relation": "coexist", "resolved_content": "新信息"},
-            fallback,
-        )
+            with self.assertRaises(memory_extraction_service.MemoryDecisionDeferred):
+                memory_extraction_service.resolve_memory_relationship_via_llm("旧信息", "新信息")
 
     def test_memory_age_counts_only_user_turns_on_current_branch(self):
         source = ChatMessage(

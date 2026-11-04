@@ -104,6 +104,7 @@ function personaFixture(getSession, getCharacter) {
   setActivePinia(createPinia());
   return createLoader({ mocks: {
     "@/api/sessions": { getSession }, "@/api/characters": { getCharacter },
+    "@/api/config": { getBaseUrl: () => "https://example.invalid" },
   }, globals: { uni: { getStorageSync: () => ({}), setStorageSync() {} } } })("store/personaStore.ts").usePersonaStore();
 }
 

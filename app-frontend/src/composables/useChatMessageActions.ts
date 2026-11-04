@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { ref, watch, onScopeDispose } from "vue";
 import type { Ref } from "vue";
 import { createSession } from "@/api/sessions";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
@@ -6,6 +6,8 @@ import { useChatStore } from "@/store/chatStore";
 import type { ChatMessage } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
+import { getBaseUrl } from "@/api/config";
+import { onServerChange } from "@/utils/connectionEvents";
 
 export function useChatMessageActions(
   currentSessionId: Ref<number | null>,
@@ -16,20 +18,35 @@ export function useChatMessageActions(
   const { playMessageTTS } = useAudioPlayer();
   const editingMessageId = ref<number | null>(null);
   const editMessageContent = ref("");
+  const editError = ref("");
+  const isSavingEdit = ref(false);
+  let editVersion = 0;
   let isMessageActionSheetOpen = false;
 
   const cancelEdit = () => {
+    editVersion++;
     editingMessageId.value = null;
     editMessageContent.value = "";
+    editError.value = "";
+    isSavingEdit.value = false;
   };
 
   const saveEdit = async () => {
-    if (editingMessageId.value === null) return;
-    await chatStore.editMessage(
-      editingMessageId.value,
-      editMessageContent.value
-    );
-    cancelEdit();
+    if (editingMessageId.value === null || isSavingEdit.value) return;
+    const id = editingMessageId.value, content = editMessageContent.value;
+    const version = editVersion, sessionId = currentSessionId.value, endpoint = getBaseUrl();
+    const current = () => version === editVersion && editingMessageId.value === id &&
+      sessionId === currentSessionId.value && endpoint === getBaseUrl();
+    isSavingEdit.value = true;
+    editError.value = "";
+    try {
+      const result = await chatStore.editMessage(id, content);
+      if (!current()) return;
+      if (result.status === "success" && editMessageContent.value === content) cancelEdit();
+      else if (result.status === "error") editError.value = result.message;
+    } finally {
+      if (current()) isSavingEdit.value = false;
+    }
   };
 
   const createBranchFromMessage = (message: ChatMessage) => {
@@ -69,14 +86,17 @@ export function useChatMessageActions(
   };
 
   const deleteMessage = (message: ChatMessage) => {
+    const version = editVersion;
+    const sessionId = currentSessionId.value, endpoint = getBaseUrl();
     uni.showModal({
       title: "删除消息",
       content: "确定要删除此消息吗？",
       confirmColor: "#D9655D",
       cancelColor: "#7C8983",
       success: async (modalResult) => {
-        if (modalResult.confirm) {
-          await chatStore.deleteMessageById(message.id);
+        if (modalResult.confirm && version === editVersion && sessionId === currentSessionId.value && endpoint === getBaseUrl()) {
+          const result = await chatStore.deleteMessageById(message.id);
+          if (result.status === "error") uni.showToast({ title: result.message, icon: "none" });
         }
       },
     });
@@ -96,6 +116,7 @@ export function useChatMessageActions(
 
   const onMessageLongPress = (message: ChatMessage) => {
     if (!message?.id || isMessageActionSheetOpen) return;
+    const version = editVersion, sessionId = currentSessionId.value, endpoint = getBaseUrl();
 
     const itemList = ["复制内容"];
     if (message.role === "assistant") {
@@ -115,6 +136,7 @@ export function useChatMessageActions(
       uni.showActionSheet({
         itemList,
         success: (result) => {
+          if (version !== editVersion || sessionId !== currentSessionId.value || endpoint !== getBaseUrl()) return;
           const action = itemList[result.tapIndex];
           if (action === "复制内容") {
             uni.setClipboardData({
@@ -125,6 +147,7 @@ export function useChatMessageActions(
           } else if (action === "朗读消息") {
             void playMessageTTS(message);
           } else if (action === "编辑消息") {
+            cancelEdit();
             editingMessageId.value = message.id;
             editMessageContent.value = message.content;
           } else if (action === "创建分支（多宇宙）") {
@@ -145,9 +168,15 @@ export function useChatMessageActions(
     }
   };
 
+  watch(currentSessionId, cancelEdit, { flush: "sync" });
+  const unsubscribe = onServerChange(cancelEdit);
+  onScopeDispose(() => { unsubscribe(); cancelEdit(); });
+
   return {
     editingMessageId,
     editMessageContent,
+    editError,
+    isSavingEdit,
     onMessageLongPress,
     cancelEdit,
     saveEdit,

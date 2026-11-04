@@ -8,8 +8,8 @@
 
 - `app-backend/`：FastAPI、SQLAlchemy、SQLite、ChromaDB；负责对话、Prompt、世界书、记忆、图谱与 TTS。
 - `app-frontend/`：Vue 3、uni-app、TypeScript、Pinia；目标平台为 H5、App 和微信小程序。
-- 修改前先阅读相关模块及其测试，避免仅凭 README 推断实现。项目概览见 `README.md`，文档入口见 `docs/README.md`。
-- 后端分层见 `docs/ARCHITECTURE.md`，前端 API 边界见 `app-frontend/src/api/README.md`。细节在对应文档维护，本文件只保留执行约定。
+- 修改前先阅读相关模块及其测试，避免仅凭 README 推断实现。项目概览见 [README](README.md)，文档入口见 [文档导航](docs/README.md)，按任务定位代码和测试见 [Agent 上手指南](docs/guides/AGENT_ONBOARDING.md)。
+- 模块分层见 [后端架构](docs/architecture/BACKEND.md) 与 [前端架构](docs/architecture/FRONTEND.md)，前端 API 边界见 [API 模块约定](app-frontend/src/api/README.md)。细节在对应文档维护，本文件只保留执行约定。
 
 ## 开发与模块边界
 
@@ -52,7 +52,7 @@
 - 后端自动测试优先使用 `python -m tests` 入口：它会复制源码到临时目录、生成测试配置并迁移临时库，不使用开发数据库或真实模型。直接运行 `unittest` 会跳过该隔离。
 - 后端行为变更新增或更新对应领域的有效回归，先运行相关领域测试；移动后端模块或改变启动、迁移、共享基础设施时运行完整后端回归，并核对测试临时副本的复制范围。
 - 前端逻辑改动运行 `npm test` 和 `npm run type-check`；跨端网络、流式传输、平台适配或共享界面改动按影响执行三个目标平台构建。真机行为不能仅凭构建成功认定通过。
-- 纯文档变更核对内容、路径与差异即可。交付时说明实际验证结果；未执行、依赖缺失或失败的检查明确注明，不声称通过。
+- 纯文档变更核对内容与差异，并在根目录运行 `python tools/check_docs.py` 检查 Git 跟踪的本地链接与路径大小写；新增文件需先纳入 Git 跟踪。该检查不访问外链、不校验标题锚点。交付时说明实际验证结果；未执行、依赖缺失或失败的检查明确注明，不声称通过。
 
 ## 本地数据与手动操作
 
@@ -62,6 +62,8 @@
 
 ## 文档同步
 
-- HTTP 接口契约统一维护在根目录 `API_TABLE.md`；涉及记忆筛选、统计或继承规则时同步更新 `docs/api/MEMORY_API.md`。
+- HTTP 接口统一从根目录 `API_TABLE.md` 索引，详细契约在 `docs/api/` 对应领域维护，不重复保存正文；涉及记忆筛选、统计或继承规则时同步更新 `docs/api/MEMORY_API.md`。接口文档变更运行后端隔离回归 `python -m tests --group api --pattern test_api_documentation.py`，校验路由覆盖与 JSON 请求样本，边界见 `docs/api/README.md`。
 - 启动、测试、目录或职责变更更新相应组件 README 与架构说明，不在前后端重复维护 API 总表。
-- 新增功能、修复或工程调整在 `CHANGELOG.md` 记录；新增文档同步 `docs/README.md` 导航。文档链接使用仓库相对路径。
+- 新增功能、修复或工程调整在 `docs/changelog/YYYY-MM.md` 按日期倒序记录，每项用 1–2 条简述；根 `CHANGELOG.md` 只保留最多 10 条近期摘要和按年分组的月度索引，超限移除最旧摘要。跨月创建新文件并更新索引，完整历史保留在月度文件中。
+- 新增文档同步 `docs/README.md` 导航；月度更新记录由根 `CHANGELOG.md` 索引，无需逐月重复登记到文档导航。文档链接使用仓库相对路径。
+- 文档按 `docs/README.md` 的用途分类：当前行为放 `features/`，模块职责放 `architecture/`，未完成规划放 `plans/`；移动文档同步修正引用，避免将待办当作已实现契约。

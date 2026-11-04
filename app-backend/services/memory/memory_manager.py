@@ -23,7 +23,7 @@ from core.models import (
     MemoryType,
     MessageRole,
 )
-from services.infrastructure.clients import chroma_client, openai_ef
+from services.infrastructure.clients import get_chroma_client, get_embedding_function
 import services.memory.persona_lineage as persona_lineage
 from core.config import settings
 
@@ -41,9 +41,9 @@ def get_character_collection(character_id: int):
     通过 metadata.persona_id 区分不同 Persona。
     """
     collection_name = f"character_{character_id}"
-    collection = chroma_client.get_or_create_collection(
+    collection = get_chroma_client().get_or_create_collection(
         name=collection_name,
-        embedding_function=openai_ef
+        embedding_function=get_embedding_function()
     )
 
     return collection
@@ -124,12 +124,14 @@ def add_memory_chunk(
     temporal_status: str = "unknown",
     temporal_note: Optional[str] = None,
     source_evidence: Optional[list] = None,
+    event_id: Optional[int] = None,
 ) -> MemoryChunk:
     """创建记忆，并在同一 SQLite 事务内登记向量同步任务。"""
     from services.memory.memory_facts import normalize_temporal
     temporal_status, temporal_note = normalize_temporal(temporal_status, temporal_note)
     chunk = MemoryChunk(
         persona_id=persona_id,
+        event_id=event_id,
         content=content,
         memory_type=memory_type,
         importance_score=importance_score,

@@ -69,6 +69,8 @@
       v-model="editMessageContent"
       :is-open="editingMessageId !== null"
       :is-android="isAndroid"
+      :is-saving="isSavingEdit"
+      :error="editError"
       @cancel="cancelEdit"
       @save="saveEdit"
     />
@@ -263,10 +265,16 @@ const inputWrapperStyle = computed(() => {
 const {
   editingMessageId,
   editMessageContent,
+  editError,
+  isSavingEdit,
   onMessageLongPress,
   cancelEdit,
   saveEdit,
 } = useChatMessageActions(currentSessionId, scrollToBottom);
+
+watch(() => chatStore.activeSessionId, (id) => {
+  if (id === null) currentSessionId.value = null;
+}, { flush: "sync" });
 
 // 平行宇宙时空树的状态变量
 const isBranchTreeOpen = ref(false);
@@ -521,7 +529,7 @@ watch(() => chatStore.isLoading, (loading) => {
 
 const onSend = async () => {
   const text = inputText.value.trim();
-  if (!text || chatStore.isLoading || currentSessionId.value === null) return;
+  if (!text || chatStore.isLoading || currentSessionId.value === null || chatStore.activeSessionId !== currentSessionId.value) return;
 
   inputText.value = "";
   chatStore.sendChatMessage(currentSessionId.value, text);

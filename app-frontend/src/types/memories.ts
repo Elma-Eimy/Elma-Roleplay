@@ -67,7 +67,11 @@ export interface CharacterMemoryOverviewResponse {
 export interface TriggerSummaryResponse {
   message: string;
   session_id: number;
+  /** 保留兼容；异步入队入口固定为 0，处理结果看 status 和记忆列表。 */
   extracted_count: number;
+  status: "completed" | "pending" | "retrying" | "failed";
+  pending_count: number;
+  error_codes: string[];
 }
 
 export interface MemoryCreateResponse {

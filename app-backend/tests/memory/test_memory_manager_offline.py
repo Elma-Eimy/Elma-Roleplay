@@ -108,8 +108,8 @@ def _load_memory_manager():
 
     clients_mod = types.ModuleType("services.infrastructure.clients")
     clients_mod.LLM_MODEL = "offline"
-    clients_mod.chroma_client = MagicMock(name="offline_chroma_client")
-    clients_mod.openai_ef = MagicMock(name="offline_embedding_function")
+    clients_mod.get_chroma_client = MagicMock(name="get_offline_chroma_client")
+    clients_mod.get_embedding_function = MagicMock(name="get_offline_embedding_function")
 
     lineage_mod = types.ModuleType("services.memory.persona_lineage")
     lineage_mod.get_ancestor_persona_ids = MagicMock(return_value=[7])

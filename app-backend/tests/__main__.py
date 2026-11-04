@@ -38,6 +38,13 @@ def main():
             )
         for name in ("main.py", "schemas.py", "alembic.ini"):
             shutil.copy2(backend / name, workspace / name)
+        # 仅复制接口索引和固定领域契约，不带入 docs/local 或运行数据。
+        from scripts.api_documentation import DOMAIN_DOCUMENTS
+        docs = workspace / "project_docs"
+        (docs / "docs" / "api").mkdir(parents=True)
+        shutil.copy2(backend.parent / "API_TABLE.md", docs / "API_TABLE.md")
+        for name in DOMAIN_DOCUMENTS:
+            shutil.copy2(backend.parent / "docs" / "api" / name, docs / "docs" / "api" / name)
         config = {
             "llm": {
                 "chat_base_url": "https://example.invalid/v1",

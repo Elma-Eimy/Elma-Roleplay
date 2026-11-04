@@ -290,9 +290,8 @@ class MemoryHandoffTests(unittest.TestCase):
                 "get_effective_memory_extract_limit",
                 return_value=13,
             ),
-            patch.object(
-                chat_router.chat_turn_service.memory_extraction_service,
-                "summarize_and_store_memory",
+            patch(
+                "services.memory.memory_extraction_jobs.request_capture",
                 return_value=1,
             ) as summarize_mock,
             patch.object(
@@ -309,7 +308,7 @@ class MemoryHandoffTests(unittest.TestCase):
             chat_router.chat_turn_service.run_post_turn_maintenance(
                 session_id=1, persona_id=2
             )
-            summarize_mock.assert_called_once_with(1, db)
+            summarize_mock.assert_called_once_with(2, db)
 
 
 if __name__ == "__main__":

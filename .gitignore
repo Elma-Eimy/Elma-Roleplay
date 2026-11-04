@@ -3,6 +3,7 @@
 
 # Local Python test caches.
 **/.pytest_cache/
+**/__pycache__/
 
 # Personal drafts and third-party reference copies remain local.
 /docs/local/

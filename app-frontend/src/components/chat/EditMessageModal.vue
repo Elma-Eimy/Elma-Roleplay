@@ -10,12 +10,14 @@
         class="edit-textarea"
         :value="modelValue"
         :maxlength="-1"
+        :disabled="isSaving"
         :show-confirm-bar="false"
         @input="handleInput"
       ></textarea>
+      <text v-if="error" class="edit-error" role="alert">{{ error }}</text>
       <view class="modal-actions">
         <view class="modal-btn cancel" @tap="emit('cancel')">取消</view>
-        <view class="modal-btn save" @tap="emit('save')">保存</view>
+        <view class="modal-btn save" :class="{ 'is-disabled': isSaving }" :aria-disabled="isSaving" @tap="!isSaving && emit('save')">{{ isSaving ? "保存中…" : "保存" }}</view>
       </view>
     </view>
   </view>
@@ -26,6 +28,8 @@ defineProps<{
   isOpen: boolean;
   modelValue: string;
   isAndroid: boolean;
+  isSaving?: boolean;
+  error?: string;
 }>();
 
 const emit = defineEmits<{
@@ -41,6 +45,17 @@ const handleInput = (event: Event) => {
 </script>
 
 <style scoped>
+.edit-error {
+  display: block;
+  color: var(--app-color-danger, #d9655d);
+  margin-top: 16rpx;
+  font-size: 24rpx;
+}
+
+.modal-btn.is-disabled {
+  opacity: 0.55;
+}
+
 .modal-backdrop {
   position: fixed;
   top: 0;
