@@ -42,6 +42,10 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 
 ## 核心特性
 
+群聊目前完成 M1-A 数据基础：会话区分 single/group，Persona 按成员位置归属会话；尚未开放群聊创建与聊天。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
+
+HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
+
 角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 未配置时从现有非思考聊天模型初始化一次。使用流程和范围见 [角色卡双版本阅读](../docs/features/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
 
 ### 1. 优化 Prompt Caching 的提示词设计

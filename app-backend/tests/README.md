@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。
+
 `memory/test_memory_processing_status.py` 验证只读状态接口不入队、故事隔离、排队与运行计数、重试和取消、缺失故事或 Persona，以及捕获成功时间；候选提交时间由 `test_memory_extraction_jobs.py` 覆盖。`infrastructure/test_memory_completion_migration.py` 检查旧任务升级后时间为空，升降级保留任务。均使用临时库和模型替身。
 
 `api/test_api_documentation.py` 校验根 API 总表与真实路由集合一致，并使用真实请求模型校验每个 JSON 请求接口的文档样本。隔离入口将总表和 `scripts/api_documentation.py` 固定清单中的领域契约复制到临时副本的 `project_docs/`，不读取开发配置或本地草稿；检查边界与样本写法见 [API 维护说明](../../docs/api/README.md)。单独运行：`python -m tests --group api --pattern test_api_documentation.py`。

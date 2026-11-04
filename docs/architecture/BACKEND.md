@@ -24,6 +24,16 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 ## 模块边界
 
+群聊 M1-A 已建立 `Session.kind` 与 `Session.personas` 数据基础。单聊使用 slot 0，群聊预留 slot 1–3；`Session.persona` 只读兼容单聊，对群聊返回空。`services/conversation/session_access.py` 在旧入口读取或修改前检查类型，应用工厂统一将类型冲突转换为 HTTP 409。旧单聊列表在计数和分页前排除群聊；角色被群聊引用时拒绝删除。群聊创建、来源快照与界面仍待后续批次实现。
+
+HTTP 接口统一使用 `application/session_routes.py` 的 `SessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得单聊限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
+
+直接服务调用和后台重试仍通过 `get_single_session`、`get_single_message` 或 `get_single_persona` 加载资源；内部步骤复用已加载对象，跨事务重新加载。`api/test_session_access_architecture.py` 自动发现全部服务中同时声明 `db` 和上述资源参数的公开函数、类方法，使用群聊夹具验证拒绝访问且不改动数据，不维护入口名单。按显式人格隔离的共享算法使用 `@session_kind_agnostic("原因")` 声明例外；该标记不豁免 HTTP 校验，新增例外需要审查其成员选择与分支语义。自建数据库会话的回合维护、按任务 ID 调度的 Worker 继续由后台专项测试覆盖。新增资源标识命名或新的任务调度机制时，需要扩展发现规则和专项测试。
+
+列表筛选与角色删除保护仍是各自的业务规则。未来开放群聊 API 时，应新增明确的群聊访问策略及对应回归，不通过关闭现有单聊边界开放接口。
+
+Alembic 在线迁移在事务外暂停当前连接的外键执行，随后用 `BEGIN IMMEDIATE` 将表重建与版本号更新纳入同一事务，提交前执行 `foreign_key_check`，失败整体回滚，退出时恢复原外键设置。这样重建 Persona 或 Session 表时不会触发引用表的级联删除和置空。普通业务连接仍启用外键；含群聊数据时拒绝降级到 M1-A 之前的结构。
+
 | 位置 | 负责 | 不应放入 |
 | --- | --- | --- |
 | `main.py` | 暴露 ASGI 的 `app` | 接口处理、数据查询、后台任务管理 |
