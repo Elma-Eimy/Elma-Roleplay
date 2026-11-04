@@ -15,13 +15,19 @@ export async function createSession(
   params: CreateSessionParams
 ): Promise<CreateSessionResponse> {
   const db = getMockDB();
+  if (db.groupSessions?.some(group => group.session_id === params.parent_session_id)) {
+    throw new Error("此操作仅支持单聊");
+  }
   const parentSession = params.parent_session_id
     ? db.sessions.find((s) => s.id === params.parent_session_id)
     : null;
 
   const char = db.characters.find((c) => c.id === params.character_id);
-  const newSessionId = Date.now();
-  const personaId = Date.now() + 1;
+  const groups = db.groupSessions ?? [];
+  const newSessionId = Math.max(Date.now(), ...db.sessions.map(session => session.id),
+    ...groups.map(group => group.session_id)) + 1;
+  const personaId = Math.max(Date.now(), ...db.sessions.map(session => session.persona?.id ?? 0),
+    ...groups.flatMap(group => group.members.map(member => member.persona_id))) + 1;
 
   const mockPersona: PersonaDetail = {
     id: personaId,

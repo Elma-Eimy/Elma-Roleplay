@@ -4,6 +4,7 @@
  */
 
 import { notifyServerChange } from "../utils/connectionEvents";
+import type { GroupSessionDetail } from "../types/groupSessions";
 
 // 动态获取及保存 API 基础 URL 逻辑，方便在部署时 runtime 修改端口及地址
 export function getSavedBaseUrl(): string {
@@ -84,6 +85,7 @@ export interface MockDatabase {
   sessions: any[];
   messages: Record<number, any[]>; // 会话ID -> 消息数组映射 (sessionId -> Message[])
   lorebooks?: any[];
+  groupSessions?: GroupSessionDetail[];
 }
 
 function getInitialMockDB(): MockDatabase {

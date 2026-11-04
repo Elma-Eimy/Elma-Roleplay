@@ -4,6 +4,7 @@
 
 | 模块 | 职责 | 类型 | 离线实现 |
 | --- | --- | --- | --- |
+| `groupSessions.ts` | 固定成员群聊创建、列表、详情与整群删除 | `../types/groupSessions.ts` | `mock/groupSessions.ts`；原卡起步可用，来源快照明确不支持 |
 | `sessions.ts` | 创建、列表、分支、详情、标题、删除与认知更新 | `../types/sessions.ts` | `mock/sessions.ts` |
 | `roleStates.ts` | 当前角色状态读取和携带版本的增量校正 | `../types/roleState.ts` | 明确提示暂不支持，不伪造成功 |
 | `portraits.ts` | 角色多立绘上传、管理与当前剧情节点的手动选择 | `../types/portraits.ts` | 明确提示暂不支持，不伪造成功 |
@@ -22,3 +23,5 @@ import type { MemoryChunk } from "@/types/memories";
 `api/` 的领域模块负责请求路径、参数与 `USE_MOCK` 分流；`mock/` 只实现本地行为，不发 HTTP 请求。类型模块只依赖类型，不依赖 Store、组件或 Mock。角色记忆概览在离线模式下复用 `mock/sessions.ts` 的分页和 `mock/memories.ts` 的筛选，避免从 Mock 反向调用 HTTP 入口。
 
 此次拆分保留原有 Mock 行为，不将其视为后端所有业务规则的完整实现。接口契约见根目录 [API 总表](../../../API_TABLE.md)，回归范围见 [前端测试说明](../../tests/README.md)。
+
+群聊数据使用独立类型和 Mock 存储集合，不混入旧单聊列表。创建请求失败不自动重发；Mock 的来源快照明确报错，角色仍被群聊引用时拒绝删除。页面与防重复提交交互由后续 M1-D 接入。
