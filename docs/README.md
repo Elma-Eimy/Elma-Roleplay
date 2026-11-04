@@ -22,6 +22,7 @@
 | [当前角色状态](features/ROLE_STATE.md) | 增量状态、人工校正、候选与分支恢复 |
 | [图谱与记忆一致性](features/GRAPH_MEMORY_CONSISTENCY.md) | 共同事实、联合检索、证据、时间与分叉边界 |
 | [进行中事件](features/MEMORY_EVENTS.md) | 跨批事件缓冲、阶段保存、长期准入与重试 |
+| [群聊起点与成员管理](features/GROUP_CHAT.md) | 创建查看与整群删除、来源选择、提交保护和当前能力边界 |
 
 ## 接口契约
 
@@ -52,7 +53,7 @@
 
 [群聊模块实施计划](plans/group-chat/README.md) 是大型群聊开发的接续入口，维护六个模块的依赖、状态、专项设计组织方式与验收记录要求。
 
-[M1 群聊数据与人格设计](plans/group-chat/M1_DATA_AND_PERSONAS.md) 明确多 Persona、来源快照、单聊兼容、迁移、删除保护和实施批次；附 M1-A/B/C 实现与隔离验证记录，最小界面待实现。
+[M1 群聊数据与人格设计](plans/group-chat/M1_DATA_AND_PERSONAS.md) 明确多 Persona、来源快照、单聊兼容、迁移、删除保护和实施批次；附 M1-A–D 实现与隔离验证记录，App/微信真机流程待验收。
 
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 

@@ -42,7 +42,7 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 
 ## 核心特性
 
-群聊目前完成 M1-A/B/C：会话区分 single/group，Persona 按成员位置归属会话；服务与 HTTP 接口支持创建、冻结来源快照、列表详情和整群删除，页面入口尚未接入。群聊契约见[群聊管理 API](../docs/api/GROUP_SESSIONS.md)。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
+群聊目前完成 M1-A–D 代码实现：会话区分 single/group，Persona 按成员位置归属会话；服务与 HTTP 接口支持创建、冻结来源快照、列表详情和整群删除，前端已提供最小页面；群聊生成尚未开放。群聊契约见[群聊管理 API](../docs/api/GROUP_SESSIONS.md)。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
 
 HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
 
