@@ -373,6 +373,11 @@ class TTSService:
         """
         异步方法：合成文本为音频 MP3 文件，自动进行哈希缓存，并返回相对于静态路由的音频 URL 路径。
         """
+        db_message = None
+        if message_id is not None and db is not None:
+            from services.conversation.session_access import get_single_message
+            db_message = get_single_message(message_id, db)
+
         if not settings.TTS_ENABLED:
             raise ValueError("TTS 语音合成服务在配置中已被禁用。")
 
@@ -384,12 +389,9 @@ class TTSService:
         os.makedirs(cache_dir, exist_ok=True)
 
         is_message_bound = False
-        db_message = None
 
         character_name = None
         if message_id is not None and db is not None:
-            from core.models import ChatMessage
-            db_message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
             if not db_message:
                 raise ValueError(f"Message ID {message_id} 在数据库中不存在。")
             
@@ -534,6 +536,11 @@ class TTSService:
         """
         同步方法：供测试脚本或非异步上下文使用
         """
+        db_message = None
+        if message_id is not None and db is not None:
+            from services.conversation.session_access import get_single_message
+            db_message = get_single_message(message_id, db)
+
         if not settings.TTS_ENABLED:
             raise ValueError("TTS 语音合成服务在配置中已被禁用。")
 
@@ -544,12 +551,9 @@ class TTSService:
         os.makedirs(cache_dir, exist_ok=True)
 
         is_message_bound = False
-        db_message = None
 
         character_name = None
         if message_id is not None and db is not None:
-            from core.models import ChatMessage
-            db_message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
             if not db_message:
                 raise ValueError(f"Message ID {message_id} 在数据库中不存在。")
             

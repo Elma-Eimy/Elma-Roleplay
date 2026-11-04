@@ -1,4 +1,5 @@
 """Persist candidate components, plan without write locks, and retry independently."""
+from services.conversation.session_access import session_kind_agnostic
 import copy
 import json
 import logging
@@ -9,6 +10,7 @@ from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import IntegrityError
 from core.config import settings
 from core.models import MemoryChunk, MemoryExtractionJob, SessionPersona, MemoryType
+from services.conversation.session_access import get_single_persona, SessionKindConflict
 from services.memory.graph_evidence import sources_are_current, memory_evidence_is_current, content_fingerprint
 from services.memory.memory_event_buffer import (
     load_event_snapshot, plan_events, apply_event_plan, bind_buffered_graph_dependencies,
@@ -25,6 +27,7 @@ def _dump(value):
 
 
 def enqueue_candidates(persona_id, cards, entities, relations, sources, baseline, db, *, force=False):
+    get_single_persona(persona_id, db)
     indices = {card["_extraction_index"] for card in cards}
     parent = {index: index for index in indices}
 
@@ -77,6 +80,7 @@ def enqueue_candidates(persona_id, cards, entities, relations, sources, baseline
 
 
 def queue_capture_retry(persona_id, db, *, force=False, reason="extraction_failed"):
+    get_single_persona(persona_id, db)
     db.rollback()
     key = f"capture:{persona_id}"
     job = db.query(MemoryExtractionJob).filter_by(dedupe_key=key).first()
@@ -108,6 +112,7 @@ def request_capture(persona_id, db, *, force=False):
     queue_capture_retry(persona_id, db, force=force, reason=None)
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def processing_status(persona_id, db):
     rows = db.query(MemoryExtractionJob.status, MemoryExtractionJob.last_error_code).filter(
         MemoryExtractionJob.persona_id == persona_id, MemoryExtractionJob.status.in_(ACTIVE)).all()
@@ -124,6 +129,7 @@ def processing_status(persona_id, db):
             "last_completed_at": completed_at.isoformat() + "Z" if completed_at else None}
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def pending_context(persona_id, db, before_message_id):
     result = []
     rows = db.query(MemoryExtractionJob).filter(
@@ -152,6 +158,15 @@ def _claim(job_id, db):
     row = db.get(MemoryExtractionJob, job_id)
     if row is None or row.status not in ACTIVE:
         db.rollback()
+        return None
+    try:
+        get_single_persona(row.persona_id, db)
+    except SessionKindConflict:
+        row.status = "cancelled"
+        row.last_error_code = "unsupported_session_kind"
+        row.payload_json = "{}"
+        row.dedupe_key = row.lease_token = row.lease_until = None
+        db.commit()
         return None
     if row.status == "processing" and row.lease_until and row.lease_until > now:
         db.rollback()
@@ -418,6 +433,7 @@ def process_job(job_id, db):
 
 
 def force_pending_events(persona_id, db):
+    get_single_persona(persona_id, db)
     for row in db.query(MemoryExtractionJob).filter(
             MemoryExtractionJob.persona_id == persona_id, MemoryExtractionJob.status.in_(ACTIVE)).all():
         payload = json.loads(row.payload_json)
@@ -428,6 +444,7 @@ def force_pending_events(persona_id, db):
     db.commit()
 
 
+@session_kind_agnostic('Worker 必须扫描所有类型的任务；_claim 负责取消不支持的类型')
 def process_due_jobs(db, persona_id=None, *, force=False, limit=16):
     now = datetime.utcnow()
     query = db.query(MemoryExtractionJob).filter(MemoryExtractionJob.status.in_(ACTIVE))

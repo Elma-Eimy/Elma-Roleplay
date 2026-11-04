@@ -1,9 +1,11 @@
 """从对话中提取、规范化并持久化长期记忆。"""
 
+from services.conversation.session_access import session_kind_agnostic
 import json
 import logging
 import re
 from sqlalchemy.orm import Session as DBSession
+from services.conversation.session_access import get_single_session
 from core.models import SessionPersona, ChatMessage, MemoryType, MessageRole
 from services.infrastructure.llm_provider import get_llm_provider
 from services.memory.memory_manager import add_memory_chunk
@@ -266,6 +268,7 @@ def normalize_extracted_memories(
     return _coalesce_batch_fragments(parsed)
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def get_confirmed_message_upper_bound(
     session_id: int,
     db: DBSession,
@@ -294,9 +297,8 @@ def get_unsummarized_count(session_id: int, db: DBSession) -> int:
 
     供调用方（如 main.py 的 chat 端点）判断是否需要触发 summarize_and_store_memory。
     """
-    persona = db.query(SessionPersona).filter(
-        SessionPersona.session_id == session_id
-    ).first()
+    session = get_single_session(session_id, db)
+    persona = session.persona if session is not None else None
 
     if not persona:
         return 0
@@ -323,14 +325,17 @@ def get_pending_handoff_count(session_id: int, db: DBSession) -> int:
     当前回合不能进入长期记忆，但仍必须留在短期上下文中，直到下一轮确认
     并完成提纯。
     """
-    persona = db.query(SessionPersona).filter(
-        SessionPersona.session_id == session_id
-    ).first()
+    session = get_single_session(session_id, db)
+    persona = session.persona if session is not None else None
     if not persona:
         return 0
 
+    return _pending_handoff_count(persona, db)
+
+
+def _pending_handoff_count(persona, db):
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
+        ChatMessage.session_id == persona.session_id,
         ChatMessage.is_active == True,
     )
     if persona.last_summarized_msg_id is not None:
@@ -365,12 +370,14 @@ def get_memory_handoff_history_limit(session_id: int, db: DBSession) -> int:
     临时扩展到未总结消息数；为防止外部服务长期失败导致 Prompt 无界增长，
     扩展上限与单次提纯批次大小保持一致。指针推进后会自动恢复常规窗口。
     """
+    session = get_single_session(session_id, db)
+    return _handoff_history_limit(session.persona if session is not None else None, db)
+
+
+def _handoff_history_limit(persona, db):
     base_limit = max(1, int(settings.APP_CONTEXT_HISTORY_LIMIT))
-    unsummarized_count = get_pending_handoff_count(session_id, db)
-    retained_unsummarized = min(
-        unsummarized_count,
-        get_memory_extract_batch_size(),
-    )
+    unsummarized_count = _pending_handoff_count(persona, db) if persona is not None else 0
+    retained_unsummarized = min(unsummarized_count, get_memory_extract_batch_size())
     return max(base_limit, retained_unsummarized)
 
 
@@ -493,9 +500,8 @@ def summarize_and_store_memory(session_id: int, db: DBSession, *, flush_events: 
     返回成功入库的记忆条数。
     """
     # Step 1: 获取 Session 对应的 Persona
-    persona = db.query(SessionPersona).filter(
-        SessionPersona.session_id == session_id
-    ).first()
+    session = get_single_session(session_id, db)
+    persona = session.persona if session is not None else None
 
     if not persona:
         print(f"[WARN] summarize_and_store_memory: Session {session_id} 没有关联的 Persona")

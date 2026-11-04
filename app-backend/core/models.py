@@ -9,7 +9,7 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 
 from sqlalchemy import (
     Table, Column, Integer, String, Text, Float, Boolean,
-    ForeignKey, DateTime, Enum as SAEnum, Index, text
+    ForeignKey, DateTime, Enum as SAEnum, Index, text, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, relationship, backref
 from sqlalchemy.sql import func
@@ -117,8 +117,12 @@ class CharacterPackageImport(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (CheckConstraint("kind IN ('single', 'group')", name="ck_sessions_kind"),)
 
     id                = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(10), nullable=False, default="single", server_default="single")
+    shared_setting = Column(Text, nullable=True)
+    user_nickname = Column(String(50), nullable=True)
     parent_session_id = Column(
         Integer,
         ForeignKey("sessions.id", ondelete="SET NULL"),
@@ -147,12 +151,20 @@ class Session(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # 关联
-    persona = relationship(
+    personas = relationship(
         "SessionPersona",
         back_populates="session",
-        uselist=False,
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+        order_by="SessionPersona.member_slot",
     )
+
+    @property
+    def persona(self):
+        """兼容单聊读取；群聊必须显式选择成员。"""
+        if self.kind not in (None, "single"):
+            return None
+        return next((item for item in self.personas if item.member_slot in (None, 0)), None)
+
     messages = relationship(
         "ChatMessage",
         back_populates="session",
@@ -169,7 +181,7 @@ class Session(Base):
 
 # ──────────────────────────────────────────────
 # 3. 子人格/动态状态表 (SessionPersona)
-#    一个 Session 拥有唯一一个 Persona。
+#    单聊拥有 slot 0；群聊成员使用 slot 1–3。
 #
 #    parent_persona_id 构成继承链：
 #      session1.persona(id=1)
@@ -182,12 +194,17 @@ class Session(Base):
 
 class SessionPersona(Base):
     __tablename__ = "session_personas"
+    __table_args__ = (
+        UniqueConstraint("session_id", "member_slot", name="uq_personas_session_slot"),
+        UniqueConstraint("session_id", "character_id", name="uq_personas_session_character"),
+        CheckConstraint("member_slot BETWEEN 0 AND 3", name="ck_personas_member_slot"),
+    )
 
     id           = Column(Integer, primary_key=True, index=True)
+    member_slot = Column(Integer, nullable=False, default=0, server_default="0")
     session_id   = Column(
         Integer,
         ForeignKey("sessions.id", ondelete="CASCADE"),
-        unique=True,
         nullable=False
     )
     character_id = Column(
@@ -247,7 +264,7 @@ class SessionPersona(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # 关联
-    session   = relationship("Session",   back_populates="persona")
+    session   = relationship("Session",   back_populates="personas")
     character = relationship("Character", back_populates="personas")
     memories  = relationship(
         "MemoryChunk",

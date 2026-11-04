@@ -11,6 +11,7 @@ ChromaDB 架构：
   通过 metadata 中的 persona_id 字段 + $in 操作符实现单次查询跨继承链检索
 """
 
+from services.conversation.session_access import session_kind_agnostic
 import json
 import time
 from datetime import datetime, timezone
@@ -108,6 +109,7 @@ def _enqueue_vector_upsert(
     ))
 
 
+@session_kind_agnostic('底层记忆存储按显式人格隔离，调用方负责选择成员')
 def add_memory_chunk(
     persona_id: int,
     character_id: int,
@@ -231,6 +233,7 @@ def calculate_memory_age_turns(
     return turns
 
 
+@session_kind_agnostic('底层记忆存储按显式人格隔离，调用方负责选择成员')
 def retrieve_memories(
     persona_id: int,
     character_id: int,
@@ -502,6 +505,7 @@ def get_superseded_memory_ids(
 # 5. 删除一致性（ChromaDB 清理）
 # ──────────────────────────────────────────────
 
+@session_kind_agnostic('底层记忆存储按显式人格隔离，调用方负责选择成员')
 def delete_persona_memories(
     persona_id: int,
     character_id: int,

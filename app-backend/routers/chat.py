@@ -11,7 +11,7 @@
 
 import json
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -26,7 +26,9 @@ import services.conversation.message_service as message_service
 from services.parse import _extract_xml_block, extract_stream_reply_prefix
 from core.locking import get_session_lock
 
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 
 async def _prepare_turn_and_messages(request: ChatRequest, db: Session):

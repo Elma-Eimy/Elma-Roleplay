@@ -264,7 +264,7 @@ class MemoryEventBufferTests(unittest.TestCase):
         self.extract([self.card()])
         character = self.persona.character
         with patch.object(context_assembler, "retrieve_joint_memories", return_value=[]), \
-             patch.object(context_assembler, "resolve_state", return_value=({"state": {}}, [])), \
+             patch.object(context_assembler, "_resolve_state", return_value=({"state": {}}, [])), \
              patch.object(context_assembler, "build_chat_messages", return_value=[]) as build:
             asyncio.run(context_assembler.assemble_prompt_context(
                 self.session_id, character, self.persona, self.current_user, None, self.db))

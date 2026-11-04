@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from services.conversation.session_access import session_kind_agnostic
 import re
 
 from sqlalchemy.orm import Session as DBSession
@@ -31,6 +32,7 @@ def _clip_middle(value: str, limit: int) -> str:
     return value[:head] + marker + (value[-tail:] if tail else "")
 
 
+@session_kind_agnostic('按显式会话 ID 和消息上界读取局部历史，不选择单个人格')
 def build_contextual_retrieval_query(
     session_id: int,
     user_msg: ChatMessage,

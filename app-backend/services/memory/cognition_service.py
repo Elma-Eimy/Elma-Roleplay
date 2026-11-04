@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
+from services.conversation.session_access import get_single_persona
 from core.models import ChatMessage, SessionPersona
 from services.infrastructure.llm_provider import get_llm_provider
 
@@ -16,7 +17,7 @@ def get_cognition_unseen_count(
     db: DBSession,
 ) -> int:
     """返回自上次认知更新以来的新消息数量。"""
-    persona = db.get(SessionPersona, persona_id)
+    persona = get_single_persona(persona_id, db)
     if not persona:
         return 0
 
@@ -32,7 +33,7 @@ def get_cognition_unseen_count(
 
 def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
     """根据新增对话更新 ``SessionPersona.cognition_state``。"""
-    persona = db.get(SessionPersona, persona_id)
+    persona = get_single_persona(persona_id, db)
     if not persona:
         print(f"[WARN] update_cognition_state: Persona {persona_id} 不存在")
         return None
@@ -89,7 +90,7 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
         )
         new_cognition = response.choices[0].message.content.strip()
 
-        persona = db.get(SessionPersona, persona_id)
+        persona = get_single_persona(persona_id, db)
         if persona:
             persona.cognition_state = new_cognition
             persona.last_cognition_update_msg_id = last_msg_id

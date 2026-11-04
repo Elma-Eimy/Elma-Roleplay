@@ -1,5 +1,6 @@
 """持久事件身份、追加阶段、来源校验与有界缓冲。"""
 
+from services.conversation.session_access import session_kind_agnostic
 import copy
 import json
 import logging
@@ -23,6 +24,7 @@ class EventBufferConflict(RuntimeError):
         super().__init__(reason)
 
 
+@session_kind_agnostic('事件缓冲按显式人格隔离，调用方负责选择成员')
 def prune_graph_payload(payload, persona_id, db):
     """图谱辅助来源失效只移除对应图谱候选，不使事件正文失效。"""
     available = {source["id"]: source for source in payload.get("graph_sources", [])}
@@ -55,6 +57,7 @@ def _snapshot_rows(persona_id, db):
             + query.filter_by(status="checkpointed").order_by(last_source.desc(), MemoryEventBuffer.id.desc()).limit(MAX_CHECKPOINT_CONTEXT).all())
 
 
+@session_kind_agnostic('事件缓冲按显式人格隔离，调用方负责选择成员')
 def load_event_snapshot(persona_id, db, before_message_id=None):
     """返回脱离 ORM 的快照，不将父故事的未来缓冲注入当前故事。"""
     snapshot = []
@@ -89,6 +92,7 @@ def event_context(snapshot):
             if item["valid"]][:8]
 
 
+@session_kind_agnostic('事件缓冲按显式人格隔离，调用方负责选择成员')
 def assert_event_snapshot(persona_id, snapshot, db):
     actual = _snapshot_rows(persona_id, db)
     if {row.id: row.revision for row in actual} != {item["id"]: item["revision"] for item in snapshot}:
@@ -145,6 +149,7 @@ def resolve_graph_dependencies(items, memory_bindings):
     return resolved
 
 
+@session_kind_agnostic('事件缓冲按显式人格隔离，调用方负责选择成员')
 def bind_buffered_graph_dependencies(persona_id, memory_bindings, db):
     """将本批已落库卡片的证据绑定写入进行中事件的跨卡图谱候选中。"""
     for row in db.query(MemoryEventBuffer).filter_by(persona_id=persona_id, status="open").all():
@@ -289,6 +294,7 @@ def plan_events(parsed, entities, relations, sources, snapshot, *, force=False, 
                       "open": sum(item["status"] == "open" for item in pending.values())}}
 
 
+@session_kind_agnostic('事件缓冲按显式人格隔离，调用方负责选择成员')
 def apply_event_plan(persona_id, plan, db):
     assert_event_snapshot(persona_id, plan["snapshot"], db)
     retained = {item["id"] for item in plan["pending"] if item["id"] > 0}

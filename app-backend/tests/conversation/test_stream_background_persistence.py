@@ -442,7 +442,7 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             lock.release()
             return {}
 
-        with patch.object(sessions_router.session_service, "get_candidates_by_parent", side_effect=finish_during_query):
+        with patch.object(sessions_router.session_service, "_candidates_for_session", side_effect=finish_during_query):
             result = sessions_router.get_session_history(self.session_id, db=self.db)
         self.assertTrue(result["is_generating"])
         self.assertEqual("user", result["messages"][-1]["role"])

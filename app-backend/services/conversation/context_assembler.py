@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session as DBSession
 from fastapi.concurrency import run_in_threadpool
 import core.models as models
 from core.models import SessionPersona, ChatMessage, Character, MessageRole
+from services.conversation.session_access import get_single_session
 import services.conversation.session_service as session_service
-from services.memory.memory_extraction_service import get_memory_handoff_history_limit
+from services.memory.memory_extraction_service import _handoff_history_limit
 from services.conversation.prompt_compiler import build_chat_messages
-from services.conversation.role_state_service import resolve_state
+from services.conversation.role_state_service import _resolve_state
 from services.memory.joint_retrieval import retrieve_joint_memories
 from services.memory.memory_event_buffer import load_event_snapshot, event_context
 from services.memory.memory_extraction_jobs import pending_context
@@ -93,6 +94,9 @@ async def assemble_prompt_context(
     Returns:
         标准的 dict 形式 messages payload
     """
+    session = get_single_session(session_id, db)
+    if session is None or session.persona is None:
+        raise LookupError("故事不存在")
     # Resolve pronouns and ellipsis with a small, branch-local context window.
     # The same semantic query is shared by vector memory and graph retrieval.
     rag_query = build_contextual_retrieval_query(session_id, user_msg, db)
@@ -108,13 +112,13 @@ async def assemble_prompt_context(
 
     # 3. 提取历史记录轮次。后台长期记忆提纯完成前，临时扩大窗口以保留
     # 尚未总结的消息，避免它们先离开短期上下文形成记忆空档。
-    history_limit = get_memory_handoff_history_limit(session_id, db)
+    history_limit = _handoff_history_limit(persona, db)
     if old_reply is not None:
         # 再生时旧的激活回复位于 user_msg 之后，会占用一次历史查询名额但随后
         # 被 id 边界过滤，因此额外补一个名额。
         history_limit += 1
-    recent_records = session_service.get_session_history_with_inheritance(
-        session_id, db, history_limit
+    recent_records = session_service._history_for_session(
+        session, db, history_limit
     )
 
     recent_history = [
@@ -142,7 +146,7 @@ async def assemble_prompt_context(
         graph_knowledge=None,
         parent_history=parent_history,
         user_nickname=user_nickname,
-        current_role_state=resolve_state(session_id, db, before_id=user_msg.id + 1)[0]["state"],
+        current_role_state=_resolve_state(session, db, before_id=user_msg.id + 1)[0]["state"],
         ongoing_events=event_context(load_event_snapshot(persona.id, db, before_message_id=user_msg.id)),
         pending_memories=pending_context(persona.id, db, user_msg.id),
     )

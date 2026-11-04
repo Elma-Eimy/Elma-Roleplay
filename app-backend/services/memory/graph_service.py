@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from services.conversation.session_access import session_kind_agnostic
 import json
 import unicodedata
 from collections import defaultdict
@@ -101,6 +102,7 @@ def _relation_type_key(value: object) -> str:
     return unicodedata.normalize("NFKC", str(value or "related")).casefold().strip()
 
 
+@session_kind_agnostic('按显式人格隔离图谱，调用方负责选择成员')
 def upsert_graph_data(
     persona_id: int,
     entities: list[dict],
@@ -211,6 +213,7 @@ def _effective_entities(
             for key, entity in effective.items()}
 
 
+@session_kind_agnostic('按显式人格隔离图谱，调用方负责选择成员')
 def retrieve_graph_recall(
     persona_id: int, query_text: str, db: Session, *, before_message_id: int | None = None,
     seed_memory_ids: tuple[int, ...] = (),
@@ -345,6 +348,7 @@ def retrieve_graph_recall(
     return GraphRecall("\n".join(output_parts), tuple(dict.fromkeys(memory_ids)), len(ranked))
 
 
+@session_kind_agnostic('按显式人格隔离图谱，调用方负责选择成员')
 def retrieve_graph_context(
     persona_id: int, query_text: str, db: Session, *, before_message_id: int | None = None,
 ) -> str:

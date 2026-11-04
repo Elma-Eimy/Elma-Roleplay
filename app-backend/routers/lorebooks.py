@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 import json
 
@@ -7,7 +7,9 @@ from core import models
 from services.lorebook.parse_lorebook import parse_sillytavern_lorebook
 from schemas import LorebookCreate, LorebookUpdate
 
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 @router.post("/import")
 def import_lorebook(file: UploadFile = File(...), db: Session = Depends(get_db)):

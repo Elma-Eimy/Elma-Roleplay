@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy.orm import Session as DBSession
 
+from services.conversation.session_access import SessionKindConflict
 from core.models import Character, CharacterPortrait, ChatMessage, OutboxJob, Session, SessionPersona
 
 
@@ -77,6 +78,11 @@ def delete_character_service(character_id: int, db: DBSession) -> dict:
     character = db.get(Character, character_id)
     if character is None:
         raise ValueError("Character not found")
+
+    if db.query(Session.id).join(SessionPersona, SessionPersona.session_id == Session.id).filter(
+        SessionPersona.character_id == character_id, Session.kind == "group"
+    ).first():
+        raise SessionKindConflict("角色已被群聊使用，请先处理相关群聊")
 
     avatar_path = character.avatar_path
     portrait_paths = [row[0] for row in db.query(CharacterPortrait.image_path).filter_by(character_id=character_id).all()]

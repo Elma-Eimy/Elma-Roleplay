@@ -106,7 +106,7 @@ class PromptTokenEstimatorTests(unittest.TestCase):
     def test_opening_prompt_without_user_message_is_still_reported(self):
         character = SimpleNamespace()
         persona = SimpleNamespace(character=character)
-        session = SimpleNamespace(persona=persona)
+        session = SimpleNamespace(kind="single", persona=persona)
         db = _PreviewDB(session)
 
         with patch(

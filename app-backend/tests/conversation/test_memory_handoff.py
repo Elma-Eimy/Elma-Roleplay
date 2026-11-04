@@ -223,6 +223,7 @@ class MemoryHandoffTests(unittest.TestCase):
 
     def test_context_assembler_uses_handoff_limit_and_regenerate_compensation(self):
         db = MagicMock()
+        db.get.return_value = SimpleNamespace(id=1, kind="single", persona=SimpleNamespace(id=3))
         character = SimpleNamespace(id=2)
         persona = SimpleNamespace(id=3)
         user_msg = SimpleNamespace(id=10, content="她之前说了什么？")
@@ -230,7 +231,7 @@ class MemoryHandoffTests(unittest.TestCase):
         with (
             patch.object(
                 context_assembler,
-                "get_memory_handoff_history_limit",
+                "_handoff_history_limit",
                 return_value=18,
             ),
             patch.object(
@@ -240,7 +241,7 @@ class MemoryHandoffTests(unittest.TestCase):
             ),
             patch.object(
                 context_assembler.session_service,
-                "get_session_history_with_inheritance",
+                "_history_for_session",
                 return_value=[],
             ) as history_mock,
             patch.object(
@@ -253,7 +254,7 @@ class MemoryHandoffTests(unittest.TestCase):
                 "build_chat_messages",
                 return_value=[],
             ),
-            patch.object(context_assembler, "resolve_state", return_value=({"state": {}}, [])),
+            patch.object(context_assembler, "_resolve_state", return_value=({"state": {}}, [])),
         ):
             asyncio.run(context_assembler.assemble_prompt_context(
                 session_id=1,
@@ -263,7 +264,7 @@ class MemoryHandoffTests(unittest.TestCase):
                 old_reply=None,
                 db=db,
             ))
-            history_mock.assert_called_once_with(1, db, 18)
+            history_mock.assert_called_once_with(db.get.return_value, db, 18)
 
             history_mock.reset_mock()
             asyncio.run(context_assembler.assemble_prompt_context(
@@ -274,7 +275,7 @@ class MemoryHandoffTests(unittest.TestCase):
                 old_reply=SimpleNamespace(id=11),
                 db=db,
             ))
-            history_mock.assert_called_once_with(1, db, 19)
+            history_mock.assert_called_once_with(db.get.return_value, db, 19)
 
     def test_auto_trigger_uses_effective_handoff_threshold(self):
         db = MagicMock()

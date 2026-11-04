@@ -1,11 +1,13 @@
 """查询 Persona 继承链以及一条分支上可见的会话区段。"""
 
+from services.conversation.session_access import session_kind_agnostic
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DBSession
 
 from core.models import ChatMessage, Session, SessionPersona
 
 
+@session_kind_agnostic('沿显式人格继承链解析边界，不选择会话成员')
 def get_ancestor_persona_ids(persona_id: int, db: DBSession) -> list[int]:
     """返回当前 Persona 到根 Persona 的 ID 链，顺序为当前到最早祖先。"""
     sql = """
@@ -43,6 +45,7 @@ def get_ancestor_persona_ids(persona_id: int, db: DBSession) -> list[int]:
     return ids
 
 
+@session_kind_agnostic('沿显式人格继承链解析边界，不选择会话成员')
 def build_branch_turn_segments(persona_id: int, db: DBSession) -> list[dict]:
     """返回当前到根会话在本分支上可见的消息区段。
 

@@ -1,4 +1,5 @@
 """Semantic seeds -> graph expansion -> authoritative, deduplicated fact cards."""
+from services.conversation.session_access import session_kind_agnostic
 from core.config import settings
 from core.models import MemoryChunk, MemoryConsolidationSource
 from services.memory import memory_manager
@@ -12,6 +13,7 @@ MAX_FACTS = 16
 MAX_FACT_CHARS = 6000
 
 
+@session_kind_agnostic('按显式人格进行联合检索，调用方负责选择成员')
 def retrieve_joint_memories(persona_id, character_id, query, db, *, before_message_id=None):
     semantic = memory_manager.retrieve_memories(
         persona_id=persona_id, character_id=character_id, query=query, db=db,
