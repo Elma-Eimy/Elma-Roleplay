@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import ExitStack
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -17,6 +18,114 @@ class ModelSelectionTests(unittest.TestCase):
                             'CHAT_MODEL_NON_REASONING': 'deepseek-v4-flash', 'LLM_REASONING_MODE': False,
                             'LLM_REASONING_EFFORT': 'high', 'LLM_MODEL_PROFILES': []}.items():
             self.stack.enter_context(patch.object(settings, name, value))
+        self.stack.enter_context(patch.multiple(
+            settings, LLM_TEMPERATURE=0.7, LLM_TOP_P=0.9,
+            LLM_PRESENCE_PENALTY=0.1, LLM_FREQUENCY_PENALTY=0.2,
+            LLM_REPETITION_PENALTY=1.0, LLM_MAX_TOKENS=321,
+        ))
+
+    def _generate_with_both_transports(self, character, **options):
+        response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content='<reply>Hello</reply>', reasoning_content='reason',
+        ))])
+        stream = object()
+        provider = SimpleNamespace(
+            generate_async=AsyncMock(return_value=response),
+            generate_stream_async=AsyncMock(return_value=stream),
+        )
+        messages = [{'role': 'user', 'content': 'hi'}]
+        with patch('services.infrastructure.llm_provider.get_llm_provider', return_value=provider), patch.object(
+            chat_engine, 'log_llm_stream_wrapper_async', side_effect=lambda response, *args: response,
+        ):
+            result = asyncio.run(chat_engine.generate_reply(character, messages, **options))
+            actual_stream, model = asyncio.run(chat_engine.generate_reply_stream(character, messages, **options))
+
+        self.assertEqual(result['reply'], 'Hello')
+        self.assertEqual(result['model_used'], model)
+        self.assertIs(actual_stream, stream)
+        provider.generate_async.assert_awaited_once()
+        provider.generate_stream_async.assert_awaited_once()
+        plain_kwargs = provider.generate_async.call_args.kwargs
+        stream_kwargs = dict(provider.generate_stream_async.call_args.kwargs)
+        self.assertIs(plain_kwargs['messages'], messages)
+        self.assertIs(stream_kwargs['messages'], messages)
+        self.assertTrue(stream_kwargs.pop('stream'))
+        self.assertNotIn('stream', plain_kwargs)
+        self.assertEqual(plain_kwargs, stream_kwargs)
+        return plain_kwargs
+
+    def test_request_sampling_overrides_card_settings_including_zero_values(self):
+        extensions = {'temperature': 0.8, 'top_p': 0.6, 'presence_penalty': 0.4,
+                      'frequency_penalty': 0.3, 'repetition_penalty': 1.2}
+        for value in (extensions, json.dumps(extensions)):
+            with self.subTest(extensions=value):
+                kwargs = self._generate_with_both_transports(
+                    SimpleNamespace(extensions=value), model='custom-chat', thinking_mode='disabled',
+                    temperature=0.0, top_p=0.0, presence_penalty=0.0,
+                    frequency_penalty=0.0, repetition_penalty=1.4,
+                )
+                self.assertEqual(kwargs['temperature'], 0.0)
+                self.assertEqual(kwargs['top_p'], 0.0)
+                self.assertEqual(kwargs['presence_penalty'], 0.0)
+                self.assertEqual(kwargs['frequency_penalty'], 0.0)
+                self.assertEqual(kwargs['extra_body'], {'repetition_penalty': 1.4})
+                self.assertEqual(kwargs['max_tokens'], 321)
+        self.assertEqual(extensions['temperature'], 0.8)
+        self.assertEqual(extensions['repetition_penalty'], 1.2)
+
+    def test_card_sampling_settings_override_global_defaults_without_leaking_to_next_call(self):
+        extensions = {'temperature': 0.3, 'repetition_penalty': 1.2}
+        for value in (extensions, json.dumps(extensions)):
+            with self.subTest(extensions=value):
+                kwargs = self._generate_with_both_transports(
+                    SimpleNamespace(extensions=value), model='custom-chat', thinking_mode='disabled',
+                )
+                self.assertEqual(kwargs['temperature'], 0.3)
+                self.assertEqual(kwargs['top_p'], 0.9)
+                self.assertEqual(kwargs['presence_penalty'], 0.1)
+                self.assertEqual(kwargs['frequency_penalty'], 0.2)
+                self.assertEqual(kwargs['extra_body'], {'repetition_penalty': 1.2})
+        kwargs = self._generate_with_both_transports(
+            SimpleNamespace(extensions={}), model='custom-chat', thinking_mode='disabled',
+        )
+        self.assertEqual(kwargs['temperature'], 0.7)
+        self.assertNotIn('extra_body', kwargs)
+
+    def test_missing_or_unparseable_card_extensions_keep_global_defaults(self):
+        for character in (None, SimpleNamespace(extensions=None), SimpleNamespace(extensions=''),
+                          SimpleNamespace(extensions='{broken json')):
+            with self.subTest(character=character):
+                kwargs = self._generate_with_both_transports(
+                    character, model='custom-chat', thinking_mode='disabled',
+                )
+                self.assertEqual(kwargs['temperature'], 0.7)
+                self.assertEqual(kwargs['top_p'], 0.9)
+                self.assertEqual(kwargs['presence_penalty'], 0.1)
+                self.assertEqual(kwargs['frequency_penalty'], 0.2)
+                self.assertNotIn('extra_body', kwargs)
+
+    def test_effort_inheritance_keeps_modern_and_legacy_selection_rules(self):
+        character = SimpleNamespace(extensions='{"reasoning_effort":"low"}')
+        cases = [
+            ({'model': 'deepseek-v4-pro', 'thinking_mode': 'enabled'}, 'high'),
+            ({'model': 'deepseek-v4-pro', 'thinking_mode': 'enabled', 'reasoning_effort': 'inherit'}, 'high'),
+            ({'thinking_mode': 'enabled'}, 'high'),
+            ({'use_reasoning': True}, 'low'),
+            ({'model': 'deepseek-v4-pro', 'thinking_mode': 'enabled', 'reasoning_effort': 'max'}, 'max'),
+        ]
+        for options, effort in cases:
+            with self.subTest(options=options):
+                kwargs = self._generate_with_both_transports(character, **options)
+                self.assertEqual(kwargs['reasoning_effort'], effort)
+                self.assertEqual(kwargs['extra_body']['thinking'], {'type': 'enabled'})
+                self.assertNotIn('temperature', kwargs)
+
+    def test_invalid_selection_fails_before_either_provider_is_called(self):
+        with patch('services.infrastructure.llm_provider.get_llm_provider') as get_provider:
+            for generate in (chat_engine.generate_reply, chat_engine.generate_reply_stream):
+                with self.subTest(generate=generate.__name__), self.assertRaises(ValueError):
+                    asyncio.run(generate(None, [], model='o3-mini', thinking_mode='disabled'))
+            get_provider.assert_not_called()
 
     def test_flash_and_pro_each_support_independent_thinking_toggle(self):
         for model in ('deepseek-flash', 'deepseek-v4-pro'):

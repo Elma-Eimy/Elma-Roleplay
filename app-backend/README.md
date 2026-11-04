@@ -4,6 +4,8 @@
 
 后端职责边界见 [架构说明](../docs/architecture/BACKEND.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
 
+聊天引擎的流式与非流式入口共用生成参数准备逻辑，统一处理请求、角色卡与全局设置的优先级及模型能力适配；Prompt 装配和消息持久化仍由各自服务负责。
+
 ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁并在进程内复用；构造失败后可重试。导入服务不会创建这两项资源，其配置与首次使用时的错误处理见 [初始化边界](../docs/architecture/BACKEND.md#启动与请求链路)。
 
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  

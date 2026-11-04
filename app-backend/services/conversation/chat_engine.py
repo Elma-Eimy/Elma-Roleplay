@@ -65,7 +65,7 @@ def _build_generation_kwargs(
 
 
 
-async def generate_reply(
+def _prepare_generation_kwargs(
     character,
     messages: list,
     use_reasoning: Optional[bool] = None,
@@ -77,10 +77,10 @@ async def generate_reply(
     reasoning_effort: Optional[str] = None,
     model: Optional[str] = None,
     thinking_mode: Optional[str] = None,
+    *,
+    stream: bool = False,
 ) -> dict:
-    """
-    接收已编译装配完毕的 messages 列表与角色设定，调度大模型同步获取回复。
-    """
+    """按请求、角色卡和全局设置的优先级准备一次生成调用。"""
 
     # 1. 解析角色专属配置
     ext = {}
@@ -105,7 +105,7 @@ async def generate_reply(
     is_reasoning_active = selection.thinking
     final_reasoning_effort = selection.effort
 
-    kwargs = _build_generation_kwargs(
+    return _build_generation_kwargs(
         model=model,
         messages=messages,
         is_reasoning_active=is_reasoning_active,
@@ -115,7 +115,38 @@ async def generate_reply(
         final_frequency=final_frequency,
         final_repetition=final_repetition,
         final_reasoning_effort=final_reasoning_effort,
+        stream=stream,
     )
+
+
+async def generate_reply(
+    character,
+    messages: list,
+    use_reasoning: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+    reasoning_effort: Optional[str] = None,
+    model: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
+) -> dict:
+    """接收编译好的 Prompt，生成并解析一次非流式回复。"""
+    kwargs = _prepare_generation_kwargs(
+        character=character,
+        messages=messages,
+        use_reasoning=use_reasoning,
+        temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        repetition_penalty=repetition_penalty,
+        reasoning_effort=reasoning_effort,
+        model=model,
+        thinking_mode=thinking_mode,
+    )
+    model = kwargs["model"]
 
     try:
         from services.infrastructure.llm_provider import get_llm_provider
@@ -169,41 +200,21 @@ async def generate_reply_stream(
     接收已编译装配完毕的 messages 列表与角色设定，调度大模型异步获取流式回复。
     """
 
-    # 1. 解析角色专属配置
-    ext = {}
-    if character and character.extensions:
-        try:
-            ext = json.loads(character.extensions) if isinstance(character.extensions, str) else character.extensions
-        except Exception:
-            pass
-
-    # 2. 优先级链合并：Request -> Character Extensions -> Global Settings
-    final_temp = temperature if temperature is not None else ext.get("temperature", settings.LLM_TEMPERATURE)
-    final_top_p = top_p if top_p is not None else ext.get("top_p", settings.LLM_TOP_P)
-    final_presence = presence_penalty if presence_penalty is not None else ext.get("presence_penalty", settings.LLM_PRESENCE_PENALTY)
-    final_frequency = frequency_penalty if frequency_penalty is not None else ext.get("frequency_penalty", settings.LLM_FREQUENCY_PENALTY)
-    final_repetition = repetition_penalty if repetition_penalty is not None else ext.get("repetition_penalty", settings.LLM_REPETITION_PENALTY)
-    final_reasoning_effort = reasoning_effort if reasoning_effort is not None else ext.get("reasoning_effort", settings.LLM_REASONING_EFFORT)
-
-    if (model is not None or thinking_mode is not None) and reasoning_effort in (None, "inherit"):
-        final_reasoning_effort = settings.LLM_REASONING_EFFORT
-    selection = resolve_selection(model, thinking_mode, use_reasoning, final_reasoning_effort)
-    model = selection.model
-    is_reasoning_active = selection.thinking
-    final_reasoning_effort = selection.effort
-
-    kwargs = _build_generation_kwargs(
-        model=model,
+    kwargs = _prepare_generation_kwargs(
+        character=character,
         messages=messages,
-        is_reasoning_active=is_reasoning_active,
-        final_temp=final_temp,
-        final_top_p=final_top_p,
-        final_presence=final_presence,
-        final_frequency=final_frequency,
-        final_repetition=final_repetition,
-        final_reasoning_effort=final_reasoning_effort,
+        use_reasoning=use_reasoning,
+        temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        repetition_penalty=repetition_penalty,
+        reasoning_effort=reasoning_effort,
+        model=model,
+        thinking_mode=thinking_mode,
         stream=True,
     )
+    model = kwargs["model"]
 
     try:
         from services.infrastructure.llm_provider import get_llm_provider
