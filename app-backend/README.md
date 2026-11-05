@@ -52,7 +52,7 @@ M2 已建立群聊轮次、候选、内容与知情记录，以及内部单步�
 
 HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
 
-M3-A 提供导演 JSON 协议、有效场景快照和 `python -m scripts.group_chat_prototype` 隔离原型。启动器只复制源码，在临时配置与虚构库中运行，默认固定响应回放；输出导演及角色实际输入、自动检查和只读 HTTP 结果。它不接应用生成入口或正式任务生命周期，模型自然度尚未验收；混合台词与私密心理的全文隐藏会丢失公开信息，须先修订可见单元设计。命令与在线模式边界见[工具说明](scripts/README.md)。
+M3-A 提供导演 JSON 协议、有效场景快照和 `python -m scripts.group_chat_prototype` 隔离原型；M3-B 将其推进收敛到内部整轮服务，加入任务执行权、冻结参数、调用预算、零重试与应用关闭清理。启动器只复制源码，在临时配置与虚构库中默认固定响应回放，完整 messages 仅用于隔离报告；普通结果不带全文输入，没有新增生成 API。混合内容仍沿用全文隐藏，可见单元方案已修订、落库待 M3-C，模型自然度尚未验收。命令与在线模式边界见[工具说明](scripts/README.md)。
 
 角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 未配置时从现有非思考聊天模型初始化一次。使用流程和范围见 [角色卡双版本阅读](../docs/features/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
 
