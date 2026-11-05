@@ -63,6 +63,8 @@
 
 [聊天 Store 生命周期评估](plans/CHAT_LIFECYCLE_REVIEW.md) 保留初评证据，标注已完成的异步回写、编辑反馈与切服失效修复；进一步拆分 Store 仍待评估。
 
+[Outbox 向量同步容错与自愈待办](plans/OUTBOX_VECTOR_SELF_HEALING.md) 记录线上出现的 NULL 文档 ID 死循环重试现象、兜底自愈与事务刷盘的待办方案。
+
 `local/` 是 Git 忽略的个人草稿、第三方参考与本地验收报告，不作为项目实现或接口契约的权威来源。
 
 ## 目录与维护归属
