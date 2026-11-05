@@ -15,6 +15,50 @@ function fixture({ mock = false, request = async () => ({ ok: true }), db } = {}
   return { api: load("api/groupSessions.ts"), load, get db() { return db; }, get writes() { return writes; } };
 }
 
+test("group operation APIs keep request IDs and query URLs without retrying POST", async () => {
+  const calls = [];
+  const f = fixture({ request: async (...args) => { calls.push(args); return {}; } });
+  const params = { client_request_id: "same-id", expected_group_revision: 2, observed_round_id: 3,
+    observed_candidate_id: 4, observed_candidate_revision: 5 };
+  await f.api.sendGroupRound(21, { ...params, user_content: "  raw  " });
+  await f.api.regenerateGroupRound(21, 3, params);
+  await f.api.resumeGroupRound(21, 3, { ...params, target_candidate_id: 6, target_candidate_revision: 1 });
+  await f.api.selectGroupCandidate(21, 3, { ...params, target_candidate_id: 4, target_candidate_revision: 5 });
+  await f.api.discardGroupRound(21, 3, params);
+  await f.api.getGroupRequest(21, "id /?#");
+  await f.api.getGroupCandidates(21, 3, 5, 10);
+  await f.api.getGroupCandidate(21, 3, 6);
+  assert.deepEqual(calls.map(call => call[0]), ["/group-sessions/21/rounds", "/group-sessions/21/rounds/3/regenerate",
+    "/group-sessions/21/rounds/3/resume", "/group-sessions/21/rounds/3/select-candidate", "/group-sessions/21/rounds/3/discard",
+    "/group-sessions/21/requests/id%20%2F%3F%23", "/group-sessions/21/rounds/3/candidates?limit=5&offset=10", "/group-sessions/21/rounds/3/candidates/6"]);
+  for (const call of calls.slice(0, 5)) {
+    assert.equal(call[1].method, "POST");
+    assert.equal(JSON.parse(call[1].body).client_request_id, params.client_request_id);
+  }
+  assert.equal(JSON.parse(calls[0][1].body).user_content, "  raw  ");
+  let attempts = 0;
+  const broken = fixture({ request: async () => { attempts++; throw new Error("timeout"); } });
+  await assert.rejects(broken.api.sendGroupRound(21, { ...params, user_content: "raw" }), /timeout/);
+  assert.equal(attempts, 1);
+});
+
+test("Mock rejects new generation and recovery capabilities without writes or fake receipts", async () => {
+  const f = fixture({ mock: true });
+  const group = await f.api.createGroupSession(cards());
+  const params = { client_request_id: "same-id", expected_group_revision: 0 };
+  const snapshot = plain(f.db), writes = f.writes;
+  for (const action of [() => f.api.sendGroupRound(group.session_id, { ...params, user_content: "hello" }),
+    () => f.api.regenerateGroupRound(group.session_id, 1, params), () => f.api.resumeGroupRound(group.session_id, 1, params),
+    () => f.api.selectGroupCandidate(group.session_id, 1, params), () => f.api.discardGroupRound(group.session_id, 1, params),
+    () => f.api.getGroupRequest(group.session_id, "same-id"), () => f.api.getGroupCandidates(group.session_id, 1),
+    () => f.api.getGroupCandidate(group.session_id, 1, 1)]) {
+    await assert.rejects(action(), /离线模式暂不支持/);
+  }
+  assert.equal(f.writes, writes);
+  assert.deepEqual(plain(f.db), snapshot);
+  await assert.rejects(f.api.getGroupRequest(10, "id"), /仅支持群聊/);
+});
+
 test("group API keeps HTTP methods, pagination and creation payload through shared request", async () => {
   const calls = [];
   const f = fixture({ request: async (...args) => { calls.push(args); return { ok: true }; } });

@@ -48,7 +48,8 @@ export interface GroupSessionDetail {
   shared_setting: string | null;
   created_at: string;
   updated_at: string;
-  can_generate: false;
+  can_generate: boolean;
+  group_revision?: number;
   members: GroupSessionMember[];
 }
 
@@ -90,9 +91,80 @@ export interface GroupRound {
 }
 
 export interface GetGroupRoundsResponse {
+  can_generate?: boolean;
+  current?: GroupCurrentState;
   rounds: GroupRound[];
   total: number;
   limit: number;
   offset: number;
   has_more: boolean;
+}
+
+export type GroupOperationKind = "send" | "regenerate" | "resume" | "select" | "discard";
+export type GroupOperationStatus = "queued" | "running" | "succeeded" | "failed";
+export interface GroupObservedCommand {
+  client_request_id: string;
+  expected_group_revision: number;
+  observed_round_id?: number | null;
+  observed_candidate_id?: number | null;
+  observed_candidate_revision?: number | null;
+}
+export interface GroupRoundCommand extends GroupObservedCommand {
+  observed_round_id: number;
+  observed_candidate_id: number;
+  observed_candidate_revision: number;
+}
+export interface GroupGenerationOptions {
+  model?: string | null;
+  thinking_mode?: "inherit" | "enabled" | "disabled" | null;
+  reasoning_effort?: string | null;
+  max_steps?: number;
+}
+export interface SendGroupRoundParams extends GroupObservedCommand, GroupGenerationOptions { user_content: string }
+export interface RegenerateGroupRoundParams extends GroupRoundCommand, GroupGenerationOptions {}
+export interface GroupCandidateCommand extends GroupRoundCommand {
+  target_candidate_id: number;
+  target_candidate_revision: number;
+}
+export interface GroupAcceptedOperation {
+  operation_id: number;
+  request_id: string;
+  kind: GroupOperationKind;
+  status: GroupOperationStatus;
+  accepted: { round_id: number; candidate_id: number; group_revision: number; candidate_revision: number; kind: GroupOperationKind };
+}
+export interface GroupOperationSummary {
+  operation_id: number; request_id: string; kind: GroupOperationKind; status: GroupOperationStatus;
+  revision: number; round_id: number; candidate_id: number; call_count: number; call_limit: number;
+  created_at: string; started_at: string | null; deadline_at: string | null; finished_at: string | null;
+  error_code: string | null;
+}
+export interface GroupCurrentState {
+  group_revision: number;
+  latest: { round_id: number; candidate_id: number | null; candidate_revision: number | null; confirmed: boolean } | null;
+  active_operation: GroupOperationSummary | null;
+  capabilities: { can_send: boolean; can_regenerate: boolean; can_select: boolean; can_discard: boolean };
+}
+export interface GroupCandidateSummary {
+  candidate_id: number; version: number; revision: number;
+  status: GroupRound["status"]; checkpoint: "user_visibility" | "next_action" | "role_generation" | "finish" | "done" | null;
+  protocol_version: 1 | 2; selected: boolean; finish_reason: GroupRound["finish_reason"];
+  error_code: string | null; can_select: boolean; can_resume: boolean;
+}
+export interface GroupRoundSummary {
+  round_id: number; round_index: number; user_content: string; selected_candidate_id: number | null;
+  confirmed: boolean; discarded_at: string | null; created_at: string;
+}
+export interface GetGroupCandidatesResponse {
+  can_generate: boolean; round: GroupRoundSummary; candidates: GroupCandidateSummary[]; current: GroupCurrentState;
+  total: number; limit: number; offset: number; has_more: boolean;
+}
+export interface GetGroupCandidateResponse {
+  can_generate: boolean; round: GroupRoundSummary; candidate: GroupCandidateSummary; current: GroupCurrentState;
+  utterances: GroupUtterance[];
+  state_preview: { candidate_id: number; members: { persona_id: number; affection_score: number; current_mood: string | null; role_state: RoleState }[] };
+}
+export interface GetGroupRequestResponse extends GroupOperationSummary {
+  can_generate: boolean; accepted: GroupAcceptedOperation["accepted"];
+  round: GroupRoundSummary; candidate: GroupCandidateSummary; current: GroupCurrentState;
 }

@@ -5,6 +5,11 @@ import type { CreateGroupSessionParams, GroupSessionDetail, GetGroupSessionsResp
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
+export async function unsupportedGroupOperation(sessionId: number): Promise<never> {
+  requireGroup(getMockDB(), sessionId);
+  throw new Error("离线模式暂不支持群聊生成、候选操作或请求恢复，请连接后端");
+}
+
 function requireGroup(db: MockDatabase, sessionId: number): GroupSessionDetail {
   if (db.sessions.some(session => session.id === sessionId)) {
     throw new Error("此操作仅支持群聊");
@@ -47,7 +52,7 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
   const group: GroupSessionDetail = {
     kind: "group", session_id: sessionId, title, user_nickname: nickname,
     shared_setting: params.shared_setting?.trim() || null,
-    created_at: now, updated_at: now, can_generate: false,
+    created_at: now, updated_at: now, can_generate: false, group_revision: 0,
     members: characters.map((character, index) => ({
       persona_id: personaId + index, slot: index + 1,
       character: { id: character.id, name: character.name, avatar_path: character.avatar_path ?? null },
