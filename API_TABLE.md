@@ -78,6 +78,14 @@
 | **GET** | `/group-sessions` | 群聊摘要稳定分页 |
 | **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
 | **GET** | `/group-sessions/{session_id}/rounds` | 按整轮分页读取所选候选正文、版本与终止状态 |
+| **POST** | `/group-sessions/{session_id}/rounds` | 原子接受用户消息与确认上一成功轮次，返回后台回执 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/regenerate` | 保留旧选择并生成新的整轮候选 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/resume` | 显式续接指定失败候选的可靠检查点 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/select-candidate` | 选择最新未确认轮次的成功候选 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/discard` | 撤回最新未确认轮次并保留请求回执 |
+| **GET** | `/group-sessions/{session_id}/requests/{client_request_id}` | 查询接受结果、执行终态与当前选择，不派发模型 |
+| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates` | 分页读取同轮候选元数据与可用操作 |
+| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}` | 读取指定候选前缀及独立状态预览 |
 | **POST** | `/group-sessions/{session_id}/delete` | 删除整个群聊并登记资源清理 |
 
 ### 会话、消息与记忆 API

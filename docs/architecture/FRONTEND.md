@@ -53,6 +53,8 @@ M2-C 在详情增加只读轮次列表，独立的 GroupRound/GroupUtterance 类
 
 M3-D 的 `utils/groupRounds.ts` 负责候选状态和停止提示，缺少新增字段的旧响应仍可阅读，未知失败码不直接显示。专用 H5 构建 `VITE_GROUP_PREVIEW=true` 由 Vite 注入标记和构建常量；`api/config.ts` 只在该构建中固定当前页面来源、忽略已存地址/密钥并拒绝写请求。普通构建和 App/小程序继续使用原连接配置，不增加生成入口。
 
+M4-C 扩展 `api/groupSessions.ts` 与 `types/groupSessions.ts`，提供发送、重生成、续接、选择、撤回以及请求/候选 GET；每次调用只发一次请求，不在 API 层轮询或自动重发。查询 UUID 按路径编码，current、操作 revision 与候选 revision 分开表达；旧 rounds 响应继续兼容。Mock 拒绝新增生成与恢复能力，现有详情页操作和请求代际管理留给 M4-D。
+
 群聊流程使用页内版本、活动状态和服务器地址校验回写，订阅 `connectionEvents`，在 onHide/onUnload 及作用域销毁时失效。列表、角色和来源读取各自管理请求版本；创建固定点击时的参数快照，结果不确定时转为先查列表。详情切服后清空目标，不自动读取新服务器的同号故事。删除确认和返回结果均校验原页面与对象版本。该隔离不取消已经发给后端的事务，也不提供跨断连幂等。
 
 `useStoryKeepsakes.ts` 管理本机收藏快照与角色配色，`StoryKeepsakeSheet.vue` 展示回忆册。收藏键包含服务器与故事 ID，配色键包含服务器与角色 ID；换故事或服务器关闭面板并清理当前视图，不继承其他故事的收藏。写入失败保留旧值并反馈，不调用后端或进入记忆检索链路。

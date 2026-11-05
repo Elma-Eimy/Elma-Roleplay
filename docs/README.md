@@ -29,7 +29,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [HTTP API 总表](../API_TABLE.md) | 前后端共享的路由清单与领域契约入口 |
-| [群聊管理 API](api/GROUP_SESSIONS.md) | 固定成员创建、来源快照、列表详情、整群删除与类型隔离 |
+| [群聊管理 API](api/GROUP_SESSIONS.md) | 成员与来源快照、整轮操作、请求恢复查询、候选预览与类型隔离 |
 | [API 阅读与校验](api/README.md) | 各领域请求、响应、兼容规则的导航及隔离检查方法 |
 | [记忆模块 API](api/MEMORY_API.md) | 筛选、统计、继承、导航、整理预览与撤销 |
 | [前端 API 模块](../app-frontend/src/api/README.md) | 领域请求封装、共享类型、兼容导出与 Mock 边界 |
@@ -60,7 +60,7 @@
 
 [M3 导演与有限互动设计](plans/group-chat/M3_DIRECTOR.md) 记录导演协议、执行基础、可见单元与审计，以及 M3-D 本机只读预览和 H5 联通；真实模型语义及 App/微信真机仍待验收。
 
-[M4 整轮候选与失败恢复设计](plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) 规划原子确认、持久请求回执、候选切换、失败检查点与撤回，以及后台执行和 GET 恢复边界；M4-A/B 数据、内部事务、后台执行与检查点续接已实现，下一批为 M4-C HTTP 接入，尚未开放新的 HTTP 能力。
+[M4 整轮候选与失败恢复设计](plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) 规划原子确认、持久请求回执、候选切换、失败检查点与撤回，以及后台执行和 GET 恢复边界；M4-A–C 数据、内部事务、后台执行、检查点续接与 HTTP 已实现，下一批为 M4-D 页面交互。
 
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 
