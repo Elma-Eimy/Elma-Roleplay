@@ -400,15 +400,20 @@ class DirectorPrototypeTests(unittest.TestCase):
             report = json.loads(paths[0].read_text(encoding="utf-8"))
             self.assertEqual("offline", report["mode"])
             self.assertEqual("pending", report["semantic_review"])
-            self.assertEqual(8, len(report["results"]))
+            self.assertEqual(9, len(report["results"]))
             for result in report["results"]:
-                self.assertIsNone(result["error_code"], result["id"])
+                self.assertEqual("invalid_output" if result["id"] == "failed-prefix" else None, result["error_code"], result["id"])
                 self.assertTrue(all(result["checks"].values()), result["checks"])
-                self.assertEqual("awaiting_confirmation", result["http_rounds"]["rounds"][0]["status"])
+                self.assertEqual("failed" if result["id"] == "failed-prefix" else "awaiting_confirmation",
+                                 result["http_rounds"]["rounds"][0]["status"])
             mixed = next(row for row in report["results"] if row["id"] == "mixed-private-thought")
             self.assertTrue(mixed["granularity_review"].startswith("offline_units_passed"))
             for row in report["results"]:
                 self.assertEqual(2, row["candidate_state"]["protocol_version"])
+                if row["id"] == "failed-prefix":
+                    self.assertEqual(1, len(row["http_rounds"]["rounds"][0]["utterances"]))
+                    self.assertEqual(row["candidate_state"]["revision"], row["revision"])
+                    continue
                 self.assertEqual(row["finish_reason"], row["candidate_state"]["finish_reason"])
                 self.assertEqual("finish", row["director_steps"][-1]["stage"])
                 self.assertEqual(row["candidate_state"]["revision"], row["director_steps"][-1]["result_revision"])

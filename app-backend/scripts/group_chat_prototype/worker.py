@@ -31,6 +31,8 @@ class ReplayModel:
                                          for i, pid in enumerate(self.ids)]})
 
     async def __call__(self, stage, messages):
+        if self.case.get("fail_at") == stage and self.role_index == self.case.get("fail_step", 0):
+            return _response('{"invalid":true}')
         if stage == "user_visibility":
             if self.protocol_version == 2:
                 return _response(json.dumps({"units": [{"start": 0, "end": len(self.case["user"]),
@@ -109,8 +111,9 @@ async def _run_suite(request):
                     finally:
                         client.close()
                     checks = {"read_only_http": rounds["total"] == 1,
-                              "input_collection": result.get("error_code") is None and result.get("diagnostic_error_code") is None,
                               "call_bound": len(result["calls"]) <= 3 * case.get("max_steps", 4) + 1}
+                    if case.get("expected_error") is None:
+                        checks["input_collection"] = result.get("error_code") is None and result.get("diagnostic_error_code") is None
                     if not request["online"]:
                         utterances = rounds["rounds"][0]["utterances"] if rounds["rounds"] else []
                         checks["speaker_order"] = [row["speaker_persona_id"] for row in utterances] == [ids[i] for i in case["expected_speakers"]]
@@ -137,7 +140,15 @@ async def _run_suite(request):
                         "revision": saved_candidate.revision, "status": saved_candidate.status,
                         "finish_reason": saved_candidate.finish_reason, "error_code": saved_candidate.error_code}
                         if saved_candidate else None)
-                    results.append({"id": case["id"], "member_ids": ids, **result, "http_rounds": rounds,
+                    checks["candidate_handoff"] = bool(saved_candidate and rounds["rounds"]
+                        and rounds["rounds"][0]["candidate_id"] == result["candidate_id"]
+                        and rounds["rounds"][0]["revision"] == saved_candidate.revision == result["revision"]
+                        and rounds["rounds"][0]["finish_reason"] == saved_candidate.finish_reason
+                        and rounds["rounds"][0]["error_code"] == saved_candidate.error_code
+                        and rounds["rounds"][0]["status"] == saved_candidate.status)
+                    checks["expected_outcome"] = result.get("error_code") == case.get("expected_error")
+                    results.append({"id": case["id"], "session_id": group["session_id"], "member_ids": ids,
+                        **result, "http_rounds": rounds,
                         "candidate_state": candidate_state, "director_steps": audit_rows,
                         "checks": checks, "granularity_review": "pending" if request["online"] else case.get("granularity_review", "pending")})
     finally:
@@ -154,7 +165,11 @@ def main():
     report = {"schema_version": 2, "mode": "online" if request["online"] else "offline",
               "semantic_review": "pending", "results": results}
     (destination / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return int(any(result["error_code"] or not all(result["checks"].values()) for result in results))
+    if request.get("serve"):
+        from scripts.group_chat_prototype.preview import serve_preview
+        serve_preview(Path("data/cases.db"), report, request["port"], request["preview_seconds"],
+                      Path("h5") if request.get("frontend_dist") else None)
+    return int(any(not all(result["checks"].values()) for result in results))
 
 
 if __name__ == "__main__":

@@ -317,6 +317,9 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
             result.append({"round_id": row.id, "round_index": row.round_index,
                 "candidate_id": row.selected_candidate_id,
                 "status": candidate.status if candidate else "failed", "confirmed": row.confirmed_at is not None,
+                "revision": candidate.revision if candidate else None,
+                "finish_reason": candidate.finish_reason if candidate else None,
+                "error_code": candidate.error_code if candidate else None,
                 "user_content": row.user_content, "created_at": row.created_at.isoformat(),
                 "utterances": by_candidate.get(row.selected_candidate_id, [])})
         return {"rounds": result, "total": total, "limit": limit, "offset": offset,

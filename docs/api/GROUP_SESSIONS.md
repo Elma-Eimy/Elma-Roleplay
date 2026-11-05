@@ -73,7 +73,9 @@
 
 ## 只读轮次历史
 
-`GET /group-sessions/{session_id}/rounds?limit=20&offset=0`：limit 为 1–100，offset 非负，按 round_index 倒序分页。返回 `{rounds, total, limit, offset, has_more}`，每个元素包含 round_id、round_index、candidate_id、status、confirmed、user_content、created_at 和 utterances。status 为 generating、awaiting_confirmation 或 failed；confirmed 独立表示是否已确认。
+`GET /group-sessions/{session_id}/rounds?limit=20&offset=0`：limit 为 1–100，offset 非负，按 round_index 倒序分页。返回 `{rounds, total, limit, offset, has_more}`，每个元素包含 round_id、round_index、candidate_id、status、confirmed、revision、finish_reason、error_code、user_content、created_at 和 utterances。status 为 generating、awaiting_confirmation 或 failed；confirmed 独立表示是否已确认。
+
+revision 为所选候选的持久化版本；finish_reason 为正常停止的 wait_user、no_visible_basis、step_limit 或 null，error_code 为失败时的非敏感错误码或 null。旧 v1 候选可没有正常停止原因，前端以已有 status 展示；候选缺失时 revision/finish_reason/error_code 返回 null。版本、终止原因和正文前缀供后续候选流程交接，当前仍不提供确认或恢复操作，不返回导演审计 JSON。
 
 utterances 按轮内 sequence 正序，每项为 `{item_id, sequence, speaker_persona_id, speaker_name, content, created_at}`。仅返回各轮所选候选，用户原文只在 user_content 出现一次；失败候选保留已经提交的前缀。分页以整轮为单位，不截断单轮发言。reasoning、导演理由、知情行和内部状态增量不进入响应。
 

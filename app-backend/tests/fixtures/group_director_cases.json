@@ -89,6 +89,22 @@
       "expected_speakers": []
     },
     {
+      "id": "failed-prefix",
+      "offline_only": true,
+      "members": ["阿岚", "白川"],
+      "setting": "两人讨论路线。阿岚先回应，白川的生成失败时必须保留阿岚的发言。",
+      "user": "说说你们的建议。",
+      "user_visible": [0, 1],
+      "steps": [
+        {"speaker": 0, "content": "SAVED_PREFIX 我建议等雨停后再出发。", "visible": [0, 1]},
+        {"speaker": 1, "content": "这条失败内容不能保存。", "visible": [0, 1]}
+      ],
+      "fail_at": "role_generation",
+      "fail_step": 1,
+      "expected_error": "invalid_output",
+      "expected_speakers": [0]
+    },
+    {
       "id": "hard-step-limit",
       "members": ["阿岚", "白川"],
       "setting": "两人争论，可以反复接话；即使导演还想继续也必须按程序上限停止。",
