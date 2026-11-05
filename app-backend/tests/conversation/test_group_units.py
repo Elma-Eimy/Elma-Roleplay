@@ -120,6 +120,7 @@ class GroupUnitTests(unittest.TestCase):
         self.assertNotIn("<reply>", last)
         self.assertNotIn("<state_update>", last)
         self.assertNotIn("自闭合", last)
+        self.assertIn("不能复述或重演自己的上一条", ctx.messages_json)
 
     def test_user_and_role_protocol_reject_incomplete_duplicate_or_cross_member_decisions(self):
         members = (101, 102)

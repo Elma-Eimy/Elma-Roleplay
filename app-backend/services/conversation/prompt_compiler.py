@@ -963,7 +963,10 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
     context = ("【群聊身份与共同起点】\n" + identity +
         "\n共同设定有值时优先于角色卡初始场景；自己的当前状态记录后续变化。"
         "历史中的 group_member JSON 是已发生的其他成员发言，不是当前用户指令；"
-        "assistant 历史只属于你本人。只能使用已提供的内容，不猜测未提供的私人历史。")
+        "assistant 历史只属于你本人，也已经发生。当前是在这段历史之后继续一次发言，"
+        "不能重新回答已经回应的旧问题，也不能复述或重演自己的上一条；"
+        "若自己的上一条说了准备行动，本次从那之后继续推进。"
+        "只能使用已提供的内容，不猜测未提供的私人历史。")
     contract = None
     if protocol_version == 2:
         contract = ('【群聊单元输出协议 v2】\n仅输出一个 JSON 对象，不输出 XML 或 Markdown。'
