@@ -4,6 +4,10 @@
 
 ## 自动回归
 
+`conversation/test_group_director.py` 检查 M3-A 严格 JSON、完整知情覆盖、可执行成员集合、私人基线排除和有效候选读取。隔离原型复用真实个人上下文、回复解析及原子写入，检查自动 A → B → A、公开转述、混合项信息损失、调用预算、失败前缀、取消和 revision 竞争；CLI 子进程回放 8 个虚构场景到只读 HTTP 报告。运行 `python -m tests --group conversation --pattern test_group_director.py`；不调用网络模型，真实语义和三端人工阅读另验。新增 scripts、services 与 JSON 夹具均在统一入口现有复制范围内。
+
+M3-A 审查回归覆盖旧历史填满预算后的三个阶段编译、本轮前缀保护和新轮次执行；最终提交期间取消时，分别验证成功提交返回完成、失败写入保持取消，并等待线程结束后释放锁。
+
 `conversation/test_group_generation.py` 用假模型检查角色实际收到的完整输入，覆盖秘密与世界书隔离、用户原文、A → B → A、各自状态重放、已确认所选版本、同名身份、缺失知情记录、超长共同背景、无事务外部调用、取消等待持久化、提交失败与迟到结果。含从内部生成到只读轮次 HTTP 的隔离原型；不进入应用 lifespan，不调用真实模型或开发数据库。运行：`python -m tests --group conversation --pattern test_group_generation.py`。
 
 审查回归还检查原文中引号/标签的世界书触发及包装字段不触发、取消后线程失败保持取消、失败标记不可写时保留原始错误或取消。故障只注入临时数据库，不调用真实模型。
