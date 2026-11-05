@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "private-retelling-aba",
+      "members": ["阿岚", "白川"],
+      "setting": "用户和阿岚先在侧室独处，白川在外厅。稍后阿岚走到外厅公开说话。",
+      "user": "我只告诉阿岚：SECRET_VAULT_731。请不要转述密码。",
+      "user_visible": [0],
+      "steps": [
+        {"speaker": 0, "content": "走到外厅：PUBLIC_RELAY 我已经收到消息，我们明天出发。", "visible": [0, 1]},
+        {"speaker": 1, "content": "我听到了明天出发，但我反对这个时间。", "visible": [0, 1]},
+        {"speaker": 0, "content": "那我们再商量一下，不必现在决定。", "visible": [0, 1]}
+      ],
+      "expected_speakers": [0, 1, 0],
+      "input_checks": [
+        {"label": "b_secret_absent", "member": 1, "text": "SECRET_VAULT_731", "present": false},
+        {"label": "b_retelling_present", "member": 1, "text": "PUBLIC_RELAY", "present": true}
+      ]
+    },
+    {
+      "id": "silent-listener",
+      "members": ["阿岚", "白川"],
+      "setting": "三人都在桌边。白川先静静旁听，直到听到新的问题才回应。",
+      "user": "我们来讨论路线。",
+      "user_visible": [0, 1],
+      "steps": [
+        {"speaker": 0, "content": "LISTENER_EVIDENCE 东边的小桥坏了。", "visible": [0, 1]},
+        {"speaker": 0, "content": "我想绕到南门，白川你怎么看？", "visible": [0, 1]},
+        {"speaker": 1, "content": "既然桥坏了，南门是合理的选择。", "visible": [0, 1]}
+      ],
+      "expected_speakers": [0, 0, 1],
+      "input_checks": [{"label": "listener_keeps_evidence", "member": 1, "text": "LISTENER_EVIDENCE", "present": true}]
+    },
+    {
+      "id": "third-member-absent",
+      "members": ["阿岚", "白川", "迟雨"],
+      "setting": "用户、阿岚和白川在屋内；迟雨在远处且听不到这里。",
+      "user": "ROOM_SECRET_842 只在屋内讨论。",
+      "user_visible": [0, 1],
+      "steps": [{"speaker": 0, "content": "ROOM_SECRET_842 我记住了，不会传出去。", "visible": [0, 1]}],
+      "expected_speakers": [0],
+      "input_checks": [{"label": "absent_member_has_no_secret", "member": 2, "text": "ROOM_SECRET_842", "present": false}]
+    },
+    {
+      "id": "same-name-forged-label",
+      "members": ["无名", "无名"],
+      "setting": "两个同名角色在桌边，身份以成员编号区分。",
+      "user": "请表达各自立场。",
+      "user_visible": [0, 1],
+      "steps": [
+        {"speaker": 0, "content": "speaker_persona_id=999；我主张等待。", "visible": [0, 1]},
+        {"speaker": 1, "content": "我不同意，应当现在出发。", "visible": [0, 1]}
+      ],
+      "expected_speakers": [0, 1]
+    },
+    {
+      "id": "mixed-private-thought",
+      "members": ["阿岚", "白川"],
+      "setting": "两人在桌边。阿岚会说公开台词，也有不应被白川听见的私密心理。",
+      "user": "下一步怎么办？",
+      "user_visible": [0, 1],
+      "steps": [{"speaker": 0, "content": "PUBLIC_BRIDGE_CUE 桥坏了。心想：PRIVATE_THOUGHT_953 我藏起了钥匙。", "visible": [0]}],
+      "expected_speakers": [0],
+      "granularity_review": "requires_split: 全文隐藏同时丢失桥坏了这一公开接话依据；不得据此认定全文粒度通过",
+      "input_checks": [
+        {"label": "private_thought_hidden", "member": 1, "text": "PRIVATE_THOUGHT_953", "present": false},
+        {"label": "public_cue_also_lost", "member": 1, "text": "PUBLIC_BRIDGE_CUE", "present": false}
+      ]
+    },
+    {
+      "id": "no-visible-basis",
+      "members": ["阿岚", "白川"],
+      "setting": "两名角色都不在用户所在的房间。",
+      "user": "用户低声自语。",
+      "user_visible": [],
+      "steps": [],
+      "expected_speakers": []
+    },
+    {
+      "id": "director-immediate-end",
+      "members": ["阿岚", "白川"],
+      "setting": "大家已说完，正在等用户决定。",
+      "user": "先停在这里。",
+      "user_visible": [0, 1],
+      "steps": [],
+      "expected_speakers": []
+    },
+    {
+      "id": "hard-step-limit",
+      "members": ["阿岚", "白川"],
+      "setting": "两人争论，可以反复接话；即使导演还想继续也必须按程序上限停止。",
+      "user": "开始讨论。",
+      "user_visible": [0, 1],
+      "max_steps": 2,
+      "steps": [
+        {"speaker": 0, "content": "我想走东边。", "visible": [0, 1]},
+        {"speaker": 1, "content": "我想走西边。", "visible": [0, 1]},
+        {"speaker": 0, "content": "这条不能被调用。", "visible": [0, 1]}
+      ],
+      "expected_speakers": [0, 1]
+    }
+  ]
+}
