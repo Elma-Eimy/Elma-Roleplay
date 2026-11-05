@@ -38,6 +38,18 @@ M2-A 的 `services/conversation/group_history_service.py` 管理内部轮次创�
 
 M2-A 的公开服务入口在接管事务前检查待提交 ORM 修改和底层 SQLite 活动事务，类型预读取禁止 autoflush。若调用方已修改、flush 或显式开启事务，则拒绝操作并保留其事务，不进入内部 rollback 清理；服务只负责自己取得的事务。普通只读预查询形成的 SQLAlchemy 逻辑事务仍可结束后重新取得快照。
 
+M2-B 的 `group_context_service.py` 在同一读快照内取得个人历史和自身状态，复用既有角色卡 DSL、示例、世界书和参数准备，返回序列化的不可变调用快照。`prompt_compiler.build_group_messages` 共享单聊编译主体，但不改写真人用户原文，不为隐藏用户项补发 user 消息；其他成员正文使用有身份的 JSON user 消息，自身发言使用 assistant 格式。世界书扫描只接收同一份可见内容，PHI 与群聊输出契约后置。内部 ID/全局 sequence 不进入模型历史；仅自身历史附带自己的心情和好感变化，其他成员的内部状态不会进入输入。
+
+世界书扫描与模型消息包装分别构造：扫描只用个人可见正文原文，模型历史仍使用 JSON 身份或 assistant XML。不能拿转义后的模型消息扫描，否则引号、标签等关键字会漏触发，身份字段或 status 标签也会误触发词条。
+
+群聊状态从 M1 不可变起点及已确认所选候选、本轮当前候选中较早的自身增量重放，不受历史窗口截断影响。共同设定优先于来源初始场景，但作为可长达 20000 字的背景独立提供，不能塞入限长 300 字的 scene；后续自己的 scene 增量继续生效。群聊 state_update.characters 只允许自己的角色卡名称，不能修改其他 Persona；不覆盖起点、不进入单聊消息或记忆任务。
+
+`group_generation_service.py` 要求 `core.locking.GroupRuntimeOwner` 对应同一 Engine 且仍有效，全程持有会话锁。外部模型与知情判定不持有 SQLite 事务，模型只调用一次；接收者回调只取得正文与作者 ID，不取得 reasoning 或内部状态。严格校验单个 reply/status 与可选状态增量，截断或无效输出失败；落库前重新检查运行权、候选版本和状态，正文、状态与知情集合原子提交。取消后等待已派发数据库线程完成再释放锁，可能已保存的前缀保留并标失败；迟到结果不改写已经推进或结束的版本。
+
+取消优先于等待期间发生的普通数据库异常，线程结束后仍传播取消。另存失败状态的操作若也失败，只记录异常类型，不替换原始生成错误或取消，不输出 SQL 正文参数；无法持久化的 generating 候选由后续启动中断处理收敛。
+
+M2-C 的只读轮次路由调用 `group_history_service.list_group_rounds`，面向故事操作者按整轮分页、各轮只取所选候选，包含失败前缀，不返回 reasoning、知情行或状态增量。该视图可包含操作者看到的全部正文，不能用作角色个人上下文；普通发送、确认、候选切换与恢复接口仍未开放。
+
 `application/group_runtime.py` 将运行权绑定到 SQLite 文件旁的 `.runtime.lock`：Windows 使用 msvcrt 字节锁，其他支持的平台使用 flock。lifespan 先独占运行权，再迁移并将残留 generating 候选改为 failed/process_interrupted、递增 revision，随后启动 Worker；关闭并等待任务结束后才释放运行权。第二个应用进程会在迁移和中断处理前失败，避免误判其他 Worker 的正在执行候选。锁文件保留，锁随句柄或进程退出释放；不自动恢复或再次调用模型。
 
 关闭清理通过独立任务统一取消并等待后台 Worker，再清理聊天流；单个 Worker 已异常退出时也继续处理其余任务。lifespan 的重复取消不会传入该清理任务，清理完成后才传播取消或 Worker 错误并释放运行权，避免后台仍在写库时允许新进程接管。
