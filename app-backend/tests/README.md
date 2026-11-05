@@ -4,6 +4,10 @@
 
 ## 自动回归
 
+`conversation/test_group_history.py` 覆盖 M2-A 个人历史的成员/候选/轮次隔离、先过滤后限量、缺失知情记录默认隐藏、内部写入的版本竞争和事务回滚，以及新表随整群删除级联。`infrastructure/test_group_round_migration.py` 验证旧值保留、组合外键、循环引用删除、失败升级回滚和非空降级保护；`test_group_runtime.py` 验证运行权互斥、启动顺序和中断候选只标失败、不重发。测试均使用临时数据库，不调用模型。
+
+M2-A 审查回归还覆盖 autoflush 开/关、未 flush 与已 flush 的调用方修改被拒绝后仍保留；后台 Worker 异常和重复取消关闭时，其他 Worker 与聊天流必须清理后才释放运行权。
+
 `conversation/test_group_session_service.py` 验证群聊服务的来源冻结、事务与资源归属，覆盖分支/整理、并发修改、角色删除竞争、取消与大样本导入；`infrastructure/test_group_snapshot_migration.py` 验证快照迁移、来源删除独立和非空降级保护。均使用虚构临时数据，不调用真实模型或 Embedding。
 
 `api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外，群聊专用服务用 `group_session_operation` 声明类型并验证拒绝单聊资源。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。

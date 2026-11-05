@@ -44,6 +44,10 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 
 群聊目前完成 M1-A–D 代码实现：会话区分 single/group，Persona 按成员位置归属会话；服务与 HTTP 接口支持创建、冻结来源快照、列表详情和整群删除，前端已提供最小页面；群聊生成尚未开放。群聊契约见[群聊管理 API](../docs/api/GROUP_SESSIONS.md)。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
 
+M2-A 已建立群聊轮次、候选、内容与知情记录，以及内部原子写入和个人历史读取。用户原文只保存一次；个人历史仅含此前已确认的所选成功候选与当前候选边界内的可见内容，先过滤再限量。没有新增生成或历史 HTTP 接口，模型调用与界面展示仍待后续批次。
+
+后端对同一 SQLite 文件强制单进程运行：lifespan 在迁移前取得数据库旁的 `.runtime.lock` 文件锁，另一个 Worker 启动会明确失败；关闭后操作系统释放锁，无需删除锁文件。迁移完成后，将遗留 generating 群聊候选标为 process_interrupted 失败并保留已保存内容，不自动续接或重发。使用 `uvicorn main:app --reload` 开发或单 Worker 部署，不使用多 Worker 连接同一库。
+
 HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
 
 角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 未配置时从现有非思考聊天模型初始化一次。使用流程和范围见 [角色卡双版本阅读](../docs/features/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
@@ -410,6 +414,7 @@ app-backend/
 ├── application/
 │   ├── factory.py           # 应用、CORS、静态资源与路由装配
 │   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   ├── group_runtime.py     # 数据库运行权与群聊中断候选处理
 │   └── banner.py            # 启动地址提示
 ├── scripts/
 │   ├── README.md            # 显式维护命令说明

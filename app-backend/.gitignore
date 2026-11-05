@@ -24,6 +24,7 @@ db/
 data.db
 data.db-shm
 data.db-wal
+*.runtime.lock
 
 # 9. 其他
 llm_debug.log

@@ -31,7 +31,7 @@ class GroupSnapshotMigrationTests(unittest.TestCase):
             connection.execute(text("INSERT INTO sessions (id,title,kind) VALUES (1,'source','single'),(2,'group','group')"))
             connection.execute(text("INSERT INTO session_personas (id,session_id,character_id,member_slot) VALUES (10,1,1,0),(20,2,1,1)"))
             connection.execute(text("INSERT INTO memory_chunks (id,persona_id,content,memory_type) VALUES (1,10,'saved','fact')"))
-        command.upgrade(self.config, "head")
+        command.upgrade(self.config, "a8b9c0d1e2f3")
         with self.engine.begin() as connection:
             connection.execute(text("INSERT INTO group_persona_origins (persona_id,mode,captured_at,initial_state_json,source_session_id,source_persona_id,content_fingerprint) VALUES (20,'single_snapshot',CURRENT_TIMESTAMP,'{}',1,10,'fixture')"))
             connection.execute(text("INSERT INTO group_inherited_memory_snapshots (persona_id,content,memory_type,temporal_status,source_memory_id,source_persona_id,source_session_id,captured_at,content_fingerprint) VALUES (20,'frozen','fact','unknown',1,10,1,CURRENT_TIMESTAMP,'fixture')"))
