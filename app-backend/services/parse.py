@@ -103,7 +103,7 @@ def _validate_card_object(raw: dict) -> dict:
         raise ValueError("角色卡缺少有效的 name 字段。")
     for key in ('description', 'personality', 'scenario', 'first_mes', 'mes_example',
                 'creator_notes', 'system_prompt', 'system_prompt_override',
-                'post_history_instructions', 'char_persona', 'world_scenario',
+                'post_history_instructions', 'physical_description', 'char_persona', 'world_scenario',
                 'greeting', 'example_dialogue'):
         if data.get(key) is not None and not isinstance(data[key], str):
             raise ValueError(f"角色卡 {key} 必须是文本。")
@@ -215,7 +215,10 @@ def _extract_v2_data(raw_data: dict) -> dict:
     data = deepcopy(_validate_card_object(raw_data))
 
     # 映射旧字段或变种字段以兼容 V1 / 不同平台变种
-    description = data.get("description", data.get("char_persona", ""))
+    description = _html_to_markdown(data.get("description", data.get("char_persona", "")))
+    physical_description = _html_to_markdown(data.get("physical_description", ""))
+    if physical_description and physical_description not in description:
+        description = f"{description}\n\n【外貌与服装】\n{physical_description}" if description else physical_description
     scenario = data.get("scenario", data.get("world_scenario", ""))
     first_mes = data.get("first_mes", data.get("greeting", ""))
     mes_example = data.get("mes_example", data.get("example_dialogue", ""))
@@ -264,7 +267,7 @@ def _extract_v2_data(raw_data: dict) -> dict:
     # 归一化输出字段，包含完整的默认值以防 undefined 报错，并进行 HTML 到 Markdown 的格式清洗
     return {
         "name": _html_to_markdown(data.get("name", "")),
-        "description": _html_to_markdown(description),
+        "description": description,
         "personality": _html_to_markdown(data.get("personality", "")),
         "scenario": _html_to_markdown(scenario),
         "first_mes": _html_to_markdown(first_mes),
