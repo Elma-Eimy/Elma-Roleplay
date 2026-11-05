@@ -41,6 +41,12 @@ class _DatabaseCancelled(asyncio.CancelledError):
 
 
 async def _database(operation, *args, **kwargs):
+    from services.conversation.group_checkpoint_service import GroupTargetScope
+    scope = kwargs.get("scope") or next((arg for arg in args if isinstance(arg, GroupTargetScope)), None)
+    if scope is not None:
+        require_group_execution(scope.execution, scope.session_id, scope.execution.owner.engine)
+        if getattr(scope.execution, "target_scope", None) is not scope:
+            raise RuntimeError("持久目标作用域不属于当前执行")
     work = asyncio.create_task(run_in_threadpool(partial(operation, *args, **kwargs)))
     cancelled = False
     while True:
@@ -103,7 +109,7 @@ def _parse(raw, context):
         raise GroupGenerationError("invalid_output") from None
 
 
-def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db, runtime, *, model=None):
+def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db, runtime, *, model=None, scope=None):
     require_group_runtime(runtime, db.get_bind())
     body, emotion, affection, patch = result[:4]
     plan = visible_to if isinstance(visible_to, UnitPlan) else None
@@ -112,7 +118,7 @@ def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db
     if plan:
         visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
     return history._append(session_id, candidate_id, persona_id, body, visible_to, revision, db,
-        emotion_tag=emotion, affection_change=affection, role_state_patch=patch, unit_plan=plan, model=model)
+        emotion_tag=emotion, affection_change=affection, role_state_patch=patch, unit_plan=plan, model=model, scope=scope)
 
 
 def _fail(session_id, candidate_id, revision, db, runtime, code):
@@ -150,15 +156,17 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
 
 async def _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, execution, decide_visibility, model=None, call_model=None,
-                                   generation_parameters_json=None, history_limit=None, fail_candidate=True):
+                                   generation_parameters_json=None, history_limit=None, fail_candidate=True, scope=None):
     require_group_execution(execution, session_id, db.get_bind())
+    if scope is not None and scope.execution is not execution:
+        raise RuntimeError("不能借用其他任务的持久目标")
     runtime = execution.owner
     failure_revision = expected_revision
     prepared = False
     try:
         context = await _database(build_member_context, session_id, speaker_persona_id,
             candidate_id, expected_revision, db, model=model, generation_parameters_json=generation_parameters_json,
-            history_limit=history_limit)
+            history_limit=history_limit, **({"scope": scope} if scope is not None else {}))
         prepared = True
         parameters = json.loads(context.generation_json)
         response = await (get_llm_provider().generate_async(**parameters, _group_no_retry=True) if call_model is None else call_model(parameters))
@@ -169,7 +177,8 @@ async def _generate_with_execution(session_id, candidate_id, speaker_persona_id,
         try:
             saved = await _database(_save, session_id, candidate_id, speaker_persona_id,
                 expected_revision, result, audience, db, runtime,
-                **({"model": parameters.get("model")} if context.protocol_version == 2 else {}))
+                **({"model": parameters.get("model")} if context.protocol_version == 2 else {}),
+                **({"scope": scope} if scope is not None else {}))
         except _DatabaseCancelled as exc:
             if isinstance(exc.result, dict):
                 failure_revision = exc.result["revision"]

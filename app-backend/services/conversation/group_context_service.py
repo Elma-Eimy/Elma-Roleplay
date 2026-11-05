@@ -58,7 +58,7 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
 
 @group_session_operation
 def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None,
-                         generation_parameters_json=None, history_limit=None):
+                         generation_parameters_json=None, history_limit=None, scope=None):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     history._positive(persona_id, "成员")
@@ -66,7 +66,7 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
     db.expire_all()
     db.execute(text("BEGIN"))
     try:
-        round_, candidate = history._writable(session_id, candidate_id, expected_revision, db)
+        round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
         persona = db.get(SessionPersona, persona_id)
         if persona is None or persona.session_id != session_id:
             raise GroupSessionValidationError("发言成员不属于本群")

@@ -201,7 +201,7 @@ def build_director_messages(context, stage, *, user_content=None, proposed=None,
 
 
 @group_session_operation
-def build_director_context(session_id, db, *, candidate_id=None, expected_revision=None, max_chars=24000):
+def build_director_context(session_id, db, *, candidate_id=None, expected_revision=None, max_chars=24000, scope=None):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     if type(max_chars) is not int or max_chars < 1:
@@ -227,11 +227,14 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
             boundary = None
             current = []
         else:
-            round_, candidate = history._writable(session_id, candidate_id, expected_revision, db)
+            round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
             boundary = round_.round_index
             current = query.filter(GroupRoundCandidate.id == candidate_id).order_by(GroupContentItem.sequence).all()
-            eligible = tuple(pid for pid in ids if history._member_history(session_id, pid, round_, candidate, 2**63-1, 1, db))
+            eligible = (() if scope is not None and candidate.checkpoint == "user_visibility" else
+                        tuple(pid for pid in ids if history._member_history(session_id, pid, round_, candidate, 2**63-1, 1, db)))
             payload["eligible_persona_ids"] = list(eligible)
+            if scope is not None and candidate.checkpoint == "user_visibility":
+                current = []
 
         def content(row):
             item, owner = row

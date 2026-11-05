@@ -110,6 +110,32 @@ def validate_group_call_selection(encoded, *, model, thinking_mode, reasoning_ef
             raise history.GroupSessionValidationError("请求的模型选择与冻结调用参数不一致")
 
 
+def restore_group_calls(candidate, member_ids):
+    """续接只恢复已保存参数，提供方可轮换凭据但不能切服。"""
+    try:
+        value = json.loads(candidate.call_snapshot_json)
+        if (candidate.protocol_version != 2 or set(value) != {
+                "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
+                or value["policy_version"] != 2):
+            raise ValueError
+        if any(set(member) != {"persona_id", "parameters"} for member in value["members"]):
+            raise ValueError
+        snapshot = GroupCallSnapshot(json.dumps(value["director"]),
+            tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
+            value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY))
+        _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
+        def selection(parameters):
+            return (parameters["model"], parameters.get("reasoning_effort"),
+                    parameters.get("extra_body", {}).get("thinking"))
+        if any(selection(member["parameters"]) != selection(value["director"]) for member in value["members"]):
+            raise ValueError
+        if fingerprint != candidate.provider_fingerprint:
+            raise ValueError
+        return snapshot, value["max_steps"]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise history.GroupSessionValidationError("原调用参数缺失、损坏或提供方已变化，请整轮重生成") from None
+
+
 @group_session_operation
 def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reasoning_effort=None):
     history._require_group(session_id, db)

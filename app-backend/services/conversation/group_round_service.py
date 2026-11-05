@@ -4,10 +4,12 @@ import json
 import logging
 import math
 import time
+from datetime import datetime
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_director_service as director, group_generation_service as generation
 from services.conversation import group_history_service as history
+from services.conversation import group_checkpoint_service as checkpoints
 from services.conversation.group_call_snapshot import capture_group_calls
 from services.conversation.group_context_service import build_member_context
 from services.conversation.session_access import group_session_operation
@@ -69,8 +71,8 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
             return await _execute_round(session_id, user_content, db, execution, snapshot, budget, invoke, collect_inputs, protocol_version)
 
 
-async def _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version):
-    target = None
+async def _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version,
+                         *, target=None, scope=None, progress=None):
     calls = []
     runtime = execution.owner
     model = json.loads(snapshot.director_json)["model"]
@@ -78,6 +80,14 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
     async def call(stage, parameters, persona_id=None):
         require_group_execution(execution, session_id, db.get_bind())
         wait = budget.consume()
+        deadline = None
+        if scope is not None:
+            deadline = await generation._database(checkpoints.consume, scope, target["revision"], db)
+            # 预算提交也会消耗整轮时间，不能把提交前的剩余时长带到提交后。
+            remaining = (deadline - datetime.utcnow()).total_seconds()
+            if remaining <= 0:
+                raise director.GroupDirectorError("call_budget")
+            wait = min(wait, budget.remaining(), remaining)
         call_deadline = time.monotonic() + wait
         entry = {"stage": stage, "speaker_persona_id": persona_id}
         if collect_inputs:
@@ -85,14 +95,15 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         calls.append(entry)
         response = await asyncio.wait_for(call_model(stage, {**parameters, "timeout": wait}), wait)
         budget.remaining()
-        if time.monotonic() >= call_deadline:
+        if time.monotonic() >= call_deadline or (deadline is not None and datetime.utcnow() >= deadline):
             raise TimeoutError
         return response
 
     async def scene():
         require_group_execution(execution, session_id, db.get_bind())
         return await generation._database(director.build_director_context, session_id, db,
-            candidate_id=target["candidate_id"] if target else None, expected_revision=target["revision"] if target else None)
+            candidate_id=target["candidate_id"] if target else None, expected_revision=target["revision"] if target else None,
+            **({"scope": scope} if scope is not None else {}))
 
     async def decide(context, stage, **kwargs):
         messages = director.build_director_messages(context, stage, protocol_version=protocol_version, **kwargs)
@@ -100,42 +111,56 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         return response.choices[0]
 
     try:
-        context = await scene()
-        answer = await decide(context, "user_visibility", user_content=user_content)
-        plan = None
-        if protocol_version == 2:
-            plan = parse_user_units(answer.message.content, user_content, context.member_ids, finish_reason=answer.finish_reason)
-            visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
-        else:
-            visible_to = director.parse_visibility(answer.message.content, context.member_ids, finish_reason=answer.finish_reason).visible_to
-        try:
-            target = await generation._database(history._prepare, session_id, user_content, visible_to, db,
-                                                unit_plan=plan, model=model)
-        except generation._DatabaseCancelled as exc:
-            if isinstance(exc.result, dict):
-                target = exc.result
-            raise
-        finish_reason = "step_limit"
-        for _ in range(budget.max_steps):
+        if scope is None or progress["checkpoint"] == "user_visibility":
             context = await scene()
-            if not context.eligible_ids:
-                finish_reason = "no_visible_basis"
-                break
-            answer = await decide(context, "next_action")
-            action = director.parse_next_action(answer.message.content, context.member_ids, context.eligible_ids,
-                                                finish_reason=answer.finish_reason)
-            if action.action == "end":
-                finish_reason = action.reason_code
-                break
+            answer = await decide(context, "user_visibility", user_content=user_content)
+            plan = None
             if protocol_version == 2:
-                try:
-                    accepted = await generation._database(history._accept_action, session_id, target["candidate_id"],
-                                                          target["revision"], action, model, db)
-                except generation._DatabaseCancelled as exc:
-                    if isinstance(exc.result, dict):
-                        target["revision"] = exc.result["revision"]
-                    raise
-                target["revision"] = accepted["revision"]
+                plan = parse_user_units(answer.message.content, user_content, context.member_ids, finish_reason=answer.finish_reason)
+                visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
+            else:
+                visible_to = director.parse_visibility(answer.message.content, context.member_ids, finish_reason=answer.finish_reason).visible_to
+            try:
+                if scope is None:
+                    target = await generation._database(history._prepare, session_id, user_content, visible_to, db,
+                                                        unit_plan=plan, model=model)
+                else:
+                    saved_user = await generation._database(checkpoints.save_user, scope, target["revision"], plan, model, db)
+                    target.update(saved_user)
+            except generation._DatabaseCancelled as exc:
+                if isinstance(exc.result, dict):
+                    if target is None:
+                        target = exc.result
+                    else:
+                        target.update(exc.result)
+                raise
+        finish_reason = "step_limit"
+        pending_speaker = progress["speaker"] if scope is not None else None
+        iterations = progress["remaining"] if scope is not None else budget.max_steps
+        for _ in range(iterations):
+            context = await scene()
+            if pending_speaker is not None:
+                action = director.NextAction("speak", pending_speaker, "follow_up")
+                pending_speaker = None
+            else:
+                if not context.eligible_ids:
+                    finish_reason = "no_visible_basis"
+                    break
+                answer = await decide(context, "next_action")
+                action = director.parse_next_action(answer.message.content, context.member_ids, context.eligible_ids,
+                                                    finish_reason=answer.finish_reason)
+                if action.action == "end":
+                    finish_reason = action.reason_code
+                    break
+                if protocol_version == 2:
+                    try:
+                        accepted = await generation._database(history._accept_action, session_id, target["candidate_id"],
+                            target["revision"], action, model, db, **({"scope": scope} if scope is not None else {}))
+                    except generation._DatabaseCancelled as exc:
+                        if isinstance(exc.result, dict):
+                            target["revision"] = exc.result["revision"]
+                        raise
+                    target["revision"] = accepted["revision"]
             async def audience(proposed):
                 try:
                     answer = await decide(context, "utterance_visibility", proposed=proposed)
@@ -158,7 +183,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             saved = await generation._generate_with_execution(session_id, target["candidate_id"], action.speaker_persona_id,
                 target["revision"], db, execution=execution, decide_visibility=audience, call_model=role_call,
                 generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id),
-                history_limit=snapshot.history_limit, fail_candidate=False)
+                history_limit=snapshot.history_limit, fail_candidate=False,
+                **({"scope": scope} if scope is not None else {}))
             target["revision"] = saved["revision"]
         personal_inputs = {}
         diagnostic_error_code = None
@@ -167,7 +193,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 context = await scene()
                 for pid in context.eligible_ids:
                     personal = await generation._database(build_member_context, session_id, pid, target["candidate_id"],
-                        target["revision"], db, generation_parameters_json=snapshot.member_parameters(pid), history_limit=snapshot.history_limit)
+                        target["revision"], db, generation_parameters_json=snapshot.member_parameters(pid), history_limit=snapshot.history_limit,
+                        **({"scope": scope} if scope is not None else {}))
                     personal_inputs[str(pid)] = json.loads(personal.messages_json)
             except Exception as exc:
                 # 诊断读取不改变业务终态；取消仍交给外层等待持久化并清理。
@@ -175,8 +202,11 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 diagnostic_error_code = exc.code if isinstance(exc, director.GroupDirectorError) else "input_collection_failed"
                 logger.warning("群聊输入诊断未完成 error_type=%s", type(exc).__name__)
         try:
-            done = await generation._database(history._finish, session_id, target["candidate_id"], target["revision"], False, db,
-                **({"finish_reason": finish_reason, "model": model} if protocol_version == 2 else {}))
+            if scope is None:
+                done = await generation._database(history._finish, session_id, target["candidate_id"], target["revision"], False, db,
+                    **({"finish_reason": finish_reason, "model": model} if protocol_version == 2 else {}))
+            else:
+                done = await generation._database(checkpoints.finish, scope, target["revision"], finish_reason, model, db)
         except generation._DatabaseCancelled as exc:
             if not isinstance(exc.result, dict):
                 raise
@@ -192,8 +222,11 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError, GroupUnitError))
                 else "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
             try:
-                failed_revision = await generation._database(generation._fail, session_id, target["candidate_id"],
-                                                             target["revision"], db, runtime, code)
+                if scope is None:
+                    failed_revision = await generation._database(generation._fail, session_id, target["candidate_id"],
+                                                                 target["revision"], db, runtime, code)
+                else:
+                    failed_revision = await generation._database(checkpoints.fail, scope, target["revision"], code, db)
                 if failed_revision is not None:
                     target["revision"] = failed_revision
             except Exception as marker_error:

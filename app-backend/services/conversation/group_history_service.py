@@ -1,5 +1,6 @@
 """群聊内容归属和个人历史；兼容旧单步执行，不调用模型。"""
 import logging
+import json
 from dataclasses import dataclass
 
 from sqlalchemy import and_, or_, func, text
@@ -82,8 +83,11 @@ def _target(session_id, candidate_id, db):
     return round_, candidate
 
 
-def _writable(session_id, candidate_id, expected_revision, db):
+def _writable(session_id, candidate_id, expected_revision, db, *, scope=None):
     _positive(expected_revision, "候选版本", 0)
+    if scope is not None:
+        from services.conversation.group_checkpoint_service import target
+        return target(scope, session_id, candidate_id, expected_revision, db)
     from services.conversation.group_operation_service import _active
     if _active(session_id, db):
         raise SessionKindConflict("持久任务不能通过旧执行入口写入")
@@ -151,10 +155,14 @@ async def append_group_utterance(session_id, candidate_id, speaker_persona_id, c
 
 
 def _append(session_id, candidate_id, speaker, content, visible_to, revision, db, *,
-            emotion_tag=None, affection_change=None, role_state_patch=None, unit_plan=None, model=None):
+            emotion_tag=None, affection_change=None, role_state_patch=None, unit_plan=None, model=None, scope=None):
     try:
         _begin_write(db)
-        _, candidate = _writable(session_id, candidate_id, revision, db)
+        round_, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
+        if scope is not None:
+            from services.conversation.group_checkpoint_service import validate_prefix
+            if candidate.checkpoint != "role_generation" or validate_prefix(round_, candidate, db) != speaker:
+                raise SessionKindConflict("发言不属于当前已接受调度")
         if (candidate.protocol_version == 2) != (unit_plan is not None):
             raise GroupSessionValidationError("不能混用全文和单元协议")
         members = _members(session_id, db)
@@ -171,6 +179,12 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
         if unit_plan is not None:
             units._write_units(item, unit_plan, members, None, db)
             audit.record(candidate, "utterance_visibility", unit_plan, model, db, item=item)
+        if scope is not None:
+            from services.conversation.group_checkpoint_service import saved_steps
+            # 检查点与本次完整发言同事务保存。
+            count = saved_steps(candidate_id, db)
+            maximum = json.loads(candidate.call_snapshot_json)["max_steps"]
+            candidate.checkpoint = "finish" if count >= maximum else "next_action"
         candidate.revision += 1
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()
@@ -209,13 +223,17 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
         raise
 
 
-def _accept_action(session_id, candidate_id, revision, action, model, db):
+def _accept_action(session_id, candidate_id, revision, action, model, db, *, scope=None):
     try:
         _begin_write(db)
-        _, candidate = _writable(session_id, candidate_id, revision, db)
+        _, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
+        if scope is not None and candidate.checkpoint != "next_action":
+            raise SessionKindConflict("调度检查点已变化")
         if action.speaker_persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("调度成员不属于本群")
         audit.record(candidate, "next_action", action, model, db)
+        if scope is not None:
+            candidate.checkpoint = "role_generation"
         candidate.revision += 1
         result = {"revision": candidate.revision}
         db.commit()
