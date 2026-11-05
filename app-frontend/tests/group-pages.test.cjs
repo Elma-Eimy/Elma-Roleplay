@@ -18,6 +18,7 @@ function fixture(kind, overrides = {}, mock = false, platform = "H5") {
   const calls = [];
   const api = {
     getGroupSessions: async () => page(), getGroupSession: async id => group(id),
+    getGroupRounds: async () => ({ rounds: [], total: 0, limit: 20, offset: 0, has_more: false }),
     createGroupSession: async value => { calls.push(value); return group(50); },
     deleteGroupSession: async id => { calls.push(id); return { deleted_session_id: id }; },
     ...overrides,
@@ -40,6 +41,83 @@ function fill(f) {
   f.state.title.value = "group";
   f.state.toggleCharacter(character(1));
   f.state.toggleCharacter(character(2));
+}
+
+const roundPage = (items = [], more = false, offset = 0) => ({ rounds: items, total: 3,
+  limit: 20, offset, has_more: more });
+const round = id => ({ round_id: id, round_index: id, candidate_id: id,
+  status: "failed", confirmed: false, user_content: "sample", utterances: [] });
+
+test("round pagination preserves failure prefixes and retries the failed page", async () => {
+  let fail = true;
+  const offsets = [];
+  const f = fixture("detail", { getGroupRounds: async (id, limit, offset) => {
+    offsets.push(offset);
+    if (!offset) return roundPage([round(3)], true);
+    if (fail) { fail = false; throw new Error("network failed"); }
+    return roundPage([round(3), round(2)], true, offset);
+  } });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  await f.state.loadRounds(true);
+  assert.match(f.state.roundsError.value, /network failed/);
+  assert.deepEqual(plain(f.state.rounds.value.map(item => item.round_id)), [3]);
+  await f.state.retryRounds();
+  assert.deepEqual(offsets, [0, 1, 1]);
+  assert.deepEqual(plain(f.state.rounds.value.map(item => item.round_id)), [3, 2]);
+  await f.state.loadRounds(true);
+  assert.equal(offsets.at(-1), 3);
+  f.scope.stop();
+});
+
+test("failed round refresh retries offset zero while retaining the old view", async () => {
+  const offsets = []; let reads = 0;
+  const f = fixture("detail", { getGroupRounds: async (_, limit, offset) => {
+    offsets.push(offset); if (++reads === 2) throw new Error("refresh failed");
+    return roundPage([round(reads)], true);
+  } });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  await f.state.loadRounds();
+  assert.equal(f.state.rounds.value[0].round_id, 1);
+  await f.state.retryRounds();
+  assert.deepEqual(offsets, [0, 0, 0]);
+  assert.equal(f.state.rounds.value[0].round_id, 3);
+  f.scope.stop();
+});
+
+test("detail refresh cannot be displaced by a concurrent round pagination read", async () => {
+  const refresh = deferred(); let detailReads = 0;
+  const offsets = [];
+  const f = fixture("detail", {
+    getGroupSession: async id => ++detailReads === 1 ? group(id) : refresh.promise,
+    getGroupRounds: async (_, limit, offset) => {
+      offsets.push(offset);
+      return roundPage([round(offsets.length === 1 ? 1 : 2)], true, offset);
+    },
+  });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  const updating = f.state.load();
+  await f.state.loadRounds(true);
+  assert.deepEqual(offsets, [0]);
+  refresh.resolve(group(1)); await updating; await flush();
+  assert.deepEqual(offsets, [0, 0]);
+  assert.deepEqual(plain(f.state.rounds.value.map(item => item.round_id)), [2]);
+  f.scope.stop();
+});
+
+for (const change of ["story", "server", "hide", "delete"]) {
+  test(`late round history cannot refill state after ${change}`, async () => {
+    const pending = deferred(); let reads = 0;
+    const f = fixture("detail", { getGroupRounds: () => ++reads === 1 ? pending.promise : Promise.resolve(roundPage([round(2)])) });
+    f.state.setSessionId(1); f.state.show(); await flush();
+    if (change === "story") { f.state.setSessionId(2); await f.state.load(); await flush(); }
+    if (change === "server") f.setServer("https://b.invalid");
+    if (change === "hide") { f.state.hide(); f.state.show(); await flush(); }
+    if (change === "delete") await f.state.remove(async () => true);
+    pending.resolve(roundPage([round(1)])); await flush();
+    assert.deepEqual(plain(f.state.rounds.value.map(item => item.round_id)), ["story", "hide"].includes(change) ? [2] : []);
+    assert.equal(f.state.loadingRounds.value, false);
+    f.scope.stop();
+  });
 }
 
 test("group pages are registered without changing the default home or exposing a send control", () => {

@@ -65,3 +65,31 @@ export interface DeleteGroupSessionResponse {
   members_deleted: number;
   local_memories_deleted: number;
 }
+
+export interface GroupUtterance {
+  item_id: number;
+  sequence: number;
+  speaker_persona_id: number;
+  speaker_name: string;
+  content: string;
+  created_at: string;
+}
+
+export interface GroupRound {
+  round_id: number;
+  round_index: number;
+  candidate_id: number | null;
+  status: "generating" | "awaiting_confirmation" | "failed";
+  confirmed: boolean;
+  user_content: string;
+  created_at: string;
+  utterances: GroupUtterance[];
+}
+
+export interface GetGroupRoundsResponse {
+  rounds: GroupRound[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}

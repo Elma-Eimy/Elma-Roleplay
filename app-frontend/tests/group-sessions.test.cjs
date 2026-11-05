@@ -29,6 +29,30 @@ test("group API keeps HTTP methods, pagination and creation payload through shar
   assert.deepEqual(plain(calls[3][1]), { method: "POST" });
 });
 
+test("group round API uses shared GET and the explicit session pagination", async () => {
+  const calls = [];
+  const f = fixture({ request: async (...args) => { calls.push(args); return { rounds: [] }; } });
+  await f.api.getGroupRounds(21, 5, 10);
+  assert.deepEqual(calls, [["/group-sessions/21/rounds?limit=5&offset=10"]]);
+});
+
+test("mock round history is readonly, paginated and removed with its group", async () => {
+  const f = fixture({ mock: true });
+  const group = await f.api.createGroupSession(cards());
+  f.db.groupRounds = { [group.session_id]: [1, 2].map(id => ({ round_id: id, round_index: id,
+    candidate_id: id, status: "failed", confirmed: false, user_content: "虚构样本", created_at: "2026-11-05", utterances: [] })) };
+  const writes = f.writes;
+  const page = await f.api.getGroupRounds(group.session_id, 1, 0);
+  assert.equal(page.rounds[0].round_id, 2); assert.equal(page.has_more, true);
+  page.rounds[0].user_content = "mutated";
+  assert.equal(f.db.groupRounds[group.session_id][1].user_content, "虚构样本");
+  assert.equal(f.writes, writes);
+  await assert.rejects(f.api.getGroupRounds(10), /仅支持群聊/);
+  await assert.rejects(f.api.getGroupRounds(group.session_id, 101), /分页/);
+  await f.api.deleteGroupSession(group.session_id);
+  assert.equal(f.db.groupRounds[group.session_id], undefined);
+});
+
 test("failed group creation never retries POST", async () => {
   let calls = 0;
   const f = fixture({ request: async () => { calls++; throw new Error("timeout"); } });

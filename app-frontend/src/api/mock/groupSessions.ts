@@ -1,7 +1,7 @@
 import { getMockDB, setMockDB } from "../config";
 import type { MockDatabase } from "../config";
 import type { CreateGroupSessionParams, GroupSessionDetail, GetGroupSessionsResponse,
-  DeleteGroupSessionResponse } from "../../types/groupSessions";
+  DeleteGroupSessionResponse, GetGroupRoundsResponse } from "../../types/groupSessions";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -78,6 +78,19 @@ export async function getGroupSession(sessionId: number): Promise<GroupSessionDe
 export async function deleteGroupSession(sessionId: number): Promise<DeleteGroupSessionResponse> {
   const db = getMockDB();
   const group = requireGroup(db, sessionId);
-  setMockDB({ ...db, groupSessions: db.groupSessions!.filter(session => session.session_id !== sessionId) });
+  const groupRounds = { ...db.groupRounds };
+  delete groupRounds[sessionId];
+  setMockDB({ ...db, groupRounds, groupSessions: db.groupSessions!.filter(session => session.session_id !== sessionId) });
   return { deleted_session_id: sessionId, members_deleted: group.members.length, local_memories_deleted: 0 };
+}
+
+export async function getGroupRounds(sessionId: number, limit = 20, offset = 0): Promise<GetGroupRoundsResponse> {
+  const db = getMockDB();
+  requireGroup(db, sessionId);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0) {
+    throw new Error("分页参数无效");
+  }
+  const rounds = [...(db.groupRounds?.[sessionId] ?? [])].sort((a, b) => b.round_index - a.round_index);
+  return clone({ rounds: rounds.slice(offset, offset + limit), total: rounds.length, limit, offset,
+    has_more: offset + limit < rounds.length });
 }

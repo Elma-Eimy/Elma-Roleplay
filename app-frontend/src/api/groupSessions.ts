@@ -5,6 +5,7 @@ import type {
   GroupSessionDetail,
   GetGroupSessionsResponse,
   DeleteGroupSessionResponse,
+  GetGroupRoundsResponse,
 } from "../types/groupSessions";
 
 export async function createGroupSession(params: CreateGroupSessionParams): Promise<GroupSessionDetail> {
@@ -28,4 +29,9 @@ export async function getGroupSession(sessionId: number): Promise<GroupSessionDe
 export async function deleteGroupSession(sessionId: number): Promise<DeleteGroupSessionResponse> {
   if (USE_MOCK) return mock.deleteGroupSession(sessionId);
   return request<DeleteGroupSessionResponse>(`/group-sessions/${sessionId}/delete`, { method: "POST" });
+}
+
+export async function getGroupRounds(sessionId: number, limit = 20, offset = 0): Promise<GetGroupRoundsResponse> {
+  if (USE_MOCK) return mock.getGroupRounds(sessionId, limit, offset);
+  return request<GetGroupRoundsResponse>(`/group-sessions/${sessionId}/rounds?limit=${limit}&offset=${offset}`);
 }
