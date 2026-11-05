@@ -14,6 +14,8 @@
 
 M3-A 审查回归覆盖旧历史填满预算后的三个阶段编译、本轮前缀保护和新轮次执行；最终提交期间取消时，分别验证成功提交返回完成、失败写入保持取消，并等待线程结束后释放锁。
 
+`conversation/test_group_director_prompts.py` 覆盖独立阶段契约、实际成员 ID、Unicode 原文长度与位置参照、长文包围符边界优先、稠密包围符的参照上限和场景预算，以及真实 API 返回过的错误范围与阶段包装仍被拒绝；同时核对调度只统计本轮已发生的发言。与导演专项一起执行：`python -m tests --group conversation --pattern 'test_group_director*.py'`。这些离线回归不评价模型语义，真实调用记录见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。
+
 M3-B 审查回归还验证四个模型阶段在适配器吞掉超时取消并返回结果时仍停止推进；诊断开关和诊断异常不改变成功候选，诊断错误码不含原始异常。诊断期间的外部取消仍等待线程结束并将候选标失败，不与普通诊断读取异常混为一谈。
 
 `conversation/test_group_generation.py` 用假模型检查角色实际收到的完整输入，覆盖秘密与世界书隔离、用户原文、A → B → A、各自状态重放、已确认所选版本、同名身份、缺失知情记录、超长共同背景、无事务外部调用、取消等待持久化、提交失败与迟到结果。含从内部生成到只读轮次 HTTP 的隔离原型；不进入应用 lifespan，不调用真实模型或开发数据库。运行：`python -m tests --group conversation --pattern test_group_generation.py`。
