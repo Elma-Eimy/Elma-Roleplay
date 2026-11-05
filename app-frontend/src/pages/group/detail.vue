@@ -12,7 +12,7 @@
             <text class="group-label">共同设定</text>
             <text class="group-copy">{{ group.shared_setting || '未填写共同设定，角色保留各自的角色卡设定。' }}</text>
           </view>
-          <view class="group-notice"><text class="group-copy">可查看成员起点与已保存发言。自动角色互动将在后续开放。</text></view>
+          <view class="group-notice"><text class="group-copy">可查看成员起点与自动互动已保存的发言。发送、确认和候选操作尚未开放。</text></view>
           <view v-for="member in group.members" :key="member.persona_id" class="group-card">
             <view class="group-row"><AvatarImage class="group-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /><view class="member-name"><text class="group-heading">{{ member.character.name }}</text><text class="group-caption">成员 {{ member.slot }}</text></view></view>
             <text class="group-label">{{ member.origin.mode === 'card' ? '从原卡开始' : '导入单聊快照' }}</text>
@@ -35,7 +35,7 @@
                 <text class="group-caption">{{ utterance.speaker_name }} · {{ memberLabel(utterance.speaker_persona_id) }}</text>
                 <text class="group-copy">{{ utterance.content }}</text>
               </view>
-              <text v-if="round.status === 'failed'" class="group-error">本轮未完成，已保存的发言仍可查看。</text>
+              <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error' : 'group-copy'">{{ groupRoundNotice(round) }}</text>
             </view>
             <text v-if="roundsError" class="group-error" role="alert">{{ roundsError }}</text>
             <view v-if="roundsError" class="group-action" role="button" :aria-disabled="loading || loadingRounds || deleting" @tap="retryRounds">重新读取发言</view>
@@ -58,7 +58,7 @@ import AvatarImage from "@/components/common/AvatarImage.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
 import type { ActorState } from "@/types/roleState";
-import type { GroupRound } from "@/types/groupSessions";
+import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/groupRounds";
 
 const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
 const state = useGroupSessionDetail(backToList);
@@ -67,7 +67,6 @@ onLoad(options => state.setSessionId(Number(options?.sessionId)));
 onShow(state.show); onHide(state.hide); onUnload(state.hide);
 const formatTime = (value: string) => value.replace("T", " ").slice(0, 19);
 const actorDescription = (actor: ActorState) => [actor.posture, actor.clothing, actor.location].filter(Boolean).join(" · ");
-const roundStatus = (round: GroupRound) => round.confirmed ? "已确认" : round.status === "failed" ? "未完成" : round.status === "generating" ? "处理中" : "待确认";
 const refreshRounds = () => state.loadRounds();
 const moreRounds = () => state.loadRounds(true);
 const retryRounds = () => state.retryRounds();

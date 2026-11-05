@@ -7,7 +7,7 @@ const ts = require("typescript");
 const { createPinia, setActivePinia } = require("pinia");
 const { createLoader, deferred, sourceRoot } = require("./helpers/load-ts.cjs");
 
-function connectionFixture() {
+function connectionFixture(preview = false) {
   const storage = new Map([["api_base_url", "https://server-a.invalid"]]);
   let failSave = false;
   const uni = {
@@ -21,6 +21,7 @@ function connectionFixture() {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(code, { module, exports: module.exports, uni,
+    __GROUP_PREVIEW__: preview, window: { location: { origin: "http://127.0.0.1:8767" } },
     console: { ...console, error() {} }, require(name) {
       assert.equal(name, "../utils/connectionEvents"); return events;
     } });
@@ -39,6 +40,22 @@ test("only a successfully persisted different server invalidates subscribers", (
   assert.equal(f.config.getBaseUrl(), "https://server-b.invalid");
   assert.equal(seen.length, 1);
   unsubscribe(); f.events.notifyServerChange(); assert.equal(seen.length, 1);
+});
+
+test("preview build pins its origin, drops saved keys and rejects writes before transport", async () => {
+  const f = connectionFixture(true);
+  f.uni.setStorageSync("api_access_key", "PRIVATE_KEY");
+  let requests = 0;
+  f.uni.request = options => { requests++; options.success({ statusCode: 200, data: options }); };
+  assert.equal(f.config.getBaseUrl(), "http://127.0.0.1:8767");
+  assert.equal(f.config.getSavedApiKey(), "");
+  assert.throws(() => f.config.setSavedBaseUrl("https://server-b.invalid"), /固定/);
+  assert.deepEqual(Object.keys(f.config.getHeaders({ "X-API-Key": "PRIVATE_KEY" })), []);
+  const read = await f.config.request("/group-sessions");
+  assert.equal(read.url, "http://127.0.0.1:8767/group-sessions");
+  assert.equal(read.header["X-API-Key"], undefined);
+  await assert.rejects(f.config.request("/group-sessions/1/delete", { method: "POST" }), /只允许读取/);
+  assert.equal(requests, 1);
 });
 
 test("server saves reset live stores and reject old history, details and character lists even after A-B-A", async t => {

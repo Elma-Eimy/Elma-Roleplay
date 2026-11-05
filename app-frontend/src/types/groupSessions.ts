@@ -81,6 +81,9 @@ export interface GroupRound {
   candidate_id: number | null;
   status: "generating" | "awaiting_confirmation" | "failed";
   confirmed: boolean;
+  revision?: number | null;
+  finish_reason?: "wait_user" | "no_visible_basis" | "step_limit" | null;
+  error_code?: string | null;
   user_content: string;
   created_at: string;
   utterances: GroupUtterance[];
