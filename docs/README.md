@@ -55,6 +55,8 @@
 
 [M1 群聊数据与人格设计](plans/group-chat/M1_DATA_AND_PERSONAS.md) 明确多 Persona、来源快照、单聊兼容、迁移、删除保护和实施批次；附 M1-A–D 实现与隔离验证记录，App/微信真机流程待验收。
 
+[M2 单角色发言与知情隔离设计](plans/group-chat/M2_CONTEXT_AND_VISIBILITY.md) 定义群聊轮次/候选、个人可见历史、独立 Prompt 与单步生成边界；M2-A 数据、归属和查询基础已实现，生成与展示待后续批次。
+
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 
 [聊天 Store 生命周期评估](plans/CHAT_LIFECYCLE_REVIEW.md) 保留初评证据，标注已完成的异步回写、编辑反馈与切服失效修复；进一步拆分 Store 仍待评估。

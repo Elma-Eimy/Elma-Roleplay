@@ -32,6 +32,16 @@ HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接
 
 `services/conversation/group_session_service.py` 在来源锁与 SQLite 写事务内原子创建群聊及成员快照；快照来源 ID 不设动态外键，删除来源不影响已冻结事实。创建、删除和角色删除通过写事务串行化引用检查，群聊删除与本群资源的 Outbox 登记同进同退。继承快照当前只作持久交接，不进入单聊检索、任务或向量索引。
 
+M2-A 的 `services/conversation/group_history_service.py` 管理内部轮次创建、完整内容与知情结果的原子追加、候选终态及个人历史查询，不调用模型或提供 HTTP 入口。`group_rounds`、`group_round_candidates`、`group_content_items`、`group_content_visibility` 通过组合外键约束同群归属；所选候选使用延迟校验外键解决循环引用，普通业务外键保持开启。新迁移只给旧 Session/Persona 增加目标唯一索引，不重建旧表；非空群聊轮次拒绝降级。
+
+个人历史显式校验群聊、Persona 和当前未确认所选候选，独立 SQLite 读事务内筛选此前已确认的所选成功候选及当前 sequence 边界，按可见性过滤后再取最近 N 项。缺失知情行默认隐藏并报告内部告警；返回不可变 DTO，不附加全群原文、内部状态或隐藏项摘要。DTO 的内容 ID 和全局顺序仅供内部溯源，后续 Prompt 编译不能暴露由它们推断出的隐藏内容数量。读取不授予模型执行权；M2-B 必须在会话锁内校验候选版本后使用输入，并在落库时重新核验。
+
+M2-A 的公开服务入口在接管事务前检查待提交 ORM 修改和底层 SQLite 活动事务，类型预读取禁止 autoflush。若调用方已修改、flush 或显式开启事务，则拒绝操作并保留其事务，不进入内部 rollback 清理；服务只负责自己取得的事务。普通只读预查询形成的 SQLAlchemy 逻辑事务仍可结束后重新取得快照。
+
+`application/group_runtime.py` 将运行权绑定到 SQLite 文件旁的 `.runtime.lock`：Windows 使用 msvcrt 字节锁，其他支持的平台使用 flock。lifespan 先独占运行权，再迁移并将残留 generating 候选改为 failed/process_interrupted、递增 revision，随后启动 Worker；关闭并等待任务结束后才释放运行权。第二个应用进程会在迁移和中断处理前失败，避免误判其他 Worker 的正在执行候选。锁文件保留，锁随句柄或进程退出释放；不自动恢复或再次调用模型。
+
+关闭清理通过独立任务统一取消并等待后台 Worker，再清理聊天流；单个 Worker 已异常退出时也继续处理其余任务。lifespan 的重复取消不会传入该清理任务，清理完成后才传播取消或 Worker 错误并释放运行权，避免后台仍在写库时允许新进程接管。
+
 列表筛选与角色删除保护仍是各自的业务规则。群聊路由仅允许 group 目标；创建请求中的 `origin.session_id` 映射为内部 `source_session_id`，始终按 single 来源检查。来源与目标不会共用一个模糊的类型豁免。不同策略不能重复包装同一业务入口；后续群聊子资源也沿用明确的策略及归属校验。
 
 Alembic 在线迁移在事务外暂停当前连接的外键执行，随后用 `BEGIN IMMEDIATE` 将表重建与版本号更新纳入同一事务，提交前执行 `foreign_key_check`，失败整体回滚，退出时恢复原外键设置。这样重建 Persona 或 Session 表时不会触发引用表的级联删除和置空。普通业务连接仍启用外键；含群聊数据时拒绝降级到 M1-A 之前的结构。
