@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch, AsyncMock
 
 from application.group_runtime import group_runtime, fail_interrupted_group_candidates
+from core.locking import GroupRuntimeOwner
 from core.models import GroupRoundCandidate, GroupContentItem
 from services.conversation import group_history_service as history
 from services.conversation import group_session_service as groups
@@ -74,7 +75,7 @@ class GroupRuntimeTests(unittest.TestCase):
         def runtime():
             events.append("lock")
             try:
-                yield "owner"
+                yield GroupRuntimeOwner(self.engine)
             finally:
                 events.append("unlock")
         async def worker():
@@ -84,7 +85,7 @@ class GroupRuntimeTests(unittest.TestCase):
             with patch("application.lifecycle.group_runtime", runtime), patch(
                 "application.lifecycle.run_migrations", side_effect=lambda: events.append("migrate")
             ), patch("application.lifecycle.fail_interrupted_group_candidates",
-                     side_effect=lambda owner: events.append("reconcile:" + owner)), patch(
+                     side_effect=lambda owner: events.append("reconcile:owner")), patch(
                 "application.lifecycle.run_outbox_worker", side_effect=worker
             ), patch("application.lifecycle.run_memory_retry_worker", side_effect=worker), patch(
                 "application.lifecycle.run_charx_cleanup", side_effect=worker
@@ -107,7 +108,7 @@ class GroupRuntimeTests(unittest.TestCase):
         @contextmanager
         def runtime():
             try:
-                yield "owner"
+                yield GroupRuntimeOwner(self.engine)
             finally:
                 all_stopped_at_unlock.append(all(task.done() for task in tasks()))
         async def worker():
@@ -143,7 +144,7 @@ class GroupRuntimeTests(unittest.TestCase):
         @contextmanager
         def runtime():
             try:
-                yield "owner"
+                yield GroupRuntimeOwner(self.engine)
             finally:
                 unlocked.append(app.state.memory_retry_task.done())
         async def scenario():

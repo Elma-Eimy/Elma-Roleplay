@@ -9,7 +9,7 @@ from functools import partial
 
 from fastapi.concurrency import run_in_threadpool
 
-from core.locking import get_session_lock, require_group_runtime
+from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_history_service as history
 from services.conversation.group_context_service import build_member_context
 from services.conversation.group_session_service import GroupSessionValidationError
@@ -111,18 +111,25 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
     history._require_clean_transaction(db)
     require_group_runtime(runtime, db.get_bind())
     history._positive(speaker_persona_id, "发言成员")
-    lock = get_session_lock(session_id)
-    if lock.locked():
-        raise SessionKindConflict("群聊正在处理")
-    await lock.acquire()
+    async with group_execution(session_id, db.get_bind(), runtime) as execution:
+        return await _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
+            db, execution=execution, decide_visibility=decide_visibility, model=model)
+
+
+async def _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
+                                   db, *, execution, decide_visibility, model=None, call_model=None,
+                                   generation_parameters_json=None, history_limit=None):
+    require_group_execution(execution, session_id, db.get_bind())
+    runtime = execution.owner
     failure_revision = expected_revision
     prepared = False
     try:
         context = await _database(build_member_context, session_id, speaker_persona_id,
-            candidate_id, expected_revision, db, model=model)
+            candidate_id, expected_revision, db, model=model, generation_parameters_json=generation_parameters_json,
+            history_limit=history_limit)
         prepared = True
         parameters = json.loads(context.generation_json)
-        response = await get_llm_provider().generate_async(**parameters)
+        response = await (get_llm_provider().generate_async(**parameters, _group_no_retry=True) if call_model is None else call_model(parameters))
         if response.choices[0].finish_reason not in (None, "stop"):
             raise GroupGenerationError("incomplete_output")
         result = _parse(response.choices[0].message.content, context)
@@ -150,5 +157,3 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
         if isinstance(exc, (asyncio.CancelledError, SessionKindConflict, GroupSessionValidationError, GroupGenerationError)):
             raise
         raise GroupGenerationError("execution_failed") from None
-    finally:
-        lock.release()

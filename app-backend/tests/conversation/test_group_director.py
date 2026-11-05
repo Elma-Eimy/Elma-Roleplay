@@ -239,6 +239,7 @@ class DirectorPrototypeTests(unittest.TestCase):
                 if calls == 2:
                     return _response('{"recipients":[]}')
         group, _, result = self.run_case(intercept=invalid)
+        self.assertEqual("invalid_output", result["error_code"])
         row = history.list_group_rounds(group["session_id"], self.db)["rounds"][0]
         self.assertEqual("failed", row["status"])
         self.assertEqual(1, len(row["utterances"]))

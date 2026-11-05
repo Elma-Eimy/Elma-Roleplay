@@ -53,7 +53,8 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
 
 
 @group_session_operation
-def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None):
+def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None,
+                         generation_parameters_json=None, history_limit=None):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     history._positive(persona_id, "成员")
@@ -71,7 +72,7 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
             raise GroupSessionValidationError("候选缺少用户内容项")
         before = last_sequence + 1
         rows = history._member_history(session_id, persona_id, round_, candidate, before,
-            min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT)), db)
+            min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit)), db)
         if not rows:
             raise GroupSessionValidationError("没有可见内容，不能生成角色发言")
         state, state_persona = _member_state(persona, group, round_, candidate, before, db)
@@ -82,7 +83,8 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
             persona_id=persona_id, user_nickname=group.user_nickname,
             shared_setting=group.shared_setting, current_role_state=state)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
-        kwargs = _prepare_generation_kwargs(persona.character, messages, model=model)
+        kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
+                  else {**json.loads(generation_parameters_json), "messages": messages})
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
             json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False))
     finally:
