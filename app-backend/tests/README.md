@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`conversation/test_group_units.py` 验证 M3-C 用户码点范围、角色单元知情、心理仅作者可见、过滤后窗口、一次状态重放、v2 最终输出契约与世界书输入；同时覆盖调度先落库、审计原子回滚、版本竞争、取消、正常停止及 Outbox 删除回滚。`infrastructure/test_group_units_migration.py` 使用虚构旧库验证原文和权限回填、组合约束、级联、升级失败回滚及有损降级拒绝。内部整轮默认 v2；旧执行权专项显式使用 v1 替身，CLI 的 8 个场景使用 v2。
+
 `conversation/test_group_round.py` 验证 M3-B 任务/会话执行令牌、伪造与过期拒绝、整轮模型及采样/历史窗口冻结、调用预算和超时，并用本地 HTTP 200 替身走通默认 SDK 客户端的完整轮次。关闭专项使用真实运行权，验证重复取消时仍等待角色清理和已派发数据库线程，期间拒绝新任务及第二进程运行权。`infrastructure/test_group_model_client.py` 仅连接本地 HTTP 500 替身，检查整轮客户端及 M2 单步调用各只发一次请求、不改普通单聊默认选项，以及客户端清理期间取消不会覆盖已完成结果。分别用统一入口选择对应文件执行，不访问真实模型。
 
 `conversation/test_group_director.py` 检查 M3-A 严格 JSON、完整知情覆盖、可执行成员集合、私人基线排除和有效候选读取。隔离原型复用真实个人上下文、回复解析及原子写入，检查自动 A → B → A、公开转述、混合项信息损失、调用预算、失败前缀、取消和 revision 竞争；CLI 子进程回放 8 个虚构场景到只读 HTTP 报告。运行 `python -m tests --group conversation --pattern test_group_director.py`；不调用网络模型，真实语义和三端人工阅读另验。新增 scripts、services 与 JSON 夹具均在统一入口现有复制范围内。
