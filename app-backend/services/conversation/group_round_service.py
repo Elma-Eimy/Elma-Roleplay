@@ -1,4 +1,4 @@
-"""持有任务执行权串行推进内部群聊；细分可见单元与持久审计待 M3-C。"""
+"""持有任务执行权串行推进内部群聊，普通发送入口继续关闭。"""
 import asyncio
 import json
 import logging
@@ -12,6 +12,7 @@ from services.conversation.group_call_snapshot import capture_group_calls
 from services.conversation.group_context_service import build_member_context
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.llm_provider import group_model_session
+from services.conversation.group_unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,13 @@ class GroupRoundBudget:
 
 @group_session_operation
 async def run_group_round(session_id, user_content, db, *, runtime, model=None, thinking_mode=None,
-                          reasoning_effort=None, max_steps=4, timeout=300, call_model=None, collect_inputs=False):
+                          reasoning_effort=None, max_steps=4, timeout=300, call_model=None, collect_inputs=False,
+                          protocol_version=2):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     require_group_runtime(runtime, db.get_bind())
+    if type(protocol_version) is not int or protocol_version not in (1, 2):
+        raise ValueError("群聊协议版本无效")
     if not isinstance(user_content, str) or not user_content.strip():
         raise ValueError("用户输入不能为空")
     # 参数在取得锁后和任何调用前验证；预算从执行权取得时开始计时。
@@ -58,17 +62,18 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
             raise ValueError("单次模型超时无效")
         budget.call_timeout = snapshot.call_timeout
         if call_model is not None:
-            return await _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs)
+            return await _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version)
         async with group_model_session(snapshot.connection, timeout=snapshot.call_timeout) as client:
             async def invoke(stage, kwargs):
                 return await client.chat.completions.create(**kwargs)
-            return await _execute_round(session_id, user_content, db, execution, snapshot, budget, invoke, collect_inputs)
+            return await _execute_round(session_id, user_content, db, execution, snapshot, budget, invoke, collect_inputs, protocol_version)
 
 
-async def _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs):
+async def _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version):
     target = None
     calls = []
     runtime = execution.owner
+    model = json.loads(snapshot.director_json)["model"]
 
     async def call(stage, parameters, persona_id=None):
         require_group_execution(execution, session_id, db.get_bind())
@@ -90,16 +95,22 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             candidate_id=target["candidate_id"] if target else None, expected_revision=target["revision"] if target else None)
 
     async def decide(context, stage, **kwargs):
-        messages = director.build_director_messages(context, stage, **kwargs)
+        messages = director.build_director_messages(context, stage, protocol_version=protocol_version, **kwargs)
         response = await call(stage, {**json.loads(snapshot.director_json), "messages": messages})
         return response.choices[0]
 
     try:
         context = await scene()
         answer = await decide(context, "user_visibility", user_content=user_content)
-        visible = director.parse_visibility(answer.message.content, context.member_ids, finish_reason=answer.finish_reason)
+        plan = None
+        if protocol_version == 2:
+            plan = parse_user_units(answer.message.content, user_content, context.member_ids, finish_reason=answer.finish_reason)
+            visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
+        else:
+            visible_to = director.parse_visibility(answer.message.content, context.member_ids, finish_reason=answer.finish_reason).visible_to
         try:
-            target = await generation._database(history._prepare, session_id, user_content, visible.visible_to, db)
+            target = await generation._database(history._prepare, session_id, user_content, visible_to, db,
+                                                unit_plan=plan, model=model)
         except generation._DatabaseCancelled as exc:
             if isinstance(exc.result, dict):
                 target = exc.result
@@ -116,14 +127,26 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             if action.action == "end":
                 finish_reason = action.reason_code
                 break
+            if protocol_version == 2:
+                try:
+                    accepted = await generation._database(history._accept_action, session_id, target["candidate_id"],
+                                                          target["revision"], action, model, db)
+                except generation._DatabaseCancelled as exc:
+                    if isinstance(exc.result, dict):
+                        target["revision"] = exc.result["revision"]
+                    raise
+                target["revision"] = accepted["revision"]
             async def audience(proposed):
                 try:
                     answer = await decide(context, "utterance_visibility", proposed=proposed)
+                    if protocol_version == 2:
+                        return parse_unit_visibility(answer.message.content, proposed.units, context.member_ids,
+                            proposed.speaker_persona_id, finish_reason=answer.finish_reason)
                     return director.parse_visibility(answer.message.content, context.member_ids,
                         author_id=proposed.speaker_persona_id, finish_reason=answer.finish_reason).visible_to
                 except TimeoutError:
                     raise generation.GroupGenerationError("timeout") from None
-                except director.GroupDirectorError as exc:
+                except (director.GroupDirectorError, GroupUnitError) as exc:
                     raise generation.GroupGenerationError(exc.code) from None
             async def role_call(parameters):
                 try:
@@ -134,7 +157,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     raise generation.GroupGenerationError(exc.code) from None
             saved = await generation._generate_with_execution(session_id, target["candidate_id"], action.speaker_persona_id,
                 target["revision"], db, execution=execution, decide_visibility=audience, call_model=role_call,
-                generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id), history_limit=snapshot.history_limit)
+                generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id),
+                history_limit=snapshot.history_limit, fail_candidate=False)
             target["revision"] = saved["revision"]
         personal_inputs = {}
         diagnostic_error_code = None
@@ -151,7 +175,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 diagnostic_error_code = exc.code if isinstance(exc, director.GroupDirectorError) else "input_collection_failed"
                 logger.warning("群聊输入诊断未完成 error_type=%s", type(exc).__name__)
         try:
-            done = await generation._database(history._finish, session_id, target["candidate_id"], target["revision"], False, db)
+            done = await generation._database(history._finish, session_id, target["candidate_id"], target["revision"], False, db,
+                **({"finish_reason": finish_reason, "model": model} if protocol_version == 2 else {}))
         except generation._DatabaseCancelled as exc:
             if not isinstance(exc.result, dict):
                 raise
@@ -161,13 +186,20 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 "personal_inputs": personal_inputs, "diagnostic_error_code": diagnostic_error_code}
     except BaseException as exc:
         if target:
-            code = "cancelled" if isinstance(exc, asyncio.CancelledError) else "execution_failed"
+            if isinstance(exc, generation._DatabaseCancelled) and exc.committed_revision is not None:
+                target["revision"] = exc.committed_revision
+            code = "cancelled" if isinstance(exc, asyncio.CancelledError) else (
+                exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError, GroupUnitError))
+                else "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
             try:
-                await generation._database(generation._fail, session_id, target["candidate_id"], target["revision"], db, runtime, code)
+                failed_revision = await generation._database(generation._fail, session_id, target["candidate_id"],
+                                                             target["revision"], db, runtime, code)
+                if failed_revision is not None:
+                    target["revision"] = failed_revision
             except Exception as marker_error:
                 logger.warning("群聊轮次失败标记未保存 error_type=%s", type(marker_error).__name__)
         if isinstance(exc, asyncio.CancelledError):
             raise
-        code = exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError)) else (
+        code = exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError, GroupUnitError)) else (
             "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
         return {**(target or {}), "finish_reason": "failed", "calls": calls, "error_code": code}

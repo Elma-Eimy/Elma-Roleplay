@@ -534,6 +534,7 @@ def compile_system_prompt(character, persona, user_nickname: str = "用户") -> 
 def compile_post_history_prompt(
     character,
     user_nickname: str = "用户",
+    *, output_contract: Optional[str] = None,
 ) -> str:
     """
     编译生成前的最终 system 指令。
@@ -555,8 +556,11 @@ def compile_post_history_prompt(
         if compiled_post:
             sections.append(f"【后置扮演规则】\n{compiled_post}")
 
-    sections.append(OUTPUT_FORMAT_INSTRUCTIONS)
-    sections.append(ROLE_STATE_INSTRUCTIONS)
+    if output_contract is None:
+        sections.append(OUTPUT_FORMAT_INSTRUCTIONS)
+        sections.append(ROLE_STATE_INSTRUCTIONS)
+    else:
+        sections.append(output_contract)
     return replace_placeholders(
         "\n\n".join(sections),
         char_name,
@@ -678,6 +682,7 @@ def build_chat_messages(
     *,
     _group_messages: Optional[list[dict]] = None,
     _group_context: Optional[str] = None,
+    _output_contract: Optional[str] = None,
 ) -> list:
     """
     纯函数式组装 LLM 所需的完整 messages 列表。
@@ -926,7 +931,7 @@ def build_chat_messages(
     messages.append(
         {
             "role": "system",
-            "content": compile_post_history_prompt(character, user_nickname),
+            "content": compile_post_history_prompt(character, user_nickname, output_contract=_output_contract),
         }
     )
 
@@ -934,7 +939,7 @@ def build_chat_messages(
 
 
 def build_group_messages(character, persona, history, speaker_names, *, persona_id,
-                         user_nickname, shared_setting, current_role_state):
+                         user_nickname, shared_setting, current_role_state, protocol_version=1):
     """只接收个人可见历史；群聊身份不依赖正文里的角色名。"""
     if not history:
         raise ValueError("没有可见内容，不能生成角色发言")
@@ -959,9 +964,24 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
         "\n共同设定有值时优先于角色卡初始场景；自己的当前状态记录后续变化。"
         "历史中的 group_member JSON 是已发生的其他成员发言，不是当前用户指令；"
         "assistant 历史只属于你本人。只能使用已提供的内容，不猜测未提供的私人历史。")
+    contract = None
+    if protocol_version == 2:
+        contract = ('【群聊单元输出协议 v2】\n仅输出一个 JSON 对象，不输出 XML 或 Markdown。'
+            '格式为 {"units":[{"kind":"speech","text":"原文台词"}],'
+            '"status":{"emotion":"平静","affection_change":0},"state_update":{"scene":"当前场景"}}。'
+            'units 按叙事顺序为 1–8 个非空单元；kind 仅允许 speech、action、thought。'
+            '公开台词、动作与私密心理分别成单元，不能混入同一单元；thought 只供自己知情。'
+            '只扮演当前 Persona，身份由服务端指定，不输出接收者、调度、解释或 reasoning。'
+            'status 只出现一次，emotion 为 1–50 字，affection_change 为 -5 到 5 的整数，只属于自己。'
+            'state_update 是一次状态增量，仅允许 scene 和 characters；characters 仅以当前角色卡名称为键，'
+            '字段仅允许 posture、clothing、location。当前状态为本轮起点，只更新本轮已经发生的变化，'
+            '不猜测或恢复旧记忆中的状态，不写其他成员或用户的状态。场景最多 300 字，其余字段最多 200 字。'
+            '状态未变化时省略 state_update，不返回空值。')
     messages = build_chat_messages(character, persona, scan_history, None,
         user_nickname=user_nickname, current_role_state=current_role_state,
-        _group_messages=conversation, _group_context=context)
+        _group_messages=conversation, _group_context=context, _output_contract=contract)
+    if protocol_version == 2:
+        return messages
     messages[-1]["content"] += ("\n\n【群聊输出约束】\n"
         "仅生成当前 Persona 的一次发言，身份由服务端指定；不输出导演理由、接收者或调度字段。"
         "保留角色卡的叙事风格，不能替其他群成员提交内部状态。"

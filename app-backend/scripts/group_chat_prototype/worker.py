@@ -1,4 +1,4 @@
-"""单进程临时库原型；正式任务注册、审计与恢复由后续批次接管。"""
+"""单进程临时库原型；复用内部整轮和审计，不开放候选恢复。"""
 import asyncio
 import json
 import os
@@ -21,8 +21,9 @@ def _response(raw):
 
 
 class ReplayModel:
-    def __init__(self, case, member_ids):
+    def __init__(self, case, member_ids, *, protocol_version=1):
         self.case, self.ids = case, member_ids
+        self.protocol_version = protocol_version
         self.role_index = 0
 
     def _visibility(self, slots):
@@ -31,6 +32,9 @@ class ReplayModel:
 
     async def __call__(self, stage, messages):
         if stage == "user_visibility":
+            if self.protocol_version == 2:
+                return _response(json.dumps({"units": [{"start": 0, "end": len(self.case["user"]),
+                    "recipients": json.loads(self._visibility(self.case["user_visible"]))["recipients"]}]}))
             return _response(self._visibility(self.case["user_visible"]))
         steps = self.case["steps"]
         if stage == "next_action":
@@ -40,22 +44,32 @@ class ReplayModel:
                                          "reason_code": "follow_up"}))
         if stage == "role_generation":
             step = steps[self.role_index]
+            if self.protocol_version == 2:
+                return _response(json.dumps({"units": [{"kind": unit["kind"], "text": unit["text"]}
+                    for unit in step.get("units", [{"kind": "speech", "text": step["content"]}])],
+                    "status": {"emotion": "平静", "affection_change": 0}}, ensure_ascii=False))
             return _response('<reply>' + step["content"] + '</reply><status emotion="平静" affection_change="0"/>')
-        result = _response(self._visibility(steps[self.role_index]["visible"]))
+        step = steps[self.role_index]
+        raw = self._visibility(step["visible"])
+        if self.protocol_version == 2:
+            raw = json.dumps({"units": [{"unit_index": index,
+                "recipients": json.loads(self._visibility(unit.get("visible", step["visible"])))["recipients"]}
+                for index, unit in enumerate(step.get("units", [{"kind": "speech", "text": step["content"]}]))]})
+        result = _response(raw)
         self.role_index += 1
         return result
 
 
-async def _run_round(session_id, user_content, db, runtime, call_model, *, model="fixture-replay", max_steps=4, timeout=300):
+async def _run_round(session_id, user_content, db, runtime, call_model, *, model="fixture-replay", max_steps=4, timeout=300, protocol_version=1):
     from services.conversation.group_round_service import run_group_round
     return await run_group_round(session_id, user_content, db, runtime=runtime, call_model=call_model,
-                                 model=model, max_steps=max_steps, timeout=timeout, collect_inputs=True)
+                                 model=model, max_steps=max_steps, timeout=timeout, collect_inputs=True, protocol_version=protocol_version)
 
 
 async def _run_suite(request):
     from sqlalchemy import event, create_engine
     from sqlalchemy.orm import sessionmaker
-    from core.models import Base, Character
+    from core.models import Base, Character, GroupDirectorStep, GroupRoundCandidate
     from core.database import get_db
     from application.group_runtime import group_runtime
     from application.factory import create_app
@@ -79,11 +93,11 @@ async def _run_suite(request):
                     group = await create_group_session(GroupSessionDraft(tuple(GroupMember(card.id) for card in cards),
                         shared_setting=case["setting"]), db)
                     ids = tuple(member["persona_id"] for member in group["members"])
-                    replay = ReplayModel(case, ids)
+                    replay = ReplayModel(case, ids, protocol_version=2)
                     async def call_model(stage, kwargs):
                         return await replay(stage, kwargs["messages"])
                     result = await _run_round(group["session_id"], case["user"], db, runtime, None if request["online"] else call_model,
-                        model=request["model"], max_steps=case.get("max_steps", 4))
+                        model=request["model"], max_steps=case.get("max_steps", 4), protocol_version=2)
                     app = create_app()
                     app.dependency_overrides[get_db] = lambda: db
                     # 不启动 lifespan；原型自身持有运行权，仅调用只读 HTTP。
@@ -111,7 +125,20 @@ async def _run_suite(request):
                                               and call["speaker_persona_id"] == ids[expected["member"]]]
                             checks[expected["label"] + "_all_calls"] = all(expected["text"] not in json.dumps(call["messages"], ensure_ascii=False)
                                                                           for call in personal_calls)
+                    saved_candidate = db.get(GroupRoundCandidate, result.get("candidate_id")) if result.get("candidate_id") else None
+                    steps = db.query(GroupDirectorStep).filter_by(candidate_id=result.get("candidate_id")).order_by(
+                        GroupDirectorStep.step_index).all() if saved_candidate else []
+                    audit_rows = [{"stage": row.stage, "step_index": row.step_index,
+                        "expected_revision": row.expected_revision, "result_revision": row.result_revision,
+                        "speaker_persona_id": row.speaker_persona_id, "item_id": row.item_id,
+                        "decision": json.loads(row.decision_json), "reason_code": row.reason_code,
+                        "model": row.model, "policy_version": row.policy_version} for row in steps]
+                    candidate_state = ({"protocol_version": saved_candidate.protocol_version,
+                        "revision": saved_candidate.revision, "status": saved_candidate.status,
+                        "finish_reason": saved_candidate.finish_reason, "error_code": saved_candidate.error_code}
+                        if saved_candidate else None)
                     results.append({"id": case["id"], "member_ids": ids, **result, "http_rounds": rounds,
+                        "candidate_state": candidate_state, "director_steps": audit_rows,
                         "checks": checks, "granularity_review": "pending" if request["online"] else case.get("granularity_review", "pending")})
     finally:
         engine.dispose()
@@ -124,7 +151,7 @@ def main():
     results = asyncio.run(_run_suite(request))
     destination = Path(request["destination"])
     destination.mkdir(parents=True, exist_ok=False)
-    report = {"schema_version": 1, "mode": "online" if request["online"] else "offline",
+    report = {"schema_version": 2, "mode": "online" if request["online"] else "offline",
               "semantic_review": "pending", "results": results}
     (destination / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return int(any(result["error_code"] or not all(result["checks"].values()) for result in results))

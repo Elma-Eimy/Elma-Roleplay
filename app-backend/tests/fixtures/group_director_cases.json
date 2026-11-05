@@ -60,12 +60,14 @@
       "setting": "两人在桌边。阿岚会说公开台词，也有不应被白川听见的私密心理。",
       "user": "下一步怎么办？",
       "user_visible": [0, 1],
-      "steps": [{"speaker": 0, "content": "PUBLIC_BRIDGE_CUE 桥坏了。心想：PRIVATE_THOUGHT_953 我藏起了钥匙。", "visible": [0]}],
+      "steps": [{"speaker": 0, "content": "PUBLIC_BRIDGE_CUE 桥坏了。心想：PRIVATE_THOUGHT_953 我藏起了钥匙。", "visible": [0],
+        "units": [{"kind": "speech", "text": "PUBLIC_BRIDGE_CUE 桥坏了。", "visible": [0, 1]},
+                  {"kind": "thought", "text": "心想：PRIVATE_THOUGHT_953 我藏起了钥匙。", "visible": [0]}]}],
       "expected_speakers": [0],
-      "granularity_review": "requires_split: 全文隐藏同时丢失桥坏了这一公开接话依据；不得据此认定全文粒度通过",
+      "granularity_review": "offline_units_passed: v2 保留公开线索并隐藏心理；真实模型单元划分仍待评审",
       "input_checks": [
         {"label": "private_thought_hidden", "member": 1, "text": "PRIVATE_THOUGHT_953", "present": false},
-        {"label": "public_cue_also_lost", "member": 1, "text": "PUBLIC_BRIDGE_CUE", "present": false}
+        {"label": "public_cue_preserved", "member": 1, "text": "PUBLIC_BRIDGE_CUE", "present": true}
       ]
     },
     {

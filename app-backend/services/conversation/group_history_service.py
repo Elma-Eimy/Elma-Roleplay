@@ -10,6 +10,7 @@ from services.conversation.session_access import get_group_session, group_sessio
 from services.conversation.group_session_service import (
     _begin_write, _locked_write, GroupSessionNotFound, GroupSessionValidationError,
 )
+from services.conversation import group_unit_service as units, group_audit_service as audit
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ async def prepare_group_round(session_id, user_content, visible_to, db):
     return await _locked_write([session_id], _prepare, session_id, user_content, visible_to, db)
 
 
-def _prepare(session_id, user_content, visible_to, db):
+def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=None):
     try:
         _begin_write(db)
         _require_group(session_id, db)
@@ -108,7 +109,8 @@ def _prepare(session_id, user_content, visible_to, db):
         round_ = GroupRound(session_id=session_id, round_index=index, user_content=user_content)
         db.add(round_)
         db.flush()
-        candidate = GroupRoundCandidate(round_id=round_.id, session_id=session_id)
+        candidate = GroupRoundCandidate(round_id=round_.id, session_id=session_id,
+                                        protocol_version=2 if unit_plan is not None else 1)
         db.add(candidate)
         db.flush()
         round_.selected_candidate_id = candidate.id
@@ -116,6 +118,9 @@ def _prepare(session_id, user_content, visible_to, db):
         db.add(item)
         db.flush()
         _visibility(item, visible_to, _members(session_id, db), db)
+        if unit_plan is not None:
+            units._write_units(item, unit_plan, _members(session_id, db), user_content, db)
+            audit.record(candidate, "user_visibility", unit_plan, model, db, item=item)
         candidate.revision = 1
         result = {"round_id": round_.id, "candidate_id": candidate.id, "revision": 1}
         db.commit()
@@ -139,10 +144,12 @@ async def append_group_utterance(session_id, candidate_id, speaker_persona_id, c
 
 
 def _append(session_id, candidate_id, speaker, content, visible_to, revision, db, *,
-            emotion_tag=None, affection_change=None, role_state_patch=None):
+            emotion_tag=None, affection_change=None, role_state_patch=None, unit_plan=None, model=None):
     try:
         _begin_write(db)
         _, candidate = _writable(session_id, candidate_id, revision, db)
+        if (candidate.protocol_version == 2) != (unit_plan is not None):
+            raise GroupSessionValidationError("不能混用全文和单元协议")
         members = _members(session_id, db)
         if speaker not in members:
             raise GroupSessionValidationError("发言成员不属于本群")
@@ -154,6 +161,9 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
         db.add(item)
         db.flush()
         _visibility(item, visible_to, members, db)
+        if unit_plan is not None:
+            units._write_units(item, unit_plan, members, None, db)
+            audit.record(candidate, "utterance_visibility", unit_plan, model, db, item=item)
         candidate.revision += 1
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()
@@ -173,14 +183,33 @@ async def finish_group_round(session_id, candidate_id, expected_revision, db, *,
     return await _locked_write([session_id], _finish, session_id, candidate_id, expected_revision, failed, db)
 
 
-def _finish(session_id, candidate_id, revision, failed, db):
+def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=None, model=None):
     try:
         _begin_write(db)
         _, candidate = _writable(session_id, candidate_id, revision, db)
+        if candidate.protocol_version == 2 and not failed:
+            audit.record(candidate, "finish", finish_reason, model, db)
+        candidate.finish_reason = None if failed else finish_reason
         candidate.status = "failed" if failed else "awaiting_confirmation"
         candidate.error_code = "execution_failed" if failed else None
         candidate.revision += 1
         result = {"candidate_id": candidate.id, "revision": candidate.revision, "status": candidate.status}
+        db.commit()
+        return result
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def _accept_action(session_id, candidate_id, revision, action, model, db):
+    try:
+        _begin_write(db)
+        _, candidate = _writable(session_id, candidate_id, revision, db)
+        if action.speaker_persona_id not in _members(session_id, db):
+            raise GroupSessionValidationError("调度成员不属于本群")
+        audit.record(candidate, "next_action", action, model, db)
+        candidate.revision += 1
+        result = {"revision": candidate.revision}
         db.commit()
         return result
     except BaseException:
@@ -229,20 +258,29 @@ def _content_query(session_id, round_, candidate, before_sequence, db):
 
 def _member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db):
     query = _content_query(session_id, round_, candidate, before_sequence, db)
-    visible = query.join(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
-            GroupContentVisibility.recipient_persona_id == persona_id))
+    legacy_visible = db.query(GroupContentVisibility.item_id).filter(
+        GroupContentVisibility.item_id == GroupContentItem.id,
+        GroupContentVisibility.recipient_persona_id == persona_id,
+        GroupContentVisibility.decision == "visible").exists()
+    visible = query.filter(or_(and_(GroupRoundCandidate.protocol_version == 1, legacy_visible),
+        and_(GroupRoundCandidate.protocol_version == 2, units._has_visible_unit(persona_id, db))))
     # 缺行不兜底为公开；只向内部日志报告，不向个人 DTO 泄露隐藏项信息。
     missing = query.outerjoin(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
             GroupContentVisibility.recipient_persona_id == persona_id)).filter(GroupContentVisibility.item_id.is_(None)).first()
     if missing:
         logger.warning("群聊个人历史存在缺失知情记录，已按不可见处理")
-    rows = visible.filter(GroupContentVisibility.decision == "visible").order_by(
+    rows = visible.order_by(
             GroupRound.round_index.desc(), GroupContentItem.sequence.desc()).limit(limit).all()
-    return tuple(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
-            item.sequence, item.kind, item.speaker_persona_id,
-            owner.user_content if item.kind == "user" else item.content,
-            item.emotion_tag if item.speaker_persona_id == persona_id else None,
-            item.affection_change if item.speaker_persona_id == persona_id else None) for item, owner in reversed(rows))
+    result = []
+    for item, owner in reversed(rows):
+        v2 = db.get(GroupRoundCandidate, item.candidate_id).protocol_version == 2
+        content = (units._member_text(item, owner, persona_id, db) if v2 else
+                   owner.user_content if item.kind == "user" else item.content)
+        own_state_visible = item.speaker_persona_id == persona_id and (not v2 or units._complete_author_visibility(item, db))
+        result.append(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
+            item.sequence, item.kind, item.speaker_persona_id, content,
+            item.emotion_tag if own_state_visible else None, item.affection_change if own_state_visible else None))
+    return tuple(result)
 
 
 @group_session_operation

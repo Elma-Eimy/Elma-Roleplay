@@ -388,6 +388,10 @@ class GroupRoundCandidate(Base):
     status = Column(String(30), nullable=False, default="generating", server_default="generating")
     revision = Column(Integer, nullable=False, default=0, server_default="0")
     error_code = Column(String(80), nullable=True)
+    protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),
+                              nullable=False, default=1, server_default="1")
+    finish_reason = Column(String(30), CheckConstraint("finish_reason IN ('wait_user', 'step_limit', 'no_visible_basis')",
+                                                     name="ck_group_finish_reason"))
 
 
 class GroupContentItem(Base):
@@ -398,6 +402,7 @@ class GroupContentItem(Base):
                              deferrable=True, initially="DEFERRED"),
         UniqueConstraint("id", "session_id", name="uq_group_content_scope"),
         UniqueConstraint("candidate_id", "sequence", name="uq_group_content_sequence"),
+        Index("uq_group_content_candidate", "id", "candidate_id", "session_id", unique=True),
         CheckConstraint("(kind = 'user' AND sequence = 0 AND speaker_persona_id IS NULL AND content IS NULL "
                         "AND emotion_tag IS NULL AND affection_change IS NULL AND role_state_patch IS NULL) OR "
                         "(kind = 'utterance' AND sequence > 0 AND speaker_persona_id IS NOT NULL "
@@ -432,6 +437,77 @@ class GroupContentVisibility(Base):
     session_id = Column(Integer, nullable=False)
     decision = Column(String(10), nullable=False)
     policy_version = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class GroupContentUnit(Base):
+    __tablename__ = "group_content_units"
+    __table_args__ = (
+        ForeignKeyConstraint(["item_id", "candidate_id", "session_id"],
+            ["group_content_items.id", "group_content_items.candidate_id", "group_content_items.session_id"], ondelete="CASCADE"),
+        UniqueConstraint("id", "session_id", name="uq_group_unit_scope"),
+        UniqueConstraint("item_id", "unit_index", name="uq_group_unit_index"),
+        CheckConstraint("unit_index >= 0 AND ((kind = 'user' AND source_start >= 0 AND source_end >= source_start "
+            "AND source_start IS NOT NULL AND source_end IS NOT NULL AND text IS NULL) OR "
+            "(kind IN ('speech', 'action', 'thought', 'legacy') AND source_start IS NULL AND source_end IS NULL "
+            "AND text IS NOT NULL AND length(text) > 0))", name="ck_group_unit_shape"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    unit_index = Column(Integer, nullable=False)
+    kind = Column(String(20), nullable=False)
+    source_start = Column(Integer)
+    source_end = Column(Integer)
+    text = Column(Text)
+
+
+class GroupUnitVisibility(Base):
+    __tablename__ = "group_unit_visibility"
+    __table_args__ = (
+        ForeignKeyConstraint(["unit_id", "session_id"], ["group_content_units.id", "group_content_units.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "recipient_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        CheckConstraint("decision IN ('visible', 'hidden')", name="ck_group_unit_decision"),
+        Index("ix_group_unit_recipient", "recipient_persona_id", "decision", "unit_id"),
+    )
+    unit_id = Column(Integer, primary_key=True)
+    recipient_persona_id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    decision = Column(String(10), nullable=False)
+
+
+class GroupDirectorStep(Base):
+    __tablename__ = "group_director_steps"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "session_id"], ["group_round_candidates.id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["item_id", "candidate_id", "session_id"],
+            ["group_content_items.id", "group_content_items.candidate_id", "group_content_items.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "speaker_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        UniqueConstraint("candidate_id", "step_index", name="uq_group_director_index"),
+        CheckConstraint("step_index >= 1 AND expected_revision >= 0 AND result_revision = expected_revision + 1 "
+            "AND policy_version IN (1, 2)", name="ck_group_director_revision"),
+        CheckConstraint("(stage = 'user_visibility' AND item_id IS NOT NULL AND speaker_persona_id IS NULL) OR "
+            "(stage = 'utterance_visibility' AND item_id IS NOT NULL AND speaker_persona_id IS NOT NULL) OR "
+            "(stage = 'next_action' AND item_id IS NULL AND speaker_persona_id IS NOT NULL) OR "
+            "(stage = 'finish' AND item_id IS NULL AND speaker_persona_id IS NULL)", name="ck_group_director_shape"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    stage = Column(String(30), nullable=False)
+    step_index = Column(Integer, nullable=False)
+    expected_revision = Column(Integer, nullable=False)
+    result_revision = Column(Integer, nullable=False)
+    speaker_persona_id = Column(Integer)
+    item_id = Column(Integer)
+    decision_json = Column(Text, nullable=False)
+    reason_code = Column(String(30))
+    model = Column(String(200), nullable=False)
+    policy_version = Column(Integer, nullable=False)
 
 
 class MemoryExtractionJob(Base):

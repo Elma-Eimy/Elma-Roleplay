@@ -406,4 +406,10 @@ class DirectorPrototypeTests(unittest.TestCase):
                 self.assertTrue(all(result["checks"].values()), result["checks"])
                 self.assertEqual("awaiting_confirmation", result["http_rounds"]["rounds"][0]["status"])
             mixed = next(row for row in report["results"] if row["id"] == "mixed-private-thought")
-            self.assertTrue(mixed["granularity_review"].startswith("requires_split"))
+            self.assertTrue(mixed["granularity_review"].startswith("offline_units_passed"))
+            for row in report["results"]:
+                self.assertEqual(2, row["candidate_state"]["protocol_version"])
+                self.assertEqual(row["finish_reason"], row["candidate_state"]["finish_reason"])
+                self.assertEqual("finish", row["director_steps"][-1]["stage"])
+                self.assertEqual(row["candidate_state"]["revision"], row["director_steps"][-1]["result_revision"])
+                self.assertNotIn("PRIVATE_THOUGHT", json.dumps(row["director_steps"]))

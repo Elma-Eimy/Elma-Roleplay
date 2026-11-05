@@ -16,6 +16,7 @@ from services.conversation.group_session_service import GroupSessionValidationEr
 from services.conversation.role_state_schema import validate_patch, merge_state, encode_state
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.infrastructure.llm_provider import get_llm_provider
+from services.conversation.group_unit_protocol import load_object, parse_role_units, UnitPlan, GroupUnitError
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +31,13 @@ class GroupGenerationError(RuntimeError):
 class ProposedGroupUtterance:
     speaker_persona_id: int
     content: str
+    units: tuple = ()
 
 
 class _DatabaseCancelled(asyncio.CancelledError):
     def __init__(self, result):
         self.result = result
+        self.committed_revision = None
 
 
 async def _database(operation, *args, **kwargs):
@@ -59,6 +62,26 @@ async def _database(operation, *args, **kwargs):
 
 
 def _parse(raw, context):
+    if getattr(context, "protocol_version", 1) == 2:
+        try:
+            value = load_object(raw)
+            if set(value) - {"units", "status", "state_update"} or not {"units", "status"} <= set(value):
+                raise ValueError("invalid fields")
+            units = parse_role_units(value["units"])
+            status = value["status"]
+            if (not isinstance(status, dict) or set(status) != {"emotion", "affection_change"}
+                    or not isinstance(status["emotion"], str) or not 1 <= len(status["emotion"].strip()) <= 50
+                    or type(status["affection_change"]) is not int or not -5 <= status["affection_change"] <= 5):
+                raise ValueError("invalid status")
+            patch = validate_patch(value["state_update"]) if "state_update" in value else None
+            if patch and set(patch.get("characters", {})) - {context.speaker_name}:
+                raise ValueError("state belongs to another actor")
+            if patch:
+                merge_state(json.loads(context.state_json), patch)
+            return ("".join(unit.text for unit in units), status["emotion"].strip(), status["affection_change"],
+                    encode_state(patch) if patch else None, units)
+        except (ValueError, TypeError):
+            raise GroupGenerationError("invalid_output") from None
     if not isinstance(raw, str):
         raise GroupGenerationError("invalid_output")
     match = re.fullmatch(r'\s*<reply>(.*?)</reply>\s*(<status\s+[^<>]*?/>)\s*(?:<state_update>(.*?)</state_update>)?\s*', raw, re.S)
@@ -80,11 +103,16 @@ def _parse(raw, context):
         raise GroupGenerationError("invalid_output") from None
 
 
-def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db, runtime):
+def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db, runtime, *, model=None):
     require_group_runtime(runtime, db.get_bind())
-    body, emotion, affection, patch = result
+    body, emotion, affection, patch = result[:4]
+    plan = visible_to if isinstance(visible_to, UnitPlan) else None
+    if len(result) == 5 and (plan is None or plan.units != result[4]):
+        raise GroupUnitError()
+    if plan:
+        visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
     return history._append(session_id, candidate_id, persona_id, body, visible_to, revision, db,
-        emotion_tag=emotion, affection_change=affection, role_state_patch=patch)
+        emotion_tag=emotion, affection_change=affection, role_state_patch=patch, unit_plan=plan, model=model)
 
 
 def _fail(session_id, candidate_id, revision, db, runtime, code):
@@ -94,8 +122,11 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
         _, candidate = history._writable(session_id, candidate_id, revision, db)
         candidate.status = "failed"
         candidate.error_code = code
+        candidate.finish_reason = None
         candidate.revision += 1
+        committed_revision = candidate.revision
         db.commit()
+        return committed_revision
     except (SessionKindConflict, history.GroupSessionNotFound):
         db.rollback()
         # 外部已经结束、删除或推进候选时，旧请求不改写新状态。
@@ -118,7 +149,7 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
 
 async def _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, execution, decide_visibility, model=None, call_model=None,
-                                   generation_parameters_json=None, history_limit=None):
+                                   generation_parameters_json=None, history_limit=None, fail_candidate=True):
     require_group_execution(execution, session_id, db.get_bind())
     runtime = execution.owner
     failure_revision = expected_revision
@@ -133,20 +164,23 @@ async def _generate_with_execution(session_id, candidate_id, speaker_persona_id,
         if response.choices[0].finish_reason not in (None, "stop"):
             raise GroupGenerationError("incomplete_output")
         result = _parse(response.choices[0].message.content, context)
-        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0]))
+        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else ()))
         try:
             saved = await _database(_save, session_id, candidate_id, speaker_persona_id,
-                expected_revision, result, audience, db, runtime)
+                expected_revision, result, audience, db, runtime,
+                **({"model": parameters.get("model")} if context.protocol_version == 2 else {}))
         except _DatabaseCancelled as exc:
             if isinstance(exc.result, dict):
                 failure_revision = exc.result["revision"]
+                exc.committed_revision = failure_revision
             raise
         return saved
     except BaseException as exc:
         # 参数或归属校验未通过时不结束其他成员正在使用的候选。
         if isinstance(exc, _DatabaseCancelled) and not prepared:
             prepared = hasattr(exc.result, "candidate_id")
-        if prepared and runtime.active:
+        # 整轮调用由外层统一结束候选，避免内外两次失败写入丢失提交版本。
+        if fail_candidate and prepared and runtime.active:
             code = "cancelled" if isinstance(exc, asyncio.CancelledError) else (
                 exc.code if isinstance(exc, GroupGenerationError) else "execution_failed")
             try:

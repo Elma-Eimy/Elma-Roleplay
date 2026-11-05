@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from sqlalchemy import and_, func, text
 
 from core.config import settings
-from core.models import GroupContentItem, GroupContentVisibility, GroupRound, SessionPersona
+from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
+from services.conversation.group_unit_service import _complete_author_visibility
 from services.conversation import group_history_service as history
 from services.conversation.chat_engine import _prepare_generation_kwargs
 from services.conversation.prompt_compiler import build_group_messages
@@ -24,6 +25,7 @@ class GroupMemberContext:
     state_json: str
     messages_json: str
     generation_json: str
+    protocol_version: int = 1
 
 
 def _member_state(persona, group, round_, candidate, before_sequence, db):
@@ -42,6 +44,8 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
         GroupContentItem.speaker_persona_id == persona.id).order_by(
         GroupRound.round_index, GroupContentItem.sequence).all()
     for item, _ in rows:
+        if db.get(GroupRoundCandidate, item.candidate_id).protocol_version == 2 and not _complete_author_visibility(item, db):
+            continue
         if item.role_state_patch:
             state = merge_state(state, decode_state(item.role_state_patch))
         affection += item.affection_change or 0
@@ -81,11 +85,11 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
             SessionPersona.id.in_(speaker_ids)).all()}
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
-            shared_setting=group.shared_setting, current_role_state=state)
+            shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
-            json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False))
+            json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version)
     finally:
         db.rollback()

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 import threading
+from functools import partial
 import unittest
 from unittest.mock import patch
 
@@ -13,11 +14,14 @@ from core.locking import (group_execution, require_group_execution, _GroupExecut
 from core.models import Character, GroupRoundCandidate, GroupContentItem
 from application.group_runtime import group_runtime
 from services.conversation.group_call_snapshot import capture_group_calls
-from services.conversation.group_round_service import run_group_round, GroupRoundBudget
+from services.conversation.group_round_service import run_group_round as _run_group_round, GroupRoundBudget
 from services.conversation.group_session_service import create_group_session
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import ReplayModel, _response
 from tests.conversation import test_group_session_service as fixtures
+
+# 既有执行权测试保留 v1 替身，v2 端到端覆盖在 test_group_units。
+run_group_round = partial(_run_group_round, protocol_version=1)
 
 
 class GroupRoundTests(unittest.TestCase):
