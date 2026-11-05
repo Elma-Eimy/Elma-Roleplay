@@ -19,7 +19,7 @@
 
 ## 群聊导演原型
 
-在后端目录运行 `python -m scripts.group_chat_prototype`，默认执行 8 个固定虚构场景。可用 `--case private-retelling-aba` 选择场景，`--case` 可重复；`--output <目录>` 指定报告父目录，每次创建独立子目录。默认结果位于 Git 忽略的 `docs/local/group-chat-prototype/`，临时源码、数据库和媒体目录在结束后清理，不复制 `.env`、开发配置或数据。
+在后端目录运行 `python -m scripts.group_chat_prototype`，默认执行 9 个固定虚构场景，包含预期失败并保留前缀的故障注入。可用 `--case private-retelling-aba` 选择场景，`--case` 可重复；`--output <目录>` 指定报告父目录，每次创建独立子目录。默认结果位于 Git 忽略的 `docs/local/group-chat-prototype/`，临时源码、数据库和媒体目录在结束后清理，不复制 `.env`、开发配置或数据。在线模式排除故障注入场景，仍使用 8 个样本。
 
 `report.json` 记录实际发送的导演/角色 messages、调用次数、成员 ID、只读 rounds 响应和自动检查。报告只含虚构样本；`mode=offline` 是固定响应回放，`semantic_review=pending` 表示未进行真实语义验收。CLI 使用 v2 单元协议，混合场景的 `granularity_review=offline_units_passed...` 仅表示固定单元保留公开线索并隐藏心理；真实模型的单元划分与知情准确度仍待人工评审。
 
@@ -32,3 +32,5 @@
 最终个人输入诊断读取失败时，report.json 单独记录 diagnostic_error_code、清空不完整 personal_inputs，并将 input_collection 检查标为未通过；候选仍依据实际执行结果结束。程序在每次模型返回后复核单次绝对期限，已触发超时的迟到结果按失败处理，等待清理结束后停止推进。
 
 v2 报告的 `schema_version=2`，`candidate_state` 保存数据库实际协议版本、revision、状态、终止原因与错误码；`director_steps` 保存已接受的规范化审计链，不含正文副本或自由文本理由。这些字段仅供隔离报告复核，不加入普通 rounds API。
+
+M3-D 增加 `--serve`，回放后固定监听 `127.0.0.1:8767`，最多 600 秒（`--port`、`--preview-seconds` 可调整，最长 3600 秒）。`--frontend-dist` 可挂载专用 H5 构建到 `/preview/`，首页提供各场景的详情链接。预览只允许群聊读取和静态资源，SQLite 以只读方式打开，不启动 lifespan 或后台任务；时间到后进程退出并清理临时副本。专用 H5 固定当前来源、忽略保存的地址/密钥并拒绝写请求；普通 H5 构建会被启动器拒绝。构建命令、验证矩阵与交接边界见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。

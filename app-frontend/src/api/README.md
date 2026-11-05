@@ -24,4 +24,4 @@ import type { MemoryChunk } from "@/types/memories";
 
 此次拆分保留原有 Mock 行为，不将其视为后端所有业务规则的完整实现。接口契约见根目录 [API 总表](../../../API_TABLE.md)，回归范围见 [前端测试说明](../../tests/README.md)。
 
-群聊数据使用独立类型和 Mock 存储集合，不混入旧单聊列表。创建请求失败不自动重发；Mock 的来源快照明确报错，角色仍被群聊引用时拒绝删除。页面与防重复提交交互由后续 M1-D 接入。
+群聊数据使用独立类型和 Mock 存储集合，不混入旧单聊列表。创建请求失败不自动重发；Mock 的来源快照明确报错，角色仍被群聊引用时拒绝删除。`groupSessions.ts` 也提供整轮只读查询，类型中的 revision/finish_reason/error_code 保持可选以兼容旧响应；Mock 原样读取虚构样本，不推断终止原因或导演判定。

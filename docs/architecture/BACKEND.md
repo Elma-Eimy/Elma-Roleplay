@@ -66,6 +66,8 @@ M3-C 的 `group_unit_protocol.py` 严格校验用户连续完整码点范围、�
 
 迁移 `b0d1e2f3a4b5` 在原 head 后追加 Candidate 协议/终止字段、单元/知情表和导演审计表。旧项回填一个单元，按 Python 码点映射原文并照抄既有权限，不重新判定；旧数据仍以 v1 权限为准。组合外键限制同候选和同群归属，删除级联与 Outbox 事务共同回滚；存在 v2 候选、终止原因或审计时拒绝有损降级。v2 最终 JSON 契约替换原 XML 输出指令，角色卡 DSL、PHI 和单聊协议保持原编译入口。
 
+M3-D 的 `scripts/group_chat_prototype/preview.py` 在虚构库回放后提供限时本机预览，复用应用的群聊 GET 路由和按请求关闭的只读 Session；SQLite mode=ro/query_only 与路由白名单共同限制写入，应用 lifespan、迁移和后台任务不在预览中启动。专用 H5 构建副本挂在 `/preview/`，预览期间仍独占数据库运行权，结束后由启动器清理副本。普通 rounds 响应新增所选候选的 revision、finish_reason 与非敏感 error_code，审计 JSON 继续只在内部报告保存。
+
 每次模型返回后同时检查整轮与单次绝对截止时间，适配器捕获取消后返回的迟到结果也按超时拒绝。隔离诊断读取失败只产生 diagnostic_error_code，不改变成功候选；报告将 input_collection 标为未通过。取消仍等待诊断线程结束并传播，原始异常正文和 SQL 参数不进入诊断错误码或日志。
 
 `application/group_runtime.py` 将运行权绑定到 SQLite 文件旁的 `.runtime.lock`：Windows 使用 msvcrt 字节锁，其他支持的平台使用 flock。lifespan 先独占运行权，再迁移并将残留 generating 候选改为 failed/process_interrupted、递增 revision，随后启动 Worker；关闭并等待任务结束后才释放运行权。第二个应用进程会在迁移和中断处理前失败，避免误判其他 Worker 的正在执行候选。锁文件保留，锁随句柄或进程退出释放；不自动恢复或再次调用模型。

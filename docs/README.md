@@ -44,6 +44,7 @@
 | [后端测试指南](../app-backend/tests/README.md) | 隔离测试入口、领域分组和手动场景 |
 | [前端回归检查](../app-frontend/tests/README.md) | 离线回归、类型检查与跨端验证 |
 | [记忆整理质量验收](testing/MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收与人工审阅 |
+| [群聊 M3 联通验收与交接](testing/GROUP_CHAT_M3.md) | 本机只读预览、H5 检查、模型/真机待验收项与后续模块边界 |
 | [持续集成](development/CI.md) | GitHub Actions 环境、本地文档链接检查、回归范围与失败排查 |
 | [后端维护工具](../app-backend/scripts/README.md) | 诊断、查询与显式重置操作 |
 
@@ -57,7 +58,7 @@
 
 [M2 单角色发言与知情隔离设计](plans/group-chat/M2_CONTEXT_AND_VISIBILITY.md) 记录轮次/候选、个人 Prompt、内部单步生成与只读发言展示的实现和隔离证据；真实模型质量与真机阅读仍待验收。
 
-[M3 导演与有限互动设计](plans/group-chat/M3_DIRECTOR.md) 记录导演协议、隔离原型与执行基础，以及 M3-C 可见单元、原文映射、导演审计和终止原因；M3-D 联通、真实模型语义及真机仍待验收。
+[M3 导演与有限互动设计](plans/group-chat/M3_DIRECTOR.md) 记录导演协议、执行基础、可见单元与审计，以及 M3-D 本机只读预览和 H5 联通；真实模型语义及 App/微信真机仍待验收。
 
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 

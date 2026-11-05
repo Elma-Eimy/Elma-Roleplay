@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`conversation/test_group_preview.py` 检查 M3-D 的真实群聊路由、SQLite 只读写入拒绝、预览白名单、H5 静态资源挂载和生命周期禁用；CLI 子进程用本机 HTTP 读取失败前缀，限时退出后端口释放。导演 CLI 专项现覆盖 9 个离线场景，包含预期失败和候选版本/终止原因交接。H5 与真机方法见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。
+
 `conversation/test_group_units.py` 验证 M3-C 用户码点范围、角色单元知情、心理仅作者可见、过滤后窗口、一次状态重放、v2 最终输出契约与世界书输入；同时覆盖调度先落库、审计原子回滚、版本竞争、取消、正常停止及 Outbox 删除回滚。`infrastructure/test_group_units_migration.py` 使用虚构旧库验证原文和权限回填、组合约束、级联、升级失败回滚及有损降级拒绝。内部整轮默认 v2；旧执行权专项显式使用 v1 替身，CLI 的 8 个场景使用 v2。
 
 `conversation/test_group_round.py` 验证 M3-B 任务/会话执行令牌、伪造与过期拒绝、整轮模型及采样/历史窗口冻结、调用预算和超时，并用本地 HTTP 200 替身走通默认 SDK 客户端的完整轮次。关闭专项使用真实运行权，验证重复取消时仍等待角色清理和已派发数据库线程，期间拒绝新任务及第二进程运行权。`infrastructure/test_group_model_client.py` 仅连接本地 HTTP 500 替身，检查整轮客户端及 M2 单步调用各只发一次请求、不改普通单聊默认选项，以及客户端清理期间取消不会覆盖已完成结果。分别用统一入口选择对应文件执行，不访问真实模型。
