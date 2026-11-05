@@ -24,6 +24,8 @@ class GroupHistoryItem:
     kind: str
     speaker_persona_id: int | None
     content: str
+    emotion_tag: str | None = None
+    affection_change: int | None = None
 
 
 def _require_group(session_id, db):
@@ -136,7 +138,8 @@ async def append_group_utterance(session_id, candidate_id, speaker_persona_id, c
                               content, visible_to, expected_revision, db)
 
 
-def _append(session_id, candidate_id, speaker, content, visible_to, revision, db):
+def _append(session_id, candidate_id, speaker, content, visible_to, revision, db, *,
+            emotion_tag=None, affection_change=None, role_state_patch=None):
     try:
         _begin_write(db)
         _, candidate = _writable(session_id, candidate_id, revision, db)
@@ -145,7 +148,9 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
             raise GroupSessionValidationError("发言成员不属于本群")
         sequence = db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() + 1
         item = GroupContentItem(session_id=session_id, candidate_id=candidate_id, sequence=sequence,
-                                kind="utterance", speaker_persona_id=speaker, content=content)
+                                kind="utterance", speaker_persona_id=speaker, content=content,
+                                emotion_tag=emotion_tag, affection_change=affection_change,
+                                role_state_patch=role_state_patch)
         db.add(item)
         db.flush()
         _visibility(item, visible_to, members, db)
@@ -201,26 +206,82 @@ def get_member_history(session_id, persona_id, candidate_id, before_sequence, db
         round_, candidate = _target(session_id, candidate_id, db)
         if persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("成员不属于本群")
-        scope = or_(
-            and_(GroupRound.round_index < round_.round_index, GroupRound.confirmed_at.isnot(None),
-                 GroupRound.selected_candidate_id == GroupRoundCandidate.id,
-                 GroupRoundCandidate.status == "awaiting_confirmation"),
-            and_(GroupRoundCandidate.id == candidate.id, GroupContentItem.sequence < before_sequence),
-        )
-        query = db.query(GroupContentItem, GroupRound).join(GroupRoundCandidate,
+        return _member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db)
+    finally:
+        db.rollback()
+
+
+def _content_scope(round_, candidate, before_sequence):
+    return or_(
+        and_(GroupRound.round_index < round_.round_index, GroupRound.confirmed_at.isnot(None),
+             GroupRound.selected_candidate_id == GroupRoundCandidate.id,
+             GroupRoundCandidate.status == "awaiting_confirmation"),
+        and_(GroupRoundCandidate.id == candidate.id, GroupContentItem.sequence < before_sequence),
+    )
+
+
+def _content_query(session_id, round_, candidate, before_sequence, db):
+    return db.query(GroupContentItem, GroupRound).join(GroupRoundCandidate,
             GroupContentItem.candidate_id == GroupRoundCandidate.id).join(GroupRound,
-            GroupRoundCandidate.round_id == GroupRound.id).filter(GroupRound.session_id == session_id, scope)
-        visible = query.join(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
+            GroupRoundCandidate.round_id == GroupRound.id).filter(GroupRound.session_id == session_id,
+                _content_scope(round_, candidate, before_sequence))
+
+
+def _member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db):
+    query = _content_query(session_id, round_, candidate, before_sequence, db)
+    visible = query.join(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
             GroupContentVisibility.recipient_persona_id == persona_id))
-        # 缺行不兜底为公开；只向内部日志报告，不向个人 DTO 泄露隐藏项信息。
-        missing = query.outerjoin(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
+    # 缺行不兜底为公开；只向内部日志报告，不向个人 DTO 泄露隐藏项信息。
+    missing = query.outerjoin(GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
             GroupContentVisibility.recipient_persona_id == persona_id)).filter(GroupContentVisibility.item_id.is_(None)).first()
-        if missing:
-            logger.warning("群聊个人历史存在缺失知情记录，已按不可见处理")
-        rows = visible.filter(GroupContentVisibility.decision == "visible").order_by(
+    if missing:
+        logger.warning("群聊个人历史存在缺失知情记录，已按不可见处理")
+    rows = visible.filter(GroupContentVisibility.decision == "visible").order_by(
             GroupRound.round_index.desc(), GroupContentItem.sequence.desc()).limit(limit).all()
-        return tuple(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
+    return tuple(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
             item.sequence, item.kind, item.speaker_persona_id,
-            owner.user_content if item.kind == "user" else item.content) for item, owner in reversed(rows))
+            owner.user_content if item.kind == "user" else item.content,
+            item.emotion_tag if item.speaker_persona_id == persona_id else None,
+            item.affection_change if item.speaker_persona_id == persona_id else None) for item, owner in reversed(rows))
+
+
+@group_session_operation
+def list_group_rounds(session_id, db, *, limit=20, offset=0):
+    """故事操作者的只读视图，不能作为角色个人输入。"""
+    _require_group(session_id, db)
+    _require_clean_transaction(db)
+    _positive(limit, "分页条数")
+    _positive(offset, "分页位置", 0)
+    if limit > 100:
+        raise GroupSessionValidationError("分页条数最多 100")
+    db.rollback()
+    db.expire_all()
+    db.execute(text("BEGIN"))
+    try:
+        _require_group(session_id, db)
+        query = db.query(GroupRound).filter_by(session_id=session_id)
+        total = query.count()
+        rounds = query.order_by(GroupRound.round_index.desc()).offset(offset).limit(limit).all()
+        ids = [row.selected_candidate_id for row in rounds if row.selected_candidate_id is not None]
+        candidates = {row.id: row for row in db.query(GroupRoundCandidate).filter(GroupRoundCandidate.id.in_(ids)).all()}
+        items = db.query(GroupContentItem).filter(GroupContentItem.candidate_id.in_(ids),
+            GroupContentItem.kind == "utterance").order_by(GroupContentItem.sequence).all()
+        members = {row.id: row.character for row in db.query(SessionPersona).filter_by(session_id=session_id)}
+        by_candidate = {cid: [] for cid in ids}
+        for item in items:
+            character = members[item.speaker_persona_id]
+            by_candidate[item.candidate_id].append({"item_id": item.id, "sequence": item.sequence,
+                "speaker_persona_id": item.speaker_persona_id, "speaker_name": character.name,
+                "content": item.content, "created_at": item.created_at.isoformat()})
+        result = []
+        for row in rounds:
+            candidate = candidates.get(row.selected_candidate_id)
+            result.append({"round_id": row.id, "round_index": row.round_index,
+                "candidate_id": row.selected_candidate_id,
+                "status": candidate.status if candidate else "failed", "confirmed": row.confirmed_at is not None,
+                "user_content": row.user_content, "created_at": row.created_at.isoformat(),
+                "utterances": by_candidate.get(row.selected_candidate_id, [])})
+        return {"rounds": result, "total": total, "limit": limit, "offset": offset,
+                "has_more": offset + len(result) < total}
     finally:
         db.rollback()

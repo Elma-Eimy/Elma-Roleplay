@@ -6,6 +6,7 @@ from application.session_routes import GroupSessionAPIRouter
 from core.database import get_db
 from schemas import GroupSessionCreate
 from services.conversation import group_session_service as service
+from services.conversation.group_history_service import list_group_rounds
 
 router = GroupSessionAPIRouter()
 
@@ -46,4 +47,13 @@ async def delete_group_session(session_id: int, db: Session = Depends(get_db)):
     try:
         return await service.delete_group_session(session_id, db)
     except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/{session_id}/rounds")
+def get_group_rounds(session_id: int, limit: int = Query(20, ge=1, le=100),
+                     offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
+    try:
+        return list_group_rounds(session_id, db, limit=limit, offset=offset)
+    except service.GroupSessionNotFound as exc:
         raise _http_error(exc) from exc

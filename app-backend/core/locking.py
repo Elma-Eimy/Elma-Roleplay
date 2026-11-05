@@ -25,6 +25,18 @@ from typing import Dict
 _session_locks: Dict[int, asyncio.Lock] = {}
 
 
+class GroupRuntimeOwner:
+    """由应用生命周期持有的数据库进程运行权。"""
+    def __init__(self, db_engine):
+        self.engine = db_engine
+        self.active = True
+
+
+def require_group_runtime(owner, db_engine):
+    if not isinstance(owner, GroupRuntimeOwner) or not owner.active or owner.engine is not db_engine:
+        raise RuntimeError("群聊生成必须持有对应数据库的运行权")
+
+
 def get_session_lock(session_id: int) -> asyncio.Lock:
     """获取指定会话的异步锁，不存在时自动创建。"""
     if session_id not in _session_locks:

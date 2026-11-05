@@ -4,6 +4,12 @@
 
 ## 自动回归
 
+`conversation/test_group_generation.py` 用假模型检查角色实际收到的完整输入，覆盖秘密与世界书隔离、用户原文、A → B → A、各自状态重放、已确认所选版本、同名身份、缺失知情记录、超长共同背景、无事务外部调用、取消等待持久化、提交失败与迟到结果。含从内部生成到只读轮次 HTTP 的隔离原型；不进入应用 lifespan，不调用真实模型或开发数据库。运行：`python -m tests --group conversation --pattern test_group_generation.py`。
+
+审查回归还检查原文中引号/标签的世界书触发及包装字段不触发、取消后线程失败保持取消、失败标记不可写时保留原始错误或取消。故障只注入临时数据库，不调用真实模型。
+
+`api/test_group_session_routes.py` 同时验证只读轮次鉴权、类型隔离、整轮分页、所选候选和失败前缀；接口样本与路由快照由既有 API 文档回归核对。
+
 `conversation/test_group_history.py` 覆盖 M2-A 个人历史的成员/候选/轮次隔离、先过滤后限量、缺失知情记录默认隐藏、内部写入的版本竞争和事务回滚，以及新表随整群删除级联。`infrastructure/test_group_round_migration.py` 验证旧值保留、组合外键、循环引用删除、失败升级回滚和非空降级保护；`test_group_runtime.py` 验证运行权互斥、启动顺序和中断候选只标失败、不重发。测试均使用临时数据库，不调用模型。
 
 M2-A 审查回归还覆盖 autoflush 开/关、未 flush 与已 flush 的调用方修改被拒绝后仍保留；后台 Worker 异常和重复取消关闭时，其他 Worker 与聊天流必须清理后才释放运行权。

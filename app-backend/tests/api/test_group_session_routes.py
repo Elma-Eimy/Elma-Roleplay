@@ -95,6 +95,7 @@ class GroupSessionRoutesTests(unittest.TestCase):
     def test_key_is_required_in_header_for_every_group_route(self):
         with patch.object(settings, "ACCESS_API_KEY", "fixture-key"):
             for method, path in (("GET", "/group-sessions"), ("POST", "/group-sessions"),
+                                 ("GET", "/group-sessions/10/rounds"),
                                  ("GET", "/group-sessions/10"), ("POST", "/group-sessions/10/delete")):
                 response = self.client.request(method, path, json=self.payload if path == "/group-sessions" and method == "POST" else None)
                 self.assertEqual(403, response.status_code, response.text)
@@ -132,3 +133,42 @@ class GroupSessionRoutesTests(unittest.TestCase):
         self.assertEqual(409, self.client.post("/probe", json={"message_id": 1}).status_code)
         self.assertEqual([], called)
         self.assertEqual(200, self.client.post("/probe", json={"message_id": 100}).status_code)
+
+    def test_readonly_round_history_paginates_selected_candidates_and_keeps_failed_prefix(self):
+        from datetime import datetime
+        from core.models import GroupRound, GroupRoundCandidate, GroupContentItem
+        from services.conversation import group_history_service as history
+        group = self.client.post("/group-sessions", json=self.payload).json()
+        sid = group["session_id"]
+        a, b = [member["persona_id"] for member in group["members"]]
+        target = asyncio.run(history.prepare_group_round(sid, "private user", (a,), self.db))
+        saved = asyncio.run(history.append_group_utterance(sid, target["candidate_id"], a, "public reply", (b,), 1, self.db))
+        asyncio.run(history.finish_group_round(sid, target["candidate_id"], saved["revision"], self.db))
+        self.db.get(GroupRound, target["round_id"]).confirmed_at = datetime.utcnow()
+        sibling = GroupRoundCandidate(round_id=target["round_id"], session_id=sid, version=2)
+        self.db.add(sibling)
+        self.db.flush()
+        self.db.add(GroupContentItem(candidate_id=sibling.id, session_id=sid, sequence=1,
+            kind="utterance", speaker_persona_id=b, content="unselected"))
+        self.db.commit()
+        second = asyncio.run(history.prepare_group_round(sid, "second", (a, b), self.db))
+        saved = asyncio.run(history.append_group_utterance(sid, second["candidate_id"], b, "prefix", (), 1, self.db))
+        asyncio.run(history.finish_group_round(sid, second["candidate_id"], saved["revision"], self.db, failed=True))
+        result = self.client.get(f"/group-sessions/{sid}/rounds?limit=1").json()
+        self.assertEqual((2, True), (result["total"], result["has_more"]))
+        self.assertEqual("failed", result["rounds"][0]["status"])
+        self.assertEqual("prefix", result["rounds"][0]["utterances"][0]["content"])
+        earlier = self.client.get(f"/group-sessions/{sid}/rounds?limit=1&offset=1").json()["rounds"][0]
+        self.assertTrue(earlier["confirmed"])
+        self.assertEqual("private user", earlier["user_content"])
+        self.assertEqual(["public reply"], [row["content"] for row in earlier["utterances"]])
+        self.assertNotIn("role_state_patch", str(earlier))
+        self.assertNotIn("decision", str(earlier))
+
+    def test_readonly_round_history_rejects_single_missing_and_invalid_pagination(self):
+        self.assertEqual(409, self.client.get("/group-sessions/10/rounds").status_code)
+        self.assertEqual(404, self.client.get("/group-sessions/999/rounds").status_code)
+        sid = self.client.post("/group-sessions", json=self.payload).json()["session_id"]
+        self.assertEqual([], self.client.get(f"/group-sessions/{sid}/rounds").json()["rounds"])
+        self.assertEqual(422, self.client.get(f"/group-sessions/{sid}/rounds?limit=101").status_code)
+        self.assertEqual(422, self.client.get(f"/group-sessions/{sid}/rounds?offset=-1").status_code)

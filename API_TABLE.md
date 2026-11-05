@@ -77,6 +77,7 @@
 | **POST** | `/group-sessions` | 原子创建固定成员群聊与来源快照 |
 | **GET** | `/group-sessions` | 群聊摘要稳定分页 |
 | **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
+| **GET** | `/group-sessions/{session_id}/rounds` | 按整轮分页读取所选候选正文与发言归属 |
 | **POST** | `/group-sessions/{session_id}/delete` | 删除整个群聊并登记资源清理 |
 
 ### 会话、消息与记忆 API

@@ -222,5 +222,6 @@
     "PUT",
     "/utils/settings"
   ],
-  ["GET", "/sessions/{session_id}/memory-processing"]
+  ["GET", "/sessions/{session_id}/memory-processing"],
+  ["GET", "/group-sessions/{session_id}/rounds"]
 ]

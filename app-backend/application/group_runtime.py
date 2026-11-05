@@ -7,13 +7,8 @@ from sqlalchemy import text
 
 from core.database import engine
 from core.models import GroupRoundCandidate
+from core.locking import GroupRuntimeOwner
 from sqlalchemy.orm import Session
-
-
-class _RuntimeOwner:
-    def __init__(self, db_engine):
-        self.engine = db_engine
-        self.active = True
 
 
 @contextmanager
@@ -43,7 +38,7 @@ def group_runtime(db_engine=engine):
             acquired = True
         except OSError as exc:
             raise RuntimeError("同一数据库仅支持一个应用进程，请使用单 Worker 部署") from exc
-        owner = _RuntimeOwner(db_engine)
+        owner = GroupRuntimeOwner(db_engine)
         yield owner
     finally:
         if owner is not None:
@@ -61,7 +56,7 @@ def group_runtime(db_engine=engine):
 
 def fail_interrupted_group_candidates(owner):
     """仅由持有 group_runtime 的启动流程调用，不恢复或重发模型请求。"""
-    if not isinstance(owner, _RuntimeOwner) or not owner.active:
+    if not isinstance(owner, GroupRuntimeOwner) or not owner.active:
         raise RuntimeError("恢复中断候选前必须持有数据库运行权")
     with Session(owner.engine) as db:
         db.execute(text("BEGIN IMMEDIATE"))

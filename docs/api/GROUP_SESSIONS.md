@@ -2,7 +2,7 @@
 
 [API 总表](../../API_TABLE.md) · [文档导航](../README.md)
 
-当前提供固定 2–3 个 AI 成员的创建、列表、详情和整群删除，全部沿用 `X-API-Key` 鉴权。群聊接口拒绝单聊 ID，旧单聊接口拒绝群聊 ID，均返回 409。当前没有群聊发送、生成、候选或成员增删接口；响应固定 `can_generate=false`。
+当前提供固定 2–3 个 AI 成员的创建、列表、详情、只读轮次历史和整群删除，全部沿用 `X-API-Key` 鉴权。群聊接口拒绝单聊 ID，旧单聊接口拒绝群聊 ID，均返回 409。当前没有群聊发送、生成、候选切换或成员增删接口；响应固定 `can_generate=false`。
 
 ## 创建
 
@@ -70,6 +70,16 @@
 ```
 
 上例仅展示一名成员的字段，实际创建要求 2–3 名成员。Persona ID 是稳定成员标识，不能使用昵称或 slot 代替身份。来源 ID 仅作审计，不表示来源当前仍存在；角色卡本身仍可编辑，冻结的是人格起点与继承事实。
+
+## 只读轮次历史
+
+`GET /group-sessions/{session_id}/rounds?limit=20&offset=0`：limit 为 1–100，offset 非负，按 round_index 倒序分页。返回 `{rounds, total, limit, offset, has_more}`，每个元素包含 round_id、round_index、candidate_id、status、confirmed、user_content、created_at 和 utterances。status 为 generating、awaiting_confirmation 或 failed；confirmed 独立表示是否已确认。
+
+utterances 按轮内 sequence 正序，每项为 `{item_id, sequence, speaker_persona_id, speaker_name, content, created_at}`。仅返回各轮所选候选，用户原文只在 user_content 出现一次；失败候选保留已经提交的前缀。分页以整轮为单位，不截断单轮发言。reasoning、导演理由、知情行和内部状态增量不进入响应。
+
+此接口面向故事操作者，能够读取故事中保存的完整正文，包括角色间的私密内容；不能把该响应作为任何角色的个人上下文。角色生成仍使用后端按成员过滤的独立查询。不存在的群聊返回 404，单聊目标返回 409，分页参数错误返回 422，鉴权沿用 X-API-Key。
+
+当前仅开放只读展示，没有群聊生成、手动选角色、确认、候选切换或恢复接口；`can_generate=false` 继续保留。离线 Mock 只读取虚构轮次样本，不模拟生成或知情判断。
 
 ## 删除与错误
 
