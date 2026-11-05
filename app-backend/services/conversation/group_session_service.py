@@ -234,7 +234,7 @@ def _serialize(group, counts):
     return {"kind": "group", "session_id": group.id, "title": group.title,
             "user_nickname": group.user_nickname, "shared_setting": group.shared_setting,
             "created_at": _iso(group.created_at), "updated_at": _iso(group.updated_at),
-            "can_generate": False, "members": members}
+            "can_generate": False, "group_revision": group.group_revision, "members": members}
 
 
 @group_session_operation

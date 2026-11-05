@@ -348,7 +348,9 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
                 "error_code": candidate.error_code if candidate else None,
                 "user_content": row.user_content, "created_at": row.created_at.isoformat(),
                 "utterances": by_candidate.get(row.selected_candidate_id, [])})
-        return {"rounds": result, "total": total, "limit": limit, "offset": offset,
+        from services.conversation.group_query_service import _state
+        return {"current": _state(_require_group(session_id, db), db),
+                "rounds": result, "total": total, "limit": limit, "offset": offset,
                 "has_more": offset + len(result) < total}
     finally:
         db.rollback()

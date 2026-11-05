@@ -223,5 +223,13 @@
     "/utils/settings"
   ],
   ["GET", "/sessions/{session_id}/memory-processing"],
-  ["GET", "/group-sessions/{session_id}/rounds"]
+  ["GET", "/group-sessions/{session_id}/rounds"],
+  ["POST", "/group-sessions/{session_id}/rounds"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/regenerate"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/resume"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/select-candidate"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/discard"],
+  ["GET", "/group-sessions/{session_id}/requests/{client_request_id}"],
+  ["GET", "/group-sessions/{session_id}/rounds/{round_id}/candidates"],
+  ["GET", "/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}"]
 ]

@@ -50,7 +50,7 @@ async def accept_group_operation(session_id, client_request_id, kind, expected_g
                                  observed_candidate_revision=None, user_content=None,
                                  target_candidate_id=None, target_candidate_revision=None,
                                  model=None, thinking_mode=None, reasoning_effort=None,
-                                 call_snapshot=None, max_steps=4):
+                                 call_snapshot=None, max_steps=4, round_id=None):
     """内部事务原语，不派发模型；运行入口使用后台握手服务。"""
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
@@ -58,7 +58,7 @@ async def accept_group_operation(session_id, client_request_id, kind, expected_g
         observed_round_id=observed_round_id, observed_candidate_id=observed_candidate_id,
         observed_candidate_revision=observed_candidate_revision, user_content=user_content,
         target_candidate_id=target_candidate_id, target_candidate_revision=target_candidate_revision,
-        model=model, thinking_mode=thinking_mode, reasoning_effort=reasoning_effort, max_steps=max_steps)
+        model=model, thinking_mode=thinking_mode, reasoning_effort=reasoning_effort, max_steps=max_steps, round_id=round_id)
     previous = _existing(session_id, request_id, fingerprint, db)
     if previous is not None:
         return previous
@@ -69,7 +69,7 @@ async def accept_group_operation(session_id, client_request_id, kind, expected_g
 def _command(client_request_id, kind, expected_group_revision, *, observed_round_id=None,
              observed_candidate_id=None, observed_candidate_revision=None, user_content=None,
              target_candidate_id=None, target_candidate_revision=None, model=None, thinking_mode=None,
-             reasoning_effort=None, max_steps=4):
+             reasoning_effort=None, max_steps=4, round_id=None, http_resources=False):
     try:
         request_id = str(UUID(client_request_id))
     except (ValueError, TypeError, AttributeError):
@@ -77,7 +77,7 @@ def _command(client_request_id, kind, expected_group_revision, *, observed_round
     if kind not in ("send", "regenerate", "resume", "select", "discard"):
         raise GroupSessionValidationError("当前批次不支持该操作")
     history._positive(expected_group_revision, "会话版本", 0)
-    for value in (observed_round_id, observed_candidate_id, target_candidate_id):
+    for value in (round_id, observed_round_id, observed_candidate_id, target_candidate_id):
         if value is not None:
             history._positive(value, "资源 ID")
     for value in (observed_candidate_revision, target_candidate_revision):
@@ -113,8 +113,12 @@ def _command(client_request_id, kind, expected_group_revision, *, observed_round
     request = dict(kind=kind, expected=expected, user_content=user_content,
                    target_candidate_id=target_candidate_id, target_candidate_revision=target_candidate_revision,
                    model=model, thinking_mode=thinking_mode, reasoning_effort=reasoning_effort, max_steps=max_steps)
+    if round_id is not None:
+        request["round_id"] = round_id
     fingerprint = hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True,
         separators=(",", ":")).encode()).hexdigest()
+    if http_resources:
+        request["_http_resources"] = True
     return request_id, request, fingerprint
 
 
@@ -144,6 +148,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             result = _receipt(previous)
             db.rollback()
             return (result, False) if with_created else result
+        _resources(session_id, request, db)
         latest = _latest(session_id, db)
         selected = _observed(group, latest, request["expected"], db)
         kind = request["kind"]
@@ -222,6 +227,26 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
     except BaseException:
         db.rollback()
         raise
+
+
+def _resources(session_id, request, db):
+    """HTTP 路径与嵌套资源在接受事务内核对；重放回执优先于当前资源状态。"""
+    from services.conversation.group_session_service import GroupSessionNotFound
+    if not request.get("_http_resources") and "round_id" not in request:
+        return
+    seen_round, seen_candidate = request["expected"][1:3]
+    for rid in (request.get("round_id"), seen_round):
+        if rid is not None:
+            row = db.get(GroupRound, rid)
+            if row is None or row.session_id != session_id:
+                raise GroupSessionNotFound("轮次不属于本群或不存在")
+    for cid in (seen_candidate, request["target_candidate_id"]):
+        if cid is not None:
+            row = db.get(GroupRoundCandidate, cid)
+            if row is None or row.session_id != session_id or row.round_id != seen_round:
+                raise GroupSessionNotFound("候选不属于本群本轮或不存在")
+    if request.get("round_id") is not None and request["round_id"] != seen_round:
+        raise SessionKindConflict("路径轮次与所见轮次不一致")
 
 
 @group_session_operation
