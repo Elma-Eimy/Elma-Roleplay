@@ -1,6 +1,9 @@
 """在轮次起始冻结模型选择、成员采样参数和历史预算。"""
 import copy
 import json
+import hashlib
+import math
+from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -10,7 +13,7 @@ from core.config import settings
 from core.models import SessionPersona
 from services.conversation import group_history_service as history
 from services.conversation.session_access import group_session_operation
-from services.infrastructure.model_capabilities import resolve_selection, generation_controls
+from services.infrastructure.model_capabilities import resolve_selection, generation_controls, model_capability
 from services.infrastructure.llm_provider import GroupModelConnection
 
 
@@ -27,6 +30,84 @@ class GroupCallSnapshot:
             if pid == persona_id:
                 return parameters
         raise ValueError("发言成员不属于调用快照")
+
+
+def persist_group_calls(snapshot, max_steps, member_ids):
+    """逐字段保存可重放参数；连接地址只保存无凭据摘要。"""
+    error = history.GroupSessionValidationError
+    if not isinstance(snapshot, GroupCallSnapshot):
+        raise error("新任务需要冻结调用参数")
+    if type(max_steps) is not int or not 1 <= max_steps <= 6:
+        raise error("成功步数需要在 1–6 之间")
+    if type(snapshot.history_limit) is not int or not 1 <= snapshot.history_limit <= 500:
+        raise error("历史窗口无效")
+    if type(snapshot.call_timeout) not in (float, int) or not math.isfinite(snapshot.call_timeout) or snapshot.call_timeout <= 0:
+        raise error("调用超时无效")
+
+    def parameters(encoded):
+        try:
+            value = json.loads(encoded)
+        except (ValueError, TypeError):
+            raise error("调用参数无效") from None
+        allowed = {"model", "max_tokens", "temperature", "top_p", "presence_penalty", "frequency_penalty",
+                   "reasoning_effort", "extra_body"}
+        if not isinstance(value, dict) or not set(value) <= allowed:
+            raise error("调用参数含非白名单字段")
+        if not isinstance(value.get("model"), str) or not value["model"].strip():
+            raise error("模型名无效")
+        if type(value.get("max_tokens")) is not int or value["max_tokens"] <= 0:
+            raise error("输出预算无效")
+        for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+            if key in value and (type(value[key]) not in (int, float) or not math.isfinite(value[key])):
+                raise error("采样参数无效")
+        if "reasoning_effort" in value and value["reasoning_effort"] not in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
+            raise error("思考参数无效")
+        extra = value.get("extra_body", {})
+        if not isinstance(extra, dict) or not set(extra) <= {"thinking", "repetition_penalty"}:
+            raise error("扩展参数含非白名单字段")
+        if "thinking" in extra and extra["thinking"] not in ({"type": "enabled"}, {"type": "disabled"}):
+            raise error("思考开关无效")
+        if "repetition_penalty" in extra and (type(extra["repetition_penalty"]) not in (int, float)
+                or not math.isfinite(extra["repetition_penalty"])):
+            raise error("重复惩罚无效")
+        return value
+
+    ids = [pid for pid, _ in snapshot.members]
+    if any(type(pid) is not int for pid in ids) or len(ids) != len(set(ids)) or set(ids) != member_ids:
+        raise error("调用快照成员不属于本群")
+    try:
+        address = urlsplit(snapshot.connection.base_url)
+        if address.scheme.lower() not in ("http", "https") or not address.hostname or address.username or address.password or address.query or address.fragment:
+            raise ValueError
+        normalized = urlunsplit((address.scheme.lower(), address.netloc.lower(), address.path.rstrip("/"), "", ""))
+    except (ValueError, AttributeError, TypeError):
+        raise error("提供方地址必须是不含凭据的 HTTP 地址") from None
+    value = dict(policy_version=2, max_steps=max_steps, history_limit=snapshot.history_limit,
+                 call_timeout=snapshot.call_timeout, director=parameters(snapshot.director_json),
+                 members=[dict(persona_id=pid, parameters=parameters(encoded)) for pid, encoded in snapshot.members])
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False), hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def validate_group_call_selection(encoded, *, model, thinking_mode, reasoning_effort):
+    """首次接受前核对请求与所有调用参数；继承值取冻结结果。"""
+    value = json.loads(encoded)
+    director = value["director"]
+    capability = model_capability(director["model"])
+    thinking = director.get("extra_body", {}).get("thinking", {}).get("type")
+    frozen_thinking = thinking == "enabled" if thinking is not None else capability["thinking"] == "always"
+    config = SimpleNamespace(LLM_DEFAULT_CHAT_MODEL=director["model"],
+        LLM_MODEL_PROFILES=copy.deepcopy(settings.LLM_MODEL_PROFILES),
+        LLM_REASONING_MODE=frozen_thinking, LLM_REASONING_EFFORT=director.get("reasoning_effort"))
+    try:
+        selection = resolve_selection(model, thinking_mode, effort=reasoning_effort, config=config)
+    except ValueError as exc:
+        raise history.GroupSessionValidationError(str(exc)) from None
+    controls = generation_controls(selection, config=config)
+    for parameters in (director, *(member["parameters"] for member in value["members"])):
+        if (parameters["model"] != selection.model
+                or parameters.get("reasoning_effort") != controls.get("reasoning_effort")
+                or parameters.get("extra_body", {}).get("thinking") != controls.get("extra_body", {}).get("thinking")):
+            raise history.GroupSessionValidationError("请求的模型选择与冻结调用参数不一致")
 
 
 @group_session_operation

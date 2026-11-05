@@ -48,9 +48,11 @@ M2 已建立群聊轮次、候选、内容与知情记录，以及内部单步�
 
 单步生成要求对应数据库的进程运行权和会话锁，模型与接收者判定期间不持有数据库事务；完成后复核候选 revision，原子保存正文、知情行及自己的状态增量。失败/取消保留前缀并停止，不保存错误兜底台词或 reasoning，不改写成员起点、不触发记忆提纯。隔离原型入口为 `python -m tests --group conversation --pattern test_group_generation.py`，只使用临时数据和假模型，包含 A → B → A 到只读 HTTP 展示的联通检查。
 
-后端对同一 SQLite 文件强制单进程运行：lifespan 在迁移前取得数据库旁的 `.runtime.lock` 文件锁，另一个 Worker 启动会明确失败；关闭后操作系统释放锁，无需删除锁文件。迁移完成后，将遗留 generating 群聊候选标为 process_interrupted 失败并保留已保存内容，不自动续接或重发。使用 `uvicorn main:app --reload` 开发或单 Worker 部署，不使用多 Worker 连接同一库。
+后端对同一 SQLite 文件强制单进程运行：lifespan 在迁移前取得数据库旁的 `.runtime.lock` 文件锁，另一个 Worker 启动会明确失败；关闭后操作系统释放锁，无需删除锁文件。迁移完成后，将遗留 generating 群聊候选和 queued/running 请求回执一起标为 process_interrupted 失败、推进对应会话版本并保留已保存内容，不自动续接或重发。使用 `uvicorn main:app --reload` 开发或单 Worker 部署，不使用多 Worker 连接同一库。
 
 HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
+
+M4-A 已加入会话版本、撤回、候选检查点/冻结参数与持久操作回执。内部接受新消息原子确认上一成功轮次；选择/撤回受会话版本与候选版本保护，撤回保留回执并排除后续剧情。该批只建立事务原语，不启动后台生成；M4-B 接通持久执行与恢复。当前进度及调用边界见 [M4-A 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-a-接续记录)。
 
 M3-D 的限时本机只读预览已联通现有 H5 群聊详情；正常停止、同名成员和失败前缀有独立展示与候选版本交接。正式应用仍不开放群聊发送、确认或恢复。复现命令与待验收项见[群聊 M3 联通验收](../docs/testing/GROUP_CHAT_M3.md)。
 

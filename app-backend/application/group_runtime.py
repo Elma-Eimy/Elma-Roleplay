@@ -1,12 +1,13 @@
 """独占进程运行权后才能将上次中断的群聊候选标为失败。"""
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 import os
 
 from sqlalchemy import text
 
 from core.database import engine
-from core.models import GroupRoundCandidate
+from core.models import GroupRoundCandidate, GroupRoundOperation, Session as StorySession
 from core.locking import GroupRuntimeOwner
 from sqlalchemy.orm import Session
 
@@ -60,8 +61,18 @@ def fail_interrupted_group_candidates(owner):
         raise RuntimeError("恢复中断候选前必须持有数据库运行权")
     with Session(owner.engine) as db:
         db.execute(text("BEGIN IMMEDIATE"))
+        interrupted = {row[0] for row in db.query(GroupRoundCandidate.session_id).filter_by(status="generating").distinct()}
+        interrupted.update(row[0] for row in db.query(GroupRoundOperation.session_id).filter(
+            GroupRoundOperation.status.in_(("queued", "running"))).distinct())
+        db.query(StorySession).filter(StorySession.id.in_(interrupted)).update({
+            "group_revision": StorySession.group_revision + 1,
+        }, synchronize_session=False)
         db.query(GroupRoundCandidate).filter_by(status="generating").update({
             "status": "failed", "error_code": "process_interrupted",
             "revision": GroupRoundCandidate.revision + 1,
+        }, synchronize_session=False)
+        db.query(GroupRoundOperation).filter(GroupRoundOperation.status.in_(("queued", "running"))).update({
+            "status": "failed", "error_code": "process_interrupted", "finished_at": datetime.utcnow(),
+            "revision": GroupRoundOperation.revision + 1,
         }, synchronize_session=False)
         db.commit()

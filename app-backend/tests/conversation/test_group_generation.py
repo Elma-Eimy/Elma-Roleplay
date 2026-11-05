@@ -151,10 +151,12 @@ class GroupGenerationTests(unittest.TestCase):
             response(state={"characters": {"actor2": {"location": "secret"}}}), response(state={"unknown": "field"})]
         for reply in invalid:
             self.group()
+            revision = history._require_group(self.sid, self.db).group_revision
             with self.assertRaises(generation.GroupGenerationError):
                 self.generate(reply=reply)
             self.assertEqual(1, self.db.query(GroupContentItem).filter_by(candidate_id=self.target["candidate_id"]).count())
             self.assertEqual("failed", self.db.get(GroupRoundCandidate, self.target["candidate_id"]).status)
+            self.assertEqual(revision + 1, history._require_group(self.sid, self.db).group_revision)
             self.assertFalse(is_session_locked(self.sid))
 
     def test_provider_and_audience_failure_keep_prefix_and_mark_failed(self):

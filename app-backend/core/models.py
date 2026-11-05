@@ -122,6 +122,8 @@ class Session(Base):
 
     id                = Column(Integer, primary_key=True, index=True)
     kind = Column(String(10), nullable=False, default="single", server_default="single")
+    group_revision = Column(Integer, CheckConstraint("group_revision >= 0", name="ck_group_revision"),
+                            nullable=False, default=0, server_default="0")
     shared_setting = Column(Text, nullable=True)
     user_nickname = Column(String(50), nullable=True)
     parent_session_id = Column(
@@ -357,7 +359,8 @@ class GroupRound(Base):
         UniqueConstraint("id", "session_id", name="uq_group_round_identity"),
         UniqueConstraint("session_id", "round_index", name="uq_group_round_index"),
         CheckConstraint("session_kind = 'group' AND round_index >= 1", name="ck_group_round_scope"),
-        Index("uq_group_round_pending", "session_id", unique=True, sqlite_where=text("confirmed_at IS NULL")),
+        Index("uq_group_round_pending", "session_id", unique=True,
+              sqlite_where=text("confirmed_at IS NULL AND discarded_at IS NULL")),
         {"sqlite_autoincrement": True},
     )
     id = Column(Integer, primary_key=True, autoincrement="ignore_fk")
@@ -367,6 +370,8 @@ class GroupRound(Base):
     user_content = Column(Text, nullable=False)
     selected_candidate_id = Column(Integer, nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
+    discarded_at = Column(DateTime, CheckConstraint("discarded_at IS NULL OR confirmed_at IS NULL",
+                                                  name="ck_group_round_discard"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
 
@@ -388,10 +393,48 @@ class GroupRoundCandidate(Base):
     status = Column(String(30), nullable=False, default="generating", server_default="generating")
     revision = Column(Integer, nullable=False, default=0, server_default="0")
     error_code = Column(String(80), nullable=True)
+    checkpoint = Column(String(30), CheckConstraint(
+        "checkpoint IN ('user_visibility', 'next_action', 'role_generation', 'finish', 'done')",
+        name="ck_group_checkpoint"))
+    call_snapshot_json = Column(Text)
+    provider_fingerprint = Column(String(64))
     protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),
                               nullable=False, default=1, server_default="1")
     finish_reason = Column(String(30), CheckConstraint("finish_reason IN ('wait_user', 'step_limit', 'no_visible_basis')",
                                                      name="ck_group_finish_reason"))
+
+
+class GroupRoundOperation(Base):
+    __tablename__ = "group_round_operations"
+    __table_args__ = (
+        ForeignKeyConstraint(["round_id", "session_id"], ["group_rounds.id", "group_rounds.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["candidate_id", "round_id", "session_id"],
+            ["group_round_candidates.id", "group_round_candidates.round_id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        UniqueConstraint("session_id", "client_request_id", name="uq_group_operation_request"),
+        CheckConstraint("kind IN ('send', 'regenerate', 'resume', 'select', 'discard')", name="ck_group_operation_kind"),
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name="ck_group_operation_status"),
+        CheckConstraint("revision >= 0 AND call_count >= 0 AND call_limit >= 0", name="ck_group_operation_counters"),
+        Index("uq_group_operation_active", "session_id", unique=True,
+              sqlite_where=text("status IN ('queued', 'running')")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    round_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    client_request_id = Column(String(36), nullable=False)
+    kind = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False)
+    revision = Column(Integer, nullable=False, default=0, server_default="0")
+    request_fingerprint = Column(String(64), nullable=False)
+    accepted_result_json = Column(Text, nullable=False)
+    call_count = Column(Integer, nullable=False, default=0, server_default="0")
+    call_limit = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    started_at = Column(DateTime)
+    deadline_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    error_code = Column(String(80))
 
 
 class GroupContentItem(Base):

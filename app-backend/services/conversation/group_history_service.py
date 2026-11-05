@@ -1,4 +1,4 @@
-"""群聊内容归属和个人历史；不调用模型或开放跨轮确认。"""
+"""群聊内容归属和个人历史；兼容旧单步执行，不调用模型。"""
 import logging
 from dataclasses import dataclass
 
@@ -75,7 +75,7 @@ def _target(session_id, candidate_id, db):
     if candidate is None or candidate.session_id != session_id:
         raise GroupSessionNotFound("候选不属于本群或不存在")
     round_ = db.get(GroupRound, candidate.round_id)
-    if round_.selected_candidate_id != candidate.id or round_.confirmed_at is not None:
+    if round_.selected_candidate_id != candidate.id or round_.confirmed_at is not None or round_.discarded_at is not None:
         raise SessionKindConflict("只能操作当前未确认的所选候选")
     if candidate.status == "failed":
         raise SessionKindConflict("失败候选不能继续执行或作为当前上下文")
@@ -84,6 +84,9 @@ def _target(session_id, candidate_id, db):
 
 def _writable(session_id, candidate_id, expected_revision, db):
     _positive(expected_revision, "候选版本", 0)
+    from services.conversation.group_operation_service import _active
+    if _active(session_id, db):
+        raise SessionKindConflict("持久任务不能通过旧执行入口写入")
     round_, candidate = _target(session_id, candidate_id, db)
     if candidate.status != "generating" or candidate.revision != expected_revision:
         raise SessionKindConflict("候选状态或版本已变化")
@@ -102,8 +105,11 @@ async def prepare_group_round(session_id, user_content, visible_to, db):
 def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=None):
     try:
         _begin_write(db)
-        _require_group(session_id, db)
-        if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None).first():
+        group = _require_group(session_id, db)
+        from services.conversation.group_operation_service import _active
+        if _active(session_id, db):
+            raise SessionKindConflict("存在活动群聊操作")
+        if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None, discarded_at=None).first():
             raise SessionKindConflict("已有待处理或待确认轮次，当前不支持跨轮确认或恢复")
         index = (db.query(func.max(GroupRound.round_index)).filter_by(session_id=session_id).scalar() or 0) + 1
         round_ = GroupRound(session_id=session_id, round_index=index, user_content=user_content)
@@ -121,6 +127,7 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
         if unit_plan is not None:
             units._write_units(item, unit_plan, _members(session_id, db), user_content, db)
             audit.record(candidate, "user_visibility", unit_plan, model, db, item=item)
+        group.group_revision += 1
         candidate.revision = 1
         result = {"round_id": round_.id, "candidate_id": candidate.id, "revision": 1}
         db.commit()
@@ -191,6 +198,7 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
             audit.record(candidate, "finish", finish_reason, model, db)
         candidate.finish_reason = None if failed else finish_reason
         candidate.status = "failed" if failed else "awaiting_confirmation"
+        _require_group(session_id, db).group_revision += 1
         candidate.error_code = "execution_failed" if failed else None
         candidate.revision += 1
         result = {"candidate_id": candidate.id, "revision": candidate.revision, "status": candidate.status}
@@ -242,7 +250,7 @@ def get_member_history(session_id, persona_id, candidate_id, before_sequence, db
 
 def _content_scope(round_, candidate, before_sequence):
     return or_(
-        and_(GroupRound.round_index < round_.round_index, GroupRound.confirmed_at.isnot(None),
+        and_(GroupRound.round_index < round_.round_index, GroupRound.confirmed_at.isnot(None), GroupRound.discarded_at.is_(None),
              GroupRound.selected_candidate_id == GroupRoundCandidate.id,
              GroupRoundCandidate.status == "awaiting_confirmation"),
         and_(GroupRoundCandidate.id == candidate.id, GroupContentItem.sequence < before_sequence),
@@ -297,7 +305,7 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
     db.execute(text("BEGIN"))
     try:
         _require_group(session_id, db)
-        query = db.query(GroupRound).filter_by(session_id=session_id)
+        query = db.query(GroupRound).filter_by(session_id=session_id, discarded_at=None)
         total = query.count()
         rounds = query.order_by(GroupRound.round_index.desc()).offset(offset).limit(limit).all()
         ids = [row.selected_candidate_id for row in rounds if row.selected_candidate_id is not None]

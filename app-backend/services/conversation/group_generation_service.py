@@ -121,6 +121,7 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
         history._begin_write(db)
         _, candidate = history._writable(session_id, candidate_id, revision, db)
         candidate.status = "failed"
+        history._require_group(session_id, db).group_revision += 1
         candidate.error_code = code
         candidate.finish_reason = None
         candidate.revision += 1

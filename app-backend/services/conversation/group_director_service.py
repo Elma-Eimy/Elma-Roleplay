@@ -220,9 +220,9 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
                    "history": [], "eligible_persona_ids": [], "history_incomplete": False}
         query = db.query(GroupContentItem, GroupRound).join(GroupRoundCandidate,
             GroupContentItem.candidate_id == GroupRoundCandidate.id).join(GroupRound,
-            GroupRoundCandidate.round_id == GroupRound.id).filter(GroupRound.session_id == session_id)
+            GroupRoundCandidate.round_id == GroupRound.id).filter(GroupRound.session_id == session_id, GroupRound.discarded_at.is_(None))
         if candidate_id is None:
-            if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None).first():
+            if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None, discarded_at=None).first():
                 raise GroupDirectorError("pending_round")
             boundary = None
             current = []
