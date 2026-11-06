@@ -70,7 +70,7 @@ class GroupTurnPlanTests(unittest.TestCase):
 
     def test_lorebook_uses_allowed_requests_without_scanning_private_fragments(self):
         target = self.prepare()
-        self.db.get(Character, 1).extensions = json.dumps({"character_book": {"entries": [
+        self.db.get(Character, 1).extensions = json.dumps({"character_book": {"scan_depth": 0, "entries": [
             {"keys": ["请甲"], "content": "ALLOWED_REQUEST_LORE", "enabled": True},
             {"keys": ["PRIVATE_93"], "content": "FORBIDDEN_PRIVATE_LORE", "enabled": True}]}})
         self.db.commit()

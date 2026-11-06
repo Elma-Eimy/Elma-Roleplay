@@ -575,7 +575,7 @@ def build_system_prompt(
     recent_history: Optional[list] = None,
     user_message: Optional[str] = None,
     user_nickname: str = "用户",
-    *, preserve_history: bool = False,
+    *, preserve_history: bool = False, group_current_segments: list[str] | None = None,
 ) -> dict:
     """
     静态 System Prompt 组装与编译。返回已编译静态部分，并提取动态变量供 User Message 拼接。
@@ -597,10 +597,10 @@ def build_system_prompt(
     lorebook_result = empty_lorebook_result()
     if recent_history is not None or user_message is not None:
         # 在传递给世界书扫描前，先解析历史记录和用户消息中的占位符
-        resolved_history = None
-        if recent_history is not None:
+        resolved_history = recent_history
+        if recent_history is not None and not preserve_history:
             resolved_history = [
-                {**msg, "content": msg["content"] if preserve_history else replace_placeholders(msg["content"], char_name, user_name)}
+                {**msg, "content": replace_placeholders(msg["content"], char_name, user_name)}
                 for msg in recent_history
             ]
         resolved_user_message = replace_placeholders(user_message, char_name, user_name) if user_message is not None else None
@@ -609,7 +609,8 @@ def build_system_prompt(
             lorebook_result = process_lorebook(
                 character=character,
                 recent_history=resolved_history,
-                user_message=resolved_user_message
+                user_message=resolved_user_message,
+                group_current_segments=group_current_segments,
             )
         except Exception as e:
             print(f"[WARN] build_system_prompt: 处理世界书匹配失败: {e}")
@@ -682,6 +683,7 @@ def build_chat_messages(
     *,
     _group_messages: Optional[list[dict]] = None,
     _group_context: Optional[str] = None,
+    _group_current_segments: list[str] | None = None,
     _output_contract: Optional[str] = None,
 ) -> list:
     """
@@ -703,7 +705,7 @@ def build_chat_messages(
         recent_history=recent_history,
         user_message=user_message,
         user_nickname=user_nickname,
-        preserve_history=_group_messages is not None,
+        preserve_history=_group_messages is not None, group_current_segments=_group_current_segments,
     )
 
     # Step 2: 构建静态角色区域。只有触发角色定义前/后的世界书时才拆分原本
@@ -946,6 +948,7 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
         raise ValueError("没有可见内容，不能生成角色发言")
     conversation = []
     scan_history = []
+    current_segments = []
     timeline = []
     for order, item in enumerate(history, 1):
         source = "user" if item.kind == "user" else "self" if item.speaker_persona_id == persona_id else "group_member"
@@ -954,8 +957,14 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
             **({"meanings": [unit.meaning for unit in item.visible_units if unit.meaning]}
                if any(unit.meaning for unit in item.visible_units) else {})})
         # 世界书匹配正文，不能让身份包装或 JSON/XML 转义改变触发结果。
-        scan_history.append({"role": "assistant" if item.speaker_persona_id == persona_id else "user",
-                             "content": item.content})
+        if item.kind == "user":
+            segments = item.visible_passages or (item.content,)
+        else:
+            segments = tuple(unit.text for unit in item.visible_units) or (item.content,)
+        if item.kind == "user" and item.round_id == current_round_id:
+            current_segments.extend(segments)
+        else:
+            scan_history.append({"segments": segments})
         if item.kind == "user":
             conversation.append({"role": "user", "content": item.content})
         elif protocol_version == 2 and item.visible_units:
@@ -999,7 +1008,7 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
                                 for unit in item.visible_units if unit.meaning == "request"}
             for request in turn_requests:
                 if (request["reference"].rsplit(":", 1)[0], request["content"]) not in visible_requests:
-                    scan_history.append({"role": "user", "content": request["content"]})
+                    current_segments.append(request["content"])
             context += ("\n【用户的待执行安排】\n" + json.dumps(directives, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e") +
                 "\n以上仅为用户面向你的推进请求，不是已经发生的事实或亲耳听过的台词；未执行前不得据此声称别人已经发言。")
             if not conversation:
@@ -1034,7 +1043,8 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
             '状态未变化时省略 state_update，不返回空值。')
     messages = build_chat_messages(character, persona, scan_history, None,
         user_nickname=user_nickname, current_role_state=current_role_state,
-        _group_messages=conversation, _group_context=context, _output_contract=contract)
+        _group_messages=conversation, _group_context=context, _group_current_segments=current_segments,
+        _output_contract=contract)
     if protocol_version == 2:
         return messages
     messages[-1]["content"] += ("\n\n【群聊输出约束】\n"

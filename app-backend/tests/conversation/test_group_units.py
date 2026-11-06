@@ -413,7 +413,7 @@ class GroupUnitTests(unittest.TestCase):
         self.assertEqual(0, self.db.query(GroupUnitVisibility).count())
         self.assertEqual(0, self.db.query(GroupDirectorStep).count())
 
-    def test_prompt_preserves_only_contiguous_visible_user_text(self):
+    def test_lorebook_and_prompt_preserve_only_contiguous_visible_user_text(self):
         group = asyncio.run(create_group_session(self.cards, self.db))
         sid = group["session_id"]
         a, b = (member["persona_id"] for member in group["members"])
@@ -422,11 +422,36 @@ class GroupUnitTests(unittest.TestCase):
                       for start, end in ((0, 1), (1, 2), (2, 5), (5, len(content))))
         plan = UnitPlan(units, ((a, b), (a, b), (a,), (a, b)))
         target = history._prepare(sid, content, (a,), self.db, unit_plan=plan, model="fixture")
+        entries = [{"keys": [key], "content": label, "enabled": True} for key, label in (
+            ("北门", "ADJACENT_OK"), ("口令{{char}}", "LITERAL_OK"), ("北门口令", "FALSE_JOIN"),
+            (r"/北门\s*口令/", "FALSE_REGEX"), ("北门【密】口令", "FULL_INPUT_ONLY"))]
+        for cid in (1, 2):
+            self.db.get(Character, cid).extensions = json.dumps({"character_book": {"scan_depth": 0, "entries": entries}})
+        self.db.commit()
         for pid, expected in ((a, content), (b, "北门\n口令{{char}}")):
             ctx = build_member_context(sid, pid, target["candidate_id"], target["revision"], self.db)
             messages = json.loads(ctx.messages_json)
             self.assertEqual([expected], [row["content"] for row in messages if row["role"] == "user"])
+            self.assertIn("ADJACENT_OK", ctx.messages_json)
+            self.assertIn("LITERAL_OK", ctx.messages_json)
+            self.assertNotIn("FALSE_JOIN", ctx.messages_json)
+            self.assertNotIn("FALSE_REGEX", ctx.messages_json)
+            self.assertEqual(pid == a, "FULL_INPUT_ONLY" in ctx.messages_json)
             self.assertEqual(pid == a, "【密】" in ctx.messages_json)
+
+    def test_lorebook_depth_limits_utterance_history_separately_from_current_input(self):
+        self.group()
+        self.append()
+        card = self.db.get(Character, 2)
+        entries = [{"keys": [key], "content": label, "enabled": True}
+                   for key, label in (("公开", "CURRENT_LORE"), ("桥坏了", "PAST_LORE"))]
+        for depth in (0, 1):
+            with self.subTest(depth=depth):
+                card.extensions = json.dumps({"character_book": {"scan_depth": depth, "entries": entries}})
+                self.db.commit()
+                ctx = build_member_context(self.sid, self.b, self.target["candidate_id"], self.target["revision"], self.db)
+                self.assertIn("CURRENT_LORE", ctx.messages_json)
+                self.assertEqual(bool(depth), "PAST_LORE" in ctx.messages_json)
 
     def test_worldbook_scans_visible_units_only_and_keeps_card_examples(self):
         self.group()

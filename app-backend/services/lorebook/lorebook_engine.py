@@ -172,12 +172,13 @@ def _coerce_entry_list(raw_entries) -> list[dict]:
 def process_lorebook(
     character,
     recent_history: Optional[list],
-    user_message: Optional[str]
+    user_message: Optional[str],
+    *, group_current_segments: Optional[list[str]] = None,
 ) -> dict:
     """
     处理角色专属的世界书（Lorebook/CharacterBook）匹配与筛选。
     """
-    if not recent_history and not user_message:
+    if not recent_history and not user_message and not group_current_segments:
         return empty_lorebook_result()
 
     # 1. 安全解析 extensions
@@ -241,13 +242,22 @@ def process_lorebook(
     
     # 3. 构造基础扫描文本
     history_to_scan = recent_history[-scan_depth:] if scan_depth > 0 and recent_history else []
-    scan_parts = []
-    for msg in history_to_scan:
-        scan_parts.append(msg.get("content", ""))
-    if user_message:
-        scan_parts.append(user_message)
-    scan_text = "\n".join(scan_parts)
-    
+    if group_current_segments is None:
+        parts = [msg.get("content", "") for msg in history_to_scan]
+        if user_message:
+            parts.append(user_message)
+        scan_passages = ["\n".join(parts)]
+    else:
+        # 深度按历史消息计数，关键词和正则只匹配同一段连续可见正文。
+        scan_passages = [segment for msg in history_to_scan for segment in msg["segments"]]
+        scan_passages.extend(group_current_segments)
+
+    def add_lore_content(content):
+        if group_current_segments is None:
+            scan_passages[0] += "\n" + content
+        else:
+            scan_passages.append(content)
+
     # 4. 条目触发匹配 (支持递归扫描)
     # 4. 构建 Aho-Corasick 自动机 (仅构建一次以取得最优匹配性能)
     from services.lorebook.ahocorasick import AhoCorasick
@@ -325,9 +335,7 @@ def process_lorebook(
     triggered_indexes = set()
     probability_rejected_indexes = set()
     triggered_entries = []
-    
-    current_scan_text = scan_text
-    
+
     for _ in range(max_passes):
         # Bug5修复：将 constant 条目的触发和关键词匹配的触发分离记录。
         # new_trigger_added 仅跟踪"是否有新关键词命中"，不受 constant 常驻触发影响，
@@ -349,46 +357,47 @@ def process_lorebook(
                 # 常驻条目不更新 new_trigger_added，不干扰循环提前退出的判断
                 content = entry.get("content", "")
                 if content:
-                    current_scan_text += "\n" + content
+                    add_lore_content(content)
         
         # 记录本轮搜索中匹配到的关键词
         matched_primaries = {}
         matched_secondaries = {}
         
-        # 匹配不区分大小写的关键词
-        if has_insensitive:
-            text_lower = current_scan_text.lower()
-            for start, end, key, value in ac_insensitive.search_all(text_lower):
-                idx, key_type, key_index = value
-                if idx in triggered_indexes or idx in probability_rejected_indexes:
-                    continue
-                if key_type == "primary":
-                    matched_primaries.setdefault(idx, set()).add(key_index)
-                else:
-                    matched_secondaries.setdefault(idx, set()).add(key_index)
-                    
-        # 匹配区分大小写的关键词
-        if has_sensitive:
-            for start, end, key, value in ac_sensitive.search_all(current_scan_text):
-                idx, key_type, key_index = value
-                if idx in triggered_indexes or idx in probability_rejected_indexes:
-                    continue
-                if key_type == "primary":
-                    matched_primaries.setdefault(idx, set()).add(key_index)
-                else:
-                    matched_secondaries.setdefault(idx, set()).add(key_index)
+        for passage in scan_passages:
+            # 匹配不区分大小写的关键词
+            if has_insensitive:
+                text_lower = passage.lower()
+                for start, end, key, value in ac_insensitive.search_all(text_lower):
+                    idx, key_type, key_index = value
+                    if idx in triggered_indexes or idx in probability_rejected_indexes:
+                        continue
+                    if key_type == "primary":
+                        matched_primaries.setdefault(idx, set()).add(key_index)
+                    else:
+                        matched_secondaries.setdefault(idx, set()).add(key_index)
 
-        # JavaScript 风格和 use_regex 条目走独立正则匹配路径；无效模式已在
-        # 编译阶段跳过，不会影响其它世界书条目。
-        for idx, key_type, key_index, regex in regex_matchers:
-            if idx in triggered_indexes or idx in probability_rejected_indexes:
-                continue
-            if regex.search(current_scan_text):
-                if key_type == "primary":
-                    matched_primaries.setdefault(idx, set()).add(key_index)
-                else:
-                    matched_secondaries.setdefault(idx, set()).add(key_index)
-                    
+            # 匹配区分大小写的关键词
+            if has_sensitive:
+                for start, end, key, value in ac_sensitive.search_all(passage):
+                    idx, key_type, key_index = value
+                    if idx in triggered_indexes or idx in probability_rejected_indexes:
+                        continue
+                    if key_type == "primary":
+                        matched_primaries.setdefault(idx, set()).add(key_index)
+                    else:
+                        matched_secondaries.setdefault(idx, set()).add(key_index)
+
+            # JavaScript 风格和 use_regex 条目走独立正则匹配路径；无效模式已在
+            # 编译阶段跳过，不会影响其它世界书条目。
+            for idx, key_type, key_index, regex in regex_matchers:
+                if idx in triggered_indexes or idx in probability_rejected_indexes:
+                    continue
+                if regex.search(passage):
+                    if key_type == "primary":
+                        matched_primaries.setdefault(idx, set()).add(key_index)
+                    else:
+                        matched_secondaries.setdefault(idx, set()).add(key_index)
+
         # 评估触发条件
         for idx in sorted(
             set(matched_primaries.keys()) | set(matched_secondaries.keys())
@@ -413,7 +422,7 @@ def process_lorebook(
                 new_trigger_added = True  # 关键词命中才设为 True
                 content = entry.get("content", "")
                 if content:
-                    current_scan_text += "\n" + content
+                    add_lore_content(content)
                     
         if not new_trigger_added:
             break
