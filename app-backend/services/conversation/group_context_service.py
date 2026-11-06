@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import and_, func, text
 
+from services.memory.group_memory_recall import recall_inherited_memories
 from core.config import settings
 from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
 from services.conversation.group_unit_service import _complete_author_visibility
@@ -57,6 +58,23 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
         current_scenario_override=group.shared_setting or initial["current_scenario_override"])
 
 
+def _inherited_memories(persona_id, round_id, candidate, rows, requests, basis, db):
+    # 持久候选沿用接受时的策略；内部 v2 原型没有调用快照。
+    if candidate.protocol_version != 2:
+        return []
+    if candidate.call_snapshot_json and not json.loads(candidate.call_snapshot_json).get("inherited_recall", False):
+        return []
+    if basis:
+        passages = [unit["text"] for unit in basis["units"]] if "units" in basis else [basis["content"]]
+    else:
+        passages = [request["content"] for request in requests]
+        for row in rows[-3:]:
+            if row.round_id == round_id:
+                parts = row.visible_passages if row.kind == "user" else tuple(unit.text for unit in row.visible_units)
+                passages.extend(parts or (row.content,))
+    return recall_inherited_memories(persona_id, passages, db)
+
+
 @group_session_operation
 def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None,
                          generation_parameters_json=None, history_limit=None, scope=None):
@@ -87,10 +105,11 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         speaker_ids = {row.speaker_persona_id for row in rows if row.speaker_persona_id is not None}
         names = {member.id: member.character.name for member in db.query(SessionPersona).filter(
             SessionPersona.id.in_(speaker_ids)).all()}
+        memories = _inherited_memories(persona.id, round_.id, candidate, rows, requests, basis, db)
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
             shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,
-            current_round_id=round_.id, turn_requests=requests, response_basis=basis)
+            current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})

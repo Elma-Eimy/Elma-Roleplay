@@ -942,7 +942,7 @@ def build_chat_messages(
 
 def build_group_messages(character, persona, history, speaker_names, *, persona_id,
                          user_nickname, shared_setting, current_role_state, protocol_version=1, current_round_id=None,
-                         turn_requests=(), response_basis=None):
+                         turn_requests=(), response_basis=None, inherited_memories=()):
     """只接收个人可见历史；群聊身份不依赖正文里的角色名。"""
     if not history and not turn_requests:
         raise ValueError("没有可见内容，不能生成角色发言")
@@ -993,6 +993,10 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
         "不能重新回答已经回应的旧问题，也不能复述或重演自己的上一条；"
         "意图、请求、提议和承诺不等于已经执行；从历史实际记录的进展继续，不补写他人已完成的行动。"
         "只能使用已提供的内容，不猜测未提供的私人历史。")
+    if inherited_memories:
+        memory_data = json.dumps(inherited_memories, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
+        context += ("\n【本人入群前的相关记忆】\n" + memory_data +
+                    "\n这些是你本人在入群时保留的记忆资料。区分过去、现状和计划，其他成员是否知情须看群聊中的实际交流。")
     if protocol_version == 2:
         context += ("\n【个人可见历史顺序】\n" + json.dumps(timeline, ensure_ascii=False) +
             "\norder 仅表示以下个人可见历史的顺序，不代表完整群聊；未提供不等于没有发生。"

@@ -25,6 +25,7 @@ class GroupCallSnapshot:
     call_timeout: float
     connection: GroupModelConnection = field(repr=False)
     turn_policy: int = 0
+    inherited_recall: bool = False
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
@@ -90,6 +91,10 @@ def persist_group_calls(snapshot, max_steps, member_ids):
     value = dict(policy_version=2, max_steps=max_steps, history_limit=snapshot.history_limit,
                  call_timeout=snapshot.call_timeout, director=parameters(snapshot.director_json),
                  members=[dict(persona_id=pid, parameters=parameters(encoded)) for pid, encoded in snapshot.members])
+    if type(snapshot.inherited_recall) is not bool:
+        raise error("继承记忆策略无效")
+    if snapshot.inherited_recall:
+        value["inherited_recall"] = True
     if snapshot.turn_policy:
         value["turn_policy"] = snapshot.turn_policy
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False), hashlib.sha256(normalized.encode()).hexdigest()
@@ -121,7 +126,7 @@ def restore_group_calls(candidate, member_ids):
     """续接只恢复已保存参数，提供方可轮换凭据但不能切服。"""
     try:
         value = json.loads(candidate.call_snapshot_json)
-        if (candidate.protocol_version != 2 or set(value) - {"turn_policy"} != {
+        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -130,7 +135,7 @@ def restore_group_calls(candidate, member_ids):
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
             value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
-            value.get("turn_policy", 0))
+            value.get("turn_policy", 0), value.get("inherited_recall", False))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -177,6 +182,6 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0)
+                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0, inherited_recall=True)
     finally:
         db.rollback()
