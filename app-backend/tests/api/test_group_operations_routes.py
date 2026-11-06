@@ -81,6 +81,14 @@ class GroupOperationRoutesTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("background operation did not finish")
 
+    def test_stale_delete_cannot_target_replacement_group(self):
+        old_url = f"/group-sessions/{self.sid}/delete"
+        self.assertEqual(200, self.client.post(old_url).status_code)
+        new_id = self.create()
+        self.assertNotEqual(self.sid, new_id)
+        self.assertEqual(404, self.client.post(old_url).status_code)
+        self.assertEqual(200, self.client.get(f"/group-sessions/{new_id}").status_code)
+
     def test_send_receipt_readonly_query_and_candidate_projection(self):
         body, receipt = self.send()
         result = self.done(body["client_request_id"])

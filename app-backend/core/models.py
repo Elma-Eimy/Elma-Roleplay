@@ -118,7 +118,8 @@ class CharacterPackageImport(Base):
 class Session(Base):
     __tablename__ = "sessions"
     __table_args__ = (CheckConstraint("kind IN ('single', 'group')", name="ck_sessions_kind"),
-                      Index("uq_sessions_id_kind", "id", "kind", unique=True))
+                      Index("uq_sessions_id_kind", "id", "kind", unique=True),
+                      {"sqlite_autoincrement": True})
 
     id                = Column(Integer, primary_key=True, index=True)
     kind = Column(String(10), nullable=False, default="single", server_default="single")
