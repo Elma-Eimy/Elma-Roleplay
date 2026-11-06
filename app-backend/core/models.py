@@ -400,6 +400,23 @@ class GroupMemoryCapture(Base):
     cards_json = Column(Text)
 
 
+class GroupMemberInsight(Base):
+    """一次确认产生的个人认识；归属与轮次由提纯任务确定。"""
+    __tablename__ = "group_member_insights"
+    __table_args__ = (
+        CheckConstraint("kind IN ('cognition','user','member')", name="ck_group_insight_kind"),
+        CheckConstraint("(kind = 'member') = (target_persona_id IS NOT NULL)", name="ck_group_insight_target"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    capture_id = Column(Integer, ForeignKey("group_memory_captures.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(12), nullable=False)
+    target_persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"))
+    content = Column(Text, nullable=False)
+    ref = Column(String(64), nullable=False)
+    quote = Column(Text, nullable=False)
+
+
 class GroupRoundCandidate(Base):
     __tablename__ = "group_round_candidates"
     __table_args__ = (
@@ -421,6 +438,7 @@ class GroupRoundCandidate(Base):
     checkpoint = Column(String(30), CheckConstraint(
         "checkpoint IN ('user_visibility', 'next_action', 'role_generation', 'finish', 'done')",
         name="ck_group_checkpoint"))
+    insight_watermark = Column(Integer)
     call_snapshot_json = Column(Text)
     provider_fingerprint = Column(String(64))
     protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),

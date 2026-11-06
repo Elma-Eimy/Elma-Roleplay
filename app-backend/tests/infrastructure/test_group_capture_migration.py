@@ -8,6 +8,25 @@ from tests.infrastructure import test_group_operations_migration as fixtures
 class GroupCaptureMigrationTests(unittest.TestCase):
     snapshot = fixtures.GroupOperationsMigrationTests.snapshot
 
+    def test_insights_upgrade_preserves_old_cards_and_candidate_boundary(self):
+        fixtures.GroupOperationsMigrationTests.setUp(self)
+        command.upgrade(self.config, "b3a4b5c6d7e8")
+        with self.engine.begin() as db:
+            db.exec_driver_sql("INSERT INTO group_memory_captures(session_id,round_id,candidate_id,persona_id,cards_json) "
+                               "VALUES (2,1,1,20,'[]')")
+        command.upgrade(self.config, "b4c5d6e7f8a9")
+        with self.engine.begin() as db:
+            self.assertIsNone(db.exec_driver_sql("SELECT insight_watermark FROM group_round_candidates WHERE id=1").scalar_one())
+            self.assertEqual("[]", db.exec_driver_sql("SELECT cards_json FROM group_memory_captures").scalar_one())
+            db.exec_driver_sql("INSERT INTO group_member_insights(capture_id,kind,content,ref,quote) "
+                               "VALUES (1,'user','开始相信','1:0','我亲眼看到')")
+        with self.assertRaisesRegex(RuntimeError, "拒绝有损降级"):
+            command.downgrade(self.config, "b3a4b5c6d7e8")
+        with self.engine.begin() as db:
+            db.exec_driver_sql("DELETE FROM sessions WHERE id=2")
+            self.assertEqual(0, db.exec_driver_sql("SELECT count(*) FROM group_member_insights").scalar())
+        command.downgrade(self.config, "b3a4b5c6d7e8")
+
     def test_upgrade_preserves_data_and_scopes_captures(self):
         fixtures.GroupOperationsMigrationTests.setUp(self)
         command.upgrade(self.config, "b2f3a4b5c6d7")

@@ -44,7 +44,7 @@ class GroupUnitsMigrationTests(unittest.TestCase):
         inspector = inspect(self.engine)
         for model in (GroupRoundCandidate, GroupContentUnit, GroupUnitVisibility, GroupDirectorStep):
             table = model.__table__
-            self.assertEqual(set(table.columns.keys()) - ({"checkpoint", "call_snapshot_json", "provider_fingerprint"} if model is GroupRoundCandidate else set()), {row["name"] for row in inspector.get_columns(table.name)})
+            self.assertEqual(set(table.columns.keys()) - ({"checkpoint", "call_snapshot_json", "provider_fingerprint", "insight_watermark"} if model is GroupRoundCandidate else set()), {row["name"] for row in inspector.get_columns(table.name)})
             self.assertEqual({tuple(c.column_keys) for c in table.foreign_key_constraints},
                 {tuple(c["constrained_columns"]) for c in inspector.get_foreign_keys(table.name)})
             self.assertEqual({tuple(c.columns.keys()) for c in table.constraints if c.__class__.__name__ == "UniqueConstraint"},

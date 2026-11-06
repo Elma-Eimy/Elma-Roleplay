@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import and_, func, text
 
+from services.memory.group_member_insights import member_insights
 from services.memory.group_memory_recall import recall_inherited_memories
 from core.config import settings
 from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
@@ -109,7 +110,8 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
             shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,
-            current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories)
+            current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories,
+            insights=member_insights(persona.id, round_, candidate, db))
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})
