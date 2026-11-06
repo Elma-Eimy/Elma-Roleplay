@@ -130,7 +130,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             plan = None
             if protocol_version == 2:
                 plan = parse_user_units(answer.message.content, user_content, context.member_ids,
-                    finish_reason=answer.finish_reason, require_meaning=bool(snapshot.turn_policy))
+                    finish_reason=answer.finish_reason, require_meaning=bool(snapshot.turn_policy),
+                    require_reply_mode=snapshot.turn_policy >= 2)
                 if not snapshot.turn_policy and any(unit.meaning for unit in plan.units):
                     raise GroupUnitError()
                 visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
@@ -183,7 +184,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     if protocol_version == 2:
                         return parse_unit_visibility(answer.message.content, proposed.units, context.member_ids,
                             proposed.speaker_persona_id, finish_reason=answer.finish_reason,
-                            require_review=bool(snapshot.turn_policy))
+                            require_review=bool(snapshot.turn_policy),
+                            reply_mode=(proposed.response_request or {}).get("reply_mode"))
                     return director.parse_visibility(answer.message.content, context.member_ids,
                         author_id=proposed.speaker_persona_id, finish_reason=answer.finish_reason).visible_to
                 except TimeoutError:

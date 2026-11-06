@@ -15,7 +15,7 @@ from services.conversation.group_director_service import NextAction, parse_next_
 from services.conversation.group_context_service import build_member_context
 from services.conversation.group_round_service import run_group_round
 from services.conversation.group_turn_plan import _sources
-from services.conversation.group_unit_protocol import parse_user_units, GroupUnitError, UnitPlan, ContentUnit
+from services.conversation.group_unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError, UnitPlan, ContentUnit
 from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_units as fixtures
@@ -99,11 +99,54 @@ class GroupTurnPlanTests(unittest.TestCase):
         saved = history._append(self.sid, candidate.id, self.ids[0], "答复", (self.ids[0],),
             accepted["revision"], self.db, unit_plan=plan, model="fixture")
         self.db.expire_all()
-        self.assertNotIn(reference, _sources(self.sid, self.ids[0], round_, candidate, 99, self.db))
+        sources = _sources(self.sid, self.ids[0], round_, candidate, 99, self.db)
+        self.assertNotIn(reference, sources)
         self.db.rollback()
         with self.assertRaises(SessionKindConflict):
             history._accept_action(self.sid, candidate.id, saved["revision"],
                 NextAction("speak", self.ids[0], "direct_response", reference), "fixture", self.db)
+        follow_up = NextAction("speak", self.ids[0], "follow_up", next(iter(sources)))
+        accepted = history._accept_action(self.sid, candidate.id, saved["revision"], follow_up, "fixture", self.db)
+        context = build_member_context(self.sid, self.ids[0], candidate.id, accepted["revision"], self.db)
+        self.assertIn("答复", context.messages_json)
+        self.assertNotIn("请甲接话。", context.messages_json)
+
+    def test_observed_nod_allows_follow_up_without_answering_spoken_request(self):
+        self.create()
+        a, b = self.ids[:2]
+        recipients = [{"persona_id": pid, "decision": "hidden"} for pid in self.ids]
+        content = "请甲说说理由。"
+        raw = {"units": [{"start": 0, "end": len(content), "meaning": "request",
+                          "reply_mode": "speech", "request_to": [a], "recipients": recipients}]}
+        plan = parse_user_units(json.dumps(raw), content, self.ids, require_reply_mode=True)
+        target = history._prepare(self.sid, content, (), self.db, unit_plan=plan, model="fixture")
+        round_ = self.db.get(GroupRound, target["round_id"])
+        candidate = self.db.get(GroupRoundCandidate, target["candidate_id"])
+        ref, = _sources(self.sid, a, round_, candidate, 99, self.db)
+        accepted = history._accept_action(self.sid, candidate.id, target["revision"],
+            NextAction("speak", a, "direct_response", ref), "fixture", self.db)
+        units = (ContentUnit("action", "点头"), ContentUnit("thought", "HIDDEN_THOUGHT_72"))
+        visible = [{"persona_id": pid, "decision": "visible" if pid in (a, b) else "hidden"} for pid in self.ids]
+        own = [{"persona_id": pid, "decision": "visible" if pid == a else "hidden"} for pid in self.ids]
+        review = {"review": "ok", "request_result": "fulfilled", "units": [
+            {"unit_index": 0, "recipients": visible}, {"unit_index": 1, "recipients": own}]}
+        decision = parse_unit_visibility(json.dumps(review), units, self.ids, a, reply_mode="speech")
+        self.assertEqual("pending", decision.request_result)
+        self.assertEqual("fulfilled", parse_unit_visibility(json.dumps(review), units, self.ids, a, reply_mode="action").request_result)
+        saved = history._append(self.sid, candidate.id, a, "点头HIDDEN_THOUGHT_72", (a,), accepted["revision"],
+            self.db, unit_plan=decision, model="fixture")
+        self.assertIn(ref, _sources(self.sid, a, round_, candidate, 99, self.db))
+        options = _sources(self.sid, b, round_, candidate, 99, self.db)
+        basis, = options
+        self.assertEqual([{"kind": "action", "text": "点头"}], options[basis]["units"])
+        accepted = history._accept_action(self.sid, candidate.id, saved["revision"],
+            NextAction("speak", b, "follow_up", basis), "fixture", self.db)
+        context = build_member_context(self.sid, b, candidate.id, accepted["revision"], self.db)
+        messages = json.loads(context.messages_json)
+        boundary = json.loads(messages[-1]["content"].split("\n")[1])
+        self.assertEqual([], boundary["visible_current_turn_speakers"])
+        self.assertNotIn("HIDDEN_THOUGHT_72", context.messages_json)
+        self.assertNotIn(content, context.messages_json)
 
     def test_selector_rejects_a_forged_source_even_for_eligible_speaker(self):
         self.create()
@@ -120,7 +163,11 @@ class GroupTurnPlanTests(unittest.TestCase):
         candidate = GroupRoundCandidate(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
         with patch.object(settings, "APP_GROUP_TURN_PLANNING", False):
             restored, maximum = restore_group_calls(candidate, set(self.ids))
-        self.assertEqual((1, 2), (restored.turn_policy, maximum))
+        self.assertEqual((2, 2), (restored.turn_policy, maximum))
+        legacy = json.loads(encoded)
+        legacy["turn_policy"] = 1
+        candidate.call_snapshot_json = json.dumps(legacy)
+        self.assertEqual(1, restore_group_calls(candidate, set(self.ids))[0].turn_policy)
         legacy = json.loads(encoded)
         del legacy["turn_policy"]
         candidate.call_snapshot_json = json.dumps(legacy)
@@ -174,7 +221,7 @@ class GroupTurnPlanTests(unittest.TestCase):
             nonlocal reject
             calls.append(stage)
             if stage == "user_visibility":
-                return _response(json.dumps({"units": [{"start": 0, "end": 5, "meaning": "request", "request_to": [self.ids[0]],
+                return _response(json.dumps({"units": [{"start": 0, "end": 5, "meaning": "request", "reply_mode": "speech", "request_to": [self.ids[0]],
                     "recipients": [{"persona_id": pid, "decision": "hidden"} for pid in self.ids]}]}))
             if stage == "next_action":
                 scene = json.loads(parameters["messages"][1]["content"])
@@ -185,7 +232,7 @@ class GroupTurnPlanTests(unittest.TestCase):
             if stage == "role_generation":
                 self.assertIn("待执行安排", json.dumps(parameters["messages"], ensure_ascii=False))
                 return _response('{"units":[{"kind":"speech","text":"我愿意。"}],"status":{"emotion":"平静","affection_change":1}}')
-            return _response(json.dumps({"review": "agency_conflict" if reject else "ok", "units": [{"unit_index": 0,
+            return _response(json.dumps({"request_result": "fulfilled", "review": "agency_conflict" if reject else "ok", "units": [{"unit_index": 0,
                 "recipients": [{"persona_id": pid, "decision": "visible"} for pid in self.ids]}]}))
 
         async def scenario(owner):

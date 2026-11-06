@@ -26,6 +26,7 @@ class GroupMemberContext:
     messages_json: str
     generation_json: str
     protocol_version: int = 1
+    response_request: dict | None = None
 
 
 def _member_state(persona, group, round_, candidate, before_sequence, db):
@@ -77,8 +78,8 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         before = last_sequence + 1
         rows = history._member_history(session_id, persona_id, round_, candidate, before,
             min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit)), db)
-        from services.conversation.group_turn_plan import _requests, _current_basis
-        requests = _requests(round_, candidate, persona_id, db)
+        from services.conversation.group_turn_plan import _pending_requests, _current_basis
+        requests = _pending_requests(round_, candidate, persona_id, before, db)
         basis = _current_basis(session_id, persona_id, round_, candidate, before, db)
         if not rows and not requests:
             raise GroupSessionValidationError("没有可见内容，不能生成角色发言")
@@ -94,6 +95,7 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
-            json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version)
+            json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version,
+            basis if basis and basis.get("reply_mode") else None)
     finally:
         db.rollback()

@@ -76,14 +76,16 @@ def validate_prefix(round_, candidate, db):
     """校验整个持久前缀，不以当前 revision 大于旧审计为重复调度依据。"""
     def invalid():
         raise SessionKindConflict("候选检查点与前缀不一致，请整轮重生成或撤回")
+    from services.conversation.group_turn_plan import _planning, _validate_basis
+    turn_policy = _planning(candidate, db)
+
     def action_valid(step, before):
-        from services.conversation.group_turn_plan import _planning, _validate_basis
         value = json.loads(step.decision_json)
         base = {"action": "speak", "speaker_persona_id": step.speaker_persona_id, "reason_code": step.reason_code}
         if value != {**base, **({"basis": value["basis"]} if "basis" in value else {})}:
             invalid()
-        if "basis" in value or _planning(candidate, db):
-            _validate_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
+        if "basis" in value or turn_policy:
+            return _validate_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
     if candidate.protocol_version != 2 or candidate.checkpoint not in (
             "user_visibility", "next_action", "role_generation", "finish"):
         invalid()
@@ -135,10 +137,10 @@ def validate_prefix(round_, candidate, db):
         plan = UnitPlan(tuple(ContentUnit(row.kind, row.text, row.source_start, row.source_end) for row in rows), tuple(audiences))
         if item.kind == "user":
             try:
-                from services.conversation.group_turn_plan import _planning
                 plan = parse_user_units(json.dumps({"units": [{k: v for k, v in row.items() if k != "unit_index"}
                     for row in stage_value["units"]]}), round_.user_content, tuple(sorted(members)),
-                    require_meaning=_planning(candidate, db))
+                    require_meaning=bool(turn_policy),
+                    require_reply_mode=(turn_policy >= 2 if candidate.call_snapshot_json else None))
                 if ([(unit.start, unit.end) for unit in plan.units] != [(row.source_start, row.source_end) for row in rows]
                         or plan.audiences != tuple(audiences) or any(row.kind != "user" for row in rows)):
                     invalid()
@@ -147,12 +149,11 @@ def validate_prefix(round_, candidate, db):
         else:
             try:
                 checked_units = parse_role_units([{"kind": row.kind, "text": row.text} for row in rows])
-                from services.conversation.group_turn_plan import _planning
+                basis = action_valid(steps[2*index-1], item.sequence) or {}
                 plan = parse_unit_visibility(json.dumps(stage_value), checked_units, tuple(sorted(members)),
-                    item.speaker_persona_id, require_review=_planning(candidate, db))
+                    item.speaker_persona_id, require_review=bool(turn_policy), reply_mode=basis.get("reply_mode"))
                 if plan.audiences != tuple(audiences):
                     invalid()
-                action_valid(steps[2*index-1], item.sequence)
             except ValueError:
                 invalid()
             if "".join(row.text for row in rows) != item.content or steps[2*index-1].speaker_persona_id != item.speaker_persona_id:

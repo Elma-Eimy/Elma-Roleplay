@@ -151,6 +151,7 @@ def _stage_contract(context, stage, protocol_version, user_content, proposed, tu
             f'需要成员回应时只返回 {example}；reason_code 只允许 direct_response 或 follow_up。'
             '没有实质推进或用户要求停止时只返回 {"action":"end","reason_code":"wait_user"}。'
             '只能从 eligible_persona_ids 中选择实际整数 ID；该集合只表示有可见依据，不代表必须发言。'
+            '允许成员根据自己看见的动作或听到的话主动插话、询问；未完成的安排不要求持续点名。'
             '根据已发生的场景选择下一步，不预演未来台词。允许同一成员再次回应，也允许知情成员沉默；'
             '可见依据不等于发言请求；遵守用户指定的回应对象、顺序和暂时沉默安排。'
             '被要求沉默的成员即使知情也不为附和、告别或确认而发言，除非后续内容明确改变该安排。'
@@ -221,6 +222,8 @@ def build_director_messages(context, stage, *, user_content=None, proposed=None,
         if protocol_version == 2:
             payload["pending_utterance"] = {"speaker_persona_id": proposed.speaker_persona_id,
                 "units": [{"unit_index": index, "kind": unit.kind, "text": unit.text} for index, unit in enumerate(proposed.units)]}
+        if turn_policy >= 2 and proposed.response_request:
+            payload["response_request"] = proposed.response_request
     encoded = json.dumps(payload, ensure_ascii=False)
     # 阶段字段与待判正文优先，只有此前已确认的旧历史可以按完整项省略。
     while len(encoded) > context.max_chars and len(payload["history"]) > context.current_item_count:
@@ -252,6 +255,13 @@ def build_director_messages(context, stage, *, user_content=None, proposed=None,
                 '引用、转述已发生内容不等于控制别人；用户明确授权代写时尊重该范围。'
                 '意图不是执行，用户的未来安排不是已发生对话。正常描写作者自己的新台词、动作与合理创作不算冲突。'
                 '不确定或只是措辞不理想时用 ok，不做逐句出处审查。review 与 units 同级，不添加解释。')
+    if turn_policy >= 2 and stage == "user_visibility":
+        contract += ('对每个 meaning=request 的单元另给 reply_mode，其他单元省略此字段。明确要求说话、解释或口头回答用 speech，'
+                     '要求完成具体动作用 action，允许任一方式回应时用 either。')
+    if turn_policy >= 2 and stage == "utterance_visibility" and proposed.response_request:
+        contract += (' 顶层另给 request_result。对照 response_request 原文与本次实际单元：确实作答或完成所要求动作才填 fulfilled；'
+                     '明确向外表达拒绝填 declined；点头代替解释、无关台词、仅在心中决定或尚未执行的承诺均填 pending。'
+                     '未完成允许自然结束，不要求角色反复尝试。')
     return [{"role": "system", "content": contract},
             {"role": "user", "content": encoded}]
 
@@ -293,7 +303,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
                 from services.conversation.group_turn_plan import _sources
                 sources = {str(pid): _sources(session_id, pid, round_, candidate, 2**63-1, db) for pid in ids}
                 eligible = tuple(pid for pid in ids if sources[str(pid)])
-                response_sources = {pid: {reference: {key: value for key, value in source.items() if key != "content"}
+                response_sources = {pid: {reference: {key: value for key, value in source.items() if key not in ("content", "units")}
                     for reference, source in values.items()} for pid, values in sources.items()}
             payload["eligible_persona_ids"] = list(eligible)
             if scope is not None and candidate.checkpoint == "user_visibility":

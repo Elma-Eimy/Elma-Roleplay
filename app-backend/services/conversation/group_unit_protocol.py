@@ -39,6 +39,7 @@ class ContentUnit:
     start: int | None = None
     end: int | None = None
     meaning: str | None = None
+    reply_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class UnitPlan:
     audiences: tuple[tuple[int, ...], ...]
     request_targets: tuple[tuple[int, ...], ...] = ()
     review: str | None = None
+    request_result: str | None = None
 
     def decision(self, members):
         rows = []
@@ -57,8 +59,11 @@ class UnitPlan:
                 row.update(start=unit.start, end=unit.end)
                 if unit.meaning is not None:
                     row.update(meaning=unit.meaning, request_to=list(self.request_targets[index]))
+            if unit.reply_mode:
+                row["reply_mode"] = unit.reply_mode
             rows.append(row)
-        return {"units": rows, **({"review": self.review} if self.review else {})}
+        return {"units": rows, **({"review": self.review} if self.review else {}),
+                **({"request_result": self.request_result} if self.request_result else {})}
 
 
 def recipients(rows, members, author=None):
@@ -78,14 +83,15 @@ def recipients(rows, members, author=None):
     return tuple(pid for pid in members if result[pid] == "visible")
 
 
-def parse_user_units(raw, content, members, *, finish_reason="stop", require_meaning=False):
+def parse_user_units(raw, content, members, *, finish_reason="stop", require_meaning=False, require_reply_mode=None):
     value = load_object(raw, finish_reason)
     if set(value) != {"units"} or not isinstance(value["units"], list) or not 1 <= len(value["units"]) <= 8:
         raise GroupUnitError()
     units, audiences, requests, cursor = [], [], [], 0
     for row in value["units"]:
         if (not isinstance(row, dict) or set(row) not in ({"start", "end", "recipients"},
-                {"start", "end", "recipients", "meaning", "request_to"})
+                {"start", "end", "recipients", "meaning", "request_to"},
+                {"start", "end", "recipients", "meaning", "request_to", "reply_mode"})
                 or type(row["start"]) is not int or type(row["end"]) is not int
                 or row["start"] != cursor or not cursor < row["end"] <= len(content)):
             raise GroupUnitError()
@@ -97,7 +103,13 @@ def parse_user_units(raw, content, members, *, finish_reason="stop", require_mea
                 or len(set(targets)) != len(targets) or (meaning != "request" and targets)
                 or (meaning == "private" and visible)):
             raise GroupUnitError()
-        units.append(ContentUnit("user", start=cursor, end=row["end"], meaning=meaning))
+        mode = row.get("reply_mode")
+        if "reply_mode" in row:
+            if meaning != "request" or mode not in ("speech", "action", "either") or require_reply_mode is False:
+                raise GroupUnitError()
+        elif require_reply_mode and meaning == "request":
+            raise GroupUnitError()
+        units.append(ContentUnit("user", start=cursor, end=row["end"], meaning=meaning, reply_mode=mode))
         audiences.append(visible)
         requests.append(tuple(targets))
         cursor = row["end"]
@@ -119,9 +131,12 @@ def parse_role_units(value):
     return tuple(units)
 
 
-def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop", require_review=False):
+def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop", require_review=False, reply_mode=None):
     value = load_object(raw, finish_reason)
-    if (set(value) not in ({"units"}, {"units", "review"}) or not isinstance(value["units"], list)
+    fields = set(value)
+    if reply_mode is not None:
+        fields.discard("request_result")
+    if (fields not in ({"units"}, {"units", "review"}) or not isinstance(value["units"], list)
             or len(value["units"]) != len(units)):
         raise GroupUnitError()
     review = value.get("review")
@@ -139,4 +154,12 @@ def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop", 
         if units[index].kind == "thought" and set(visible) != {author}:
             raise GroupUnitError()
         audiences.append(visible)
-    return UnitPlan(units, tuple(audiences), review=review)
+    outcome = value.get("request_result")
+    if reply_mode is not None:
+        if outcome not in ("fulfilled", "declined", "pending"):
+            raise GroupUnitError()
+        kinds = {unit.kind for unit in units}
+        observable = kinds & {"action", "speech"}
+        if not observable or (outcome == "fulfilled" and reply_mode != "either" and reply_mode not in kinds):
+            outcome = "pending"
+    return UnitPlan(units, tuple(audiences), review=review, request_result=outcome)

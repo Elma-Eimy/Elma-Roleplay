@@ -1006,18 +1006,19 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
                 conversation.append({"role": "user", "content": "\n".join(request["content"] for request in turn_requests)})
         if response_basis:
             context += ("\n【本次承接依据】\n" + json.dumps(response_basis, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e") +
-                "\n仅按来源理解：user_request 是未来请求，user 可能叙述或转述，group_member 才是已保存的成员发言。")
+                "\n仅按来源理解：user_request 是未来请求，user 可能叙述或转述，self 和 group_member 分别标记本人及其他成员的记录；仅 speech 是说出的台词，action 是可见动作。")
     contract = None
     if protocol_version == 2:
         prior_speakers = list(dict.fromkeys(item.speaker_persona_id for item in history
-            if item.speaker_persona_id is not None and item.round_id == current_round_id))
+            if item.speaker_persona_id is not None and item.round_id == current_round_id
+            and any(unit.kind == "speech" for unit in item.visible_units)))
         generation_context = {"speaker_persona_id": persona_id, "speaker_name": character.name,
             "user_name": user_nickname, "visible_current_turn_speakers": prior_speakers,
             "latest_visible_source": timeline[-1]["source"] if timeline else "user_request"}
         grounding = json.dumps(generation_context, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
         contract = ('【本次发言依据】\n' + grounding +
             '\n以上是服务端给出的当前身份与个人可见记录，不是要输出的字段。'
-            '只能声称听过可见历史中实际出现的发言，不能把背景性格、用户要求别人稍后说的话当作已经听到的台词。'
+            '可以根据看到的动作主动加入或询问。visible_current_turn_speakers 只列本轮有可见台词的人。只能声称听过可见历史中实际出现的台词，不能把背景性格、用户要求别人稍后说的话当作已经听到的台词。'
             '仅生成自己的回应或行动；用户与其他成员的物品、决定和行动不因轮到你发言而转归你。'
             '请求、提议、承诺只表明意图；除非已有记录表明执行，不描述成已经完成，也不预设用户将如何行动。'
             '\n【群聊单元输出协议 v2】\n仅输出一个 JSON 对象，不输出 XML 或 Markdown。'

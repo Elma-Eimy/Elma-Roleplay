@@ -20,7 +20,7 @@ def _user_plan(item, owner, db):
 
 def _planning(candidate, db):
     if candidate.call_snapshot_json:
-        return json.loads(candidate.call_snapshot_json).get("turn_policy", 0) == 1
+        return json.loads(candidate.call_snapshot_json).get("turn_policy", 0)
     item = db.query(GroupContentItem).filter_by(candidate_id=candidate.id, sequence=0).one_or_none()
     if item is None:
         return False
@@ -28,7 +28,7 @@ def _planning(candidate, db):
     return bool(step and any("meaning" in row for row in json.loads(step.decision_json)["units"]))
 
 
-def _requests(round_, candidate, persona_id, db, *, pending=False, before_sequence=2**63-1):
+def _pending_requests(round_, candidate, persona_id, before_sequence, db):
     if not _planning(candidate, db):
         return []
     item = db.query(GroupContentItem).filter_by(candidate_id=candidate.id, sequence=0).one_or_none()
@@ -38,20 +38,21 @@ def _requests(round_, candidate, persona_id, db, *, pending=False, before_sequen
     if plan is None or not plan.request_targets:
         return []
     fulfilled = set()
-    if pending:
-        steps = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index).all()
-        for index, step in enumerate(steps[:-1]):
-            following = steps[index + 1]
-            if (step.stage == "next_action" and step.speaker_persona_id == persona_id
-                    and following.stage == "utterance_visibility"):
-                utterance = db.get(GroupContentItem, following.item_id)
-                if utterance and utterance.sequence < before_sequence:
-                    fulfilled.add(json.loads(step.decision_json).get("basis"))
+    steps = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index).all()
+    for index, step in enumerate(steps[:-1]):
+        following = steps[index + 1]
+        if (step.stage == "next_action" and step.speaker_persona_id == persona_id
+                and following.stage == "utterance_visibility"):
+            utterance = db.get(GroupContentItem, following.item_id)
+            outcome = json.loads(following.decision_json).get("request_result")
+            if utterance and utterance.sequence < before_sequence and outcome != "pending":
+                fulfilled.add(json.loads(step.decision_json).get("basis"))
     result = []
     for index, (unit, targets) in enumerate(zip(plan.units, plan.request_targets)):
         reference = f"request:{item.id}:{index}"
         if unit.meaning == "request" and persona_id in targets and reference not in fulfilled:
             result.append({"reference": reference, "source": "user_request", "meaning": "request",
+                **({"reply_mode": unit.reply_mode} if unit.reply_mode else {}),
                 "content": round_.user_content[unit.start:unit.end]})
     return result
 
@@ -66,10 +67,15 @@ def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
     for row in rows:
         if row.kind == "user" and row.visible_units and all(unit.meaning == "request" for unit in row.visible_units):
             continue
-        sources[f"item:{row.item_id}"] = {"source": "user" if row.kind == "user" else "group_member",
-            "speaker_persona_id": row.speaker_persona_id, "content": row.content,
-            "meanings": [unit.meaning for unit in row.visible_units if unit.meaning]}
-    for request in _requests(round_, candidate, persona_id, db, pending=True, before_sequence=before_sequence):
+        source = "user" if row.kind == "user" else "self" if row.speaker_persona_id == persona_id else "group_member"
+        entry = {"source": source, "speaker_persona_id": row.speaker_persona_id,
+                 "meanings": [unit.meaning for unit in row.visible_units if unit.meaning]}
+        if row.kind != "user" and row.visible_units:
+            entry["units"] = [{"kind": unit.kind, "text": unit.text} for unit in row.visible_units]
+        else:
+            entry["content"] = row.content
+        sources[f"item:{row.item_id}"] = entry
+    for request in _pending_requests(round_, candidate, persona_id, before_sequence, db):
         sources[request["reference"]] = {key: value for key, value in request.items() if key != "reference"}
     return sources
 

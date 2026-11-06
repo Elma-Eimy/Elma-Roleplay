@@ -38,7 +38,7 @@ def persist_group_calls(snapshot, max_steps, member_ids):
     error = history.GroupSessionValidationError
     if not isinstance(snapshot, GroupCallSnapshot):
         raise error("新任务需要冻结调用参数")
-    if type(snapshot.turn_policy) is not int or snapshot.turn_policy not in (0, 1):
+    if type(snapshot.turn_policy) is not int or snapshot.turn_policy not in (0, 1, 2):
         raise error("回合策略无效")
     if type(max_steps) is not int or not 1 <= max_steps <= 6:
         raise error("成功步数需要在 1–6 之间")
@@ -177,6 +177,6 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection, int(settings.APP_GROUP_TURN_PLANNING))
+                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0)
     finally:
         db.rollback()

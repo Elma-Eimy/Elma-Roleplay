@@ -32,6 +32,7 @@ class ProposedGroupUtterance:
     speaker_persona_id: int
     content: str
     units: tuple = ()
+    response_request: dict | None = None
 
 
 class _DatabaseCancelled(asyncio.CancelledError):
@@ -173,7 +174,8 @@ async def _generate_with_execution(session_id, candidate_id, speaker_persona_id,
         if response.choices[0].finish_reason not in (None, "stop"):
             raise GroupGenerationError("incomplete_output")
         result = _parse(response.choices[0].message.content, context)
-        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else ()))
+        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else (),
+            context.response_request))
         try:
             saved = await _database(_save, session_id, candidate_id, speaker_persona_id,
                 expected_revision, result, audience, db, runtime,
