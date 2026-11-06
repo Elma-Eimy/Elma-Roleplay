@@ -104,7 +104,7 @@ class GroupRuntimeTests(unittest.TestCase):
         app = FastAPI()
         all_stopped_at_unlock = []
         def tasks():
-            return (app.state.memory_retry_task, app.state.charx_cleanup_task, app.state.outbox_task)
+            return (app.state.memory_retry_task, app.state.group_memory_task, app.state.charx_cleanup_task, app.state.outbox_task)
         @contextmanager
         def runtime():
             try:

@@ -2,7 +2,10 @@
 import asyncio
 import logging
 
+from sqlalchemy.orm import Session
+
 from core.database import SessionLocal
+from services.memory.group_memory_capture import process_one_capture
 from services.memory.memory_extraction_jobs import process_due_jobs
 
 
@@ -15,8 +18,19 @@ def process_memory_jobs():
 
 
 async def run_memory_retry_worker():
+    await _poll(process_memory_jobs)
+
+
+async def run_group_memory_worker(engine):
+    def process():
+        with Session(engine) as db:
+            process_one_capture(db)
+    await _poll(process)
+
+
+async def _poll(process):
     while True:
-        work = asyncio.create_task(asyncio.to_thread(process_memory_jobs))
+        work = asyncio.create_task(asyncio.to_thread(process))
         try:
             await asyncio.shield(work)
         except asyncio.CancelledError:

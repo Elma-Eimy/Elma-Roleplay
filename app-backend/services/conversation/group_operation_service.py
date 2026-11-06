@@ -162,7 +162,9 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 if latest and latest.confirmed_at is None:
                     if not selected or selected.status != "awaiting_confirmation":
                         raise SessionKindConflict("当前轮次尚未完整成功")
+                    from services.memory.group_memory_capture import enqueue_confirmed_group
                     latest.confirmed_at = now
+                    enqueue_confirmed_group(latest, selected, db)
                     db.flush()
                 index = (db.query(func.max(GroupRound.round_index)).filter_by(session_id=session_id).scalar() or 0) + 1
                 latest = GroupRound(session_id=session_id, round_index=index, user_content=request["user_content"])

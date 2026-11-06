@@ -376,6 +376,30 @@ class GroupRound(Base):
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
 
+class GroupMemoryCapture(Base):
+    """一轮一名成员的提纯任务，成功结果与终态一次提交。"""
+    __tablename__ = "group_memory_captures"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "round_id", "session_id"],
+            ["group_round_candidates.id", "group_round_candidates.round_id", "group_round_candidates.session_id"],
+            ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             ondelete="CASCADE"),
+        UniqueConstraint("round_id", "persona_id", name="uq_group_capture_recipient"),
+        Index("ix_group_capture_due", "run_after", sqlite_where=text("cards_json IS NULL")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    round_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    persona_id = Column(Integer, nullable=False)
+    attempts = Column(Integer, nullable=False, server_default="0")
+    run_after = Column(DateTime, nullable=False, server_default=func.now())
+    error_code = Column(String(40))
+    cards_json = Column(Text)
+
+
 class GroupRoundCandidate(Base):
     __tablename__ = "group_round_candidates"
     __table_args__ = (

@@ -11,7 +11,7 @@ from application.group_runtime import group_runtime, fail_interrupted_group_cand
 from core.locking import stop_group_executions
 from core.database import run_migrations
 from services.infrastructure.outbox_worker import run_outbox_worker
-from services.memory.memory_retry_worker import run_memory_retry_worker
+from services.memory.memory_retry_worker import run_group_memory_worker, run_memory_retry_worker
 from routers.chat import cancel_all_stream_tasks
 from services.media.charx_import import cleanup_previews
 
@@ -43,12 +43,14 @@ async def _owned_lifespan(app: FastAPI, owner):
     app.state.charx_cleanup_task = cleanup_task
     memory_task = asyncio.create_task(run_memory_retry_worker(), name="memory-retry")
     app.state.memory_retry_task = memory_task
+    group_memory_task = asyncio.create_task(run_group_memory_worker(owner.engine), name="group-memory")
+    app.state.group_memory_task = group_memory_task
     try:
         print_startup_banner()
         yield
     finally:
         owner.accepting = False
-        shutdown = asyncio.create_task(_stop_workers(memory_task, cleanup_task, task, group_owner=owner), name="application-shutdown")
+        shutdown = asyncio.create_task(_stop_workers(group_memory_task, memory_task, cleanup_task, task, group_owner=owner), name="application-shutdown")
         cancelled = False
         while True:
             try:

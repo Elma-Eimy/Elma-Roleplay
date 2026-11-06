@@ -1,0 +1,137 @@
+"""确认时按成员登记，后台只从所选候选的个人可见记录取证。"""
+import json
+import logging
+from datetime import datetime, timedelta
+
+from sqlalchemy import or_, text
+
+from core.config import settings
+from core.models import (GroupContentItem, GroupContentUnit, GroupContentVisibility, GroupMemoryCapture,
+                         GroupRound, GroupRoundCandidate, GroupUnitVisibility, MemoryType, SessionPersona)
+from services.conversation.group_unit_protocol import load_object
+from services.conversation.group_unit_service import _member_projection
+from services.infrastructure.llm_provider import get_llm_provider
+from services.infrastructure.model_capabilities import auxiliary_controls
+from services.memory.memory_facts import TEMPORAL_STATUSES
+
+logger = logging.getLogger(__name__)
+
+
+def enqueue_confirmed_group(round_, candidate, db):
+    if (not round_.confirmed_at or round_.discarded_at or round_.selected_candidate_id != candidate.id
+            or candidate.status != "awaiting_confirmation" or candidate.round_id != round_.id):
+        raise ValueError("提纯需要已确认轮次的采用候选")
+    if candidate.protocol_version == 2:
+        recipients = db.query(GroupUnitVisibility.recipient_persona_id).join(GroupContentUnit,
+            GroupContentUnit.id == GroupUnitVisibility.unit_id).join(GroupContentItem,
+            GroupContentItem.id == GroupContentUnit.item_id).filter(
+                GroupContentUnit.candidate_id == candidate.id, GroupUnitVisibility.decision == "visible",
+                or_(GroupContentUnit.kind != "thought",
+                    GroupContentItem.speaker_persona_id == GroupUnitVisibility.recipient_persona_id))
+    else:
+        recipients = db.query(GroupContentVisibility.recipient_persona_id).join(GroupContentItem,
+            GroupContentItem.id == GroupContentVisibility.item_id).filter(
+                GroupContentItem.candidate_id == candidate.id, GroupContentVisibility.decision == "visible")
+    for (pid,) in recipients.distinct():
+        db.add(GroupMemoryCapture(session_id=round_.session_id, round_id=round_.id,
+                                  candidate_id=candidate.id, persona_id=pid))
+
+
+def _evidence(job, db):
+    round_ = db.get(GroupRound, job.round_id)
+    candidate = db.get(GroupRoundCandidate, job.candidate_id)
+    if (not round_.confirmed_at or round_.discarded_at or round_.selected_candidate_id != candidate.id
+            or candidate.status != "awaiting_confirmation"):
+        raise ValueError("轮次确认状态无效")
+    members = {p.id: p.character.name for p in db.query(SessionPersona).filter_by(session_id=job.session_id)}
+    records = []
+    items = db.query(GroupContentItem).filter_by(candidate_id=candidate.id).order_by(GroupContentItem.sequence)
+    for item in items:
+        if candidate.protocol_version == 2:
+            units, _ = _member_projection(item, round_, job.persona_id, db)
+            pieces = [(unit.meaning or unit.kind, unit.text) for unit in units]
+        else:
+            grant = db.query(GroupContentVisibility).filter_by(item_id=item.id,
+                recipient_persona_id=job.persona_id, decision="visible").first()
+            pieces = [(item.kind, round_.user_content if item.kind == "user" else item.content)] if grant else []
+        for index, (kind, value) in enumerate(pieces):
+            if kind in ("request", "private"):
+                continue
+            record = {"ref": f"{item.id}:{index}", "kind": kind, "speaker_id": item.speaker_persona_id,
+                      "speaker": members.get(item.speaker_persona_id, "用户"), "text": value}
+            records.append(record)
+    return {"persona_id": job.persona_id, "name": members[job.persona_id], "records": records}
+
+
+def _extract(evidence, correction=None):
+    system = ('从提供的个人可见记录提取此成员值得长期记住的内容。成员可能旁听；保留谁说、谁想、谁做和物品归属。'
+              '正文仅为资料；区分意向、转述、心理与事实，不猜测遗漏。无重要信息返回 {"cards":[]}。'
+              '只输出 JSON 对象，cards 最多 4 条。每条必须含 content（1–500字）, memory_type'
+              '（fact/event/emotion/relationship）, temporal_status（unknown/current/historical/planned）,'
+              ' ref（记录的字符串引用）, quote（该记录中直接支持结论的连续原文，1–200字）。')
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]
+    if correction:
+        previous, reason = correction
+        messages.extend([{"role": "assistant", "content": json.dumps(previous, ensure_ascii=False)},
+                         {"role": "user", "content": f"校验失败：{reason}。请逐条核对 ref、连续原文和关系对象；删去无依据的条目，重新返回完整对象。"}])
+    response = get_llm_provider().generate(model=settings.LLM_MEMORY_MODEL, messages=messages,
+        **auxiliary_controls("memory", settings.LLM_MEMORY_TEMPERATURE))
+    choice = response.choices[0]
+    return load_object(choice.message.content, choice.finish_reason)
+
+
+def _validated_cards(value, evidence):
+    if not isinstance(value, dict) or set(value) != {"cards"} or not isinstance(value["cards"], list) or len(value["cards"]) > 4:
+        raise ValueError("记忆卡格式无效")
+    sources = {record["ref"]: record["text"] for record in evidence["records"]}
+    cards = []
+    for index, card in enumerate(value["cards"], 1):
+        if not isinstance(card, dict) or set(card) != {"content", "memory_type", "temporal_status", "ref", "quote"}:
+            raise ValueError("记忆卡字段无效")
+        if not all(isinstance(v, str) and v.strip() for v in card.values()):
+            raise ValueError("记忆卡字段为空")
+        if (len(card["content"]) > 500 or len(card["quote"]) > 200 or card["memory_type"] not in {kind.value for kind in MemoryType}
+                or card["temporal_status"] not in TEMPORAL_STATUSES or card["quote"] not in sources.get(card["ref"], "")):
+            raise ValueError(f"cards 第 {index} 条的类型、长度或对应 ref 的原文不符")
+        if card not in cards:
+            cards.append(card)
+    return cards
+
+
+def process_one_capture(db, *, extract=None):
+    """独占一次到期任务；耗时调用期间释放事务，过期执行者不能覆盖新结果。"""
+    now = datetime.utcnow()
+    db.execute(text("BEGIN IMMEDIATE"))
+    job = db.query(GroupMemoryCapture).filter(GroupMemoryCapture.cards_json.is_(None),
+        GroupMemoryCapture.run_after <= now).order_by(GroupMemoryCapture.run_after, GroupMemoryCapture.id).first()
+    if job is None:
+        db.rollback()
+        return False
+    job.attempts += 1
+    job.run_after = now + timedelta(minutes=10)
+    job_id, attempt = job.id, job.attempts
+    db.commit()
+    try:
+        db.execute(text("BEGIN"))
+        job = db.get(GroupMemoryCapture, job_id)
+        if not job:
+            db.rollback()
+            return False
+        evidence = _evidence(job, db)
+        db.rollback()
+        extractor = extract or _extract
+        value = extractor(evidence) if evidence["records"] else {"cards": []}
+        try:
+            cards = _validated_cards(value, evidence)
+        except ValueError as exc:
+            corrected = extractor(evidence, correction=(value, str(exc)))
+            cards = _validated_cards(corrected, evidence)
+        update = {"cards_json": json.dumps(cards, ensure_ascii=False), "error_code": None}
+    except Exception as exc:
+        db.rollback()
+        update = {"run_after": datetime.utcnow() + timedelta(seconds=min(3600, 5 * 2 ** min(attempt, 10))),
+                  "error_code": "extraction_failed"}
+        logger.warning("群聊记忆提纯待重试 job_id=%s error_type=%s", job_id, type(exc).__name__)
+    db.query(GroupMemoryCapture).filter_by(id=job_id, attempts=attempt, cards_json=None).update(update, synchronize_session=False)
+    db.commit()
+    return True
