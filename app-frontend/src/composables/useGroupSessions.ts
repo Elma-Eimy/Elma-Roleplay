@@ -2,9 +2,10 @@ import { computed, onScopeDispose, ref } from "vue";
 import { getBaseUrl, USE_MOCK } from "@/api/config";
 import { getCharacters } from "@/api/characters";
 import { getSessions } from "@/api/sessions";
-import { createGroupSession, deleteGroupSession, getGroupSession, getGroupSessions, getGroupRounds } from "@/api/groupSessions";
+import { createGroupSession, deleteGroupSession, getGroupSession, getGroupSessions } from "@/api/groupSessions";
 import { onServerChange } from "@/utils/connectionEvents";
-import type { CreateGroupSessionParams, GroupCharacterOption, GroupSessionDetail, GroupRound } from "@/types/groupSessions";
+import type { CreateGroupSessionParams, GroupCharacterOption, GroupSessionDetail } from "@/types/groupSessions";
+import { useGroupRoundFlow } from "@/composables/useGroupRoundFlow";
 import type { SessionSummary } from "@/types/sessions";
 
 function message(cause: unknown): string {
@@ -235,35 +236,25 @@ export function useGroupSessionDetail(onDeleted: () => void) {
   const error = ref("");
   const serverChanged = ref(false);
   const invalidId = ref(false);
-  const rounds = ref<GroupRound[]>([]);
-  const loadingRounds = ref(false);
-  const roundsError = ref("");
-  const hasMoreRounds = ref(false);
-  let roundOffset = 0;
-  let roundVersion = 0;
-  let roundRetryMore = false;
   const needsSelection = computed(() => serverChanged.value || invalidId.value);
   let sessionId: number | null = null;
   let readVersion = 0;
   const scope = usePageScope(reason => {
     readVersion++; loading.value = false; deleting.value = false;
-    roundVersion++; loadingRounds.value = false;
+    flow.pause();
     if (reason === "server" || reason === "dispose") {
       group.value = null; sessionId = null;
-      resetRounds();
+      flow.reset();
       serverChanged.value = reason === "server";
       error.value = reason === "server" ? "服务器已变更，请返回群聊列表重新选择。" : "";
     }
   });
-  function resetRounds() {
-    roundVersion++; rounds.value = []; roundOffset = 0;
-    loadingRounds.value = false; hasMoreRounds.value = false; roundsError.value = "";
-    roundRetryMore = false;
-  }
+  const flow = useGroupRoundFlow({ id: () => sessionId, active: scope.active, capture: scope.capture,
+    blocked: () => loading.value || deleting.value || !group.value });
   function setSessionId(id: number) {
     scope.invalidate(); loading.value = false; deleting.value = false;
     readVersion++; group.value = null; error.value = ""; serverChanged.value = false;
-    resetRounds();
+    flow.reset();
     sessionId = Number.isSafeInteger(id) && id > 0 ? id : null;
     invalidId.value = sessionId === null;
     if (!sessionId) error.value = "群聊编号无效，请返回列表重新选择。";
@@ -274,52 +265,32 @@ export function useGroupSessionDetail(onDeleted: () => void) {
     const id = sessionId;
     const token = ++readVersion;
     const valid = () => current() && token === readVersion && id === sessionId;
-    roundVersion++; loadingRounds.value = false;
+    flow.pause();
     loading.value = true; error.value = "";
     try {
       const result = await getGroupSession(id);
       if (valid()) group.value = result;
-    } catch (cause) { if (valid()) { group.value = null; resetRounds(); error.value = message(cause); } }
+    } catch (cause) { if (valid()) { group.value = null; flow.pause(); error.value = message(cause); } }
     finally {
       if (valid()) {
         loading.value = false;
-        if (group.value) void loadRounds();
+        if (group.value) void flow.loadRounds();
       }
     }
   }
-  async function loadRounds(more = false) {
-    if (!scope.active() || !sessionId || !group.value || loading.value || loadingRounds.value || deleting.value
-      || (more && !hasMoreRounds.value)) return;
-    const current = scope.capture();
-    const id = sessionId;
-    const token = ++roundVersion;
-    roundRetryMore = more;
-    const valid = () => current() && token === roundVersion && id === sessionId;
-    loadingRounds.value = true; roundsError.value = "";
-    try {
-      const page = await getGroupRounds(id, 20, more ? roundOffset : 0);
-      if (!valid()) return;
-      const items = more ? [...rounds.value, ...page.rounds] : page.rounds;
-      rounds.value = items.filter((row, index) => items.findIndex(item => item.round_id === row.round_id) === index);
-      roundOffset = page.offset + page.rounds.length;
-      hasMoreRounds.value = page.has_more && page.rounds.length > 0;
-    } catch (cause) { if (valid()) roundsError.value = message(cause); }
-    finally { if (valid()) loadingRounds.value = false; }
-  }
   async function remove(confirm: () => Promise<boolean>) {
-    if (!scope.active() || deleting.value || loading.value || !group.value) return;
+    if (!scope.active() || !flow.canDelete.value || !group.value) return;
     const current = scope.capture();
     const id = group.value.session_id;
     deleting.value = true;
     try {
       if (!await confirm() || !current() || sessionId !== id) return;
       await deleteGroupSession(id);
-      if (current() && sessionId === id) { group.value = null; resetRounds(); onDeleted(); }
+      if (current() && sessionId === id) { group.value = null; flow.reset(); onDeleted(); }
     } catch (cause) { if (current() && sessionId === id) error.value = message(cause); }
     finally { if (current() && sessionId === id) deleting.value = false; }
   }
   return { group, loading, deleting, error, serverChanged, needsSelection, setSessionId, load, remove,
-    rounds, loadingRounds, roundsError, hasMoreRounds, loadRounds,
-    retryRounds() { return loadRounds(roundRetryMore); },
+    ...flow,
     show() { if (scope.activate()) void load(); }, hide: scope.deactivate };
 }

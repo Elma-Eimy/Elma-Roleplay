@@ -16,6 +16,7 @@ function fixture(kind, overrides = {}, mock = false, platform = "H5") {
   const listeners = new Set();
   const navigations = [];
   const calls = [];
+  const storage = new Map();
   const api = {
     getGroupSessions: async () => page(), getGroupSession: async id => group(id),
     getGroupRounds: async () => ({ rounds: [], total: 0, limit: 20, offset: 0, has_more: false }),
@@ -23,7 +24,10 @@ function fixture(kind, overrides = {}, mock = false, platform = "H5") {
     deleteGroupSession: async id => { calls.push(id); return { deleted_session_id: id }; },
     ...overrides,
   };
-  const load = createLoader({ platform, mocks: {
+  const load = createLoader({ platform, globals: { uni: {
+    getStorageSync: key => storage.get(key), setStorageSync: (key, value) => storage.set(key, plain(value)),
+    removeStorageSync: key => storage.delete(key),
+  } }, mocks: {
     "@/api/config": { getBaseUrl: () => server, USE_MOCK: mock },
     "@/api/characters": { getCharacters: overrides.getCharacters ?? (async () => ({ characters: [1, 2, 3, 4].map(character) })) },
     "@/api/sessions": { getSessions: overrides.getSessions ?? (async () => page()) },
@@ -104,7 +108,7 @@ test("detail refresh cannot be displaced by a concurrent round pagination read",
   f.scope.stop();
 });
 
-for (const change of ["story", "server", "hide", "delete"]) {
+for (const change of ["story", "server", "hide"]) {
   test(`late round history cannot refill state after ${change}`, async () => {
     const pending = deferred(); let reads = 0;
     const f = fixture("detail", { getGroupRounds: () => ++reads === 1 ? pending.promise : Promise.resolve(roundPage([round(2)])) });
@@ -112,7 +116,6 @@ for (const change of ["story", "server", "hide", "delete"]) {
     if (change === "story") { f.state.setSessionId(2); await f.state.load(); await flush(); }
     if (change === "server") f.setServer("https://b.invalid");
     if (change === "hide") { f.state.hide(); f.state.show(); await flush(); }
-    if (change === "delete") await f.state.remove(async () => true);
     pending.resolve(roundPage([round(1)])); await flush();
     assert.deepEqual(plain(f.state.rounds.value.map(item => item.round_id)), ["story", "hide"].includes(change) ? [2] : []);
     assert.equal(f.state.loadingRounds.value, false);
@@ -120,7 +123,7 @@ for (const change of ["story", "server", "hide", "delete"]) {
   });
 }
 
-test("group pages are registered without changing the default home or exposing a send control", () => {
+test("group pages keep the home entry and use the independent group flow", () => {
   const routes = JSON.parse(fs.readFileSync(path.join(sourceRoot, "pages.json"), "utf8"));
   assert.equal(routes.pages[0].path, "pages/index/index");
   for (const name of ["index", "create", "detail"]) {
@@ -129,7 +132,8 @@ test("group pages are registered without changing the default home or exposing a
   const home = fs.readFileSync(path.join(sourceRoot, "pages/index/index.vue"), "utf8");
   assert.match(home, /@tap="goToGroups"/);
   const detail = fs.readFileSync(path.join(sourceRoot, "pages/group/detail.vue"), "utf8");
-  assert.doesNotMatch(detail, /<input|<textarea|sendMessage|chatStore/);
+  assert.doesNotMatch(detail, /sendMessage|chatStore/);
+  assert.match(detail, /state.command\('send'\)/);
 });
 
 for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
@@ -360,4 +364,51 @@ test("leaving a scope unsubscribes and prevents pending writes from producing UI
   f.state.show(); await flush(); fill(f); const saving = f.state.submit();
   f.scope.stop(); pending.resolve(group(50)); await saving;
   assert.equal(f.navigations.length, 0); assert.equal(f.listeners.size, 0);
+});
+
+test("detail refresh failure preserves the unsent round draft", async () => {
+  let fails = false;
+  const f = fixture("detail", { getGroupSession: async id => { if (fails) throw new Error('offline'); return group(id); } });
+  f.state.setSessionId(1); f.state.show(); await flush(); f.state.draft.value = 'unfinished draft';
+  fails = true; await f.state.load(); assert.equal(f.state.group.value, null);
+  assert.equal(f.state.draft.value, 'unfinished draft');
+  fails = false; await f.state.load(); await flush(); assert.equal(f.state.draft.value, 'unfinished draft'); f.scope.stop();
+});
+
+test("pending round operations block deletion and late POST remains invalid after returning", async () => {
+  const post = deferred(); let deletes = 0, queries = 0;
+  const f = fixture("detail", {
+    getGroupRounds: async () => ({ ...roundPage(), can_generate: true, current: {
+      group_revision: 0, latest: null, active_operation: null,
+      capabilities: { can_send: true, can_regenerate: false, can_select: false, can_discard: false },
+    } }),
+    sendGroupRound: () => post.promise,
+    getGroupRequest: async () => { queries++; throw new Error('[API Error 404] unknown'); },
+    deleteGroupSession: async () => { deletes++; },
+  });
+  f.state.setSessionId(1); f.state.show(); await flush(); f.state.draft.value = 'hello';
+  const saving = f.state.command('send'); await f.state.remove(async () => true); assert.equal(deletes, 0);
+  f.state.hide(); f.state.show(); await flush();
+  post.resolve({ status: 'queued', accepted: { group_revision: 999 } }); await saving; await flush();
+  assert.equal(queries, 1); assert.equal(f.state.pending.value.kind, 'send');
+  assert.equal(f.state.current.value.group_revision, 0); assert.equal(f.state.submitting.value, false);
+  await f.state.remove(async () => true); assert.equal(deletes, 0); f.scope.stop();
+});
+
+test("delete waits for initial history and recovery lookup, including after a failed history read", async () => {
+  const pending = deferred(); let deletes = 0, fail = false;
+  const f = fixture('detail', { getGroupRounds: () => fail ? Promise.reject(new Error('offline')) : pending.promise,
+    deleteGroupSession: async () => { deletes++; } });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  await f.state.remove(async () => true); assert.equal(deletes, 0);
+  pending.reject(new Error('offline')); await flush(); fail = true;
+  await f.state.remove(async () => true); assert.equal(deletes, 0); f.scope.stop();
+});
+
+test("deleting after history recovery is checked clears saved rounds", async () => {
+  const f = fixture('detail', { getGroupRounds: async () => roundPage([round(1)]) });
+  f.state.setSessionId(1); f.state.show(); await flush();
+  await f.state.remove(async () => true);
+  assert.equal(f.state.group.value, null); assert.equal(f.state.rounds.value.length, 0);
+  assert.deepEqual(f.navigations, ['deleted']); f.scope.stop();
 });
