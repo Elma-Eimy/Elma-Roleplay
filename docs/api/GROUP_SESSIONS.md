@@ -121,6 +121,8 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 
 同会话存在活动生成时，只接受读取或已接受请求的重放，不接受新的发送、重生成、续接、选择、撤回或删除。HTTP 断连不取消已接受任务。不要通过自动重发聊天 POST 恢复结果；网络错误和 404 也不能证明请求未被接受，应保留原 UUID 继续查询。手动重试提交必须使用原 UUID 和原请求。
 
+新候选可按服务器冻结的回合策略，对推进请求、承接依据和角色发言进行内部校验，不改变以上请求结构。`invalid_basis` 表示导演返回了不可用的承接依据，`agency_conflict` 或 `unsupported_history` 表示提交前审查发现明确冲突；生成仍以 failed 结束，未通过的发言及状态不会提交，已保存前缀保留。是否提供显式续接仍以 can_resume 为准，续接不跳过原审查，也不通过重复发送原聊天恢复。以上为固定错误码，不包含原始模型解释；前端错误字段保持字符串，Mock 仍不模拟真实生成规则。
+
 ## 请求与候选查询
 
 `GET /group-sessions/{session_id}/requests/{client_request_id}` 返回回执的 operation_id、request_id、kind、status、revision、round_id、candidate_id、call_count、call_limit、created_at、started_at、deadline_at、finished_at、error_code，以及 accepted、round、candidate、current、can_generate。revision 属于本次操作，candidate.revision 属于候选，current.group_revision 属于会话。查询不会派发模型、增加额度或延长期限。未找到请求返回 404，可能仍在接受事务中；撤回后仍能查询原回执。
