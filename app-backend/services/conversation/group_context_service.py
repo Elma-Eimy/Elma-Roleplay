@@ -77,7 +77,10 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         before = last_sequence + 1
         rows = history._member_history(session_id, persona_id, round_, candidate, before,
             min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit)), db)
-        if not rows:
+        from services.conversation.group_turn_plan import _requests, _current_basis
+        requests = _requests(round_, candidate, persona_id, db)
+        basis = _current_basis(session_id, persona_id, round_, candidate, before, db)
+        if not rows and not requests:
             raise GroupSessionValidationError("没有可见内容，不能生成角色发言")
         state, state_persona = _member_state(persona, group, round_, candidate, before, db)
         speaker_ids = {row.speaker_persona_id for row in rows if row.speaker_persona_id is not None}
@@ -85,7 +88,8 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
             SessionPersona.id.in_(speaker_ids)).all()}
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
-            shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version)
+            shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,
+            current_round_id=round_.id, turn_requests=requests, response_basis=basis)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})

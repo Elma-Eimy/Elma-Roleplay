@@ -20,6 +20,8 @@ def record(candidate, stage, decision, model, db, *, item=None):
             raise ValueError("审计调度无效")
         speaker, reason = decision.speaker_persona_id, decision.reason_code
         payload = {"action": "speak", "speaker_persona_id": speaker, "reason_code": reason}
+        if decision.basis is not None:
+            payload["basis"] = decision.basis
     elif stage == "finish" and decision in ("wait_user", "step_limit", "no_visible_basis"):
         reason = decision
         payload = {"action": "end", "reason_code": reason}

@@ -50,7 +50,7 @@ def main():
                 "chat_base_url": "https://example.invalid/v1",
                 "embedding_base_url": "https://example.invalid/v1",
             },
-            "app": {"sqlite_db_path": "data/test.db", "chroma_db_path": "data/chroma"},
+            "app": {"sqlite_db_path": "data/test.db", "chroma_db_path": "data/chroma", "group_turn_planning": False},
             "tts": {"cache_dir": "data/audio"},
         }
         # JSON is valid YAML. Do not copy the developer's config, secrets or data.

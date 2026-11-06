@@ -4,16 +4,19 @@ import json
 from sqlalchemy import and_, or_
 
 from core.models import GroupContentItem, GroupContentUnit, GroupUnitVisibility
-from services.conversation.group_unit_protocol import UnitPlan, GroupUnitError, parse_role_units, parse_user_units
+from services.conversation.group_unit_protocol import ContentUnit, UnitPlan, GroupUnitError, parse_role_units, parse_user_units
 
 
 def _write_units(item, plan, members, user_content, db):
     if not isinstance(plan, UnitPlan) or len(plan.units) != len(plan.audiences):
         raise GroupUnitError()
+    if ((any(unit.meaning for unit in plan.units) and len(plan.request_targets) != len(plan.units))
+            or plan.review not in (None, "ok")):
+        raise GroupUnitError()
     ids = tuple(sorted(members))
     if item.kind == "user":
-        raw = {"units": [{"start": unit.start, "end": unit.end, "recipients": row["recipients"]}
-                         for unit, row in zip(plan.units, plan.decision(ids)["units"])]}
+        raw = {"units": [{key: value for key, value in row.items() if key != "unit_index"}
+                         for row in plan.decision(ids)["units"]]}
         checked = parse_user_units(json.dumps(raw), user_content, ids)
         if checked.units != plan.units:
             raise GroupUnitError()
@@ -50,7 +53,7 @@ def _has_visible_unit(persona_id, db):
              GroupUnitVisibility.session_id == GroupContentUnit.session_id)).filter(_visible_clause(persona_id)).exists()
 
 
-def _member_text(item, owner, persona_id, db):
+def _member_units(item, owner, persona_id, db):
     rows = db.query(GroupContentUnit).join(GroupUnitVisibility,
         and_(GroupUnitVisibility.unit_id == GroupContentUnit.id,
              GroupUnitVisibility.session_id == GroupContentUnit.session_id)).filter(
@@ -58,7 +61,15 @@ def _member_text(item, owner, persona_id, db):
         GroupContentUnit.session_id == item.session_id, GroupUnitVisibility.recipient_persona_id == persona_id,
         GroupUnitVisibility.decision == "visible",
         or_(GroupContentUnit.kind != "thought", item.speaker_persona_id == persona_id)).order_by(GroupContentUnit.unit_index).all()
-    return "".join(owner.user_content[row.source_start:row.source_end] if row.kind == "user" else row.text for row in rows)
+    from services.conversation.group_turn_plan import _user_plan
+    plan = _user_plan(item, owner, db) if item.kind == "user" else None
+    return tuple(ContentUnit(row.kind,
+        owner.user_content[row.source_start:row.source_end] if row.kind == "user" else row.text,
+        meaning=plan.units[row.unit_index].meaning if plan else None) for row in rows)
+
+
+def _member_text(item, owner, persona_id, db):
+    return "".join(unit.text for unit in _member_units(item, owner, persona_id, db))
 
 
 def _complete_author_visibility(item, db):

@@ -12,6 +12,7 @@ from services.conversation.group_session_service import (
     _begin_write, _locked_write, GroupSessionNotFound, GroupSessionValidationError,
 )
 from services.conversation import group_unit_service as units, group_audit_service as audit
+from services.conversation.group_unit_protocol import ContentUnit
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class GroupHistoryItem:
     content: str
     emotion_tag: str | None = None
     affection_change: int | None = None
+    visible_units: tuple[ContentUnit, ...] = ()
 
 
 def _require_group(session_id, db):
@@ -226,11 +228,15 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
 def _accept_action(session_id, candidate_id, revision, action, model, db, *, scope=None):
     try:
         _begin_write(db)
-        _, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
+        round_, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
         if scope is not None and candidate.checkpoint != "next_action":
             raise SessionKindConflict("调度检查点已变化")
         if action.speaker_persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("调度成员不属于本群")
+        from services.conversation.group_turn_plan import _planning, _validate_basis
+        if action.basis is not None or _planning(candidate, db):
+            before = (db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() or 0) + 1
+            _validate_basis(session_id, action.speaker_persona_id, round_, candidate, before, action.basis, db)
         audit.record(candidate, "next_action", action, model, db)
         if scope is not None:
             candidate.checkpoint = "role_generation"
@@ -300,12 +306,14 @@ def _member_history(session_id, persona_id, round_, candidate, before_sequence, 
     result = []
     for item, owner in reversed(rows):
         v2 = db.get(GroupRoundCandidate, item.candidate_id).protocol_version == 2
-        content = (units._member_text(item, owner, persona_id, db) if v2 else
+        visible_units = units._member_units(item, owner, persona_id, db) if v2 else ()
+        content = ("".join(unit.text for unit in visible_units) if v2 else
                    owner.user_content if item.kind == "user" else item.content)
         own_state_visible = item.speaker_persona_id == persona_id and (not v2 or units._complete_author_visibility(item, db))
         result.append(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
             item.sequence, item.kind, item.speaker_persona_id, content,
-            item.emotion_tag if own_state_visible else None, item.affection_change if own_state_visible else None))
+            item.emotion_tag if own_state_visible else None, item.affection_change if own_state_visible else None,
+            visible_units))
     return tuple(result)
 
 

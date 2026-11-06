@@ -38,12 +38,15 @@ class ContentUnit:
     text: str | None = None
     start: int | None = None
     end: int | None = None
+    meaning: str | None = None
 
 
 @dataclass(frozen=True)
 class UnitPlan:
     units: tuple[ContentUnit, ...]
     audiences: tuple[tuple[int, ...], ...]
+    request_targets: tuple[tuple[int, ...], ...] = ()
+    review: str | None = None
 
     def decision(self, members):
         rows = []
@@ -52,8 +55,10 @@ class UnitPlan:
                 {"persona_id": pid, "decision": "visible" if pid in visible else "hidden"} for pid in sorted(members)]}
             if unit.kind == "user":
                 row.update(start=unit.start, end=unit.end)
+                if unit.meaning is not None:
+                    row.update(meaning=unit.meaning, request_to=list(self.request_targets[index]))
             rows.append(row)
-        return {"units": rows}
+        return {"units": rows, **({"review": self.review} if self.review else {})}
 
 
 def recipients(rows, members, author=None):
@@ -73,22 +78,32 @@ def recipients(rows, members, author=None):
     return tuple(pid for pid in members if result[pid] == "visible")
 
 
-def parse_user_units(raw, content, members, *, finish_reason="stop"):
+def parse_user_units(raw, content, members, *, finish_reason="stop", require_meaning=False):
     value = load_object(raw, finish_reason)
     if set(value) != {"units"} or not isinstance(value["units"], list) or not 1 <= len(value["units"]) <= 8:
         raise GroupUnitError()
-    units, audiences, cursor = [], [], 0
+    units, audiences, requests, cursor = [], [], [], 0
     for row in value["units"]:
-        if (not isinstance(row, dict) or set(row) != {"start", "end", "recipients"}
+        if (not isinstance(row, dict) or set(row) not in ({"start", "end", "recipients"},
+                {"start", "end", "recipients", "meaning", "request_to"})
                 or type(row["start"]) is not int or type(row["end"]) is not int
                 or row["start"] != cursor or not cursor < row["end"] <= len(content)):
             raise GroupUnitError()
-        units.append(ContentUnit("user", start=cursor, end=row["end"]))
-        audiences.append(recipients(row["recipients"], members))
+        meaning = row.get("meaning")
+        visible = recipients(row["recipients"], members)
+        targets = row.get("request_to", [])
+        if ((require_meaning or "meaning" in row) and meaning not in ("fact", "speech", "request", "private", "uncertain")
+                or not isinstance(targets, list) or any(type(pid) is not int or pid not in members for pid in targets)
+                or len(set(targets)) != len(targets) or (meaning != "request" and targets)
+                or (meaning == "private" and visible)):
+            raise GroupUnitError()
+        units.append(ContentUnit("user", start=cursor, end=row["end"], meaning=meaning))
+        audiences.append(visible)
+        requests.append(tuple(targets))
         cursor = row["end"]
     if cursor != len(content):
         raise GroupUnitError()
-    return UnitPlan(tuple(units), tuple(audiences))
+    return UnitPlan(tuple(units), tuple(audiences), tuple(requests) if any(unit.meaning for unit in units) else ())
 
 
 def parse_role_units(value):
@@ -104,11 +119,17 @@ def parse_role_units(value):
     return tuple(units)
 
 
-def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop"):
+def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop", require_review=False):
     value = load_object(raw, finish_reason)
-    if (set(value) != {"units"} or not isinstance(value["units"], list)
+    if (set(value) not in ({"units"}, {"units", "review"}) or not isinstance(value["units"], list)
             or len(value["units"]) != len(units)):
         raise GroupUnitError()
+    review = value.get("review")
+    if require_review or "review" in value:
+        if review not in ("ok", "agency_conflict", "unsupported_history"):
+            raise GroupUnitError()
+        if review != "ok":
+            raise GroupUnitError(review)
     audiences = []
     for index, row in enumerate(value["units"]):
         if (not isinstance(row, dict) or set(row) != {"unit_index", "recipients"}
@@ -118,4 +139,4 @@ def parse_unit_visibility(raw, units, members, author, *, finish_reason="stop"):
         if units[index].kind == "thought" and set(visible) != {author}:
             raise GroupUnitError()
         audiences.append(visible)
-    return UnitPlan(units, tuple(audiences))
+    return UnitPlan(units, tuple(audiences), review=review)

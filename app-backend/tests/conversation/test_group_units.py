@@ -73,6 +73,63 @@ class GroupUnitTests(unittest.TestCase):
         self.assertIn("PRIVATE_THOUGHT", scene.payload_json)
         self.assertNotIn("decision_json", scene.payload_json)
 
+    def test_typed_personal_history_preserves_authorship_without_private_units(self):
+        self.group()
+        self.append()
+        author = self.personal(self.a)[-1]
+        listener = self.personal(self.b)[-1]
+        self.assertEqual([("speech", "桥坏了。"), ("thought", "PRIVATE_THOUGHT")],
+                         [(unit.kind, unit.text) for unit in author.visible_units])
+        self.assertEqual([("speech", "桥坏了。")], [(unit.kind, unit.text) for unit in listener.visible_units])
+        own = json.loads(build_member_context(self.sid, self.a, self.target["candidate_id"],
+            self.target["revision"], self.db).messages_json)
+        event = json.loads(next(row["content"] for row in own if row["role"] == "assistant"))
+        self.assertEqual("self", event["source"])
+        self.assertEqual(["speech", "thought"], [unit["kind"] for unit in event["units"]])
+        other = json.loads(build_member_context(self.sid, self.b, self.target["candidate_id"],
+            self.target["revision"], self.db).messages_json)
+        event = next(json.loads(row["content"].split("\n")[-1]) for row in other
+                     if row["role"] == "system" and row["content"].startswith("【其他成员的可见历史资料】"))
+        self.assertEqual(self.a, event["speaker_persona_id"])
+        self.assertEqual([{"kind": "speech", "text": "桥坏了。"}], event["units"])
+        self.assertNotIn("PRIVATE_THOUGHT", json.dumps(other))
+        self.assertNotIn("recipients", json.dumps(other))
+        self.assertEqual(["😀公开。"], [row["content"] for row in other if row["role"] == "user"])
+        boundary = json.loads(other[-1]["content"].split("\n")[1])
+        self.assertEqual(self.b, boundary["speaker_persona_id"])
+        self.assertEqual([self.a], boundary["visible_current_turn_speakers"])
+
+    def test_visible_timeline_does_not_reveal_hidden_or_windowed_events(self):
+        self.group()
+        self.append()
+        # B 的第二次发言只给自己看，A 的第三次发言才公开。
+        private = UnitPlan((ContentUnit("speech", "HIDDEN_EVENT"),), ((self.b,),))
+        saved = history._append(self.sid, self.target["candidate_id"], self.b, "HIDDEN_EVENT",
+            (self.b,), self.target["revision"], self.db, unit_plan=private, model="fixture")
+        self.target["revision"] = saved["revision"]
+        self.append()
+        context = build_member_context(self.sid, self.a, self.target["candidate_id"],
+            self.target["revision"], self.db, history_limit=1)
+        messages = json.loads(context.messages_json)
+        event = json.loads(next(row["content"] for row in messages if row["role"] == "assistant"))
+        self.assertEqual(1, event["order"])
+        self.assertNotIn("HIDDEN_EVENT", context.messages_json)
+        combined = "\n".join(row["content"] for row in messages)
+        self.assertNotIn('"sequence"', combined)
+        self.assertIn('"turn": "current"', combined)
+        self.assertNotIn('"source": "user"', combined)
+
+    def test_first_role_grounding_does_not_invent_other_speakers(self):
+        self.group()
+        context = build_member_context(self.sid, self.b, self.target["candidate_id"],
+            self.target["revision"], self.db)
+        messages = json.loads(context.messages_json)
+        boundary = json.loads(messages[-1]["content"].split("\n")[1])
+        self.assertEqual([], boundary["visible_current_turn_speakers"])
+        self.assertEqual("user", boundary["latest_visible_source"])
+        self.assertEqual(self.b, boundary["speaker_persona_id"])
+        self.assertNotIn("秘密", messages[-1]["content"])
+
     def test_missing_units_or_grants_never_fall_back_to_parent_fulltext(self):
         self.group()
         self.append()

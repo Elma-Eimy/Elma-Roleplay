@@ -71,7 +71,7 @@ def main(argv=None):
             config = {"llm": {"chat_base_url": args.base_url if args.online else "https://example.invalid/v1",
                               "embedding_base_url": "https://example.invalid/v1",
                               "default_chat_model": args.model or "fixture-replay"},
-                      "app": {"sqlite_db_path": "data/prototype.db", "chroma_db_path": "data/chroma"},
+                      "app": {"sqlite_db_path": "data/prototype.db", "chroma_db_path": "data/chroma", "group_turn_planning": args.online},
                       "tts": {"cache_dir": "data/audio"}}
             (root / "config.yaml").write_text(json.dumps(config), encoding="utf-8")
             (root / "request.json").write_text(json.dumps({"cases": cases, "online": args.online,

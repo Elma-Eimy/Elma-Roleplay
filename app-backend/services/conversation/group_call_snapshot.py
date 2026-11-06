@@ -24,6 +24,7 @@ class GroupCallSnapshot:
     history_limit: int
     call_timeout: float
     connection: GroupModelConnection = field(repr=False)
+    turn_policy: int = 0
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
@@ -37,6 +38,8 @@ def persist_group_calls(snapshot, max_steps, member_ids):
     error = history.GroupSessionValidationError
     if not isinstance(snapshot, GroupCallSnapshot):
         raise error("新任务需要冻结调用参数")
+    if type(snapshot.turn_policy) is not int or snapshot.turn_policy not in (0, 1):
+        raise error("回合策略无效")
     if type(max_steps) is not int or not 1 <= max_steps <= 6:
         raise error("成功步数需要在 1–6 之间")
     if type(snapshot.history_limit) is not int or not 1 <= snapshot.history_limit <= 500:
@@ -50,7 +53,7 @@ def persist_group_calls(snapshot, max_steps, member_ids):
         except (ValueError, TypeError):
             raise error("调用参数无效") from None
         allowed = {"model", "max_tokens", "temperature", "top_p", "presence_penalty", "frequency_penalty",
-                   "reasoning_effort", "extra_body"}
+                   "reasoning_effort", "extra_body", "response_format"}
         if not isinstance(value, dict) or not set(value) <= allowed:
             raise error("调用参数含非白名单字段")
         if not isinstance(value.get("model"), str) or not value["model"].strip():
@@ -62,6 +65,8 @@ def persist_group_calls(snapshot, max_steps, member_ids):
                 raise error("采样参数无效")
         if "reasoning_effort" in value and value["reasoning_effort"] not in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
             raise error("思考参数无效")
+        if "response_format" in value and value["response_format"] != {"type": "json_object"}:
+            raise error("群聊只支持 JSON object 格式约束")
         extra = value.get("extra_body", {})
         if not isinstance(extra, dict) or not set(extra) <= {"thinking", "repetition_penalty"}:
             raise error("扩展参数含非白名单字段")
@@ -85,6 +90,8 @@ def persist_group_calls(snapshot, max_steps, member_ids):
     value = dict(policy_version=2, max_steps=max_steps, history_limit=snapshot.history_limit,
                  call_timeout=snapshot.call_timeout, director=parameters(snapshot.director_json),
                  members=[dict(persona_id=pid, parameters=parameters(encoded)) for pid, encoded in snapshot.members])
+    if snapshot.turn_policy:
+        value["turn_policy"] = snapshot.turn_policy
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False), hashlib.sha256(normalized.encode()).hexdigest()
 
 
@@ -114,7 +121,7 @@ def restore_group_calls(candidate, member_ids):
     """续接只恢复已保存参数，提供方可轮换凭据但不能切服。"""
     try:
         value = json.loads(candidate.call_snapshot_json)
-        if (candidate.protocol_version != 2 or set(value) != {
+        if (candidate.protocol_version != 2 or set(value) - {"turn_policy"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -122,7 +129,8 @@ def restore_group_calls(candidate, member_ids):
             raise ValueError
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
-            value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY))
+            value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
+            value.get("turn_policy", 0))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -159,7 +167,8 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
             top_p=ext.get("top_p", config.LLM_TOP_P), presence_penalty=ext.get("presence_penalty", config.LLM_PRESENCE_PENALTY),
             frequency_penalty=ext.get("frequency_penalty", config.LLM_FREQUENCY_PENALTY),
             repetition_penalty=ext.get("repetition_penalty", config.LLM_REPETITION_PENALTY), config=config)
-        return json.dumps({"model": selection.model, "max_tokens": config.LLM_MAX_TOKENS, **controls}, ensure_ascii=False)
+        return json.dumps({"model": selection.model, "max_tokens": config.LLM_MAX_TOKENS, **controls,
+            **({"response_format": {"type": "json_object"}} if settings.LLM_GROUP_JSON_MODE else {})}, ensure_ascii=False)
     db.rollback()
     db.expire_all()
     db.execute(text("BEGIN"))
@@ -168,6 +177,6 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection)
+                                 connection, int(settings.APP_GROUP_TURN_PLANNING))
     finally:
         db.rollback()

@@ -5,6 +5,7 @@ import logging
 import math
 import time
 from datetime import datetime
+from dataclasses import replace
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_director_service as director, group_generation_service as generation
@@ -60,6 +61,13 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
         budget = GroupRoundBudget(max_steps, timeout, timeout)
         snapshot = await generation._database(capture_group_calls, session_id, db, model=model,
                                              thinking_mode=thinking_mode, reasoning_effort=reasoning_effort)
+        if protocol_version == 1:
+            members = []
+            for pid, encoded in snapshot.members:
+                parameters = json.loads(encoded)
+                parameters.pop("response_format", None)
+                members.append((pid, json.dumps(parameters, ensure_ascii=False)))
+            snapshot = replace(snapshot, turn_policy=0, members=tuple(members))
         if not math.isfinite(snapshot.call_timeout) or snapshot.call_timeout <= 0:
             raise ValueError("单次模型超时无效")
         budget.call_timeout = snapshot.call_timeout
@@ -76,6 +84,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
     calls = []
     runtime = execution.owner
     model = json.loads(snapshot.director_json)["model"]
+    selected_sources = None
 
     async def call(stage, parameters, persona_id=None):
         require_group_execution(execution, session_id, db.get_bind())
@@ -103,10 +112,14 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         require_group_execution(execution, session_id, db.get_bind())
         return await generation._database(director.build_director_context, session_id, db,
             candidate_id=target["candidate_id"] if target else None, expected_revision=target["revision"] if target else None,
-            **({"scope": scope} if scope is not None else {}))
+            **({"scope": scope} if scope is not None else {}), turn_policy=snapshot.turn_policy)
 
     async def decide(context, stage, **kwargs):
-        messages = director.build_director_messages(context, stage, protocol_version=protocol_version, **kwargs)
+        nonlocal selected_sources
+        messages = director.build_director_messages(context, stage, protocol_version=protocol_version,
+            turn_policy=snapshot.turn_policy, **kwargs)
+        if stage == "next_action":
+            selected_sources = json.loads(messages[1]["content"]).get("response_sources")
         response = await call(stage, {**json.loads(snapshot.director_json), "messages": messages})
         return response.choices[0]
 
@@ -116,7 +129,10 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             answer = await decide(context, "user_visibility", user_content=user_content)
             plan = None
             if protocol_version == 2:
-                plan = parse_user_units(answer.message.content, user_content, context.member_ids, finish_reason=answer.finish_reason)
+                plan = parse_user_units(answer.message.content, user_content, context.member_ids,
+                    finish_reason=answer.finish_reason, require_meaning=bool(snapshot.turn_policy))
+                if not snapshot.turn_policy and any(unit.meaning for unit in plan.units):
+                    raise GroupUnitError()
                 visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
             else:
                 visible_to = director.parse_visibility(answer.message.content, context.member_ids, finish_reason=answer.finish_reason).visible_to
@@ -148,7 +164,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     break
                 answer = await decide(context, "next_action")
                 action = director.parse_next_action(answer.message.content, context.member_ids, context.eligible_ids,
-                                                    finish_reason=answer.finish_reason)
+                    finish_reason=answer.finish_reason, response_sources=selected_sources)
                 if action.action == "end":
                     finish_reason = action.reason_code
                     break
@@ -166,7 +182,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     answer = await decide(context, "utterance_visibility", proposed=proposed)
                     if protocol_version == 2:
                         return parse_unit_visibility(answer.message.content, proposed.units, context.member_ids,
-                            proposed.speaker_persona_id, finish_reason=answer.finish_reason)
+                            proposed.speaker_persona_id, finish_reason=answer.finish_reason,
+                            require_review=bool(snapshot.turn_policy))
                     return director.parse_visibility(answer.message.content, context.member_ids,
                         author_id=proposed.speaker_persona_id, finish_reason=answer.finish_reason).visible_to
                 except TimeoutError:

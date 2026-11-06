@@ -12,6 +12,7 @@ load_dotenv(os.path.join(parent_dir, ".env"))
 # 作用: 只要在这里新增配置项，系统在启动时就会自动为用户的 config.yaml 补齐默认值，并动态绑定为类属性，实现“零修改升级”
 CONFIG_SCHEMA = {
     "llm": {
+        "group_json_mode": {"type": bool, "default": False, "dynamic": False, "attr": "LLM_GROUP_JSON_MODE"},
         # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
         "default_chat_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_DEFAULT_CHAT_MODEL"},
         "model_profiles": {"type": list, "default": [], "dynamic": True, "attr": "LLM_MODEL_PROFILES"},
@@ -55,6 +56,7 @@ CONFIG_SCHEMA = {
         "reasoning_effort": {"type": str, "default": None, "dynamic": True, "attr": "LLM_REASONING_EFFORT", "allow_none": True},
     },
     "app": {
+        "group_turn_planning": {"type": bool, "default": True, "dynamic": False, "attr": "APP_GROUP_TURN_PLANNING"},
         # 直接注入提示词上下文的最近对话消息数量限制（单边计数，如10表示最近5轮交互共10条）
         "context_history_limit": {"type": int, "default": 10, "dynamic": True, "attr": "APP_CONTEXT_HISTORY_LIMIT"},
         # 从向量记忆库中检索注入上下文的相关记忆条目数 (Top-K)
