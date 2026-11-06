@@ -53,7 +53,7 @@ def _has_visible_unit(persona_id, db):
              GroupUnitVisibility.session_id == GroupContentUnit.session_id)).filter(_visible_clause(persona_id)).exists()
 
 
-def _member_units(item, owner, persona_id, db):
+def _member_projection(item, owner, persona_id, db):
     rows = db.query(GroupContentUnit).join(GroupUnitVisibility,
         and_(GroupUnitVisibility.unit_id == GroupContentUnit.id,
              GroupUnitVisibility.session_id == GroupContentUnit.session_id)).filter(
@@ -63,13 +63,18 @@ def _member_units(item, owner, persona_id, db):
         or_(GroupContentUnit.kind != "thought", item.speaker_persona_id == persona_id)).order_by(GroupContentUnit.unit_index).all()
     from services.conversation.group_turn_plan import _user_plan
     plan = _user_plan(item, owner, db) if item.kind == "user" else None
-    return tuple(ContentUnit(row.kind,
-        owner.user_content[row.source_start:row.source_end] if row.kind == "user" else row.text,
-        meaning=plan.units[row.unit_index].meaning if plan else None) for row in rows)
-
-
-def _member_text(item, owner, persona_id, db):
-    return "".join(unit.text for unit in _member_units(item, owner, persona_id, db))
+    units = []
+    passages = []
+    previous_index = None
+    for row in rows:
+        value = owner.user_content[row.source_start:row.source_end] if row.kind == "user" else row.text
+        units.append(ContentUnit(row.kind, value, meaning=plan.units[row.unit_index].meaning if plan else None))
+        if previous_index is not None and row.unit_index == previous_index + 1:
+            passages[-1] += value
+        else:
+            passages.append(value)
+        previous_index = row.unit_index
+    return tuple(units), tuple(passages)
 
 
 def _complete_author_visibility(item, db):

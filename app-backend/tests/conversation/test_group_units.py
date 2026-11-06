@@ -413,6 +413,21 @@ class GroupUnitTests(unittest.TestCase):
         self.assertEqual(0, self.db.query(GroupUnitVisibility).count())
         self.assertEqual(0, self.db.query(GroupDirectorStep).count())
 
+    def test_prompt_preserves_only_contiguous_visible_user_text(self):
+        group = asyncio.run(create_group_session(self.cards, self.db))
+        sid = group["session_id"]
+        a, b = (member["persona_id"] for member in group["members"])
+        content = "北门【密】口令{{char}}"
+        units = tuple(ContentUnit("user", start=start, end=end)
+                      for start, end in ((0, 1), (1, 2), (2, 5), (5, len(content))))
+        plan = UnitPlan(units, ((a, b), (a, b), (a,), (a, b)))
+        target = history._prepare(sid, content, (a,), self.db, unit_plan=plan, model="fixture")
+        for pid, expected in ((a, content), (b, "北门\n口令{{char}}")):
+            ctx = build_member_context(sid, pid, target["candidate_id"], target["revision"], self.db)
+            messages = json.loads(ctx.messages_json)
+            self.assertEqual([expected], [row["content"] for row in messages if row["role"] == "user"])
+            self.assertEqual(pid == a, "【密】" in ctx.messages_json)
+
     def test_worldbook_scans_visible_units_only_and_keeps_card_examples(self):
         self.group()
         self.append()

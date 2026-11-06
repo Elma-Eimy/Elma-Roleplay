@@ -30,6 +30,7 @@ class GroupHistoryItem:
     emotion_tag: str | None = None
     affection_change: int | None = None
     visible_units: tuple[ContentUnit, ...] = ()
+    visible_passages: tuple[str, ...] = ()
 
 
 def _require_group(session_id, db):
@@ -306,14 +307,14 @@ def _member_history(session_id, persona_id, round_, candidate, before_sequence, 
     result = []
     for item, owner in reversed(rows):
         v2 = db.get(GroupRoundCandidate, item.candidate_id).protocol_version == 2
-        visible_units = units._member_units(item, owner, persona_id, db) if v2 else ()
-        content = ("".join(unit.text for unit in visible_units) if v2 else
+        visible_units, passages = units._member_projection(item, owner, persona_id, db) if v2 else ((), ())
+        content = ("\n".join(passages) if v2 else
                    owner.user_content if item.kind == "user" else item.content)
         own_state_visible = item.speaker_persona_id == persona_id and (not v2 or units._complete_author_visibility(item, db))
         result.append(GroupHistoryItem(item.id, owner.id, item.candidate_id, owner.round_index,
             item.sequence, item.kind, item.speaker_persona_id, content,
             item.emotion_tag if own_state_visible else None, item.affection_change if own_state_visible else None,
-            visible_units))
+            visible_units, passages))
     return tuple(result)
 
 
