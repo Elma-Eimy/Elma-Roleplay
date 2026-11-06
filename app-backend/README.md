@@ -44,6 +44,8 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 
 群聊目前完成 M1-A–D 代码实现：会话区分 single/group，Persona 按成员位置归属会话；服务与 HTTP 接口支持创建、冻结来源快照、列表详情和整群删除。M4 已接通后台生成、候选操作与详情页交互。群聊契约见[群聊管理 API](../docs/api/GROUP_SESSIONS.md)。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
 
+M5-A 在群聊个人 Prompt 中按可见话题召回该成员的入群快照，范围与验证见[群聊记忆实施计划](../docs/plans/group-chat/M5_MEMORY_AND_GROWTH.md)。
+
 M2 已建立群聊轮次、候选、内容与知情记录，以及内部单步生成、个人 Prompt 和候选状态重放。用户原文只保存一次；个人历史仅含此前已确认的所选成功候选与当前候选边界内的可见内容，先过滤再限量。`GET /group-sessions/{session_id}/rounds` 为故事操作者提供整轮分页的只读正文；M4-C 已接通后台生成、候选操作与请求恢复查询；不提供手动选角色或独立确认接口，确认随下一条用户消息接受完成。
 
 单步生成要求对应数据库的进程运行权和会话锁，模型与接收者判定期间不持有数据库事务；完成后复核候选 revision，原子保存正文、知情行及自己的状态增量。失败/取消保留前缀并停止，不保存错误兜底台词或 reasoning，不改写成员起点、不触发记忆提纯。隔离原型入口为 `python -m tests --group conversation --pattern test_group_generation.py`，只使用临时数据和假模型，包含 A → B → A 到只读 HTTP 展示的联通检查。

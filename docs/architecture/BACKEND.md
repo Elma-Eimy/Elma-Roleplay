@@ -70,6 +70,8 @@ M3-C 的 `group_unit_protocol.py` 严格校验用户连续完整码点范围、�
 
 M4-A 的 `group_operation_service.py` 提供内部 send/select/discard 接受事务，以会话 `group_revision` 和所见候选版本防止迟到写入。接受下一消息时，确认旧成功轮次、新建无知情草稿和 queued 回执一起提交；指纹统一省略值与 inherit，正文保持逐字一致；首次接受前核对请求选择与全部冻结参数，同 UUID 与规范化请求优先返回已有回执，不重新解析后来变化的默认配置。撤回保留轮次及回执，旧个人/导演查询和轮次列表排除撤回内容；旧执行入口不能修改持久活动任务。该层不自行启动模型任务，公开入口由 M4-C 接入后台服务。
 
+个人上下文由 `group_context_service.py` 在读快照中装配。`services/memory/group_memory_recall.py` 只查询发言 Persona 的入群记忆，不访问来源会话。
+
 迁移 `b1e2f3a4b5c6` 追加会话版本、撤回字段、候选检查点/参数和 `group_round_operations`，不重建历史表。请求同群唯一、活动任务同群部分唯一，组合外键限制同轮同群；参数只保存白名单与无凭据提供方摘要。启动收敛同时标记遗留操作与候选失败，按会话递增版本；M4-B 已通过下述独立后台入口接入检查点推进和续接。新服务和测试沿用现有隔离副本复制范围。
 
 M4-B 的 `group_background_service.submit_group_operation` 创建即登记 Worker，再由 Worker 自行取得执行权和独立 Session，接受 send/regenerate/resume 后通过 shield 握手返回回执。调用方断连只停止等待，关闭等待已登记任务与数据库线程、客户端收尾。`group_checkpoint_service` 将持久目标绑定到当前 Task、Operation、会话、轮次、候选与 revision，允许执行未选中的新候选，同时保留旧入口的选中限制。M3 与 M4 复用 `group_round_service._execute_round`，没有复制导演或个人协议。

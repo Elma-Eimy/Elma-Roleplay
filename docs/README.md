@@ -62,6 +62,8 @@
 
 [M4 整轮候选与失败恢复设计](plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) 规划原子确认、持久请求回执、候选切换、失败检查点与撤回，以及后台执行和 GET 恢复边界；M4-A–D 数据、后台恢复、HTTP 与详情页交互已接通，真实模型恢复及 App/微信真机仍待联合验收，见[群聊 M4 交接](testing/GROUP_CHAT_M4.md)。
 
+[M5 群聊记忆与人格成长](plans/group-chat/M5_MEMORY_AND_GROWTH.md) 记录已接入的继承快照召回，以及按成员提纯和更新认知的后续批次。
+
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 
 [聊天 Store 生命周期评估](plans/CHAT_LIFECYCLE_REVIEW.md) 保留初评证据，标注已完成的异步回写、编辑反馈与切服失效修复；进一步拆分 Store 仍待评估。
