@@ -60,7 +60,7 @@
 
 [M3 导演与有限互动设计](plans/group-chat/M3_DIRECTOR.md) 记录导演协议、执行基础、可见单元与审计，以及 M3-D 本机只读预览和 H5 联通；真实模型语义及 App/微信真机仍待验收。
 
-[M4 整轮候选与失败恢复设计](plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) 规划原子确认、持久请求回执、候选切换、失败检查点与撤回，以及后台执行和 GET 恢复边界；M4-A–C 数据、内部事务、后台执行、检查点续接与 HTTP 已实现，下一批为 M4-D 页面交互。
+[M4 整轮候选与失败恢复设计](plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) 规划原子确认、持久请求回执、候选切换、失败检查点与撤回，以及后台执行和 GET 恢复边界；M4-A–D 数据、后台恢复、HTTP 与详情页交互已接通，真实模型恢复及 App/微信真机仍待联合验收，见[群聊 M4 交接](testing/GROUP_CHAT_M4.md)。
 
 [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) 保留当前基线、样本研究与未完成事项。计划中的能力不能当作已实现接口；当前行为查对应功能说明与代码。
 

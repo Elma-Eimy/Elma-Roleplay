@@ -24,7 +24,7 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 ## 模块边界
 
-群聊 M1-A 已建立 `Session.kind` 与 `Session.personas` 数据基础。单聊使用 slot 0，群聊预留 slot 1–3；`Session.persona` 只读兼容单聊，对群聊返回空。`services/conversation/session_access.py` 在旧入口读取或修改前检查类型，应用工厂统一将类型冲突转换为 HTTP 409。旧单聊列表在计数和分页前排除群聊；角色被群聊引用时拒绝删除。M1-B/C 已提供群聊创建、来源快照和删除服务及 HTTP 接口，M1-D 已接入最小页面，群聊生成尚未开放。
+群聊 M1-A 已建立 `Session.kind` 与 `Session.personas` 数据基础。单聊使用 slot 0，群聊预留 slot 1–3；`Session.persona` 只读兼容单聊，对群聊返回空。`services/conversation/session_access.py` 在旧入口读取或修改前检查类型，应用工厂统一将类型冲突转换为 HTTP 409。旧单聊列表在计数和分页前排除群聊；角色被群聊引用时拒绝删除。M1-B/C 已提供群聊创建、来源快照和删除服务及 HTTP 接口，M1-D 已接入最小页面；M4 已接通后台生成、候选操作与详情页交互。
 
 HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接口使用默认单聊的 `SessionAPIRouter`，群聊管理使用 `GroupSessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得所属策略的类型限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
 
@@ -72,7 +72,7 @@ M4-A 的 `group_operation_service.py` 提供内部 send/select/discard 接受事
 
 M4-B 的 `group_background_service.submit_group_operation` 创建即登记 Worker，再由 Worker 自行取得执行权和独立 Session，接受 send/regenerate/resume 后通过 shield 握手返回回执。调用方断连只停止等待，关闭等待已登记任务与数据库线程、客户端收尾。`group_checkpoint_service` 将持久目标绑定到当前 Task、Operation、会话、轮次、候选与 revision，允许执行未选中的新候选，同时保留旧入口的选中限制。M3 与 M4 复用 `group_round_service._execute_round`，没有复制导演或个人协议。
 
-初判、调度、完整发言和最终结束分别原子推进检查点；续接核对原文范围、完整知情、父项与审计，复用未完成调度，不重跑已保存前缀。只有新候选完整成功才在同事务切换选择并结束回执；失败保留原选择。每次尝试派发前提交调用消费与版本，提交后按持久绝对期限重新计算 timeout，响应后核对同一期限，避免慢提交延长调用预算。续接恢复冻结参数并仅使用剩余步数，finish 零调用；同提供方可换凭据，换地址或缺失快照拒绝续接。公开 HTTP 已由 M4-C 接入，页面交互仍留给 M4-D。
+初判、调度、完整发言和最终结束分别原子推进检查点；续接核对原文范围、完整知情、父项与审计，复用未完成调度，不重跑已保存前缀。只有新候选完整成功才在同事务切换选择并结束回执；失败保留原选择。每次尝试派发前提交调用消费与版本，提交后按持久绝对期限重新计算 timeout，响应后核对同一期限，避免慢提交延长调用预算。续接恢复冻结参数并仅使用剩余步数，finish 零调用；同提供方可换凭据，换地址或缺失快照拒绝续接。公开 HTTP 已由 M4-C 接入，M4-D 页面通过持久 UUID 和 GET 查询恢复已接受任务。
 
 M4-C 的群聊路由使用严格请求模型与现有群聊访问策略，生成操作返回后台接受回执，选择/撤回使用短事务。路径轮次及嵌套候选在接受事务中核对归属；相同请求重放优先于当前版本校验。`group_query_service` 在独立只读事务中查询请求、候选及 current 版本快照，候选 state_preview 明确绑定候选，不修改成员起点。HTTP 能力按运行权可用性返回，旧内部接受原语不自行派发模型；详细响应与错误边界见[群聊 API](../api/GROUP_SESSIONS.md)。
 

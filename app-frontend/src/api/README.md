@@ -26,4 +26,4 @@ import type { MemoryChunk } from "@/types/memories";
 
 群聊数据使用独立类型和 Mock 存储集合，不混入旧单聊列表。创建请求失败不自动重发；Mock 的来源快照明确报错，角色仍被群聊引用时拒绝删除。`groupSessions.ts` 也提供整轮只读查询，类型中的 revision/finish_reason/error_code 保持可选以兼容旧响应；Mock 原样读取虚构样本，不推断终止原因或导演判定。
 
-M4-C 新增写操作、请求回执与候选查询函数，保留客户端请求 UUID、会话版本及目标候选版本；API 层不自动重发或轮询。Mock 对新能力明确拒绝，页面交互与 GET 恢复留给 M4-D。
+M4-C 新增写操作、请求回执与候选查询函数，保留客户端请求 UUID、会话版本及目标候选版本；API 层不自动重发或轮询。M4-D 的 `useGroupRoundFlow.ts` 在页面层管理 GET 轮询与本机请求 ID 恢复；Mock 对新能力明确拒绝，页面保留阅读能力。
