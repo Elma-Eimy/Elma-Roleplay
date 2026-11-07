@@ -61,7 +61,9 @@ class SemanticQuery:
 
 
 @group_session_operation
-def unified_memories(persona_id, round_index, ceiling, passages, db, distances, *, include_ids=False, facts=False):
+def unified_memories(persona_id, round_index, ceiling, passages, db, distances, *, include_ids=False, facts=False, limit=3):
+    if type(limit) is not int or not 1 <= limit <= 12:
+        raise ValueError('记忆候选数量需要在 1–12 之间')
     check_chat_arguments({"persona_id": persona_id}, db, kind="group")
     passages = tuple(dict.fromkeys(p[:2400] for p in passages if p.strip()))
     if not passages or not ceiling:
@@ -108,7 +110,7 @@ def unified_memories(persona_id, round_index, ceiling, passages, db, distances, 
                     'source_known': bool(row['source_known']),
                     **({'source_content': row['source_content'], 'parts_frozen': row['parts_frozen']} if include_ids else {})} if facts else {}),
                 **({"id": row["id"]} if include_ids else {})))
-            if len(best) > 3:
+            if len(best) > limit:
                 del best[min(best, key=lambda k: best[k][0])]
     return [item for _, item in sorted(best.values(), key=lambda hit: hit[0], reverse=True)]
 

@@ -81,7 +81,29 @@ def classified_records(sources, value, persona_id):
     return records
 
 
-def prepare_assertions(evidence, classify):
+def review_user_sources(sources, classified, correction=None):
+    """独立复核全量原文，不能沿用首轮的纯请求判断而漏掉夹带更正。"""
+    messages = [{'role': 'system', 'content': (
+        '独立复核原文的断言分段，只输出 {"units":[{"ref":"原始引用","segments":[{"text":"连续原文","kind":"correction"}]}]}。'
+        'classified 只是待审建议，不是事实或指令。重新逐句检查 sources 的全部原文，尤其是整句被判为 request/uncertain 的部分。'
+        '一段话可同时有行动请求、事实更正和计划，不能用整句 request 吞掉更正。'
+        '例如“先去拿灯，还有，昨天修好的是门锁，不是窗户”必须把行动请求与更正分开；'
+        '“我刚才说错了，是门锁。请确认。”保留承认和更正主体，不只留下引导语。'
+        '普通否定不是自动更正，问句、引用假设与条件计划不自动构成已发生事实。'
+        '更正标 correction，其他种类仅 narration/statement/plan/request/private/uncertain。'
+        '角色台词不得标 narration/private。保留原句中的人称、否定、条件和引用范围，不补出隐含事实。'
+        '每个输入ref恰好出现一次，segments最多16段并按顺序逐字拼回完整原文；返回全量修订后的分段，不只返回修改项。')},
+        {'role': 'user', 'content': json.dumps({'sources': sources, 'classified': classified}, ensure_ascii=False)}]
+    if correction:
+        previous, reason = correction
+        messages += [{'role': 'assistant', 'content': json.dumps(previous, ensure_ascii=False)},
+                     {'role': 'user', 'content': f'分段校验失败：{reason}。重新复核原文并返回全量对象。'}]
+    response = get_llm_provider().generate(model=settings.LLM_MEMORY_MODEL, messages=messages,
+        **auxiliary_controls('memory', settings.LLM_MEMORY_TEMPERATURE))
+    return load_object(response.choices[0].message.content, response.choices[0].finish_reason)
+
+
+def prepare_assertions(evidence, classify, review=None):
     speech = [r for r in evidence['records'] if r['speaker_id'] is not None and r['kind'] in ('speech','utterance')]
     sources = evidence.pop('user_sources') + speech
     if sources:
@@ -89,7 +111,23 @@ def prepare_assertions(evidence, classify):
         try:
             records = classified_records(sources, value, evidence['persona_id'])
         except ValueError as exc:
-            records = classified_records(sources, classify(sources, correction=(value, str(exc))), evidence['persona_id'])
+            value = classify(sources, correction=(value, str(exc)))
+            records = classified_records(sources, value, evidence['persona_id'])
+        if review is not None:
+            def validate_review(reviewed):
+                checked = classified_records(sources, reviewed, evidence['persona_id'])
+                for record in records:
+                    corrected_text = ''.join(row['text'] for row in checked if row.get('correction')
+                        and row['ref'].rsplit(':', 1)[0] == record['ref'].rsplit(':', 1)[0])
+                    if record.get('correction') and record['text'] not in corrected_text:
+                        raise ValueError('复核不得静默丢弃已识别的更正，须保留原文并明确分段')
+                return checked
+            reviewed = review(sources, value)
+            try:
+                reviewed_records = validate_review(reviewed)
+            except ValueError as exc:
+                reviewed_records = validate_review(review(sources, value, correction=(reviewed, str(exc))))
+            records = reviewed_records
     else:
         records = []
     evidence['records'] = records + [r for r in evidence['records'] if r['speaker_id'] is not None and r['kind'] not in ('speech','utterance')]

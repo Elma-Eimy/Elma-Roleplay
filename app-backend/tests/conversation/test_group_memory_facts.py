@@ -7,7 +7,7 @@ from sqlalchemy import func
 from core.models import GroupMemoryCapture,GroupRound,GroupRoundCandidate,GroupRecallCard,OutboxJob
 from services.conversation import group_session_service as groups,group_history_service as history
 from services.conversation.group_unit_protocol import ContentUnit,UnitPlan
-from services.memory.group_memory_assertions import classified_records
+from services.memory.group_memory_assertions import classified_records, prepare_assertions
 from services.memory.group_memory_capture import enqueue_confirmed_group,process_one_capture,_validated_cards
 from services.memory.group_memory_index import unified_memories
 from tests.conversation import test_group_session_service as fixtures
@@ -145,7 +145,11 @@ class GroupMemoryFactsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'更正'):
             _validated_cards(value,evidence)
         value['unmatched_corrections']=[{'ref':'1:0','reason':'no_target'}]
-        self.assertEqual([],_validated_cards(value,evidence))
+        with self.assertRaisesRegex(ValueError,'保留来源卡'):
+            _validated_cards(value,evidence)
+        value['cards']=[dict(content='甲承认刚才说错。', memory_type='fact',temporal_status='current',
+            ref='1:0',quote=record['text'],claim_kind='statement')]
+        self.assertEqual(1,len(_validated_cards(value,evidence)))
         value['unmatched_corrections'][0]['ref']='foreign'
         with self.assertRaises(ValueError):
             _validated_cards(value,evidence)
@@ -171,7 +175,9 @@ class GroupMemoryFactsTests(unittest.TestCase):
         def classify(sources,correction=None):
             return {'units':[{'ref':r['ref'],'segments':[{'text':r['text'],'kind':'correction'}]} for r in sources]}
         def extract(evidence):
-            return {'cards':[],'insights':[],'partitions':[],'unmatched_corrections':[
+            source=evidence['records'][0]
+            return {'cards':[dict(content='用户承认刚才说错。',memory_type='fact',temporal_status='current',
+                ref=source['ref'],quote=source['text'],claim_kind='statement')],'insights':[],'partitions':[],'unmatched_corrections':[
                 {'ref':evidence['records'][0]['ref'],'reason':'no_target'}]}
         with self.sessions() as db:
             process_one_capture(db,classify=classify,extract=extract)
@@ -210,3 +216,75 @@ class GroupMemoryFactsTests(unittest.TestCase):
         result=validate_revision({'card_id':4,'start':0,'end':4,'mode':'correct'},
             {'claim_kind':'statement'},{'speaker_id':2},{'prior_facts':[prior]}, {})
         self.assertEqual('dispute',result['mode'])
+
+    def test_independent_review_recovers_correction_inside_whole_request_and_preserves_it_without_target(self):
+        request='先去拿灯，还有，'
+        corrected='昨天修好的是门锁，不是窗户。'
+        self.prepare(request+corrected)
+        seen=[]
+        def classify(sources,correction=None):
+            return {'units':[{'ref':r['ref'],'segments':[{'text':r['text'],'kind':'request'}]} for r in sources]}
+        def review(sources,classified,correction=None):
+            self.assertEqual('request',classified['units'][0]['segments'][0]['kind'])
+            self.assertEqual(request+corrected,sources[0]['text'])
+            return {'units':[{'ref':sources[0]['ref'],'segments':[
+                {'text':request,'kind':'request'},{'text':corrected,'kind':'correction'}]}]}
+        def extract(evidence):
+            seen.extend(evidence['records'])
+            source=evidence['records'][0]
+            return {'cards':[dict(content='用户更正昨天修好的是门锁而非窗户。', memory_type='fact',
+                temporal_status='historical',ref=source['ref'],quote=corrected,claim_kind='statement')],
+                'insights':[],'partitions':[], 'unmatched_corrections':[{'ref':source['ref'],'reason':'no_target'}]}
+        with self.sessions() as db:
+            self.assertTrue(process_one_capture(db,classify=classify,review=review,extract=extract))
+        self.assertEqual([corrected],[record['text'] for record in seen])
+        self.db.expire_all()
+        job=self.db.query(GroupMemoryCapture).one()
+        self.assertEqual('correction_unmatched',job.error_code)
+        self.assertIn('门锁',job.cards_json)
+        self.assertEqual({self.a},{row.persona_id for row in self.db.query(GroupMemoryCapture)})
+
+    def test_bad_review_retries_with_same_visible_sources_and_never_saves_partial_memory(self):
+        self.prepare('我刚才说错了，是门锁。请确认。')
+        seen=[]
+        def classify(sources,correction=None):
+            return {'units':[{'ref':r['ref'],'segments':[{'text':r['text'],'kind':'correction'}]} for r in sources]}
+        def review(sources,classified,correction=None):
+            seen.append((sources,correction))
+            return {'units':[{'ref':r['ref'],'segments':[{'text':r['text'],'kind':'request'}]} for r in sources]}
+        def extract(evidence):
+            self.fail('更正被复核丢弃时不应继续提取')
+        with self.sessions() as db:
+            process_one_capture(db,classify=classify,review=review,extract=extract)
+        self.assertEqual(2,len(seen))
+        self.assertEqual(seen[0][0],seen[1][0])
+        self.assertIn('不得静默丢弃',seen[1][1][1])
+        self.db.expire_all()
+        job=self.db.query(GroupMemoryCapture).one()
+        self.assertIsNone(job.cards_json)
+        self.assertEqual('extraction_failed',job.error_code)
+
+    def test_review_rejects_foreign_ref_and_pure_request_still_has_no_fact(self):
+        sources=[dict(ref='1:0',text='请明天修门锁。',speaker_id=None,speaker='用户',kind='request')]
+        evidence=lambda:dict(persona_id=1,user_sources=sources,records=[])
+        classify=lambda sources: {'units':[{'ref':'1:0','segments':[{'text':sources[0]['text'],'kind':'request'}]}]}
+        review=lambda sources,classified: classified
+        self.assertEqual([],prepare_assertions(evidence(),classify,review)['records'])
+        def foreign(sources,classified,correction=None):
+            return {'units':[{'ref':'hidden','segments':[{'text':'秘密','kind':'correction'}]}]}
+        with self.assertRaises(ValueError):
+            prepare_assertions(evidence(),classify,foreign)
+
+    def test_correction_search_can_include_more_than_three_old_facts_without_widening_owner_or_turn(self):
+        self.prepare('请确认门锁。')
+        self.db.query(GroupMemoryCapture).one().cards_json=json.dumps([
+            dict(content=f'门锁记录编号{i}',memory_type='fact',temporal_status='current',ref='1:0',quote='门锁') for i in range(6)])
+        self.db.commit()
+        ceiling=self.db.query(func.max(GroupRecallCard.id)).scalar()
+        from services.memory.group_memory_capture import _evidence
+        target=self.prepare('昨天修好的是门锁，不是窗户。')
+        job=self.db.query(GroupMemoryCapture).filter_by(candidate_id=target['candidate_id']).one()
+        evidence=_evidence(job,self.db,raw=True)
+        self.assertEqual(6,len([row for row in evidence['prior_facts'] if '门锁记录' in row['content']]))
+        self.assertEqual([],unified_memories(self.b,3,ceiling,['门锁'],self.db,{},facts=True,limit=12))
+        self.assertEqual([],unified_memories(self.a,1,ceiling,['门锁'],self.db,{},facts=True,limit=12))

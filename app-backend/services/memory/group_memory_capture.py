@@ -16,7 +16,7 @@ from services.infrastructure.model_capabilities import auxiliary_controls
 from services.memory.group_member_insights import allowed_targets, member_insights, validated_insights
 from services.memory.group_memory_index import unified_memories
 from services.memory.memory_facts import TEMPORAL_STATUSES
-from services.memory.group_memory_assertions import classify_user_sources, prepare_assertions
+from services.memory.group_memory_assertions import classify_user_sources, review_user_sources, prepare_assertions
 from services.memory.group_memory_facts import CLAIM_KINDS, validate_partitions, validate_revision
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def _evidence(job, db, *, raw=False):
     if raw:
         result['user_sources'] = user_sources
         result['prior_facts'] = unified_memories(persona.id, round_.round_index, policy.get('group_card_limit', 0),
-                                                passages, db, {}, include_ids=True, facts=True)
+                                                passages, db, {}, include_ids=True, facts=True, limit=12)
     return result
 
 
@@ -139,7 +139,7 @@ def _extract(evidence, correction=None):
             '同时保留同卡刻字、保管条件等未被否定的片段。prior_facts 仅供查找更正对象，所有新结论仍须由 records 支持。'
             'records 的 correction=true 是需要逐项处理的更正。每个这样的 ref 必须产生带 replaces_part 的卡，'
             '或写入 unmatched_corrections：{"ref":"更正引用","reason":"no_target/not_same_fact/insufficient_evidence"}。'
-            '旧卡已提供且明确为同一说法时应关联，不可拆了旧卡却漏掉撤回引用；找不到目标时保留更正并说明，禁止随便覆盖。'
+            '旧卡已提供且明确为同一说法时应关联，不可拆了旧卡却漏掉撤回引用；找不到目标时仍须保存该ref的更正卡并说明未匹配，禁止只有诊断而丢弃更正。'
             '若同轮用户提出异议、原说话人承认说错，二者各保留一张 statement，分别 dispute 与 retract 同一个旧片段。'
             '拆分后的 replaces_part.quote 必须只选 parts 中的一项，不可仍填整卡原文。更正优先于普通计划和关系摘要。'
             'insights 最多4条，包含 target、content（1–240字）、ref、quote；target 原样选择该ref的 allowed_targets。'
@@ -213,6 +213,8 @@ def _validated_cards(value, evidence):
                     or item['reason'] not in ('no_target','not_same_fact','insufficient_evidence')):
                 raise ValueError('未匹配更正必须逐项引用真实更正来源')
             seen.add(item['ref'])
+            if not any(card['ref'] == item['ref'] for card in cards):
+                revision_errors.append(f'未匹配更正仍须保留来源卡：{item["ref"]}')
         if corrections - handled - seen:
             revision_errors.append(f'明确更正遗漏关联：以下 ref 须各自生成带 replaces_part 的卡或明确说明未匹配：{sorted(corrections-handled-seen)}')
         targets={c['replaces_part']['card_id'] for c in cards if 'replaces_part' in c}
@@ -229,7 +231,7 @@ def _capture_results(value, evidence, *, skip_invalid=False):
     return cards, insights
 
 
-def process_one_capture(db, *, extract=None, classify=None):
+def process_one_capture(db, *, extract=None, classify=None, review=None):
     """独占一次到期任务；耗时调用期间释放事务，过期执行者不能覆盖新结果。"""
     now = datetime.utcnow()
     db.execute(text("BEGIN IMMEDIATE"))
@@ -252,7 +254,8 @@ def process_one_capture(db, *, extract=None, classify=None):
         evidence = _evidence(job, db, raw=structured)
         db.rollback()
         if structured:
-            evidence = prepare_assertions(evidence, classify or classify_user_sources)
+            evidence = prepare_assertions(evidence, classify or classify_user_sources,
+                review=review if review is not None else review_user_sources if extract is None and classify is None else None)
         extractor = extract or _extract
         value = extractor(evidence) if evidence["records"] else {"cards": [], "insights": [], **({'partitions':[],'unmatched_corrections':[]} if structured else {})}
         error_code = None
