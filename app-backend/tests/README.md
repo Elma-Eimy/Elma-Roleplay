@@ -4,7 +4,7 @@
 
 ## 自动回归
 
-`conversation/test_group_output_retry.py` 验证当前阶段三次格式尝试、持久计数与一次提交、耗尽后无残缺写入、旧快照兼容，以及网络/取消/截断/语义拒绝不重试。`test_group_memory_evidence.py` 验证角色不复述时原始事实仍能进入提纯，且关系引文索引只包含对应对象的可见来源；请求和私密内容仍被排除。提示词的真实质量另见[阶段验收](../../docs/testing/GROUP_CHAT_M1_M5_STAGE.md)。
+`conversation/test_group_output_retry.py` 验证当前阶段三次格式尝试、持久计数与一次提交、耗尽后无残缺写入、旧快照兼容，以及网络/取消/截断/语义拒绝不重试。`test_group_memory_evidence.py` 验证角色不复述时原始事实仍能进入提纯，且关系引文索引只包含对应对象的可见来源；请求和私密内容仍被排除。`test_group_memory_facts.py` 覆盖独立断言分类、明确更正完成检查、三次校验上限、局部撤回、异议与成员隔离，以及旧候选边界；`infrastructure/test_group_memory_parts_migration.py` 核对旧库保留、分段不可变和降级保护。提示词的真实质量另见[阶段验收](../../docs/testing/GROUP_CHAT_M1_M5_STAGE.md)。
 
 `conversation/test_group_turn_plan.py` 覆盖请求与感知分离、私密片段和世界书隔离、承接依据权限及消费、来源窗口、策略与 JSON 参数冻结、v1 兼容，以及审查拒绝后的原依据续接。统一入口明确让原有固定响应夹具继续使用旧策略；本专项显式启用新策略，真实 API 另验，不能把旧夹具通过当成新语义验证。
 
