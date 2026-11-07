@@ -126,7 +126,10 @@ def restore_group_calls(candidate, member_ids):
     """续接只恢复已保存参数，提供方可轮换凭据但不能切服。"""
     try:
         value = json.loads(candidate.call_snapshot_json)
-        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall"} != {
+        limit = value.get("group_card_limit", 0)
+        if type(limit) is not int or limit < 0:
+            raise ValueError
+        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError

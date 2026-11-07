@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import func, text
 
-from core.models import GroupMemberInsight, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem
+from core.models import GroupMemberInsight, GroupRecallCard, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem
 from services.conversation import group_history_service as history
 from services.conversation.group_session_service import _begin_write, _locked_write, GroupSessionValidationError
 from services.conversation.session_access import group_session_operation, SessionKindConflict
@@ -175,6 +175,10 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 if not latest or latest.confirmed_at is not None:
                     raise SessionKindConflict("只能重生成最新未确认轮次")
                 version = db.query(func.max(GroupRoundCandidate.version)).filter_by(round_id=latest.id).scalar() + 1
+            if snapshot.inherited_recall:
+                policy = json.loads(encoded)
+                policy["group_card_limit"] = db.query(func.max(GroupRecallCard.id)).scalar() or 0
+                encoded = json.dumps(policy, ensure_ascii=False, sort_keys=True)
             selected = GroupRoundCandidate(session_id=session_id, round_id=latest.id, protocol_version=2, version=version,
                 insight_watermark=db.query(func.max(GroupMemberInsight.id)).scalar() or 0,
                 checkpoint="user_visibility", call_snapshot_json=encoded, provider_fingerprint=provider)

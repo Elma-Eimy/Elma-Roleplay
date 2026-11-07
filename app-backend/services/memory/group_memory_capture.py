@@ -1,6 +1,7 @@
 """确认时按成员登记，后台只从所选候选的个人可见记录取证。"""
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_, text
@@ -13,9 +14,11 @@ from services.conversation.group_unit_service import _member_projection
 from services.infrastructure.llm_provider import get_llm_provider
 from services.infrastructure.model_capabilities import auxiliary_controls
 from services.memory.group_member_insights import allowed_targets, member_insights, validated_insights
+from services.memory.group_memory_index import unified_memories
 from services.memory.memory_facts import TEMPORAL_STATUSES
 
 logger = logging.getLogger(__name__)
+_CLAUSE_BREAK = re.compile(r"[，,;；。！？!?\n]|\.(?:\s|$)")
 
 
 def enqueue_confirmed_group(round_, candidate, db):
@@ -66,7 +69,13 @@ def _evidence(job, db):
     initial = json.loads(persona.group_origin.initial_state_json)
     perspective = {"personality": persona.character.personality, "initial_cognition": initial["cognition_state"],
                    "previous_insights": member_insights(persona.id, round_, candidate, db)}
-    return {"persona_id": persona.id, "name": members[persona.id], "perspective": perspective, "records": records}
+    policy = json.loads(candidate.call_snapshot_json or "{}")
+    prior = unified_memories(persona.id, round_.round_index, policy.get("group_card_limit", 0),
+                             [r["text"] for r in records], db, {}, include_ids=True)
+    # 只提供单个陈述作为整卡覆盖目标，避免更正保管人时一并丢掉同卡的编号。
+    prior = [card for card in prior if sum(bool(p.strip()) for p in _CLAUSE_BREAK.split(card["content"])) == 1]
+    return {"persona_id": persona.id, "name": members[persona.id], "perspective": perspective, "records": records,
+            "prior_cards": prior}
 
 
 def _extract(evidence, correction=None):
@@ -81,6 +90,8 @@ def _extract(evidence, correction=None):
               'target="self" 表示自身认识；对用户本人的印象只能引用用户台词（speaker_id=null 且 kind=speech），用 "user"。'
               '对其他成员的印象须引用该成员的可见言行，target 填记录中的整数 speaker_id。每个关系对象最多一条。'
               'perspective 是本人的背景，只用于理解其反应；新认识和记忆都须由 records 提供新证据。'
+              'prior_cards 仅供对照。当可见引文明确更正同一事实或取消同一计划，且新卡记下该修正时，'
+              '可在新卡额外填写 replaces_id，值为该旧卡的整数 id。话题相似、转述或猜测不足以覆盖旧卡。'
               '区分发言者和被谈论的人；不把用户叙事等同于用户行为。无依据时留空。')
     messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]
     if correction:
@@ -99,9 +110,12 @@ def _validated_cards(value, evidence):
     sources = {record["ref"]: record["text"] for record in evidence["records"]}
     cards = []
     for index, card in enumerate(value["cards"], 1):
-        if not isinstance(card, dict) or set(card) != {"content", "memory_type", "temporal_status", "ref", "quote"}:
+        if not isinstance(card, dict) or set(card) - {"replaces_id"} != {"content", "memory_type", "temporal_status", "ref", "quote"}:
             raise ValueError("记忆卡字段无效")
-        if not all(isinstance(v, str) and v.strip() for v in card.values()):
+        if "replaces_id" in card and (type(card["replaces_id"]) is not int or card["replaces_id"] not in
+                                      {prior["id"] for prior in evidence.get("prior_cards", [])}):
+            raise ValueError(f"cards 第 {index} 条覆盖目标不属于本次个人依据")
+        if not all(isinstance(v, str) and v.strip() for k, v in card.items() if k != "replaces_id"):
             raise ValueError("记忆卡字段为空")
         if (len(card["content"]) > 500 or len(card["quote"]) > 200 or card["memory_type"] not in {kind.value for kind in MemoryType}
                 or card["temporal_status"] not in TEMPORAL_STATUSES or card["quote"] not in sources.get(card["ref"], "")):

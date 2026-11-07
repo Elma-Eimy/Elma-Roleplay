@@ -999,8 +999,13 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
                     "\n这些是你自己的主观看法。cognition 是个人认识，user 指对用户的印象，member 指对所列成员的印象。")
     if inherited_memories:
         memory_data = json.dumps(inherited_memories, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
-        context += ("\n【本人入群前的相关记忆】\n" + memory_data +
-                    "\n这些是你本人在入群时保留的记忆资料。区分过去、现状和计划，其他成员是否知情须看群聊中的实际交流。")
+        if any("source" in card for card in inherited_memories):
+            context += ("\n【本人相关记忆】\n" + memory_data +
+                        "\ninherited 表示入群快照，group 表示本人在所标群聊轮次形成的记忆。只有同一件事有明确修正时才采用后来的说法；"
+                        "区分过去、现状、转述和计划。其他成员是否知情须看实际交流。")
+        else:
+            context += ("\n【本人入群前的相关记忆】\n" + memory_data +
+                        "\n这些是你本人在入群时保留的记忆资料。区分过去、现状和计划，其他成员是否知情须看群聊中的实际交流。")
     if protocol_version == 2:
         context += ("\n【个人可见历史顺序】\n" + json.dumps(timeline, ensure_ascii=False) +
             "\norder 仅表示以下个人可见历史的顺序，不代表完整群聊；未提供不等于没有发生。"

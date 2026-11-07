@@ -105,7 +105,13 @@ def execute_job(job: OutboxJob):
 
 
 def execute_task(task_type: str, payload: str):
-    if task_type == "upsert_vector":
+    if task_type == "sync_group_card":
+        from services.memory.group_memory_index import sync_group_card
+        sync_group_card(json.loads(payload)["id"], SessionLocal)
+    elif task_type == "rebuild_group_index":
+        from services.memory.group_memory_index import rebuild_group_index
+        rebuild_group_index(SessionLocal)
+    elif task_type == "upsert_vector":
         handle_upsert_vector(payload)
     elif task_type == "delete_vector":
         handle_delete_vector(payload)

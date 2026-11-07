@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from sqlalchemy import and_, func, text
 
 from services.memory.group_member_insights import member_insights
+from services.memory.group_memory_index import SemanticQuery, unified_memories
 from services.memory.group_memory_recall import recall_inherited_memories
 from core.config import settings
 from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
@@ -59,26 +60,41 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
         current_scenario_override=group.shared_setting or initial["current_scenario_override"])
 
 
-def _inherited_memories(persona_id, round_id, candidate, rows, requests, basis, db):
+def _member_memories(persona_id, round_, candidate, rows, requests, basis, db, distances):
     # 持久候选沿用接受时的策略；内部 v2 原型没有调用快照。
     if candidate.protocol_version != 2:
         return []
-    if candidate.call_snapshot_json and not json.loads(candidate.call_snapshot_json).get("inherited_recall", False):
+    policy = json.loads(candidate.call_snapshot_json) if candidate.call_snapshot_json else {}
+    if candidate.call_snapshot_json and not policy.get("inherited_recall", False):
         return []
     if basis:
         passages = [unit["text"] for unit in basis["units"]] if "units" in basis else [basis["content"]]
     else:
         passages = [request["content"] for request in requests]
         for row in rows[-3:]:
-            if row.round_id == round_id:
+            if row.round_id == round_.id:
                 parts = row.visible_passages if row.kind == "user" else tuple(unit.text for unit in row.visible_units)
                 passages.extend(parts or (row.content,))
+    if "group_card_limit" in policy:
+        return unified_memories(persona_id, round_.round_index, policy["group_card_limit"], passages, db, distances)
     return recall_inherited_memories(persona_id, passages, db)
 
 
 @group_session_operation
 def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None,
                          generation_parameters_json=None, history_limit=None, scope=None):
+    def read(distances):
+        return _read_context(session_id, persona_id, candidate_id, expected_revision, db, model,
+                             generation_parameters_json, history_limit, scope, distances)
+    context = read(None)
+    if isinstance(context, SemanticQuery):
+        # Embedding 期间不持有数据库事务，重读时复核候选 revision 与成员归属。
+        return read(context.distances())
+    return context
+
+
+def _read_context(session_id, persona_id, candidate_id, expected_revision, db, model,
+                  generation_parameters_json, history_limit, scope, distances):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     history._positive(persona_id, "成员")
@@ -106,7 +122,9 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
         speaker_ids = {row.speaker_persona_id for row in rows if row.speaker_persona_id is not None}
         names = {member.id: member.character.name for member in db.query(SessionPersona).filter(
             SessionPersona.id.in_(speaker_ids)).all()}
-        memories = _inherited_memories(persona.id, round_.id, candidate, rows, requests, basis, db)
+        memories = _member_memories(persona.id, round_, candidate, rows, requests, basis, db, distances)
+        if isinstance(memories, SemanticQuery):
+            return memories
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
             shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,

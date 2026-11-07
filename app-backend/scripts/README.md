@@ -9,6 +9,7 @@
 | `python -m scripts.memory_quality` | 在临时副本中运行固定虚构记忆样本，生成整理前后与召回对照报告；默认离线 |
 | `python -m scripts.group_chat_prototype` | 在临时源码和虚构库中回放导演选人、个人生成、知情后判与只读 HTTP，默认离线 |
 | `python -m scripts.query_session_messages 12 15` | 查看会话 12 的最近 15 条消息 |
+| `python -m scripts.rebuild_group_memory_index` | 为当前库登记群聊向量重建任务。后台替换群聊集合并重索引，期间词项召回仍可用 |
 | `python -m scripts.clear_db` | 清空当前配置的 SQLite/ChromaDB 数据，并用 Alembic 重建 SQLite |
 
 查询工具会读取实际消息和角色内容。清库工具保留原有终端确认步骤；它会永久删除数据，执行前应停止服务并备份。上述查询/清库工具使用当前 `core.config` 和 `core.database`。

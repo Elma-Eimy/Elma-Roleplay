@@ -48,3 +48,19 @@ class GroupCaptureMigrationTests(unittest.TestCase):
             self.assertEqual(0, db.exec_driver_sql("SELECT count(*) FROM group_memory_captures").scalar())
             self.assertEqual([], db.exec_driver_sql("PRAGMA foreign_key_check").all())
         command.downgrade(self.config, "b2f3a4b5c6d7")
+
+    def test_recall_migration_backfills_completed_card_and_cascades_its_index_job(self):
+        fixtures.GroupOperationsMigrationTests.setUp(self)
+        command.upgrade(self.config, "b4c5d6e7f8a9")
+        with self.engine.begin() as db:
+            db.exec_driver_sql("INSERT INTO group_memory_captures(session_id,round_id,candidate_id,persona_id,cards_json) "
+                               """VALUES (2,1,1,20,'[{"content":"old card","memory_type":"fact","temporal_status":"current"}]')""")
+        command.upgrade(self.config, "b5d6e7f8a9b0")
+        with self.engine.begin() as db:
+            card_id,slot = db.exec_driver_sql("SELECT id,slot FROM group_recall_cards WHERE capture_id=1").one()
+            self.assertEqual(0,slot)
+            query = "SELECT count(*) FROM outbox_jobs WHERE task_type='sync_group_card' AND json_extract(payload,'$.id')=?"
+            self.assertEqual(1,db.exec_driver_sql(query,(card_id,)).scalar())
+            db.exec_driver_sql("DELETE FROM group_memory_captures WHERE id=1")
+            self.assertEqual(0,db.exec_driver_sql("SELECT count(*) FROM group_recall_cards WHERE id=?",(card_id,)).scalar())
+            self.assertEqual(2,db.exec_driver_sql(query,(card_id,)).scalar())

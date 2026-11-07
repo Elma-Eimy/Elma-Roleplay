@@ -9,11 +9,12 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 
 from sqlalchemy import (
     Table, Column, Integer, String, Text, Float, Boolean,
-    ForeignKey, ForeignKeyConstraint, DateTime, Enum as SAEnum, Index, text, CheckConstraint, UniqueConstraint
+    ForeignKey, ForeignKeyConstraint, DateTime, Enum as SAEnum, Index, text, CheckConstraint, UniqueConstraint, event
 )
 from sqlalchemy.orm import declarative_base, relationship, backref
 from sqlalchemy.sql import func
 import enum
+from core.group_recall_schema_v1 import install_triggers
 
 Base = declarative_base()
 
@@ -398,6 +399,27 @@ class GroupMemoryCapture(Base):
     run_after = Column(DateTime, nullable=False, server_default=func.now())
     error_code = Column(String(40))
     cards_json = Column(Text)
+
+
+class GroupRecallCard(Base):
+    """稳定的群聊索引编号，正文仍由快照或提纯结果提供。"""
+    __tablename__ = "group_recall_cards"
+    __table_args__ = (
+        CheckConstraint("(snapshot_id IS NOT NULL AND capture_id IS NULL AND slot IS NULL) OR "
+                        "(snapshot_id IS NULL AND capture_id IS NOT NULL AND slot IS NOT NULL AND slot >= 0)",
+                        name="ck_group_recall_origin"),
+        UniqueConstraint("capture_id", "slot", name="uq_group_recall_capture_slot"),
+        Index("ix_group_recall_owner", "persona_id", "id"),
+        Index("ix_group_recall_replaces", "replaces_id", sqlite_where=text("replaces_id IS NOT NULL")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id = Column(Integer, ForeignKey("group_inherited_memory_snapshots.id", ondelete="CASCADE"), unique=True)
+    capture_id = Column(Integer, ForeignKey("group_memory_captures.id", ondelete="CASCADE"))
+    slot = Column(Integer)
+    replaces_id = Column(Integer)
+    indexed = Column(Boolean, nullable=False, server_default="0")
 
 
 class GroupMemberInsight(Base):
@@ -952,3 +974,10 @@ class OutboxJob(Base):
     last_error   = Column(Text, nullable=True)
     created_at   = Column(DateTime, default=func.now())
     run_after    = Column(DateTime, default=func.now(), index=True, nullable=False) # 用于指数退避调度
+
+
+# create_all 用于隔离库；部署由 Alembic 安装同版触发器。
+@event.listens_for(Base.metadata, "after_create")
+def _install_group_recall_triggers(metadata, connection, **kwargs):
+    if GroupRecallCard.__table__ in kwargs["tables"]:
+        install_triggers(connection)
