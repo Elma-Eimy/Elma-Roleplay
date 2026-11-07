@@ -45,6 +45,7 @@
 | [前端回归检查](../app-frontend/tests/README.md) | 离线回归、类型检查与跨端验证 |
 | [记忆整理质量验收](testing/MEMORY_QUALITY.md) | 固定样本、隔离回放、显式在线验收与人工审阅 |
 | [群聊 M3 联通验收与交接](testing/GROUP_CHAT_M3.md) | 本机只读预览、H5 检查、模型/真机待验收项与后续模块边界 |
+| [群聊 M1–M5 阶段验收](testing/GROUP_CHAT_M1_M5_STAGE.md) | 离线基线、三端构建、真实调用与记忆/关系质量缺口 |
 | [持续集成](development/CI.md) | GitHub Actions 环境、本地文档链接检查、回归范围与失败排查 |
 | [后端维护工具](../app-backend/scripts/README.md) | 诊断、查询与显式重置操作 |
 
@@ -71,6 +72,8 @@
 [Outbox 向量同步容错与自愈待办](plans/OUTBOX_VECTOR_SELF_HEALING.md) 记录线上出现的 NULL 文档 ID 死循环重试现象、兜底自愈与事务刷盘的待办方案。
 
 `local/` 是 Git 忽略的个人草稿、第三方参考与本地验收报告，不作为项目实现或接口契约的权威来源。
+
+群聊真实测试的本地比较入口为 `docs/local/group-chat-tests/README.md` 与同目录的 `index.json`，按日期、版本和场景登记原始报告、完整对话及测试库。该目录不随 Git 分发，跨聊天接续时按路径直接读取；正式验收结论仍在 `testing/` 维护。
 
 ## 目录与维护归属
 
