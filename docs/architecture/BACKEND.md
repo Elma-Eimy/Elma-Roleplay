@@ -72,7 +72,7 @@ M4-A 的 `group_operation_service.py` 提供内部 send/select/discard 接受事
 
 个人上下文由 `group_context_service.py` 在读快照中装配。`services/memory/group_memory_recall.py` 只查询发言 Persona 的入群记忆，不访问来源会话。
 
-M5-B 在新轮次接受事务内向 `group_memory_captures` 登记上一轮的成员任务。`application/lifecycle.py` 管理群聊提纯循环，`services/memory/group_memory_capture.py` 负责领取、个人取证、记忆模型调用与幂等写入。退出时等待该任务结束再释放数据库运行权。M5-C 在同一事务向 group_member_insights 写入带引文的个人认知和关系印象。新候选保存当时可用的结果编号上界，角色生成按成员和已确认轮次读取。
+M5-B 在新轮次接受事务内向 `group_memory_captures` 登记上一轮的成员任务。`application/lifecycle.py` 管理群聊提纯循环，`services/memory/group_memory_capture.py` 负责领取、个人取证、记忆模型调用与幂等写入。退出时等待该任务结束再释放数据库运行权。M5-C 在同一事务向 group_member_insights 写入带引文的个人认知和关系印象。新候选保存当时可用的结果编号上界，角色生成按成员和已确认轮次读取。M5-D 用 group_recall_cards 指向快照或提纯结果中的卡位。SQLite 触发器在写入、级联删除时登记 Outbox；独立的 group_memory_v1 向量集合只提供相关编号。Embedding 查询在读事务之外运行，装配输入时重新检查轮次、采用候选和成员归属。
 
 迁移 `b1e2f3a4b5c6` 追加会话版本、撤回字段、候选检查点/参数和 `group_round_operations`，不重建历史表。请求同群唯一、活动任务同群部分唯一，组合外键限制同轮同群；参数只保存白名单与无凭据提供方摘要。启动收敛同时标记遗留操作与候选失败，按会话递增版本；M4-B 已通过下述独立后台入口接入检查点推进和续接。新服务和测试沿用现有隔离副本复制范围。
 
