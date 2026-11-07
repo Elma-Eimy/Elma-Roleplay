@@ -1,6 +1,6 @@
 <template>
   <view class="group-page">
-    <AppPageHeader title="群聊详情" eyebrow="GROUP STORY" subtitle="共同起点、当前剧情与整轮候选" show-back />
+    <AppPageHeader :title="group?.title || '群聊故事'" eyebrow="GROUP STORY" subtitle="让故事在彼此的回应中继续" show-back compact />
     <scroll-view class="group-scroll" scroll-y>
       <view class="group-content">
         <AppStatusState v-if="loading && !group" kind="loading" title="正在读取群聊" />
@@ -9,10 +9,16 @@
           <view class="group-card">
             <text class="group-caption">{{ group.members.length }} 名角色 · 你的昵称：{{ group.user_nickname }}</text>
             <text class="group-heading">{{ group.title }}</text>
-            <text class="group-label">共同设定</text>
-            <text class="group-copy">{{ group.shared_setting || '未填写共同设定，角色保留各自的角色卡设定。' }}</text>
+            <view class="group-avatars"><AvatarImage v-for="member in group.members" :key="member.persona_id" class="group-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /></view>
+            <text class="group-copy">{{ memberNames }}</text>
+            <button class="group-action" :aria-expanded="showOrigins" @tap="showOrigins = !showOrigins">{{ showOrigins ? '收起设定与成员起点' : '查看设定与成员起点' }}</button>
           </view>
-          <view class="group-notice"><text class="group-copy">发送下一条消息时，会确认当前采用的完整候选。生成期间可以离开页面，返回后会查询已保存进展。</text></view>
+          <view v-if="showOrigins" class="group-card">
+            <text class="group-heading">共同设定</text>
+            <text class="group-copy">{{ group.shared_setting || '未填写共同设定，角色保留各自的角色卡设定。' }}</text>
+            <text class="group-copy">以下是入群时固定的成员起点，不随剧情或候选预览改变。</text>
+          </view>
+          <template v-if="showOrigins">
           <view v-for="member in group.members" :key="member.persona_id" class="group-card">
             <view class="group-row"><AvatarImage class="group-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /><view class="member-name"><text class="group-heading">{{ member.character.name }}</text><text class="group-caption">成员 {{ member.slot }}</text></view></view>
             <text class="group-label">{{ member.origin.mode === 'card' ? '从原卡开始' : '导入单聊快照' }}</text>
@@ -23,18 +29,37 @@
             <text class="group-label">认知</text><text class="group-copy">{{ member.state.cognition_state || '尚未建立认知摘要。' }}</text>
             <view v-for="(actor, name) in member.state.role_state.characters" :key="name" class="group-copy"><text>{{ name }}：{{ actorDescription(actor) }}</text></view>
           </view>
+          </template>
           <view class="group-card">
-            <view class="group-row"><text class="group-heading">当前采用的发言</text><view class="group-action" role="button" :aria-disabled="loading || loadingRounds || deleting || operationBusy" @tap="refreshRounds">刷新</view></view>
-            <text class="group-copy">按最近轮次展示，每轮内按发言先后排列。</text>
+            <view class="group-row"><text class="group-heading">当前采用的成员状态</text><button class="group-action" :aria-expanded="showMemberStates" @tap="toggleMemberStates">{{ showMemberStates ? '收起' : '查看' }}</button></view>
+            <template v-if="showMemberStates">
+              <text class="group-copy">这里展示当前采用内容对应的状态。认识与关系使用本候选当时可用的资料，稍后形成的成长会在新候选中体现。</text>
+              <text v-if="operationBusy" class="group-copy" role="status">正在处理请求，结果确认后可重新读取成员状态。</text>
+              <text v-else-if="!current" class="group-copy">请先刷新发言，取得当前采用信息后再读取成员状态。</text>
+              <text v-else-if="!current?.latest?.candidate_id" class="group-copy">尚无采用候选，成员初始资料可在上方“设定与成员起点”查看。</text>
+              <text v-else-if="historyStale" class="group-copy">剧情已有更新，请先刷新发言。</text>
+              <template v-else>
+                <text v-if="loadingAdoptedState" class="group-copy" role="status">正在读取成员状态…</text>
+                <text v-else-if="adoptedStateError" class="group-error" role="alert">{{ adoptedStateError }}</text>
+                <text v-else-if="!adoptedState" class="group-copy">请重新读取此轮成员状态。</text>
+                <template v-if="adoptedState">
+                  <text class="group-caption">第 {{ adoptedState.round.round_index }} 轮 · 候选 {{ adoptedState.candidate.version }} · 当前采用</text>
+                  <text v-if="adoptedState.candidate.status === 'failed'" class="group-copy">本轮未完成，状态只反映已经保存的发言。</text>
+                  <GroupMemberStates :states="adoptedState.state_preview.members" :members="group.members" :user-nickname="group.user_nickname" />
+                </template>
+                <button class="group-action" :disabled="loadingAdoptedState || loading || deleting" @tap="state.loadAdoptedState">{{ loadingAdoptedState ? '正在读取…' : '重新读取成员状态' }}</button>
+              </template>
+            </template>
+          </view>
+          <view class="group-card">
+            <view class="group-row"><text class="group-heading">故事进展</text><view class="group-action" role="button" :aria-disabled="loading || loadingRounds || deleting || operationBusy" @tap="refreshRounds">刷新</view></view>
+            <text class="group-copy">最近轮次在前，每轮内按发言先后阅读。这里展示当前采用的内容。</text>
             <AppStatusState v-if="loadingRounds && !rounds.length" kind="loading" title="正在读取发言" />
             <AppStatusState v-else-if="!rounds.length && !roundsError" kind="empty" title="还没有已保存发言" description="可以输入第一条消息，开始这次相遇。" />
             <view v-for="round in rounds" :key="round.round_id" class="saved-round">
               <text class="group-label">第 {{ round.round_index }} 轮 · {{ roundStatus(round) }}</text>
-              <text class="group-caption">{{ group.user_nickname }}</text><text class="group-copy">{{ round.user_content }}</text>
-              <view v-for="utterance in round.utterances" :key="utterance.item_id" class="saved-utterance">
-                <text class="group-caption">{{ utterance.speaker_name }} · {{ memberLabel(utterance.speaker_persona_id) }}</text>
-                <text class="group-copy">{{ utterance.content }}</text>
-              </view>
+              <view class="user-utterance"><text class="group-caption">{{ group.user_nickname }}</text><text class="user-content">{{ round.user_content }}</text></view>
+              <GroupUtterances :utterances="round.utterances" :members="group.members" />
               <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error' : 'group-copy'">{{ groupRoundNotice(round) }}</text>
               <button role="button" v-if="current" class="group-action" :disabled="submitting || deleting || loading" @tap="state.loadCandidates(round.round_id)">查看整轮候选</button>
             </view>
@@ -61,18 +86,11 @@
             <view v-if="preview" class="candidate-preview">
               <text class="group-label">候选 {{ preview.candidate.version }} · {{ isSelected(preview.candidate.candidate_id) ? '当前采用' : '仅预览，未采用' }}</text>
               <text class="group-copy">{{ preview.round.user_content }}</text>
-              <view v-for="utterance in preview.utterances" :key="utterance.item_id" class="saved-utterance">
-                <text class="group-caption">{{ utterance.speaker_name }} · {{ memberLabel(utterance.speaker_persona_id) }}</text>
-                <text class="group-copy">{{ utterance.content }}</text>
-              </view>
+              <GroupUtterances :utterances="preview.utterances" :members="group.members" />
               <text v-if="preview.candidate.status === 'failed'" class="group-error">此候选未完成，以上仅为已保存前缀，不会作为完整结果确认。</text>
               <text v-else-if="!preview.utterances.length" class="group-copy">此候选尚无角色发言。</text>
               <text class="group-label">此候选的状态预览</text>
-              <view v-for="member in preview.state_preview.members" :key="member.persona_id">
-                <text class="group-copy">{{ memberLabel(member.persona_id) }} · 好感度 {{ member.affection_score }} · 心情 {{ member.current_mood || '未记录' }}</text>
-                <text v-if="member.role_state.scene" class="group-copy">场景：{{ member.role_state.scene }}</text>
-                <view v-for="(actor, name) in member.role_state.characters" :key="name" class="group-copy"><text>{{ name }}：{{ actorDescription(actor) }}</text></view>
-              </view>
+              <GroupMemberStates :states="preview.state_preview.members" :members="group.members" :user-nickname="group.user_nickname" />
             </view>
           </view>
           <view class="group-card">
@@ -83,8 +101,8 @@
             <text v-if="operationError" class="group-error" role="alert">{{ operationError }}</text>
             <text v-if="historyStale" class="group-copy" role="status">剧情已有更新，请刷新当前采用的发言后再操作。</text>
             <button role="button" v-if="pending || current?.active_operation" class="group-action" :disabled="recovering || submitting || loading" @tap="state.recover">查询请求结果</button>
-            <textarea v-model="draft" class="group-textarea" :disabled="locked || !canGenerate" :maxlength="20000" placeholder="输入你的行动或台词…" auto-height />
-            <button role="button" class="group-action" :disabled="!canSend || !draft.trim()" @tap="state.command('send')">发送并推进剧情</button>
+            <textarea v-model="draft" class="group-textarea" :disabled="locked || !canGenerate" :maxlength="20000" placeholder="输入你的行动或台词…" aria-label="你的行动或台词" auto-height />
+            <AppPrimaryButton label="发送并推进剧情" loading-text="正在提交" :block="true" :loading="submitting" :disabled="!canSend || !draft.trim()" @tap="state.command('send')" />
             <text v-if="current?.latest && !current.latest.confirmed" class="group-copy">发送下一条消息会确认当前采用候选；未完成轮次需要先继续、重新生成或撤回。</text>
             <view class="candidate-actions">
               <button role="button" class="group-action" :disabled="!canRegenerate" @tap="state.command('regenerate')">整轮重新生成</button>
@@ -93,7 +111,11 @@
           </view>
           <text v-if="error" class="group-error" role="alert">{{ error }}</text>
           <view class="group-action" role="button" :aria-disabled="loading || deleting" @tap="state.load">{{ loading ? '正在刷新…' : '刷新详情' }}</view>
-          <view class="group-action group-danger" role="button" :aria-disabled="!canDelete" @tap="remove">{{ deleting ? '正在处理…' : '删除整个群聊' }}</view>
+          <button class="group-action" :aria-expanded="showManagement" @tap="showManagement = !showManagement">{{ showManagement ? '收起群聊管理' : '群聊管理' }}</button>
+          <view v-if="showManagement" class="group-card">
+            <text class="group-copy">删除会移除全部成员与本群数据，来源单聊和角色卡会保留。</text>
+            <button class="group-action group-danger" :disabled="!canDelete" @tap="remove">{{ deleting ? '正在处理…' : '删除整个群聊' }}</button>
+          </view>
         </template>
       </view>
     </scroll-view>
@@ -101,10 +123,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import { onLoad, onShow, onHide, onUnload } from "@dcloudio/uni-app";
 import AppPageHeader from "@/components/common/AppPageHeader.vue";
 import AppStatusState from "@/components/common/AppStatusState.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
+import AppPrimaryButton from "@/components/common/AppPrimaryButton.vue";
+import GroupUtterances from "@/components/chat/GroupUtterances.vue";
+import GroupMemberStates from "@/components/chat/GroupMemberStates.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
 import type { ActorState } from "@/types/roleState";
@@ -112,10 +138,16 @@ import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/group
 
 const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
 const state = useGroupSessionDetail(backToList);
+const showOrigins = ref(false), showManagement = ref(false), showMemberStates = ref(false);
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,
   current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
   canSend, canRegenerate, canDiscard, candidates, candidateRoundId, loadingCandidates, candidatesError,
-  hasMoreCandidates, preview, loadingPreview, previewError } = state;
+  hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError } = state;
+const toggleMemberStates = () => {
+  showMemberStates.value = !showMemberStates.value;
+  if (showMemberStates.value) void state.loadAdoptedState();
+};
+const memberNames = computed(() => group.value?.members.map(member => member.character.name).join(" · ") || "");
 onLoad(options => state.setSessionId(Number(options?.sessionId)));
 onShow(state.show); onHide(state.hide); onUnload(state.hide);
 const formatTime = (value: string) => value.replace("T", " ").slice(0, 19);
@@ -123,7 +155,6 @@ const actorDescription = (actor: ActorState) => [actor.posture, actor.clothing, 
 const refreshRounds = () => state.loadRounds();
 const moreRounds = () => state.loadRounds(true);
 const retryRounds = () => state.retryRounds();
-const memberLabel = (id: number) => `成员 ${group.value?.members.find(member => member.persona_id === id)?.slot ?? "?"}`;
 const isSelected = (id: number) => candidateRoundId.value === current.value?.latest?.round_id
   ? current.value.latest.candidate_id === id : preview.value?.round.selected_candidate_id === id || candidates.value.some(row => row.candidate_id === id && row.selected);
 const candidateStatus = (status: string) => status === 'failed' ? '未完成' : status === 'generating' ? '处理中' : '完整结果';
@@ -143,7 +174,8 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 @import "./group.css";
 .member-name { flex: 1; min-width: 0; }
 .saved-round { margin-top: 28rpx; border-top: 1px solid var(--app-color-border); padding-top: 12rpx; }
-.saved-utterance { margin-top: 24rpx; padding-left: 20rpx; border-left: 2px solid var(--app-color-primary-soft); }
+.user-utterance { margin-top: 20rpx; padding: 24rpx; background: var(--app-color-background); border-radius: var(--app-radius-sm); }
+.user-content { display: block; margin-top: 12rpx; color: var(--app-color-text-primary); font-size: var(--app-font-size-body); line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
 .candidate-row, .candidate-preview { margin-top: 20rpx; border-top: 1px solid var(--app-color-border); padding-top: 16rpx; }
 .candidate-actions { display: flex; flex-wrap: wrap; gap: 12rpx; }
 button.group-action { margin: 12rpx 0; background: var(--app-color-surface); border-radius: var(--app-radius-sm); }

@@ -45,7 +45,7 @@
             <view v-if="member.sourceError || member.hasMoreSources" class="group-action" role="button" :aria-disabled="locked || member.loadingSources" @tap="state.loadSources(member, member.sources.length > 0)">{{ member.sourceError ? '重新读取来源' : '加载更多来源故事' }}</view>
           </template>
         </view>
-        <view class="group-notice"><text class="group-copy">{{ supportsSnapshots ? '成员与共同设定在创建后固定。目前可查看群聊，尚不支持角色互动。' : '离线模式仅支持原卡起步，暂不支持导入单聊状态与记忆快照。' }}</text></view>
+        <view class="group-notice"><text class="group-copy">{{ supportsSnapshots ? '成员与共同设定在创建后固定。创建后可进入故事，输入你的第一句台词或行动。' : '离线模式仅支持原卡起步与查看，不支持导入单聊快照或生成角色互动。' }}</text></view>
         <text v-if="error" class="group-error" role="alert">{{ error }}</text>
         <text v-else-if="validation" class="group-copy">{{ validation }}</text>
         <AppPrimaryButton label="创建群聊" loading-text="正在创建" :block="true" :loading="submitting" :disabled="locked || !!validation" @tap="state.submit" />

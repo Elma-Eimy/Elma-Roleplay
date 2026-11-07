@@ -162,7 +162,21 @@ export interface GetGroupCandidatesResponse {
 export interface GetGroupCandidateResponse {
   can_generate: boolean; round: GroupRoundSummary; candidate: GroupCandidateSummary; current: GroupCurrentState;
   utterances: GroupUtterance[];
-  state_preview: { candidate_id: number; members: { persona_id: number; affection_score: number; current_mood: string | null; role_state: RoleState }[] };
+  state_preview: { candidate_id: number; members: GroupCandidateMemberState[] };
+}
+export interface GroupMemberInsight {
+  kind: "cognition" | "user" | "member";
+  content: string;
+  target_persona_id: number | null;
+  target_name: string | null;
+}
+export interface GroupCandidateMemberState {
+  persona_id: number;
+  affection_score: number;
+  current_mood: string | null;
+  role_state: RoleState;
+  cognition_state?: string | null;
+  insights?: GroupMemberInsight[];
 }
 export interface GetGroupRequestResponse extends GroupOperationSummary {
   can_generate: boolean; accepted: GroupAcceptedOperation["accepted"];

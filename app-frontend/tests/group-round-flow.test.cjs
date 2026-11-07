@@ -32,7 +32,7 @@ function fixture(overrides = {}, { platform = 'H5', storage = new Map(), mock = 
     getGroupCandidates: async (_, rid, limit, offset) => ({ current: model.current, can_generate: true, round: { round_id: rid },
       candidates: model.rows, offset, limit, total: 2, has_more: false }),
     getGroupCandidate: async (_, rid, cid) => ({ current: model.current, can_generate: true,
-      candidate: model.rows.find(row => row.candidate_id === cid), round: { round_id: rid, selected_candidate_id: 11 },
+      candidate: model.rows.find(row => row.candidate_id === cid), round: { round_id: rid, selected_candidate_id: model.current.latest?.candidate_id ?? 11 },
       utterances: [{ content: 'saved prefix' }], state_preview: { candidate_id: cid, members: [{ affection_score: 99 }] } }),
     sendGroupRound: submit('send'), regenerateGroupRound: submit('regenerate'), resumeGroupRound: submit('resume'),
     selectGroupCandidate: submit('select'), discardGroupRound: submit('discard'), ...overrides,
@@ -319,4 +319,69 @@ test('an active task discovered through candidates can be queried without a loca
   await f.flow.loadCandidates(1); assert.equal(f.flow.pending.value, null);
   await f.flow.recover(); assert.equal(f.queries[0][1], uuid);
   assert.equal(f.posts.length, 0); f.stop();
+});
+
+for (const platform of ['H5', 'APP-PLUS', 'MP-WEIXIN']) {
+  test(`${platform}: adopted state uses selected candidate and stays separate from another preview`, async () => {
+    const f = fixture({}, { platform }); f.model.current = state(8, latest()); await f.start();
+    await f.flow.loadAdoptedState();
+    assert.equal(f.flow.adoptedState.value.candidate.candidate_id, 11);
+    await f.flow.loadCandidates(1); await f.flow.viewCandidate(1, 12);
+    assert.equal(f.flow.preview.value.candidate.candidate_id, 12);
+    assert.equal(f.flow.adoptedState.value.candidate.candidate_id, 11);
+    assert.equal(f.posts.length, 0); f.stop();
+  });
+}
+
+test('adopted state invalidates immediately when selected candidate or confirmation changes', async () => {
+  const f = fixture(); f.model.current = state(8, latest()); await f.start(); await f.flow.loadAdoptedState();
+  f.model.current = state(9, latest(12)); await f.flow.loadRounds();
+  assert.equal(f.flow.adoptedState.value, null);
+  await f.flow.loadAdoptedState(); assert.equal(f.flow.adoptedState.value.candidate.candidate_id, 12);
+  f.model.current = state(10, { ...latest(12), confirmed: true }); await f.flow.loadRounds();
+  assert.equal(f.flow.adoptedState.value, null); f.stop();
+});
+
+test('late adopted reads cannot overwrite a new story or A to B to A server context', async () => {
+  const old = deferred(); const f = fixture({ getGroupCandidate: () => old.promise });
+  f.model.current = state(8, latest()); await f.start(); const reading = f.flow.loadAdoptedState();
+  f.target(2, 'https://b.invalid'); f.target(1, 'https://a.invalid'); await f.start();
+  old.resolve({ current: state(8, latest()), candidate: candidate(11),
+    round: { round_id: 1, selected_candidate_id: 11 }, state_preview: { candidate_id: 11, members: [] } });
+  await reading; assert.equal(f.flow.adoptedState.value, null); assert.equal(f.flow.loadingAdoptedState.value, false); f.stop();
+});
+
+test('adopted state read errors are retryable and mismatched versions are not displayed', async () => {
+  let broken = true;
+  const f = fixture({ getGroupCandidate: async () => {
+    if (broken) throw new Error('offline');
+    return { current: state(8, latest()), candidate: candidate(11), round: { round_id: 1, selected_candidate_id: 11 },
+      state_preview: { candidate_id: 11, members: [] } };
+  } });
+  f.model.current = state(8, latest()); await f.start(); await f.flow.loadAdoptedState();
+  assert.match(f.flow.adoptedStateError.value, /offline/); assert.equal(f.flow.loadingAdoptedState.value, false);
+  broken = false; await f.flow.loadAdoptedState(); assert.equal(f.flow.adoptedState.value.candidate.candidate_id, 11);
+  f.model.current = state(9, latest(11, 5)); await f.flow.loadRounds(); await f.flow.loadAdoptedState();
+  assert.equal(f.flow.adoptedState.value, null); assert.match(f.flow.adoptedStateError.value, /刷新/); f.stop();
+});
+
+test('a late state read cannot replace a newer selected candidate state', async () => {
+  const old = deferred(); let reads = 0;
+  const f = fixture({ getGroupCandidate: async () => ++reads === 1 ? old.promise : ({
+    current: state(9, latest(12)), candidate: candidate(12), round: { round_id: 1, selected_candidate_id: 12 },
+    state_preview: { candidate_id: 12, members: [] },
+  }) });
+  f.model.current = state(8, latest()); await f.start(); const reading = f.flow.loadAdoptedState();
+  f.model.current = state(9, latest(12)); await f.flow.loadRounds(); await f.flow.loadAdoptedState();
+  old.resolve({ current: state(8, latest()), candidate: candidate(11), round: { round_id: 1, selected_candidate_id: 11 },
+    state_preview: { candidate_id: 11, members: [] } });
+  await reading; assert.equal(f.flow.adoptedState.value.candidate.candidate_id, 12); f.stop();
+});
+
+test('hiding or submitting invalidates adopted state without replaying a POST', async () => {
+  const f = fixture(); f.model.current = state(8, latest()); await f.start(); await f.flow.loadAdoptedState();
+  f.hide(); assert.equal(f.flow.adoptedState.value, null);
+  await f.show(); await f.flow.loadAdoptedState();
+  await f.flow.command('discard'); assert.equal(f.flow.adoptedState.value, null);
+  assert.equal(f.posts.length, 1); f.stop();
 });

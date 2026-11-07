@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { getBaseUrl, USE_MOCK } from "@/api/config";
 import { getGroupRounds, getGroupRequest, getGroupCandidates, getGroupCandidate,
   sendGroupRound, regenerateGroupRound, resumeGroupRound, selectGroupCandidate, discardGroupRound } from "@/api/groupSessions";
@@ -53,6 +53,9 @@ export function useGroupRoundFlow(context: Context) {
   const candidateRoundId = ref<number | null>(null), loadingCandidates = ref(false), candidatesError = ref("");
   const hasMoreCandidates = ref(false), preview = ref<GetGroupCandidateResponse | null>(null);
   const loadingPreview = ref(false), previewError = ref("");
+  const adoptedState = ref<GetGroupCandidateResponse | null>(null);
+  const loadingAdoptedState = ref(false), adoptedStateError = ref("");
+  let adoptedStateVersion = 0;
   let epoch = 0, historyVersion = 0, candidateVersion = 0, previewVersion = 0;
   let roundOffset = 0, candidateOffset = 0, retryMore = false;
   let submittedContent: string | null = null;
@@ -65,6 +68,34 @@ export function useGroupRoundFlow(context: Context) {
   const canSend = computed(() => !locked.value && canGenerate.value && !!current.value?.capabilities.can_send);
   const canRegenerate = computed(() => !locked.value && canGenerate.value && !!current.value?.capabilities.can_regenerate);
   const canDiscard = computed(() => !locked.value && !!current.value?.capabilities.can_discard);
+
+  function invalidateAdoptedState() {
+    adoptedStateVersion++; adoptedState.value = null;
+    loadingAdoptedState.value = false; adoptedStateError.value = "";
+  }
+  watch([() => historyStamp(current.value), () => operationBusy.value], invalidateAdoptedState, { flush: "sync" });
+
+  async function loadAdoptedState() {
+    const latest = current.value?.latest;
+    if (!context.active() || !context.id() || context.blocked() || operationBusy.value
+      || historyStale.value || !latest?.candidate_id || loadingAdoptedState.value) return;
+    const stamp = historyStamp(current.value), validContext = ticket(), version = ++adoptedStateVersion;
+    const valid = () => validContext() && version === adoptedStateVersion && stamp === historyStamp(current.value);
+    adoptedState.value = null; loadingAdoptedState.value = true; adoptedStateError.value = "";
+    try {
+      const result = await getGroupCandidate(context.id()!, latest.round_id, latest.candidate_id);
+      if (!valid()) return;
+      if (stamp !== historyStamp(result.current) || result.candidate.candidate_id !== latest.candidate_id
+        || result.candidate.revision !== latest.candidate_revision || result.round.round_id !== latest.round_id
+        || result.round.selected_candidate_id !== latest.candidate_id
+        || result.state_preview.candidate_id !== latest.candidate_id) {
+        adoptedStateError.value = "剧情已有更新，请刷新发言后重新读取成员状态。";
+        return;
+      }
+      adoptedState.value = result;
+    } catch (cause) { if (valid()) adoptedStateError.value = errorMessage(cause); }
+    finally { if (valid()) loadingAdoptedState.value = false; }
+  }
 
   function clearTimer() { if (timer !== null) clearTimeout(timer); timer = null; }
   function ticket() {
@@ -100,6 +131,7 @@ export function useGroupRoundFlow(context: Context) {
     return true;
   }
   function pause() {
+    invalidateAdoptedState();
     epoch++; historyVersion++; candidateVersion++; previewVersion++; clearTimer();
     loadingRounds.value = loadingCandidates.value = loadingPreview.value = false;
     submitting.value = recovering.value = false;
@@ -293,5 +325,6 @@ export function useGroupRoundFlow(context: Context) {
   return { rounds, loadingRounds, roundsError, hasMoreRounds, loadRounds, retryRounds: () => loadRounds(retryMore),
     current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
     canSend, canRegenerate, canDiscard, recover, command, candidates, candidateRoundId, loadingCandidates, candidatesError,
-    hasMoreCandidates, loadCandidates, preview, loadingPreview, previewError, viewCandidate, pause, reset };
+    hasMoreCandidates, loadCandidates, preview, loadingPreview, previewError, viewCandidate,
+    adoptedState, loadingAdoptedState, adoptedStateError, loadAdoptedState, pause, reset };
 }

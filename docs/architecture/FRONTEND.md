@@ -27,6 +27,10 @@ src/main.ts + App.vue + pages.json
 | `App.vue` 与 `uni.scss` | 全局基础样式与语义设计变量；页面专属样式留在对应页面 |
 | `api/transports/` | App 流传输适配，配合 renderjs 桥接组件使用 |
 
+群聊页面由 `pages/group/` 提供，继续由 `useGroupSessions.ts` 和 `useGroupRoundFlow.ts` 管理请求与候选生命周期。`components/chat/GroupUtterances.vue` 只展示按 Persona 匹配头像的发言正文，共用于采用内容和候选预览，不负责提交、轮询或状态重放。入群资料与候选状态仍显式区分，完整界面批次见 [M6 计划](../plans/group-chat/M6_INTERFACE_AND_ACCEPTANCE.md)。
+
+`GroupMemberStates.vue` 共用于当前采用状态和候选预览，按成员展示状态、继承认知与候选可用的个人认识，不发起请求。`useGroupRoundFlow.loadAdoptedState()` 独立保存当前采用状态，按群版本、最新轮次/候选及 revision 校验读取结果；选择或确认变化、处理操作、离页和切服使旧数据与在途读取失效。读取不改变采用选择、不派发模型，也不影响原有候选预览。
+
 ## 流式聊天与会话隔离
 
 普通发送从 `store/chatStore.ts` 调用 `api/chat.ts`。H5 与小程序接收逻辑见 `api/chatStream.ts`；App 经 `composables/useChatStreamBridge.ts`、`components/chat/ChatStreamBridge.vue` 与 `api/transports/appStream.ts` 接入。三端共用 `utils/chatStreamProtocol.ts` 解释 SSE 事件和终态。

@@ -5,7 +5,7 @@
     </AppPageHeader>
     <scroll-view class="group-scroll" scroll-y @scrolltolower="loadMore">
       <view class="group-content">
-        <view class="group-notice"><text class="group-copy">目前可创建和查看群聊，角色互动将在后续开放。</text></view>
+        <view class="group-notice"><text class="group-copy">{{ USE_MOCK ? '离线模式可创建和查看示例群聊，角色生成需连接后端。' : '选择一段故事继续互动，角色会根据场景接话。下一条消息将确认上一轮采用的内容。' }}</text></view>
         <AppStatusState v-if="loading && !groups.length" kind="loading" title="正在读取群聊" />
         <AppStatusState v-else-if="error && !groups.length" kind="error" title="群聊加载失败" :description="error" action-label="重新加载" @action="refresh" />
         <AppStatusState v-else-if="!groups.length" kind="empty" title="还没有群聊故事" description="选择 2–3 名角色，设定他们共同的起点。" action-label="创建群聊" @action="create" />
@@ -32,6 +32,7 @@ import AppPageHeader from "@/components/common/AppPageHeader.vue";
 import AppStatusState from "@/components/common/AppStatusState.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import { getAvatarUrl } from "@/api/characters";
+import { USE_MOCK } from "@/api/config";
 import { useGroupSessionList } from "@/composables/useGroupSessions";
 import type { GroupSessionDetail } from "@/types/groupSessions";
 
