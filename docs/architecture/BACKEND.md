@@ -7,8 +7,8 @@ main.py
   └─ application.factory.create_app()
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
-            ├─ 启动：Alembic 升级 → 创建 Outbox、记忆重试与 CHARX 清理任务 → 启动提示
-            └─ 关闭：等待记忆处理线程 → 取消 Outbox 与 CHARX 清理任务 → 清理后台对话 Worker
+            ├─ 启动：取得数据库运行权 → Alembic 升级 → 收敛中断群聊 → 启动 Outbox、单聊/群聊记忆与 CHARX 清理任务
+            └─ 关闭：停止接受群聊 → 等待执行与后台任务清理 → 清理聊天流 → 释放数据库运行权
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 维护命令 → scripts/ → core/ 与基础设施客户端
@@ -24,79 +24,7 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 ## 模块边界
 
-群聊 M1-A 已建立 `Session.kind` 与 `Session.personas` 数据基础。单聊使用 slot 0，群聊预留 slot 1–3；`Session.persona` 只读兼容单聊，对群聊返回空。`services/conversation/session_access.py` 在旧入口读取或修改前检查类型，应用工厂统一将类型冲突转换为 HTTP 409。旧单聊列表在计数和分页前排除群聊；角色被群聊引用时拒绝删除。M1-B/C 已提供群聊创建、来源快照和删除服务及 HTTP 接口，M1-D 已接入最小页面；M4 已接通后台生成、候选操作与详情页交互。
-
-HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接口使用默认单聊的 `SessionAPIRouter`，群聊管理使用 `GroupSessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得所属策略的类型限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
-
-直接服务调用和后台重试仍通过 `get_single_session`、`get_single_message` 或 `get_single_persona` 加载资源；内部步骤复用已加载对象，跨事务重新加载。`api/test_session_access_architecture.py` 自动发现全部服务中同时声明 `db` 和上述资源参数的公开函数、类方法，使用群聊夹具验证拒绝访问且不改动数据，不维护入口名单。按显式人格隔离的共享算法使用 `@session_kind_agnostic("原因")` 声明例外；该标记不豁免 HTTP 校验，新增例外需要审查其成员选择与分支语义。自建数据库会话的回合维护、按任务 ID 调度的 Worker 继续由后台专项测试覆盖。群聊专用服务使用 `@group_session_operation` 声明类型，自动发现测试对其传入单聊资源验证反向隔离。新增资源标识命名或新的任务调度机制时，需要扩展发现规则和专项测试。
-
-`services/conversation/group_session_service.py` 在来源锁与 SQLite 写事务内原子创建群聊及成员快照；快照来源 ID 不设动态外键，删除来源不影响已冻结事实。创建、删除和角色删除通过写事务串行化引用检查，群聊删除与本群资源的 Outbox 登记同进同退。继承快照当前只作持久交接，不进入单聊检索、任务或向量索引。
-
-M2-A 的 `services/conversation/group_history_service.py` 管理内部轮次创建、完整内容与知情结果的原子追加、候选终态及个人历史查询，不调用模型或提供 HTTP 入口。`group_rounds`、`group_round_candidates`、`group_content_items`、`group_content_visibility` 通过组合外键约束同群归属；所选候选使用延迟校验外键解决循环引用，普通业务外键保持开启。新迁移只给旧 Session/Persona 增加目标唯一索引，不重建旧表；非空群聊轮次拒绝降级。
-
-个人历史显式校验群聊、Persona 和当前未确认所选候选，独立 SQLite 读事务内筛选此前已确认的所选成功候选及当前 sequence 边界，按可见性过滤后再取最近 N 项。缺失知情行默认隐藏并报告内部告警；返回不可变 DTO，不附加全群原文、内部状态或隐藏项摘要。v2 DTO 保留获准单元类型并兼容拼接正文；内容 ID 和全局顺序仅供内部溯源，Prompt 只使用个人可见顺序。用户原话独立，其他成员 v2 发言作为明确不含指令的动态历史资料，自己的历史保留 assistant 身份。本轮已见发言者从过滤后历史推导，不附带隐藏活动或权限记录。读取不授予模型执行权；M2-B 必须在会话锁内校验候选版本后使用输入，并在落库时重新核验。
-
-M2-A 的公开服务入口在接管事务前检查待提交 ORM 修改和底层 SQLite 活动事务，类型预读取禁止 autoflush。若调用方已修改、flush 或显式开启事务，则拒绝操作并保留其事务，不进入内部 rollback 清理；服务只负责自己取得的事务。普通只读预查询形成的 SQLAlchemy 逻辑事务仍可结束后重新取得快照。
-
-M2-B 的 `group_context_service.py` 在同一读快照内取得个人历史和自身状态，复用既有角色卡 DSL、示例、世界书和参数准备，返回序列化的不可变调用快照。`prompt_compiler.build_group_messages` 共享单聊编译主体，保留用户原话；v2 其他成员正文是标明作者的动态历史资料，v1 保留 JSON user 消息兼容，自身发言仍为 assistant。世界书只扫描个人可感知内容及获准读取的推进请求，不扫描其他私密片段。PHI 与群聊输出契约后置；内容全局编号不进入角色历史，仅自身历史附带自己的心情和好感变化。
-
-`group_turn_plan.py` 从当前候选审计恢复片段用途、请求对象及承接依据。推进请求可以独立于感知提供给指定角色，但不成为已发生剧情；依据只能来自当前请求或个人可见、同候选/已确认所选历史，调度提交和角色上下文装配分别校验。已提交回应会消费对应成员的请求依据，窗口裁剪同时删除导演可选引用。发言后判复用一次调用完成知情与明确一致性审查；拒绝时不提交正文或状态，保留检查点供显式续接，不自动纠正。策略冻结在调用快照的可选 `turn_policy`，结构信息保存在现有审计 JSON，未新增表或改变迁移链；旧快照缺字段按旧策略恢复。
-
-世界书扫描与模型消息包装分别构造：扫描只用个人可见正文原文，模型历史仍使用 JSON 身份或 assistant XML。不能拿转义后的模型消息扫描，否则引号、标签等关键字会漏触发，身份字段或 status 标签也会误触发词条。
-
-群聊状态从 M1 不可变起点及已确认所选候选、本轮当前候选中较早的自身增量重放，不受历史窗口截断影响。共同设定优先于来源初始场景，但作为可长达 20000 字的背景独立提供，不能塞入限长 300 字的 scene；后续自己的 scene 增量继续生效。群聊 state_update.characters 只允许自己的角色卡名称，不能修改其他 Persona；不覆盖起点、不进入单聊消息或记忆任务。
-
-`group_generation_service.py` 要求 `core.locking.GroupRuntimeOwner` 对应同一 Engine 且仍有效，全程持有会话锁。外部模型与知情判定不持有 SQLite 事务，模型只调用一次；接收者回调只取得正文与作者 ID，不取得 reasoning 或内部状态。严格校验单个 reply/status 与可选状态增量，截断或无效输出失败；落库前重新检查运行权、候选版本和状态，正文、状态与知情集合原子提交。取消后等待已派发数据库线程完成再释放锁，可能已保存的前缀保留并标失败；迟到结果不改写已经推进或结束的版本。
-
-取消优先于等待期间发生的普通数据库异常，线程结束后仍传播取消。另存失败状态的操作若也失败，只记录异常类型，不替换原始生成错误或取消，不输出 SQL 正文参数；无法持久化的 generating 候选由后续启动中断处理收敛。
-
-M2-C 的只读轮次路由调用 `group_history_service.list_group_rounds`，面向故事操作者按整轮分页、各轮只取所选候选，包含失败前缀，不返回 reasoning、知情行或状态增量。该视图可包含操作者看到的全部正文，不能用作角色个人上下文；普通发送、确认、候选切换与恢复接口仍未开放。
-
-M3-A 的 `group_director_service.py` 负责导演严格 JSON 协议和独立读快照。导演只读有效候选正文、完整知情结果、共同设定和成员 ID/名称，不读角色卡私密字段、来源聊天、私人认知或状态；角色继续使用 M2 个人输入。导演载荷按完整项应用字符预算，当前前缀及暂存待判正文不能静默截断。`scripts/group_chat_prototype/` 仅在独立源码副本与虚构临时库中回放，现已复用 M3-B 内部编排与任务登记，普通生成 API 仍关闭，持久导演审计已由 M3-C 接入。具体用法和未完成边界见[工具说明](../../app-backend/scripts/README.md)。
-
-阶段编译将 stage 和待判内容一起计入预算，快照携带的内部本轮项数限定可省略范围，只移除较早的已确认内容，不暴露该边界元数据。隔离原型以最终候选终态的明确成功提交作为完成点：等待期间取消也返回成功结果和新 revision；最终写入失败则继续传播取消并按版本标失败。
-
-M3-B 的 `group_round_service.py` 在整轮内持有 core.locking 的任务执行令牌，M2 单步入口作为兼容包装登记到同一运行权拥有者。令牌同时校验任务、Engine、会话、锁和登记对象身份，持权内部步骤不重新加锁。`group_call_snapshot.py` 在起始快照中冻结统一模型/思考选择、成员采样、输出上限和个人历史预算；模型与知情判断期间无数据库事务。专属客户端冻结连接并禁用 SDK 重试，单次/整轮超时由程序限制；默认结果只含阶段元数据，原型显式收集完整输入。
-
-`group_output_retry.py` 仅对未提交的 `invalid_output` 附加格式纠正并重试当前步骤。新候选冻结 `output_attempts=3`，旧快照缺字段时为 1；每次派发继续通过原有内存与持久预算扣费，调用上限为 `output_attempts × (3K+1)`，原有期限不延长。重试前复核候选目标和版本，解析通过后才保存单元或推进审计，非法正文不作为历史传给后续步骤。网络、取消、截断和语义拒绝不重试；显式 v1 内部兼容执行保留一次调用。
-
-lifespan 通过 app.state.group_runtime_owner 提供内部运行权，关闭先停止接收新群聊，再取消并等待全部登记任务、持久化和后台 Worker。客户端关闭与数据库线程同样等待清理，重复取消不会提前释放文件锁。B 批未增加表或迁移；C 批在此基础上接入下述 v2 单元和审计，v1 保留为显式兼容路径。
-
-M3-C 的 `group_unit_protocol.py` 严格校验用户连续完整码点范围、角色 1–8 个 speech/action/thought 单元和全成员知情覆盖。`group_unit_service.py` 保存同候选父项下的单元及权限；用户单元只保存原文范围，角色单元保存原始文本。个人查询先过滤单元，再按原顺序合并获准内容；v2 缺失记录按不可见处理，不回退父项全文，thought 即使权限异常也只允许作者读取。父项仍保存一次心情、好感和状态增量，完整自身权限缺失时不重放状态。世界书扫描复用同一份个人正文。
-
-`group_audit_service.py` 只保存已接受的单元索引/原文范围、成员判定、调度动作、revision 链、模型和策略版本，不保存 Prompt、正文副本或 reasoning。初判与用户项、后判与发言项、结束决定与终态各自原子提交；选人决定先提交并推进 revision，再调用角色。正常终止保存 wait_user/no_visible_basis/step_limit，与 failed.error_code 分开；审计不进入角色输入或普通 rounds 响应。
-
-整轮失败由 `group_round_service` 统一标记并取得该次实际提交的 revision，内部角色步骤不重复结束同一候选；独立单步入口仍负责自己的失败标记。发言保存后收到取消会把明确提交版本交回整轮，再按该版本清理。失败写入遇到版本竞争或不可写时保留最后接受的版本，不将外部推进误报为本次成果。
-
-迁移 `b0d1e2f3a4b5` 在原 head 后追加 Candidate 协议/终止字段、单元/知情表和导演审计表。旧项回填一个单元，按 Python 码点映射原文并照抄既有权限，不重新判定；旧数据仍以 v1 权限为准。组合外键限制同候选和同群归属，删除级联与 Outbox 事务共同回滚；存在 v2 候选、终止原因或审计时拒绝有损降级。v2 最终 JSON 契约替换原 XML 输出指令，角色卡 DSL、PHI 和单聊协议保持原编译入口。
-
-M4-A 的 `group_operation_service.py` 提供内部 send/select/discard 接受事务，以会话 `group_revision` 和所见候选版本防止迟到写入。接受下一消息时，确认旧成功轮次、新建无知情草稿和 queued 回执一起提交；指纹统一省略值与 inherit，正文保持逐字一致；首次接受前核对请求选择与全部冻结参数，同 UUID 与规范化请求优先返回已有回执，不重新解析后来变化的默认配置。撤回保留轮次及回执，旧个人/导演查询和轮次列表排除撤回内容；旧执行入口不能修改持久活动任务。该层不自行启动模型任务，公开入口由 M4-C 接入后台服务。
-
-个人上下文由 `group_context_service.py` 在读快照中装配。`services/memory/group_memory_recall.py` 只查询发言 Persona 的入群记忆，不访问来源会话。
-
-M5-B 在新轮次接受事务内向 `group_memory_captures` 登记上一轮的成员任务。`application/lifecycle.py` 管理群聊提纯循环，`services/memory/group_memory_capture.py` 负责领取、个人取证、记忆模型调用与幂等写入。退出时等待该任务结束再释放数据库运行权。M5-C 在同一事务向 group_member_insights 写入带引文的个人认知和关系印象。新候选保存当时可用的结果编号上界，角色生成按成员和已确认轮次读取。M5-D 用 group_recall_cards 指向快照或提纯结果中的卡位。SQLite 触发器在写入、级联删除时登记 Outbox；独立的 group_memory_v1 向量集合只提供相关编号。Embedding 查询在读事务之外运行，装配输入时重新检查轮次、采用候选和成员归属。
-
-迁移 `b1e2f3a4b5c6` 追加会话版本、撤回字段、候选检查点/参数和 `group_round_operations`，不重建历史表。请求同群唯一、活动任务同群部分唯一，组合外键限制同轮同群；参数只保存白名单与无凭据提供方摘要。启动收敛同时标记遗留操作与候选失败，按会话递增版本；M4-B 已通过下述独立后台入口接入检查点推进和续接。新服务和测试沿用现有隔离副本复制范围。
-
-M4-B 的 `group_background_service.submit_group_operation` 创建即登记 Worker，再由 Worker 自行取得执行权和独立 Session，接受 send/regenerate/resume 后通过 shield 握手返回回执。调用方断连只停止等待，关闭等待已登记任务与数据库线程、客户端收尾。`group_checkpoint_service` 将持久目标绑定到当前 Task、Operation、会话、轮次、候选与 revision，允许执行未选中的新候选，同时保留旧入口的选中限制。M3 与 M4 复用 `group_round_service._execute_round`，没有复制导演或个人协议。
-
-初判、调度、完整发言和最终结束分别原子推进检查点；续接核对原文范围、完整知情、父项与审计，复用未完成调度，不重跑已保存前缀。只有新候选完整成功才在同事务切换选择并结束回执；失败保留原选择。每次尝试派发前提交调用消费与版本，提交后按持久绝对期限重新计算 timeout，响应后核对同一期限，避免慢提交延长调用预算。续接恢复冻结参数并仅使用剩余步数，finish 零调用；同提供方可换凭据，换地址或缺失快照拒绝续接。公开 HTTP 已由 M4-C 接入，M4-D 页面通过持久 UUID 和 GET 查询恢复已接受任务。
-
-`group_memory_assertions.py` 在模型调用前释放读事务，对成员获准知情的用户原文与角色台词独立分类；请求授权不扩大取证范围。`group_memory_facts.py` 校验来源类型、旧卡完整分段与局部更正关系，并在候选卡片上界内计算有效片段。`parts_json` 首次写入后由 SQLite 触发器禁止修改，旧卡原文和父卡向量保持不变。部分撤回的父卡不沿用整卡语义分数；按保留片段做词面匹配。分段、提纯结果和 Outbox 同事务提交，版本竞争整体回滚。迁移 `b6e7f8a9b0c1` 不回填历史正文，已有新版候选或事实数据时拒绝有损降级。
-
-M4-C 的群聊路由使用严格请求模型与现有群聊访问策略，生成操作返回后台接受回执，选择/撤回使用短事务。路径轮次及嵌套候选在接受事务中核对归属；相同请求重放优先于当前版本校验。`group_query_service` 在独立只读事务中查询请求、候选及 current 版本快照，候选 state_preview 明确绑定候选，不修改成员起点。HTTP 能力按运行权可用性返回，旧内部接受原语不自行派发模型；详细响应与错误边界见[群聊 API](../api/GROUP_SESSIONS.md)。
-
-M3-D 的 `scripts/group_chat_prototype/preview.py` 在虚构库回放后提供限时本机预览，复用应用的群聊 GET 路由和按请求关闭的只读 Session；SQLite mode=ro/query_only 与路由白名单共同限制写入，应用 lifespan、迁移和后台任务不在预览中启动。专用 H5 构建副本挂在 `/preview/`，预览期间仍独占数据库运行权，结束后由启动器清理副本。普通 rounds 响应新增所选候选的 revision、finish_reason 与非敏感 error_code，审计 JSON 继续只在内部报告保存。
-
-每次模型返回后同时检查整轮与单次绝对截止时间，适配器捕获取消后返回的迟到结果也按超时拒绝。隔离诊断读取失败只产生 diagnostic_error_code，不改变成功候选；报告将 input_collection 标为未通过。取消仍等待诊断线程结束并传播，原始异常正文和 SQL 参数不进入诊断错误码或日志。
-
-`application/group_runtime.py` 将运行权绑定到 SQLite 文件旁的 `.runtime.lock`：Windows 使用 msvcrt 字节锁，其他支持的平台使用 flock。lifespan 先独占运行权，再迁移并将残留 generating 候选改为 failed/process_interrupted、递增 revision，随后启动 Worker；关闭并等待任务结束后才释放运行权。第二个应用进程会在迁移和中断处理前失败，避免误判其他 Worker 的正在执行候选。锁文件保留，锁随句柄或进程退出释放；不自动恢复或再次调用模型。
-
-关闭清理通过独立任务统一取消并等待后台 Worker，再清理聊天流；单个 Worker 已异常退出时也继续处理其余任务。lifespan 的重复取消不会传入该清理任务，清理完成后才传播取消或 Worker 错误并释放运行权，避免后台仍在写库时允许新进程接管。
-
-列表筛选与角色删除保护仍是各自的业务规则。群聊路由仅允许 group 目标；创建请求中的 `origin.session_id` 映射为内部 `source_session_id`，始终按 single 来源检查。来源与目标不会共用一个模糊的类型豁免。不同策略不能重复包装同一业务入口；后续群聊子资源也沿用明确的策略及归属校验。
-
-Alembic 在线迁移在事务外暂停当前连接的外键执行，随后用 `BEGIN IMMEDIATE` 将表重建与版本号更新纳入同一事务，提交前执行 `foreign_key_check`，失败整体回滚，退出时恢复原外键设置。这样重建 Persona 或 Session 表时不会触发引用表的级联删除和置空。普通业务连接仍启用外键；含群聊数据时拒绝降级到 M1-A 之前的结构。
+群聊的数据、个人上下文、导演、后台恢复与成员记忆机制见 [群聊架构](GROUP_CHAT.md)。功能范围查 [群聊说明](../features/GROUP_CHAT.md)，HTTP 契约查 [群聊接口](../api/GROUP_SESSIONS.md)。
 
 | 位置 | 负责 | 不应放入 |
 | --- | --- | --- |
@@ -137,7 +65,19 @@ CHARX 确认区分新建、追加素材和更新已有角色；设定合并、�
 
 `joint_retrieval.py` 编排向量种子、图谱扩展、SQLite 支持卡回查、整理摘要映射和共同预算；`memory_facts.py` 提供共用载荷、故事时间语义及自动卡来源校验。Prompt 接收统一事实卡，图谱不单独注入重复正文；ChromaDB 继续只作可重建索引。
 
+## 会话类型隔离与迁移
+
+HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接口使用默认单聊的 `SessionAPIRouter`，群聊管理使用 `GroupSessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得所属策略的类型限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
+
+直接服务调用和后台重试仍通过 `get_single_session`、`get_single_message` 或 `get_single_persona` 加载资源；内部步骤复用已加载对象，跨事务重新加载。`api/test_session_access_architecture.py` 自动发现全部服务中同时声明 `db` 和上述资源参数的公开函数、类方法，使用群聊夹具验证拒绝访问且不改动数据，不维护入口名单。按显式人格隔离的共享算法使用 `@session_kind_agnostic("原因")` 声明例外；该标记不豁免 HTTP 校验，新增例外需要审查其成员选择与分支语义。自建数据库会话的回合维护、按任务 ID 调度的 Worker 继续由后台专项测试覆盖。群聊专用服务使用 `@group_session_operation` 声明类型，自动发现测试对其传入单聊资源验证反向隔离。新增资源标识命名或新的任务调度机制时，需要扩展发现规则和专项测试。
+
+列表筛选与角色删除保护仍是各自的业务规则。群聊路由仅允许 group 目标；创建请求中的 `origin.session_id` 映射为内部 `source_session_id`，始终按 single 来源检查。来源与目标不会共用一个模糊的类型豁免。不同策略不能重复包装同一业务入口；后续群聊子资源也沿用明确的策略及归属校验。
+
+Alembic 在线迁移在事务外暂停当前连接的外键执行，随后用 `BEGIN IMMEDIATE` 将表重建与版本号更新纳入同一事务，提交前执行 `foreign_key_check`，失败整体回滚，退出时恢复原外键设置。这样重建 Persona 或 Session 表时不会触发引用表的级联删除和置空。普通业务连接仍启用外键；含群聊数据时拒绝降级到 M1-A 之前的结构。
+
 ## 后台任务
+
+群聊运行权、提纯 Worker 与关闭顺序见 [群聊生命周期](GROUP_CHAT.md#进程生命周期与隔离预览)。应用关闭等待清理完成后才释放数据库运行权。
 
 进行中事件由 `memory_event_buffer.py` 纯内存规划并持久化到 `memory_event_buffers`。`memory_extraction_jobs.py` 先将候选与接收进度原子保存，再按依赖组件处理；所有外部调用位于写事务之外，提交时核对来源、旧卡、缓冲版本和租约。单独的 `memory_retry_worker.py` 退避重试，生命周期关闭会等待其线程结束。聊天装配向纯 Prompt 编译器传入有效事件和待处理候选；事件与图谱辅助来源分别失效。迁移和测试副本沿用现有复制范围，详见[进行中事件](../features/MEMORY_EVENTS.md)。
 

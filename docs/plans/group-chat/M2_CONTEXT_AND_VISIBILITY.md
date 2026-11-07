@@ -1,8 +1,10 @@
 # M2：单角色发言与知情隔离设计
 
+> 本页保留阶段设计、决策与当时交付证据。最新进度见 [实施入口](README.md)，当前机制见 [群聊架构](../../architecture/GROUP_CHAT.md)，后续复验见 [验收索引](../../testing/group-chat/README.md)；文中的下一批和验证数量按记录当时理解。
+
 更新日期：2026-11-05。状态：M2-A–C 已实现，M2-D 离线联合验证通过，真实模型与真机流程待验收。本稿记录数据、上下文与内部执行边界，没有开放面向用户的群聊生成。M1 的 App/微信真机流程仍待验收。
 
-[模块进度](README.md) · [需求基线](../GROUP_CHAT_PLAN.md) · [M1 设计](M1_DATA_AND_PERSONAS.md) · [M3 设计](M3_DIRECTOR.md) · [文档导航](../../README.md)
+[模块进度](README.md) · [需求基线](REQUIREMENTS.md) · [M1 设计](M1_DATA_AND_PERSONAS.md) · [M3 设计](M3_DIRECTOR.md) · [文档导航](../../README.md)
 
 ## 范围与交付
 

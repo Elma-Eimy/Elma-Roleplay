@@ -1,6 +1,8 @@
 # 群聊 M4 联通验收与交接
 
-[文档导航](../README.md) · [M4 设计与接续](../plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) · [群聊接口](../api/GROUP_SESSIONS.md)
+> 阶段报告：以下结果按各节记录的日期、版本和配置理解。最新验证汇总见 [验收索引](README.md)，当前开发任务见 [实施入口](../../plans/group-chat/README.md)。
+
+[文档导航](../../README.md) · [M4 设计与接续](../../plans/group-chat/M4_ROUNDS_AND_RECOVERY.md) · [群聊接口](../../api/GROUP_SESSIONS.md)
 
 M4-A–D 已接通数据、后台执行、公开接口与详情页交互。以下区分离线程序、隔离 H5、真实模型与真机证据；M4 仍处于联合验收，持续记忆及完整界面留给 M5/M6。
 

@@ -8,6 +8,8 @@
 
 参与开发的 agent 先读 [协作约定](AGENTS.md) 与 [上手指南](docs/guides/AGENT_ONBOARDING.md)，按任务查找代码、领域文档和测试。模块职责见 [后端架构](docs/architecture/BACKEND.md) 与 [前端架构](docs/architecture/FRONTEND.md)。
 
+群聊资料从 [当前功能](docs/features/GROUP_CHAT.md)、[当前架构](docs/architecture/GROUP_CHAT.md)、[实施进度](docs/plans/group-chat/README.md) 和 [验收索引](docs/testing/group-chat/README.md) 分别进入；阶段设计和历史报告由对应索引组织。
+
 ---
 
 ## 项目初衷与应用场景

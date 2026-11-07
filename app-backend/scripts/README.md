@@ -34,4 +34,4 @@
 
 v2 报告的 `schema_version=2`，`candidate_state` 保存数据库实际协议版本、revision、状态、终止原因与错误码；`director_steps` 保存已接受的规范化审计链，不含正文副本或自由文本理由。这些字段仅供隔离报告复核，不加入普通 rounds API。
 
-M3-D 增加 `--serve`，回放后固定监听 `127.0.0.1:8767`，最多 600 秒（`--port`、`--preview-seconds` 可调整，最长 3600 秒）。`--frontend-dist` 可挂载专用 H5 构建到 `/preview/`，首页提供各场景的详情链接。预览只允许群聊读取和静态资源，SQLite 以只读方式打开，不启动 lifespan 或后台任务；时间到后进程退出并清理临时副本。专用 H5 固定当前来源、忽略保存的地址/密钥并拒绝写请求；普通 H5 构建会被启动器拒绝。构建命令、验证矩阵与交接边界见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。
+M3-D 增加 `--serve`，回放后固定监听 `127.0.0.1:8767`，最多 600 秒（`--port`、`--preview-seconds` 可调整，最长 3600 秒）。`--frontend-dist` 可挂载专用 H5 构建到 `/preview/`，首页提供各场景的详情链接。预览只允许群聊读取和静态资源，SQLite 以只读方式打开，不启动 lifespan 或后台任务；时间到后进程退出并清理临时副本。专用 H5 固定当前来源、忽略保存的地址/密钥并拒绝写请求；普通 H5 构建会被启动器拒绝。构建命令、验证矩阵与交接边界见[群聊 M3 联通验收](../../docs/testing/group-chat/M3_DIRECTOR.md)。

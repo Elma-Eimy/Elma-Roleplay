@@ -4,13 +4,13 @@
 
 ## 自动回归
 
-`conversation/test_group_output_retry.py` 验证当前阶段三次格式尝试、持久计数与一次提交、耗尽后无残缺写入、旧快照兼容，以及网络/取消/截断/语义拒绝不重试。`test_group_memory_evidence.py` 验证角色不复述时原始事实仍能进入提纯，且关系引文索引只包含对应对象的可见来源；请求和私密内容仍被排除。`test_group_memory_facts.py` 覆盖独立断言分类、明确更正完成检查、三次校验上限、局部撤回、异议与成员隔离，以及旧候选边界；`infrastructure/test_group_memory_parts_migration.py` 核对旧库保留、分段不可变和降级保护。提示词的真实质量另见[阶段验收](../../docs/testing/GROUP_CHAT_M1_M5_STAGE.md)。
+`conversation/test_group_output_retry.py` 验证当前阶段三次格式尝试、持久计数与一次提交、耗尽后无残缺写入、旧快照兼容，以及网络/取消/截断/语义拒绝不重试。`test_group_memory_evidence.py` 验证角色不复述时原始事实仍能进入提纯，且关系引文索引只包含对应对象的可见来源；请求和私密内容仍被排除。`test_group_memory_facts.py` 覆盖独立断言分类、明确更正完成检查、三次校验上限、局部撤回、异议与成员隔离，以及旧候选边界；`infrastructure/test_group_memory_parts_migration.py` 核对旧库保留、分段不可变和降级保护。提示词的真实质量另见[阶段验收](../../docs/testing/group-chat/M1_M5_STAGE.md)。
 
 `conversation/test_group_turn_plan.py` 覆盖请求与感知分离、私密片段和世界书隔离、承接依据权限及消费、来源窗口、策略与 JSON 参数冻结、v1 兼容，以及审查拒绝后的原依据续接。统一入口明确让原有固定响应夹具继续使用旧策略；本专项显式启用新策略，真实 API 另验，不能把旧夹具通过当成新语义验证。
 
-`conversation/test_group_units.py` 另覆盖个人投影保留单元类型、其他成员资料不占用用户消息身份、可见窗口的局部顺序，以及首个角色的发言依据不虚构其他发言者。真实交互的改进与残留分别记录在[群聊 M4 验收](../../docs/testing/GROUP_CHAT_M4.md)，离线断言不代表模型语义已全部通过。
+`conversation/test_group_units.py` 另覆盖个人投影保留单元类型、其他成员资料不占用用户消息身份、可见窗口的局部顺序，以及首个角色的发言依据不虚构其他发言者。真实交互的改进与残留分别记录在[群聊 M4 验收](../../docs/testing/group-chat/M4_ROUNDS_AND_RECOVERY.md)，离线断言不代表模型语义已全部通过。
 
-`conversation/test_group_preview.py` 检查 M3-D 的真实群聊路由、SQLite 只读写入拒绝、预览白名单、H5 静态资源挂载和生命周期禁用；CLI 子进程用本机 HTTP 读取失败前缀，限时退出后端口释放。导演 CLI 专项现覆盖 9 个离线场景，包含预期失败和候选版本/终止原因交接。H5 与真机方法见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。
+`conversation/test_group_preview.py` 检查 M3-D 的真实群聊路由、SQLite 只读写入拒绝、预览白名单、H5 静态资源挂载和生命周期禁用；CLI 子进程用本机 HTTP 读取失败前缀，限时退出后端口释放。导演 CLI 专项现覆盖 9 个离线场景，包含预期失败和候选版本/终止原因交接。H5 与真机方法见[群聊 M3 联通验收](../../docs/testing/group-chat/M3_DIRECTOR.md)。
 
 `conversation/test_group_units.py` 验证 M3-C 用户码点范围、角色单元知情、心理仅作者可见、过滤后窗口、一次状态重放、v2 最终输出契约与世界书输入；同时覆盖调度先落库、审计原子回滚、版本竞争、取消、正常停止及 Outbox 删除回滚。`infrastructure/test_group_units_migration.py` 使用虚构旧库验证原文和权限回填、组合约束、级联、升级失败回滚及有损降级拒绝。内部整轮默认 v2；旧执行权专项显式使用 v1 替身，CLI 的 8 个场景使用 v2。
 
@@ -20,7 +20,7 @@
 
 M3-A 审查回归覆盖旧历史填满预算后的三个阶段编译、本轮前缀保护和新轮次执行；最终提交期间取消时，分别验证成功提交返回完成、失败写入保持取消，并等待线程结束后释放锁。
 
-`conversation/test_group_director_prompts.py` 覆盖独立阶段契约、实际成员 ID、Unicode 原文长度与位置参照、长文包围符边界优先、稠密包围符的参照上限和场景预算，以及真实 API 返回过的错误范围与阶段包装仍被拒绝；同时核对调度只统计本轮已发生的发言。与导演专项一起执行：`python -m tests --group conversation --pattern 'test_group_director*.py'`。这些离线回归不评价模型语义，真实调用记录见[群聊 M3 联通验收](../../docs/testing/GROUP_CHAT_M3.md)。
+`conversation/test_group_director_prompts.py` 覆盖独立阶段契约、实际成员 ID、Unicode 原文长度与位置参照、长文包围符边界优先、稠密包围符的参照上限和场景预算，以及真实 API 返回过的错误范围与阶段包装仍被拒绝；同时核对调度只统计本轮已发生的发言。与导演专项一起执行：`python -m tests --group conversation --pattern 'test_group_director*.py'`。这些离线回归不评价模型语义，真实调用记录见[群聊 M3 联通验收](../../docs/testing/group-chat/M3_DIRECTOR.md)。
 
 M3-B 审查回归还验证四个模型阶段在适配器吞掉超时取消并返回结果时仍停止推进；诊断开关和诊断异常不改变成功候选，诊断错误码不含原始异常。诊断期间的外部取消仍等待线程结束并将候选标失败，不与普通诊断读取异常混为一谈。
 

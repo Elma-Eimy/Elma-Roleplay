@@ -1,5 +1,7 @@
 # M5 群聊记忆与人格成长
 
+> 本页保留阶段设计、决策与当时交付证据。最新进度见 [实施入口](README.md)，当前机制见 [群聊架构](../../architecture/GROUP_CHAT.md)，后续复验见 [验收索引](../../testing/group-chat/README.md)；文中的下一批和验证数量按记录当时理解。
+
 [群聊模块进度](README.md) · [群聊当前行为](../../features/GROUP_CHAT.md)
 
 ## M5-A 已接入成员继承记忆

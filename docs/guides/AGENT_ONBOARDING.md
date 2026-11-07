@@ -4,6 +4,8 @@
 
 ## 阅读顺序与资料用途
 
+群聊任务先读 [当前架构](../architecture/GROUP_CHAT.md)，再查 [最新实施进度](../plans/group-chat/README.md) 与 [验收索引](../testing/group-chat/README.md)。模块设计和交接历史中的状态按记录当时理解，不作为当前待办。
+
 1. 阅读 [项目概览](../../README.md)，确认涉及的产品功能与平台。
 2. 查 [后端架构](../architecture/BACKEND.md) 或 [前端架构](../architecture/FRONTEND.md)，定位模块边界。
 3. 从下表找到代码与测试，沿调用方阅读实现；涉及接口时对照 [API 总表](../../API_TABLE.md)。

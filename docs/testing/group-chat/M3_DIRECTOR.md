@@ -1,6 +1,8 @@
 # 群聊 M3 联通验收与交接
 
-[文档导航](../README.md) · [M3 设计与记录](../plans/group-chat/M3_DIRECTOR.md) · [群聊接口](../api/GROUP_SESSIONS.md)
+> 阶段报告：以下结果按各节记录的日期、版本和配置理解。最新验证汇总见 [验收索引](README.md)，当前开发任务见 [实施入口](../../plans/group-chat/README.md)。
+
+[文档导航](../../README.md) · [M3 设计与记录](../../plans/group-chat/M3_DIRECTOR.md) · [群聊接口](../../api/GROUP_SESSIONS.md)
 
 M3 的内部执行、可见单元和只读展示已接通。以下入口只使用虚构临时数据，不开放正式发送、确认、候选切换或失败恢复。离线程序检查、H5 浏览器检查、真实模型质量和真机验收分别记录。
 
