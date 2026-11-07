@@ -15,6 +15,7 @@ from sqlalchemy.orm import declarative_base, relationship, backref
 from sqlalchemy.sql import func
 import enum
 from core.group_recall_schema_v1 import install_triggers
+from core.group_recall_schema_v2 import install_parts_trigger
 
 Base = declarative_base()
 
@@ -420,6 +421,7 @@ class GroupRecallCard(Base):
     slot = Column(Integer)
     replaces_id = Column(Integer)
     indexed = Column(Boolean, nullable=False, server_default="0")
+    parts_json = Column(Text)
 
 
 class GroupMemberInsight(Base):
@@ -981,3 +983,4 @@ class OutboxJob(Base):
 def _install_group_recall_triggers(metadata, connection, **kwargs):
     if GroupRecallCard.__table__ in kwargs["tables"]:
         install_triggers(connection)
+        install_parts_trigger(connection)
