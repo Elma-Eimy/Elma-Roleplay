@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from services.conversation.session_access import check_chat_arguments, group_session_operation
 from services.memory.group_memory_recall import _terms
+from services.memory.group_memory_facts import effective_facts
 
 logger = logging.getLogger(__name__)
 COLLECTION = "group_memory_v1"
@@ -13,7 +14,12 @@ MAX_COSINE_DISTANCE = 0.50
 
 # 即使索引尚未清理，角色输入也必须重新检查采用候选和成员归属。
 CARD_ROWS = """
-SELECT d.id, d.persona_id, d.indexed, s.importance_score, s.temporal_note, r.round_index,
+SELECT d.id, d.persona_id, d.indexed, d.parts_json, s.importance_score, s.temporal_note, r.round_index,
+       json_extract(c.cards_json,'$[' || d.slot || '].claim_kind') AS claim_kind,
+       json_extract(c.cards_json,'$[' || d.slot || '].replaces_part') AS revision_json,
+       evidence.speaker_persona_id AS source_speaker, evidence.id IS NOT NULL AS source_known,
+       coalesce(json_extract(c.cards_json,'$[' || d.slot || '].source_name'),
+                CASE WHEN evidence.id IS NOT NULL AND evidence.speaker_persona_id IS NULL THEN '用户' ELSE '旧资料' END) AS source_name,
        coalesce(s.content, json_extract(c.cards_json,'$[' || d.slot || '].content')) AS content,
        coalesce(s.memory_type, json_extract(c.cards_json,'$[' || d.slot || '].memory_type')) AS memory_type,
        coalesce(s.temporal_status, json_extract(c.cards_json,'$[' || d.slot || '].temporal_status')) AS temporal_status
@@ -22,6 +28,8 @@ LEFT JOIN group_inherited_memory_snapshots s ON s.id=d.snapshot_id AND s.persona
 LEFT JOIN group_memory_captures c ON c.id=d.capture_id AND c.persona_id=d.persona_id
 LEFT JOIN group_rounds r ON r.id=c.round_id AND r.session_id=c.session_id
 LEFT JOIN group_round_candidates picked ON picked.id=c.candidate_id AND picked.round_id=r.id
+LEFT JOIN group_content_items evidence ON evidence.candidate_id=c.candidate_id AND evidence.id=
+       CAST(json_extract(c.cards_json,'$[' || d.slot || '].ref') AS INTEGER)
 WHERE (s.id IS NOT NULL OR (r.confirmed_at IS NOT NULL AND r.discarded_at IS NULL
        AND r.selected_candidate_id=c.candidate_id AND picked.status='awaiting_confirmation'))
 """
@@ -53,7 +61,7 @@ class SemanticQuery:
 
 
 @group_session_operation
-def unified_memories(persona_id, round_index, ceiling, passages, db, distances, *, include_ids=False):
+def unified_memories(persona_id, round_index, ceiling, passages, db, distances, *, include_ids=False, facts=False):
     check_chat_arguments({"persona_id": persona_id}, db, kind="group")
     passages = tuple(dict.fromkeys(p[:2400] for p in passages if p.strip()))
     if not passages or not ceiling:
@@ -74,13 +82,14 @@ def unified_memories(persona_id, round_index, ceiling, passages, db, distances, 
         "AND t.temporal_status=v.temporal_status AND t.note=coalesce(v.temporal_note,'') "
         "WHERE t.until_turn IS NULL OR v.round_index>=t.until_turn")
     rows = db.execute(text(query), {"pid": persona_id, "ceiling": ceiling, "turn": round_index}).mappings()
+    rows = effective_facts([dict(row) for row in rows]) if facts else rows
     for row in rows:
         content = row["content"]
         if not content or len(content) > 1000:
             continue
         tokens = _terms(content)
         overlap = len(terms & tokens)
-        distance = (distances or {}).get(row["id"]) if row["indexed"] else None
+        distance = (distances or {}).get(row["id"]) if row["indexed"] and not row.get('partially_retired') else None
         if not overlap and distance is None:
             continue
         similarity = overlap / math.sqrt(max(1, len(terms) * len(tokens)))
@@ -88,10 +97,17 @@ def unified_memories(persona_id, round_index, ceiling, passages, db, distances, 
         score = max(similarity, 1 - distance if distance is not None else 0) + min(similarity, 0.2) * (distance is not None)
         rank = (score, row["round_index"] or 0, row["importance_score"] or 0, row["id"])
         key = (content.strip(), row["memory_type"], row["temporal_status"], row["temporal_note"] or "")
+        if facts:
+            key += (row.get('claim_kind') or 'legacy', row['source_speaker'], bool(row['source_known']),
+                    tuple(fragment['disputed'] for fragment in row['fact_fragments']))
         if key not in best or rank > best[key][0]:
             best[key] = (rank, dict(content=content, memory_type=row["memory_type"], temporal_status=row["temporal_status"],
                 temporal_note=row["temporal_note"], source="group" if row["round_index"] else "inherited",
-                round_index=row["round_index"], **({"id": row["id"]} if include_ids else {})))
+                round_index=row["round_index"], **({'claim_kind': row.get('claim_kind') or 'legacy',
+                    'fact_fragments': row['fact_fragments'], 'source_speaker': row['source_speaker'],
+                    'source_known': bool(row['source_known']),
+                    **({'source_content': row['source_content'], 'parts_frozen': row['parts_frozen']} if include_ids else {})} if facts else {}),
+                **({"id": row["id"]} if include_ids else {})))
             if len(best) > 3:
                 del best[min(best, key=lambda k: best[k][0])]
     return [item for _, item in sorted(best.values(), key=lambda hit: hit[0], reverse=True)]

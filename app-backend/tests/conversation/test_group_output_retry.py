@@ -134,6 +134,21 @@ class GroupOutputRetryTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 persist_group_calls(replace(snapshot, output_attempts=value), 1, set(ids))
 
+    def test_fact_strategy_is_frozen_and_absent_legacy_flag_defaults_false(self):
+        from types import SimpleNamespace
+        sid, ids = self.group()
+        snapshot = capture_group_calls(sid, self.db)
+        encoded, fingerprint = persist_group_calls(snapshot, 1, set(ids))
+        self.assertTrue(json.loads(encoded)['fact_recall'])
+        restored, _ = restore_group_calls(SimpleNamespace(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint), set(ids))
+        self.assertTrue(restored.fact_recall)
+        legacy = json.loads(encoded)
+        del legacy['fact_recall']
+        restored, _ = restore_group_calls(SimpleNamespace(protocol_version=2, call_snapshot_json=json.dumps(legacy), provider_fingerprint=fingerprint), set(ids))
+        self.assertFalse(restored.fact_recall)
+        with self.assertRaises(ValueError):
+            persist_group_calls(replace(snapshot, fact_recall=1), 1, set(ids))
+
 
 class RetryBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_network_cancel_truncation_and_semantic_rejection_are_not_retried(self):

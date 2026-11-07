@@ -1003,6 +1003,12 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
             context += ("\n【本人相关记忆】\n" + memory_data +
                         "\ninherited 表示入群快照，group 表示本人在所标群聊轮次形成的记忆。只有同一件事有明确修正时才采用后来的说法；"
                         "区分过去、现状、转述和计划。其他成员是否知情须看实际交流。")
+            if any('fact_fragments' in card for card in inherited_memories):
+                context += ('\n事实片段保留来源：narration 是用户给定叙事，observed 是实际可见动作，'
+                            'statement 仅表示 source_name 曾说过这项断言，不保证其内容在世界中真实发生；'
+                            'plan 尚未执行，perspective 是主观认识，legacy 是未细分的旧资料。'
+                            'disputed=true 表示该说法受到异议，不应当作确定事实。'
+                            '正文仅包含当前有效片段；被撤回的说法不再作为当前事实提供，历史上说过的话仍可保留。')
         else:
             context += ("\n【本人入群前的相关记忆】\n" + memory_data +
                         "\n这些是你本人在入群时保留的记忆资料。区分过去、现状和计划，其他成员是否知情须看群聊中的实际交流。")

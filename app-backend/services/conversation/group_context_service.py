@@ -76,7 +76,8 @@ def _member_memories(persona_id, round_, candidate, rows, requests, basis, db, d
                 parts = row.visible_passages if row.kind == "user" else tuple(unit.text for unit in row.visible_units)
                 passages.extend(parts or (row.content,))
     if "group_card_limit" in policy:
-        return unified_memories(persona_id, round_.round_index, policy["group_card_limit"], passages, db, distances)
+        return unified_memories(persona_id, round_.round_index, policy["group_card_limit"], passages, db, distances,
+                                facts=policy.get('fact_recall', False))
     return recall_inherited_memories(persona_id, passages, db)
 
 
