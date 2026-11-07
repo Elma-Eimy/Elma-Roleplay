@@ -308,7 +308,8 @@ class GroupUnitTests(unittest.TestCase):
         self.assertEqual("invalid_output", candidate.error_code)
         self.assertEqual(candidate.revision, result["revision"])
         self.assertEqual(3, result["revision"])
-        self.assertEqual(4, len(calls))
+        self.assertEqual(6, len(calls))
+        self.assertEqual(3, calls.count("utterance_visibility"))
         self.assertEqual(["user_visibility", "next_action"], [row.stage for row in self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id)])
         self.assertEqual(1, self.db.query(GroupContentItem).count())
 

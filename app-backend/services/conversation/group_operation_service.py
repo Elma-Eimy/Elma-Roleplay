@@ -197,7 +197,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 if (not target or target.session_id != session_id or target.round_id != latest.id
                         or target.status != "failed" or target.revision != request["target_candidate_revision"]):
                     raise SessionKindConflict("续接目标或版本无效")
-                _, max_steps = restore_group_calls(target, history._members(session_id, db))
+                snapshot, max_steps = restore_group_calls(target, history._members(session_id, db))
                 validate_prefix(latest, target, db)
                 from services.conversation.group_checkpoint_service import saved_steps
                 remaining = max_steps - saved_steps(target.id, db)
@@ -223,8 +223,8 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
         operation = GroupRoundOperation(session_id=session_id, round_id=latest.id, candidate_id=selected.id,
             client_request_id=request_id, kind=kind, status="queued" if kind in ("send", "regenerate", "resume") else "succeeded",
             request_fingerprint=fingerprint, accepted_result_json=json.dumps(accepted),
-            call_limit=(3 * request["max_steps"] + 1 if kind in ("send", "regenerate") else
-                        3 * remaining + 1 if kind == "resume" and remaining else 0),
+            call_limit=((3 * request["max_steps"] + 1) * snapshot.output_attempts if kind in ("send", "regenerate") else
+                        (3 * remaining + 1) * snapshot.output_attempts if kind == "resume" and remaining else 0),
             finished_at=None if kind in ("send", "regenerate", "resume") else now)
         db.add(operation)
         db.flush()

@@ -1,4 +1,4 @@
-"""持有会话执行权完成一次群聊发言；不提供导演或自动重试。"""
+"""持有会话执行权完成一次群聊发言，提交前有界重试格式无效响应。"""
 import asyncio
 import json
 import logging
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from functools import partial
 
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import text
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_history_service as history
@@ -17,6 +18,7 @@ from services.conversation.role_state_schema import validate_patch, merge_state,
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.infrastructure.llm_provider import get_llm_provider
 from services.conversation.group_unit_protocol import load_object, parse_role_units, UnitPlan, GroupUnitError
+from services.conversation.group_output_retry import validated_output
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +145,17 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
         raise
 
 
+def _check_retry_target(session_id, candidate_id, revision, db, *, scope=None):
+    history._require_clean_transaction(db)
+    db.rollback()
+    db.expire_all()
+    db.execute(text("BEGIN"))
+    try:
+        history._writable(session_id, candidate_id, revision, db, scope=scope)
+    finally:
+        db.rollback()
+
+
 @group_session_operation
 async def generate_group_utterance(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, runtime, decide_visibility, model=None):
@@ -157,7 +170,8 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
 
 async def _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, execution, decide_visibility, model=None, call_model=None,
-                                   generation_parameters_json=None, history_limit=None, fail_candidate=True, scope=None):
+                                   generation_parameters_json=None, history_limit=None, fail_candidate=True, scope=None,
+                                   output_attempts=1):
     require_group_execution(execution, session_id, db.get_bind())
     if scope is not None and scope.execution is not execution:
         raise RuntimeError("不能借用其他任务的持久目标")
@@ -170,10 +184,19 @@ async def _generate_with_execution(session_id, candidate_id, speaker_persona_id,
             history_limit=history_limit, **({"scope": scope} if scope is not None else {}))
         prepared = True
         parameters = json.loads(context.generation_json)
-        response = await (get_llm_provider().generate_async(**parameters, _group_no_retry=True) if call_model is None else call_model(parameters))
-        if response.choices[0].finish_reason not in (None, "stop"):
-            raise GroupGenerationError("incomplete_output")
-        result = _parse(response.choices[0].message.content, context)
+        attempted = False
+        async def invoke(parameters):
+            nonlocal attempted
+            if attempted:
+                await _database(_check_retry_target, session_id, candidate_id, expected_revision, db, scope=scope)
+            attempted = True
+            return await (get_llm_provider().generate_async(**parameters, _group_no_retry=True)
+                          if call_model is None else call_model(parameters))
+        def validate(choice):
+            if choice.finish_reason not in (None, "stop"):
+                raise GroupGenerationError("incomplete_output")
+            return _parse(choice.message.content, context)
+        _, result = await validated_output(invoke, parameters, validate, output_attempts)
         audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else (),
             context.response_request))
         try:

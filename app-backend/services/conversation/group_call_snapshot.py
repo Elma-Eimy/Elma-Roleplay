@@ -26,6 +26,7 @@ class GroupCallSnapshot:
     connection: GroupModelConnection = field(repr=False)
     turn_policy: int = 0
     inherited_recall: bool = False
+    output_attempts: int = 1
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
@@ -97,6 +98,10 @@ def persist_group_calls(snapshot, max_steps, member_ids):
         value["inherited_recall"] = True
     if snapshot.turn_policy:
         value["turn_policy"] = snapshot.turn_policy
+    if type(snapshot.output_attempts) is not int or snapshot.output_attempts not in (1, 3):
+        raise error("输出重试策略无效")
+    if snapshot.output_attempts != 1:
+        value["output_attempts"] = snapshot.output_attempts
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False), hashlib.sha256(normalized.encode()).hexdigest()
 
 
@@ -129,7 +134,7 @@ def restore_group_calls(candidate, member_ids):
         limit = value.get("group_card_limit", 0)
         if type(limit) is not int or limit < 0:
             raise ValueError
-        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit"} != {
+        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit", "output_attempts"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -138,7 +143,7 @@ def restore_group_calls(candidate, member_ids):
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
             value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
-            value.get("turn_policy", 0), value.get("inherited_recall", False))
+            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -185,6 +190,7 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0, inherited_recall=True)
+                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0, inherited_recall=True,
+                                 output_attempts=3)
     finally:
         db.rollback()
