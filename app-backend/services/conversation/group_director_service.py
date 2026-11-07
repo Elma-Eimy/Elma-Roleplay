@@ -243,6 +243,11 @@ def build_director_messages(context, stage, *, user_content=None, proposed=None,
                 'request_to 是请求面向的实际成员 ID 数组，仅 request 可以非空；它决定谁可读取推进请求，不授予任何剧情事实知情。'
                 'recipients 仍单独判断剧情感知；请求可对感知隐藏但面向某成员。private 必须对所有成员隐藏且没有请求对象。'
                 '不同用途或秘密必须拆段，不可把私密正文混入面向他人的请求。含义不明时用 uncertain，不补造已发生对话。'
+                '先按断言和请求的边界拆段，再分别分类与判断知情；不能因为末尾有“请确认”就把前面的事实一起归为 request。'
+                '例如“铜铃原来的安排取消，现在只由赤羽保管。请岑夏确认。”应把前两项已确定的安排变更保留为 fact，'
+                '最后的确认要求另作 request；“请你把铜铃交给赤羽”仍全是未执行的 request，不能改成已交付的 fact。'
+                '直接说出的用户台词保留为 speech，台词之后要求角色回应的部分另作 request；没有引号时也按语义拆分。'
+                '分段只取连续原文，必须完整覆盖原文且不超过八段；不改写、不拼接，不向不知情者授予事实片段。'
                 '所有范围和 ID 都必须用提供的实际整数，不输出占位符。')
         elif stage == "next_action":
             contract += ('\n选择 speak 时还必须返回 basis 字符串，只能选 response_sources 中该成员的一个 reference 键。'

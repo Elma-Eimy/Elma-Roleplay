@@ -74,8 +74,13 @@ def _evidence(job, db):
                              [r["text"] for r in records], db, {}, include_ids=True)
     # 只提供单个陈述作为整卡覆盖目标，避免更正保管人时一并丢掉同卡的编号。
     prior = [card for card in prior if sum(bool(p.strip()) for p in _CLAUSE_BREAK.split(card["content"])) == 1]
+    relationship_refs = {}
+    for record in records:
+        for target in record["allowed_targets"]:
+            if target != "self":
+                relationship_refs.setdefault(str(target), []).append(record["ref"])
     return {"persona_id": persona.id, "name": members[persona.id], "perspective": perspective, "records": records,
-            "prior_cards": prior}
+            "prior_cards": prior, "relationship_refs": relationship_refs}
 
 
 def _extract(evidence, correction=None):
@@ -89,9 +94,18 @@ def _extract(evidence, correction=None):
               'target 必须原样选自该 ref 的 allowed_targets；quote 必须逐字摘自该 ref 的 text，不拼接。'
               'target="self" 表示自身认识；对用户本人的印象只能引用用户台词（speaker_id=null 且 kind=speech），用 "user"。'
               '对其他成员的印象须引用该成员的可见言行，target 填记录中的整数 speaker_id。每个关系对象最多一条。'
+              '先分别检查用户与各成员是否带来重要的信任、戒心、亲近或疏远变化，再填写 insights，'
+              '不要用一条自我感受或同伴印象代替所有对象，也不要求没有变化时硬凑。'
+              'relationship_refs 按对象列出可引用的 ref；对象键仅为查找索引，target 仍按 allowed_targets 的原始类型填写。'
+              '当用户亲口承认欺骗、栽赃、道歉或履行承诺，且足以改变本人认识时，优先引用该用户原话提取对用户的印象。'
+              '例如用户承认“是我偷的，我故意栽赃你”，对用户的印象应引用这句，而不是本人回应“我很难过”。'
+              '自己的感受或心理可作为 self，但不能作为 user 的引文。另一个成员支持本人时，应另给该成员的印象。'
               'perspective 是本人的背景，只用于理解其反应；新认识和记忆都须由 records 提供新证据。'
               'prior_cards 仅供对照。当可见引文明确更正同一事实或取消同一计划，且新卡记下该修正时，'
               '可在新卡额外填写 replaces_id，值为该旧卡的整数 id。话题相似、转述或猜测不足以覆盖旧卡。'
+              '明确修正时优先单独提取一张 fact 卡，并核对是否需要 replaces_id，不要把修正埋进混有动作和承诺的事件摘要。'
+              '仅改变原定安排时写 planned；已明确改变的现状写 current，不能把未来交付写成已经交付。'
+              '返回前分别检查卡片类型、对用户与同伴的引文，以及新旧卡是否确属同一事实；没有明确证据就保留旧卡。'
               '区分发言者和被谈论的人；不把用户叙事等同于用户行为。无依据时留空。')
     messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}]
     if correction:
