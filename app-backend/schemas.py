@@ -158,6 +158,22 @@ class GroupCommandBase(BaseModel):
         return self
 
 
+class GroupPortraitChange(BaseModel):
+    model_config = {"extra": "forbid"}
+    portrait_id: Optional[int] = Field(..., gt=0, le=SQLITE_INT_MAX, strict=True)
+    expected_group_revision: int = Field(ge=0, le=SQLITE_INT_MAX, strict=True)
+    observed_round_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_revision: Optional[int] = Field(None, ge=0, le=SQLITE_INT_MAX, strict=True)
+
+    @model_validator(mode="after")
+    def complete_observation(self):
+        values = (self.observed_round_id, self.observed_candidate_id, self.observed_candidate_revision)
+        if any(value is None for value in values) and any(value is not None for value in values):
+            raise ValueError("所见轮次、候选及版本需要同时提供或同时为空")
+        return self
+
+
 class GroupGenerationOptions(BaseModel):
     model_config = {"extra": "forbid"}
     model: Optional[str] = Field(None, min_length=1, max_length=200)

@@ -2,6 +2,8 @@
   ["POST", "/group-sessions"],
   ["GET", "/group-sessions"],
   ["GET", "/group-sessions/{session_id}"],
+  ["GET", "/group-sessions/{session_id}/portraits"],
+  ["PUT", "/group-sessions/{session_id}/members/{persona_id}/portrait"],
   ["POST", "/group-sessions/{session_id}/delete"],
   ["POST", "/characters/charx/preview"],
   ["GET", "/characters/charx/previews/{token}/images"],

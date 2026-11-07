@@ -28,9 +28,14 @@ test("group operation APIs keep request IDs and query URLs without retrying POST
   await f.api.getGroupRequest(21, "id /?#");
   await f.api.getGroupCandidates(21, 3, 5, 10);
   await f.api.getGroupCandidate(21, 3, 6);
+  await f.api.getGroupPortraits(21);
+  await f.api.setGroupPortrait(21, 7, { portrait_id: null, expected_group_revision: 2 });
   assert.deepEqual(calls.map(call => call[0]), ["/group-sessions/21/rounds", "/group-sessions/21/rounds/3/regenerate",
     "/group-sessions/21/rounds/3/resume", "/group-sessions/21/rounds/3/select-candidate", "/group-sessions/21/rounds/3/discard",
-    "/group-sessions/21/requests/id%20%2F%3F%23", "/group-sessions/21/rounds/3/candidates?limit=5&offset=10", "/group-sessions/21/rounds/3/candidates/6"]);
+    "/group-sessions/21/requests/id%20%2F%3F%23", "/group-sessions/21/rounds/3/candidates?limit=5&offset=10", "/group-sessions/21/rounds/3/candidates/6",
+    "/group-sessions/21/portraits", "/group-sessions/21/members/7/portrait"]);
+  assert.equal(calls.at(-1)[1].method, 'PUT');
+  assert.equal(JSON.parse(calls.at(-1)[1].body).portrait_id, null);
   for (const call of calls.slice(0, 5)) {
     assert.equal(call[1].method, "POST");
     assert.equal(JSON.parse(call[1].body).client_request_id, params.client_request_id);
@@ -51,7 +56,8 @@ test("Mock rejects new generation and recovery capabilities without writes or fa
     () => f.api.regenerateGroupRound(group.session_id, 1, params), () => f.api.resumeGroupRound(group.session_id, 1, params),
     () => f.api.selectGroupCandidate(group.session_id, 1, params), () => f.api.discardGroupRound(group.session_id, 1, params),
     () => f.api.getGroupRequest(group.session_id, "same-id"), () => f.api.getGroupCandidates(group.session_id, 1),
-    () => f.api.getGroupCandidate(group.session_id, 1, 1)]) {
+    () => f.api.getGroupCandidate(group.session_id, 1, 1), () => f.api.getGroupPortraits(group.session_id),
+    () => f.api.setGroupPortrait(group.session_id, 1, { portrait_id: null, expected_group_revision: 0 })]) {
     await assert.rejects(action(), /离线模式暂不支持/);
   }
   assert.equal(f.writes, writes);

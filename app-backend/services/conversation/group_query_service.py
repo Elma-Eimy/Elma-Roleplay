@@ -137,12 +137,15 @@ def get_group_candidate(session_id, round_id, candidate_id, db):
         names = {member.id: member.character.name for member in members}
         items = db.query(GroupContentItem).filter_by(candidate_id=candidate_id, kind="utterance").order_by(GroupContentItem.sequence).all()
         preview = []
+        from services.media.group_portraits import _candidate_portraits
+        portraits = {row['persona_id']: row for row in _candidate_portraits(session_id, candidate, db)}
         for member in members:
             role_state, persona = _member_state(member, group, round_, candidate, 2**63-1, db)
             insights = member_insights(member.id, round_, candidate, db)
             preview.append({"persona_id": member.id, "role_state": role_state,
                             "affection_score": persona.affection_score, "current_mood": persona.current_mood,
                             "cognition_state": persona.cognition_state,
+                            "portrait": portraits[member.id],
                             "insights": [{"kind": row["kind"], "content": row["content"],
                                 "target_persona_id": row.get("persona_id"), "target_name": row.get("name")}
                                 for row in insights]})
@@ -151,3 +154,14 @@ def get_group_candidate(session_id, round_id, candidate_id, db):
                     "speaker_persona_id": item.speaker_persona_id, "speaker_name": names[item.speaker_persona_id],
                     "content": item.content, "created_at": _iso(item.created_at)} for item in items],
                 "state_preview": {"candidate_id": candidate_id, "members": preview}}
+
+
+@group_session_operation
+def get_group_portraits(session_id, db):
+    from services.media.group_portraits import _current_portraits
+    with _read(session_id, db) as group:
+        state = _state(group, db)
+        latest = state['latest']
+        return {'session_id': session_id, 'current': state, 'members': _current_portraits(session_id, db),
+                'can_update': bool(state['capabilities']['can_send'] if latest is None else
+                                   state['capabilities']['can_regenerate'] and latest['candidate_id'] is not None)}

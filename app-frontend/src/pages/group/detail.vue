@@ -52,6 +52,33 @@
             </template>
           </view>
           <view class="group-card">
+            <view class="group-row"><text class="group-heading">成员立绘</text><button class="group-action" :aria-expanded="showPortraits" @tap="togglePortraits">{{ showPortraits ? '收起' : '查看' }}</button></view>
+            <template v-if="showPortraits">
+              <text class="group-copy">每名成员独立选择。立绘随采用候选保存，切换候选和撤回会恢复对应选择，已删除素材回退头像。</text>
+              <text v-if="loadingPortraits" class="group-copy" role="status">正在读取立绘…</text>
+              <text v-if="portraitWriting" class="group-copy" role="status">正在保存选择，请稍候…</text>
+              <text v-if="portraitError" class="group-error" role="alert">{{ portraitError }}</text>
+              <text v-if="portraitData && !portraitData.can_update" class="group-copy">当前只可查看；请求处理完成并刷新后，才能修改最新未确认候选的选择。</text>
+              <view v-if="portraitData" class="portrait-scene">
+                <view v-for="member in group.members" :key="member.persona_id" class="portrait-member">
+                  <text class="group-label">{{ member.character.name }} · 成员 {{ member.slot }}</text>
+                  <AvatarImage class="scene-image" :src="portraitImage(member.persona_id)" mode="aspectFit" />
+                  <text class="group-copy">{{ selectedPortrait(member.persona_id) ? '采用立绘' : '角色头像' }}</text>
+                  <button class="group-action" :disabled="!canChoosePortrait" @tap="state.choosePortrait(member.persona_id, null)">使用头像</button>
+                  <button class="group-action" :disabled="!canChoosePortrait || portraitOptions[member.persona_id]?.loading" @tap="state.loadPortraitOptions(member.persona_id)">选择已有立绘</button>
+                  <template v-if="portraitOptions[member.persona_id]">
+                    <text v-if="portraitOptions[member.persona_id].loading" class="group-copy">正在读取素材…</text>
+                    <text v-if="portraitOptions[member.persona_id].error" class="group-error">{{ portraitOptions[member.persona_id].error }}</text>
+                    <text v-if="!portraitOptions[member.persona_id].loading && !portraitOptions[member.persona_id].error && !portraitOptions[member.persona_id].rows.length" class="group-copy">还没有立绘，可到角色档案添加。</text>
+                    <button v-for="portrait in portraitOptions[member.persona_id].rows" :key="portrait.id" class="group-action" :disabled="!canChoosePortrait" @tap="state.choosePortrait(member.persona_id, portrait.id)">{{ portrait.name }}{{ selectedPortrait(member.persona_id) === portrait.id ? ' · 当前采用' : '' }}</button>
+                    <button v-if="portraitOptions[member.persona_id].hasMore" class="group-action" :disabled="!canChoosePortrait || portraitOptions[member.persona_id].loading" @tap="state.loadPortraitOptions(member.persona_id, true)">加载更多立绘</button>
+                  </template>
+                </view>
+              </view>
+              <button class="group-action" :disabled="loadingPortraits || portraitWriting || operationBusy || loading || deleting" @tap="state.refreshPortraits">刷新立绘</button>
+            </template>
+          </view>
+          <view class="group-card">
             <view class="group-row"><text class="group-heading">故事进展</text><view class="group-action" role="button" :aria-disabled="loading || loadingRounds || deleting || operationBusy" @tap="refreshRounds">刷新</view></view>
             <text class="group-copy">最近轮次在前，每轮内按发言先后阅读。这里展示当前采用的内容。</text>
             <AppStatusState v-if="loadingRounds && !rounds.length" kind="loading" title="正在读取发言" />
@@ -59,7 +86,7 @@
             <view v-for="round in rounds" :key="round.round_id" class="saved-round">
               <text class="group-label">第 {{ round.round_index }} 轮 · {{ roundStatus(round) }}</text>
               <view class="user-utterance"><text class="group-caption">{{ group.user_nickname }}</text><text class="user-content">{{ round.user_content }}</text></view>
-              <GroupUtterances :utterances="round.utterances" :members="group.members" />
+              <GroupUtterances :utterances="round.utterances" :members="group.members" :portraits="round.portraits" />
               <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error' : 'group-copy'">{{ groupRoundNotice(round) }}</text>
               <button role="button" v-if="current" class="group-action" :disabled="submitting || deleting || loading" @tap="state.loadCandidates(round.round_id)">查看整轮候选</button>
             </view>
@@ -86,7 +113,7 @@
             <view v-if="preview" class="candidate-preview">
               <text class="group-label">候选 {{ preview.candidate.version }} · {{ isSelected(preview.candidate.candidate_id) ? '当前采用' : '仅预览，未采用' }}</text>
               <text class="group-copy">{{ preview.round.user_content }}</text>
-              <GroupUtterances :utterances="preview.utterances" :members="group.members" />
+              <GroupUtterances :utterances="preview.utterances" :members="group.members" :portraits="previewPortraits" />
               <text v-if="preview.candidate.status === 'failed'" class="group-error">此候选未完成，以上仅为已保存前缀，不会作为完整结果确认。</text>
               <text v-else-if="!preview.utterances.length" class="group-copy">此候选尚无角色发言。</text>
               <text class="group-label">此候选的状态预览</text>
@@ -138,11 +165,19 @@ import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/group
 
 const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
 const state = useGroupSessionDetail(backToList);
-const showOrigins = ref(false), showManagement = ref(false), showMemberStates = ref(false);
+const showOrigins = ref(false), showManagement = ref(false), showMemberStates = ref(false), showPortraits = ref(false);
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,
   current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
   canSend, canRegenerate, canDiscard, candidates, candidateRoundId, loadingCandidates, candidatesError,
-  hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError } = state;
+  hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError,
+  portraitData, loadingPortraits, portraitWriting, portraitError, portraitOptions, canChoosePortrait } = state;
+const togglePortraits = () => {
+  showPortraits.value = !showPortraits.value;
+  if (showPortraits.value) void state.refreshPortraits();
+};
+const portraitImage = (id: number) => getAvatarUrl(portraitData.value?.members.find(row => row.persona_id === id)?.image_path || "");
+const selectedPortrait = (id: number) => portraitData.value?.members.find(row => row.persona_id === id)?.portrait_id;
+const previewPortraits = computed(() => preview.value?.state_preview.members.flatMap(row => row.portrait ? [row.portrait] : []) || []);
 const toggleMemberStates = () => {
   showMemberStates.value = !showMemberStates.value;
   if (showMemberStates.value) void state.loadAdoptedState();
@@ -173,6 +208,10 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 <style scoped>
 @import "./group.css";
 .member-name { flex: 1; min-width: 0; }
+.portrait-scene { display: flex; flex-wrap: wrap; gap: 24rpx; }
+.portrait-member { flex: 1 1 260rpx; min-width: 0; }
+.portrait-member .group-label, .portrait-member .group-action { overflow-wrap: anywhere; white-space: normal; }
+.scene-image { width: 100%; height: 420rpx; }
 .saved-round { margin-top: 28rpx; border-top: 1px solid var(--app-color-border); padding-top: 12rpx; }
 .user-utterance { margin-top: 20rpx; padding: 24rpx; background: var(--app-color-background); border-radius: var(--app-radius-sm); }
 .user-content { display: block; margin-top: 12rpx; color: var(--app-color-text-primary); font-size: var(--app-font-size-body); line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }

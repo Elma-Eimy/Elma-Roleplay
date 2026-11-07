@@ -119,10 +119,13 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
         if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None, discarded_at=None).first():
             raise SessionKindConflict("已有待处理或待确认轮次，当前不支持跨轮确认或恢复")
         index = (db.query(func.max(GroupRound.round_index)).filter_by(session_id=session_id).scalar() or 0) + 1
+        from services.media.group_portraits import _freeze_current_choices
+        portrait_snapshot = _freeze_current_choices(session_id, db)
         round_ = GroupRound(session_id=session_id, round_index=index, user_content=user_content)
         db.add(round_)
         db.flush()
         candidate = GroupRoundCandidate(round_id=round_.id, session_id=session_id,
+                                        portrait_selections_json=portrait_snapshot,
                                         protocol_version=2 if unit_plan is not None else 1)
         db.add(candidate)
         db.flush()
@@ -347,6 +350,7 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
                 "speaker_persona_id": item.speaker_persona_id, "speaker_name": character.name,
                 "content": item.content, "created_at": item.created_at.isoformat()})
         result = []
+        from services.media.group_portraits import _candidate_portraits
         for row in rounds:
             candidate = candidates.get(row.selected_candidate_id)
             result.append({"round_id": row.id, "round_index": row.round_index,
@@ -355,6 +359,7 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
                 "revision": candidate.revision if candidate else None,
                 "finish_reason": candidate.finish_reason if candidate else None,
                 "error_code": candidate.error_code if candidate else None,
+                "portraits": _candidate_portraits(session_id, candidate, db) if candidate else [],
                 "user_content": row.user_content, "created_at": row.created_at.isoformat(),
                 "utterances": by_candidate.get(row.selected_candidate_id, [])})
         from services.conversation.group_query_service import _state

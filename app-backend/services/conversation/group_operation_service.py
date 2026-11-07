@@ -154,6 +154,8 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
         kind = request["kind"]
         now = datetime.utcnow()
         if kind in ("send", "regenerate"):
+            from services.media.group_portraits import _freeze_current_choices
+            portrait_snapshot = _freeze_current_choices(session_id, db)
             # 幂等命中不重新解析服务器默认参数；首次接受必须保存可靠快照。
             encoded, provider = persist_group_calls(snapshot, request["max_steps"], history._members(session_id, db))
             validate_group_call_selection(encoded, model=request["model"], thinking_mode=request["thinking_mode"],
@@ -180,6 +182,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 policy["group_card_limit"] = db.query(func.max(GroupRecallCard.id)).scalar() or 0
                 encoded = json.dumps(policy, ensure_ascii=False, sort_keys=True)
             selected = GroupRoundCandidate(session_id=session_id, round_id=latest.id, protocol_version=2, version=version,
+                portrait_selections_json=portrait_snapshot,
                 insight_watermark=db.query(func.max(GroupMemberInsight.id)).scalar() or 0,
                 checkpoint="user_visibility", call_snapshot_json=encoded, provider_fingerprint=provider)
             db.add(selected)

@@ -77,6 +77,8 @@
 | **POST** | `/group-sessions` | 原子创建固定成员群聊与来源快照 |
 | **GET** | `/group-sessions` | 群聊摘要稳定分页 |
 | **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
+| **GET** | `/group-sessions/{session_id}/portraits` | 读取当前采用候选的成员立绘与选择权限 |
+| **PUT** | `/group-sessions/{session_id}/members/{persona_id}/portrait` | 按所见群与候选版本修改单个成员立绘 |
 | **GET** | `/group-sessions/{session_id}/rounds` | 按整轮分页读取所选候选正文、版本与终止状态 |
 | **POST** | `/group-sessions/{session_id}/rounds` | 原子接受用户消息与确认上一成功轮次，返回后台回执 |
 | **POST** | `/group-sessions/{session_id}/rounds/{round_id}/regenerate` | 保留旧选择并生成新的整轮候选 |

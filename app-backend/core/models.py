@@ -463,6 +463,7 @@ class GroupRoundCandidate(Base):
         "checkpoint IN ('user_visibility', 'next_action', 'role_generation', 'finish', 'done')",
         name="ck_group_checkpoint"))
     insight_watermark = Column(Integer)
+    portrait_selections_json = Column(Text)
     call_snapshot_json = Column(Text)
     provider_fingerprint = Column(String(64))
     protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),

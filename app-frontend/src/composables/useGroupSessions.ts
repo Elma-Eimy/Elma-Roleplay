@@ -6,6 +6,7 @@ import { createGroupSession, deleteGroupSession, getGroupSession, getGroupSessio
 import { onServerChange } from "@/utils/connectionEvents";
 import type { CreateGroupSessionParams, GroupCharacterOption, GroupSessionDetail } from "@/types/groupSessions";
 import { useGroupRoundFlow } from "@/composables/useGroupRoundFlow";
+import { useGroupPortraits } from "@/composables/useGroupPortraits";
 import type { SessionSummary } from "@/types/sessions";
 
 function message(cause: unknown): string {
@@ -242,6 +243,7 @@ export function useGroupSessionDetail(onDeleted: () => void) {
   const scope = usePageScope(reason => {
     readVersion++; loading.value = false; deleting.value = false;
     flow.pause();
+    portraits.pausePortraits();
     if (reason === "server" || reason === "dispose") {
       group.value = null; sessionId = null;
       flow.reset();
@@ -250,11 +252,16 @@ export function useGroupSessionDetail(onDeleted: () => void) {
     }
   });
   const flow = useGroupRoundFlow({ id: () => sessionId, active: scope.active, capture: scope.capture,
-    blocked: () => loading.value || deleting.value || !group.value });
+    blocked: () => loading.value || deleting.value || !group.value || portraits.portraitWriting.value });
+  const portraits = useGroupPortraits({ id: () => sessionId, active: scope.active, capture: scope.capture,
+    current: () => flow.current.value, members: () => group.value?.members || [],
+    blocked: () => loading.value || deleting.value || flow.operationBusy.value || flow.loadingRounds.value || flow.historyStale.value,
+    invalidate: flow.pause, refresh: () => flow.loadRounds() });
   function setSessionId(id: number) {
     scope.invalidate(); loading.value = false; deleting.value = false;
     readVersion++; group.value = null; error.value = ""; serverChanged.value = false;
     flow.reset();
+    portraits.pausePortraits();
     sessionId = Number.isSafeInteger(id) && id > 0 ? id : null;
     invalidId.value = sessionId === null;
     if (!sessionId) error.value = "群聊编号无效，请返回列表重新选择。";
@@ -266,6 +273,7 @@ export function useGroupSessionDetail(onDeleted: () => void) {
     const token = ++readVersion;
     const valid = () => current() && token === readVersion && id === sessionId;
     flow.pause();
+    portraits.pausePortraits();
     loading.value = true; error.value = "";
     try {
       const result = await getGroupSession(id);
@@ -291,6 +299,6 @@ export function useGroupSessionDetail(onDeleted: () => void) {
     finally { if (current() && sessionId === id) deleting.value = false; }
   }
   return { group, loading, deleting, error, serverChanged, needsSelection, setSessionId, load, remove,
-    ...flow,
+    ...flow, ...portraits,
     show() { if (scope.activate()) void load(); }, hide: scope.deactivate };
 }

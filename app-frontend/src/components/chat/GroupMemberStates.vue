@@ -2,6 +2,7 @@
   <view class="member-states">
     <view v-for="state in states" :key="state.persona_id" class="member-state">
       <text class="member-title">{{ memberName(state.persona_id) }}</text>
+      <AvatarImage v-if="state.portrait" class="member-portrait" :src="getAvatarUrl(state.portrait.image_path)" mode="aspectFit" />
       <text class="state-copy">好感度 {{ state.affection_score }} · 心情 {{ state.current_mood || '未记录' }}</text>
       <text v-if="state.role_state.scene" class="state-copy">场景：{{ state.role_state.scene }}</text>
       <view v-for="(actor, name) in state.role_state.characters" :key="name">
@@ -23,6 +24,8 @@
 <script setup lang="ts">
 import type { GroupCandidateMemberState, GroupMemberInsight, GroupSessionMember } from "@/types/groupSessions";
 import type { ActorState } from "@/types/roleState";
+import AvatarImage from "@/components/common/AvatarImage.vue";
+import { getAvatarUrl } from "@/api/characters";
 
 const props = defineProps<{ states: GroupCandidateMemberState[]; members: GroupSessionMember[]; userNickname: string }>();
 const memberName = (id: number) => {
@@ -38,6 +41,7 @@ const insightLabel = (insight: GroupMemberInsight) => insight.kind === "cognitio
 <style scoped>
 .member-state { margin-top: 24rpx; padding-top: 24rpx; border-top: 1px solid var(--app-color-border); }
 .member-title { display: block; font-size: var(--app-font-size-body); font-weight: 600; }
+.member-portrait { width: 100%; height: 360rpx; margin-top: 20rpx; }
 .state-label { display: block; margin-top: 20rpx; color: var(--app-color-primary-strong); font-size: var(--app-font-size-caption); }
 .state-copy { display: block; margin-top: 10rpx; color: var(--app-color-text-secondary); font-size: var(--app-font-size-body-sm); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .insight { margin-top: 16rpx; padding-left: 20rpx; border-left: 2px solid var(--app-color-primary-soft); }

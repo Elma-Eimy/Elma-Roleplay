@@ -32,6 +32,7 @@ function fixture(kind, overrides = {}, mock = false, platform = "H5") {
     "@/api/characters": { getCharacters: overrides.getCharacters ?? (async () => ({ characters: [1, 2, 3, 4].map(character) })) },
     "@/api/sessions": { getSessions: overrides.getSessions ?? (async () => page()) },
     "@/api/groupSessions": api,
+    "@/api/portraits": { getPortraits: async () => ({ portraits: [], total: 0, has_more: false }) },
     "@/utils/connectionEvents": { onServerChange: callback => { listeners.add(callback); return () => listeners.delete(callback); } },
   } });
   const scope = effectScope();

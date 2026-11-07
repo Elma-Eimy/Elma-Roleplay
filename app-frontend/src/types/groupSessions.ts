@@ -88,6 +88,7 @@ export interface GroupRound {
   user_content: string;
   created_at: string;
   utterances: GroupUtterance[];
+  portraits?: GroupMemberPortrait[];
 }
 
 export interface GetGroupRoundsResponse {
@@ -177,7 +178,20 @@ export interface GroupCandidateMemberState {
   role_state: RoleState;
   cognition_state?: string | null;
   insights?: GroupMemberInsight[];
+  portrait?: GroupMemberPortrait;
 }
+export interface GroupMemberPortrait {
+  persona_id: number;
+  portrait_id: number | null;
+  image_path: string;
+}
+export interface GroupPortraitsResponse {
+  session_id: number;
+  current: GroupCurrentState;
+  can_update: boolean;
+  members: GroupMemberPortrait[];
+}
+export type GroupPortraitChange = Omit<GroupObservedCommand, "client_request_id"> & { portrait_id: number | null };
 export interface GetGroupRequestResponse extends GroupOperationSummary {
   can_generate: boolean; accepted: GroupAcceptedOperation["accepted"];
   round: GroupRoundSummary; candidate: GroupCandidateSummary; current: GroupCurrentState;

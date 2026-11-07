@@ -13,12 +13,13 @@
 <script setup lang="ts">
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import { getAvatarUrl } from "@/api/characters";
-import type { GroupSessionMember, GroupUtterance } from "@/types/groupSessions";
+import type { GroupSessionMember, GroupUtterance, GroupMemberPortrait } from "@/types/groupSessions";
 
-const props = defineProps<{ utterances: GroupUtterance[]; members: GroupSessionMember[] }>();
+const props = defineProps<{ utterances: GroupUtterance[]; members: GroupSessionMember[]; portraits?: GroupMemberPortrait[] }>();
 const memberSlot = (id: number) => props.members.find(member => member.persona_id === id)?.slot ?? "?";
 const memberAvatar = (id: number) => getAvatarUrl(
-  props.members.find(member => member.persona_id === id)?.character.avatar_path || "",
+  props.portraits?.find(row => row.persona_id === id)?.image_path
+    || props.members.find(member => member.persona_id === id)?.character.avatar_path || "",
 );
 </script>
 

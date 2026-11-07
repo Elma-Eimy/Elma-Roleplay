@@ -6,13 +6,15 @@ from sqlalchemy.orm import Session
 
 from application.session_routes import GroupSessionAPIRouter
 from core.database import get_db
-from schemas import (GroupSessionCreate, GroupRoundSend, GroupRoundRegenerate, GroupRoundMutation, GroupCandidateCommand, SQLITE_INT_MAX)
+from schemas import (GroupSessionCreate, GroupRoundSend, GroupRoundRegenerate, GroupRoundMutation, GroupCandidateCommand,
+                     GroupPortraitChange, SQLITE_INT_MAX)
 from core.locking import GroupRuntimeOwner
 from services.conversation import group_session_service as service
 from services.conversation.group_history_service import list_group_rounds
 from services.conversation.group_background_service import submit_group_operation
 from services.conversation.group_operation_service import accept_group_operation
 from services.conversation import group_query_service as queries
+from services.media.group_portraits import update_group_portrait
 
 router = GroupSessionAPIRouter()
 GroupResourceId = Annotated[int, Path(gt=0, le=SQLITE_INT_MAX)]
@@ -68,6 +70,25 @@ def get_group_session(session_id: GroupResourceId, http: Request, db: Session = 
 async def delete_group_session(session_id: GroupResourceId, db: Session = Depends(get_db)):
     try:
         return await service.delete_group_session(session_id, db)
+    except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/{session_id}/portraits")
+def get_group_portraits(session_id: GroupResourceId, db: Session = Depends(get_db)):
+    try:
+        return queries.get_group_portraits(session_id, db)
+    except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.put("/{session_id}/members/{persona_id}/portrait")
+async def set_group_portrait(session_id: GroupResourceId, persona_id: GroupResourceId,
+                            body: GroupPortraitChange, db: Session = Depends(get_db)):
+    expected = (body.expected_group_revision, body.observed_round_id,
+                body.observed_candidate_id, body.observed_candidate_revision)
+    try:
+        return await update_group_portrait(session_id, persona_id, body.portrait_id, expected, db)
     except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
         raise _http_error(exc) from exc
 

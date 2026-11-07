@@ -45,7 +45,7 @@ class GroupRoundMigrationTests(unittest.TestCase):
         inspector = inspect(self.engine)
         for model in (GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility):
             table = model.__table__
-            historical_columns = set(table.columns.keys()) - ({"protocol_version", "finish_reason", "checkpoint", "call_snapshot_json", "provider_fingerprint", "insight_watermark"} if model is GroupRoundCandidate else {"discarded_at"} if model is GroupRound else set())
+            historical_columns = set(table.columns.keys()) - ({"protocol_version", "finish_reason", "checkpoint", "call_snapshot_json", "provider_fingerprint", "insight_watermark", "portrait_selections_json"} if model is GroupRoundCandidate else {"discarded_at"} if model is GroupRound else set())
             self.assertEqual(historical_columns, {c["name"] for c in inspector.get_columns(table.name)})
             self.assertEqual({tuple(c.columns.keys()) for c in table.constraints if c.__class__.__name__ == "UniqueConstraint"},
                              {tuple(c["column_names"]) for c in inspector.get_unique_constraints(table.name)})

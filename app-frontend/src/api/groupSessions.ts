@@ -8,6 +8,7 @@ import type {
   GetGroupRoundsResponse,
   SendGroupRoundParams, RegenerateGroupRoundParams, GroupRoundCommand, GroupCandidateCommand,
   GroupAcceptedOperation, GetGroupRequestResponse, GetGroupCandidatesResponse, GetGroupCandidateResponse,
+  GroupPortraitsResponse, GroupPortraitChange,
 } from "../types/groupSessions";
 
 export async function createGroupSession(params: CreateGroupSessionParams): Promise<GroupSessionDetail> {
@@ -76,4 +77,14 @@ export async function getGroupCandidates(sessionId: number, roundId: number, lim
 export async function getGroupCandidate(sessionId: number, roundId: number, candidateId: number): Promise<GetGroupCandidateResponse> {
   if (USE_MOCK) return mock.unsupportedGroupOperation(sessionId);
   return request(`/group-sessions/${sessionId}/rounds/${roundId}/candidates/${candidateId}`);
+}
+
+export async function getGroupPortraits(sessionId: number): Promise<GroupPortraitsResponse> {
+  if (USE_MOCK) return mock.unsupportedGroupOperation(sessionId);
+  return request(`/group-sessions/${sessionId}/portraits`);
+}
+
+export async function setGroupPortrait(sessionId: number, personaId: number, body: GroupPortraitChange) {
+  if (USE_MOCK) return mock.unsupportedGroupOperation(sessionId);
+  return request(`/group-sessions/${sessionId}/members/${personaId}/portrait`, { method: "PUT", body: JSON.stringify(body) });
 }
