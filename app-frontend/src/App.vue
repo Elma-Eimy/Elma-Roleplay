@@ -64,6 +64,12 @@ page {
   --app-color-warning: #d69c4a;
   --app-color-danger: #d9655d;
   --app-color-mask: rgba(25, 37, 32, 0.42);
+  --app-color-bubble-ai: rgba(255, 255, 255, 0.62);
+  --app-color-bubble-ai-border: rgba(255, 255, 255, 0.56);
+  --app-color-bubble-user: rgba(215, 236, 228, 0.9);
+  --app-color-bubble-user-border: rgba(112, 174, 155, 0.16);
+  --app-color-thought-bg: rgba(247, 249, 247, 0.72);
+  --app-color-thought-expanded-bg: rgba(238, 246, 241, 0.82);
 
   --app-font-size-caption: 22rpx;
   --app-font-size-body-sm: 24rpx;

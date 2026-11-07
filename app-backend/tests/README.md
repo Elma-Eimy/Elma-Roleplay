@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`memory/test_memory_processing_status.py` 验证只读状态接口不入队、故事隔离、排队与运行计数、重试和取消、缺失故事或 Persona，以及捕获成功时间；候选提交时间由 `test_memory_extraction_jobs.py` 覆盖。`infrastructure/test_memory_completion_migration.py` 检查旧任务升级后时间为空，升降级保留任务。均使用临时库和模型替身。
+
 `api/test_api_documentation.py` 校验根 API 总表与真实路由集合一致，并使用真实请求模型校验每个 JSON 请求接口的文档样本。隔离入口将总表和 `scripts/api_documentation.py` 固定清单中的领域契约复制到临时副本的 `project_docs/`，不读取开发配置或本地草稿；检查边界与样本写法见 [API 维护说明](../../docs/api/README.md)。单独运行：`python -m tests --group api --pattern test_api_documentation.py`。
 
 `infrastructure/test_client_initialization.py` 在隔离副本的独立进程中验证导入服务和创建应用不会构造 ChromaDB 或 Embedding 函数，并覆盖并发首次访问复用、构造失败重试、配置传递及记忆集合与 Outbox 调用边界。测试替换资源构造器，不连接真实向量服务。

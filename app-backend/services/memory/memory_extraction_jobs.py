@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import IntegrityError
 from core.config import settings
 from core.models import MemoryChunk, MemoryExtractionJob, SessionPersona, MemoryType
@@ -115,9 +115,13 @@ def processing_status(persona_id, db):
     errors = {row.last_error_code for row in rows if row.last_error_code}
     if not rows and latest and latest.status == "cancelled" and latest.last_error_code:
         errors.add(latest.last_error_code)
+    completed_at = db.query(func.max(MemoryExtractionJob.completed_at)).filter(
+        MemoryExtractionJob.persona_id == persona_id, MemoryExtractionJob.status == "completed").scalar()
     return {"status": "retrying" if any(row.status == "retrying" for row in rows) else "pending" if rows else
             "failed" if latest and latest.status == "cancelled" else "completed",
-            "pending_count": len(rows), "error_codes": sorted(errors)}
+            "pending_count": len(rows), "processing_count": sum(row.status == "processing" for row in rows),
+            "error_codes": sorted(errors),
+            "last_completed_at": completed_at.isoformat() + "Z" if completed_at else None}
 
 
 def pending_context(persona_id, db, before_message_id):
@@ -345,6 +349,7 @@ def _commit(data, planned, db):
         extraction.upsert_graph_data(persona_id=data["persona_id"], entities=entities, relations=relations,
                                      db=db, source_messages=sources, memory_bindings=bindings)
     row.status = "completed"
+    row.completed_at = datetime.utcnow()
     row.payload_json = "{}"
     row.lease_token = row.lease_until = row.last_error_code = None
     row.written_count = stats["new"] + stats["replaced"]
@@ -386,6 +391,7 @@ def process_job(job_id, db):
                 row.run_after = datetime.utcnow() + timedelta(seconds=5)
             else:
                 row.status, row.dedupe_key, row.payload_json = "completed", None, "{}"
+                row.completed_at = datetime.utcnow()
             row.last_error_code = None
             row.lease_token = row.lease_until = None
             db.commit()

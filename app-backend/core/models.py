@@ -294,6 +294,7 @@ class MemoryExtractionJob(Base):
     lease_token = Column(String(40), nullable=True)
     last_error_code = Column(String(80), nullable=True)
     written_count = Column(Integer, nullable=False, default=0, server_default="0")
+    completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     persona = relationship("SessionPersona", backref=backref("extraction_jobs", cascade="all, delete-orphan"))
 

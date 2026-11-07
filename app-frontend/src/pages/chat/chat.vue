@@ -1,5 +1,15 @@
 <template>
-  <view class="page-container app-motion-enter" :class="{ 'is-android': isAndroid, 'is-immersive': isImmersive }">
+  <view
+    class="page-container app-motion-enter"
+    :style="paletteStyle"
+    :class="[
+      `font-${chatSettingsStore.readingPrefs.fontScale}`,
+      `spacing-${chatSettingsStore.readingPrefs.lineSpacing}`,
+      `style-${chatSettingsStore.readingPrefs.bubbleStyle}`,
+      `theme-${chatSettingsStore.readingPrefs.colorTheme}`,
+      { 'is-android': isAndroid, 'is-immersive': isImmersive, 'is-portrait-only': isImmersive && isPortraitOnly },
+    ]"
+  >
     <view
       class="chat-bg"
       :class="`mode-${backgroundMode}`"
@@ -29,22 +39,50 @@
     <ChatHeader
       :character-name="personaStore.characterName"
       :current-mood="personaStore.currentMood"
+      :affection-score="personaStore.currentPersona ? personaStore.affectionScore : undefined"
+      :avatar-url="characterAvatarUrl"
       :is-android="isAndroid"
+      :is-faded="isHeaderFaded"
+      :show-portrait-toggle="isImmersive"
       @back="goBack"
       @open-status="isStatusPanelOpen = true"
+      @toggle-portrait-view="isPortraitOnly = true"
     />
+
+    <!-- 立绘独占欣赏模式：隐藏顶部栏与对话区，点击任意处恢复 -->
+    <view
+      v-if="isImmersive && isPortraitOnly"
+      class="portrait-only-overlay"
+      @tap="isPortraitOnly = false"
+    >
+      <view class="portrait-exit-pill">
+        <text class="portrait-exit-text">返回对话</text>
+      </view>
+    </view>
 
     <view class="chat-workspace">
       <view class="chat-conversation">
+        <view v-if="currentSessionId !== null && !isInitLoading" class="story-ribbon">
+          <view class="story-ribbon-mark"><view class="story-color-dot"></view><text>此刻，故事仍在继续</text></view>
+          <button class="keepsake-entry" @tap="isKeepsakeOpen = true">回忆册 <text class="keepsake-count">{{ keepsakes.length ? String(keepsakes.length).padStart(2, '0') : '＋' }}</text></button>
+        </view>
         <ChatMessageList
           :messages="chatStore.messages"
-          :avatar-url="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+          :avatar-url="characterAvatarUrl"
           :character-name="personaStore.characterName"
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
           :scroll-with-animation="scrollWithAnimation"
+          :show-jump-button="!isPinnedToBottom && chatStore.messages.length > 0"
+          :has-unread="hasUnreadBelow"
+          :maintain-scroll-position="maintainScrollPosition"
           @load-more="onLoadMore"
           @longpress-message="onMessageLongPress"
+          @retry-failed="onRetryFailed"
+          @copy-message="copyMessageContent"
+          @regenerate-message="regenerateLatestReply"
+          @scroll-metrics="onScrollMetrics"
+          @jump-to-bottom="onJumpToBottom"
         />
 
         <ChatComposer
@@ -55,6 +93,8 @@
           :is-android="isAndroid"
           :keyboard-height="keyboardHeight"
           :wrapper-style="inputWrapperStyle"
+          :is-generating="chatStore.isLoading"
+          :character-name="personaStore.characterName"
           @open-model-settings="isModelSettingsOpen = true"
           @focus-change="isInputFocused = $event"
           @line-change="scrollToBottom"
@@ -63,6 +103,8 @@
       </view>
     </view>
 
+    <StoryKeepsakeSheet v-if="isKeepsakeOpen" :cards="keepsakes" :character-name="personaStore.characterName"
+      :palette-id="paletteId" @close="isKeepsakeOpen = false" @palette="selectPalette" @rename="renameKeepsake" @remove="removeKeepsake" />
     <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
 
     <EditMessageModal
@@ -73,6 +115,15 @@
       :error="editError"
       @cancel="cancelEdit"
       @save="saveEdit"
+    />
+
+    <AppActionSheet
+      :is-open="actionSheetMessage !== null"
+      :items="actionSheetItems"
+      :is-android="isAndroid"
+      title="消息操作"
+      @select="selectActionSheetItem"
+      @close="closeActionSheet"
     />
 
     <!-- 记忆与微观认知状态右侧抽屉面板 -->
@@ -86,7 +137,7 @@
       @portrait-changed="refreshPortrait"
       @delete-session="deleteCurrentSession"
       @open-branch-tree="openBranchTree"
-      @open-memory-view="isMemoryPanelOpen = true"
+      @open-memory-view="isStatusPanelOpen = false; isMemoryPanelOpen = true"
       @open-prompt-preview="openPromptPreview"
     />
 
@@ -160,13 +211,18 @@ import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import BranchTreePanel from "@/components/chat/BranchTreePanel.vue";
 import NewSessionModal from "@/components/common/NewSessionModal.vue";
+import AppActionSheet from "@/components/common/AppActionSheet.vue";
 import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
+import { shouldFadeHeaderOnScroll, type ScrollMetrics } from "@/utils/chatDisplay";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
+import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
+import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
 import type { TokenEstimate } from "@/api/sessions";
 import type { BranchSession } from "@/types/chat";
+import type { ChatMessage } from "@/store/chatStore";
 
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
@@ -180,8 +236,13 @@ const {
   scrollWithAnimation,
   keyboardHeight,
   isAndroid,
+  isPinnedToBottom,
+  hasUnreadBelow,
   scrollToBottom,
-  scrollToBottomThrottled,
+  pinToBottom,
+  followNewContent,
+  updateScrollMetrics,
+  resetPinState,
   triggerPhasedScroll,
   maintainScrollPosition,
 } = useChatScroll();
@@ -193,6 +254,10 @@ const {
 
 // 状态变量与视图状态
 const currentSessionId = ref<number | null>(null);
+const {
+  cards: keepsakes, paletteId, paletteStyle, isOpen: isKeepsakeOpen,
+  save: saveKeepsake, rename: renameKeepsake, remove: removeKeepsake, selectPalette,
+} = useStoryKeepsakes(currentSessionId, () => personaStore.activeCharacter?.id);
 const { selection: portraitSelection, refresh: refreshPortrait, dispose: disposePortrait } = usePortraitSelection(
   () => currentSessionId.value,
   () => `${chatStore.isLoading}:${chatStore.messages.map(message => message.id).join(',')}`,
@@ -267,10 +332,17 @@ const {
   editMessageContent,
   editError,
   isSavingEdit,
+  actionSheetMessage,
+  actionSheetItems,
   onMessageLongPress,
+  selectActionSheetItem,
+  closeActionSheet,
+  copyMessageContent,
+  regenerateLatestReply,
   cancelEdit,
   saveEdit,
-} = useChatMessageActions(currentSessionId, scrollToBottom);
+} = useChatMessageActions(currentSessionId, async () => { pinToBottom(); },
+  message => saveKeepsake(message, message.role === "user" ? personaStore.userNickname || "我" : personaStore.characterName || "角色"));
 
 watch(() => chatStore.activeSessionId, (id) => {
   if (id === null) currentSessionId.value = null;
@@ -336,6 +408,7 @@ const switchSession = async (session: Pick<BranchSession, "id">) => {
   currentSessionId.value = session.id;
   backgroundMode.value = readBackgroundMode(session.id);
   isInitLoading.value = true;
+  resetPinState();
   scrollWithAnimation.value = false;
   
   try {
@@ -505,27 +578,38 @@ const goBack = () => {
   }
 };
 
-// 监听消息长度变化以自动置底
+// 新消息到达：停留在底部时跟随，用户上翻阅读时只显示“新回复”浮标
 watch(() => chatStore.messages.length, () => {
   if (isInitLoading.value || isHistoryLoading.value) return;
-  scrollToBottom();
+  followNewContent();
 });
 
-// 流式输出时，使用节流控制置底并临时关闭动画以防卡顿
-watch(() => chatStore.streamingText, () => {
-  if (isInitLoading.value) return;
-  scrollWithAnimation.value = false;
-  scrollToBottomThrottled();
-});
+// 流式输出（含思考过程展开）时，使用节流控制置底并临时关闭动画以防卡顿
+watch(
+  [
+    () => chatStore.streamingText,
+    () => chatStore.lastAssistantMessage?.reasoning_content,
+  ],
+  () => {
+    if (isInitLoading.value) return;
+    scrollWithAnimation.value = false;
+    followNewContent(true);
+  }
+);
 
 // 对话彻底结束或状态变动时置底
 watch(() => chatStore.isLoading, (loading) => {
   if (isInitLoading.value || isHistoryLoading.value) return;
   if (!loading) {
     scrollWithAnimation.value = true;
-    scrollToBottom();
+    followNewContent();
   }
 });
+
+const onJumpToBottom = () => {
+  scrollWithAnimation.value = true;
+  pinToBottom();
+};
 
 const onSend = async () => {
   const text = inputText.value.trim();
@@ -533,9 +617,40 @@ const onSend = async () => {
 
   inputText.value = "";
   chatStore.sendChatMessage(currentSessionId.value, text);
-  scrollToBottom();
+  pinToBottom();
 };
 
+// 失败消息“编辑后重发”：只回填输入框，不自动重新提交。
+const onRetryFailed = (message: ChatMessage) => {
+  if (chatStore.isLoading) {
+    uni.showToast({ title: "请等待当前回复结束", icon: "none" });
+    return;
+  }
+  const sessionId = currentSessionId.value;
+  const restore = () => {
+    if (sessionId === null || sessionId !== currentSessionId.value || chatStore.activeSessionId !== sessionId) return;
+    const content = chatStore.discardFailedMessage(message.clientId);
+    if (content === null) return;
+    inputText.value = content;
+  };
+  const draft = inputText.value.trim();
+  if (!draft || draft === message.content.trim()) {
+    restore();
+    return;
+  }
+  uni.showModal({
+    title: "替换草稿",
+    content: "输入框中已有内容，是否用失败的消息替换？",
+    confirmColor: "#70AE9B",
+    success: (res) => {
+      if (res.confirm) restore();
+    },
+  });
+};
+
+const characterAvatarUrl = computed(() =>
+  getAvatarUrl(personaStore.activeCharacter?.avatar_path || "")
+);
 const characterBackgroundUrl = computed(() =>
   getAvatarUrl(portraitSelection.value?.image_path || personaStore.activeCharacter?.avatar_path || "")
 );
@@ -547,6 +662,30 @@ const hasPortrait = computed(() =>
 );
 watch(characterBackgroundUrl, () => { portraitLoadFailed.value = false; });
 const isImmersive = computed(() => backgroundMode.value === 'character' && hasPortrait.value);
+
+// 沉浸模式下阅读滚动时淡化顶部栏，上滑或回到顶部附近自动恢复；支持一键进入立绘独占模式。
+const isHeaderFaded = ref(false);
+const isPortraitOnly = ref(false);
+let lastScrollTop = 0;
+watch([isImmersive, currentSessionId], () => {
+  isHeaderFaded.value = false;
+  isPortraitOnly.value = false;
+  lastScrollTop = 0;
+});
+const onScrollMetrics = (metrics: ScrollMetrics) => {
+  updateScrollMetrics(metrics);
+  if (isInitLoading.value || isHistoryLoading.value) {
+    lastScrollTop = metrics.scrollTop;
+    return;
+  }
+  isHeaderFaded.value = shouldFadeHeaderOnScroll({
+    currentHidden: isHeaderFaded.value,
+    scrollTop: metrics.scrollTop,
+    previousScrollTop: lastScrollTop,
+    isImmersive: isImmersive.value,
+  });
+  lastScrollTop = metrics.scrollTop;
+};
 const onPortraitUnavailable = (event: Event) => {
   const target = event.currentTarget as unknown as { dataset?: { source?: string } } | null;
   if (target?.dataset?.source === characterBackgroundUrl.value) {

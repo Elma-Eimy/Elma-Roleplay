@@ -1,10 +1,14 @@
 import { ref, nextTick, onMounted, onUnmounted } from "vue";
+import { isNearBottom, type ScrollMetrics } from "@/utils/chatDisplay";
 
 export function useChatScroll() {
   const scrollTop = ref(0);
   const scrollIntoViewId = ref("");
   const scrollWithAnimation = ref(false);
   const keyboardHeight = ref(0);
+  // 用户停留在底部时自动跟随新内容；上翻阅读时只提示，不强制拉回。
+  const isPinnedToBottom = ref(true);
+  const hasUnreadBelow = ref(false);
   type TimerHandle = ReturnType<typeof setTimeout>;
   const timers = new Set<TimerHandle>();
   let bottomTimer: TimerHandle | null = null;
@@ -42,6 +46,35 @@ export function useChatScroll() {
     }, 16);
   };
 
+  /** 用户主动行为（发送、点击浮标）：恢复跟随并置底。 */
+  const pinToBottom = () => {
+    isPinnedToBottom.value = true;
+    hasUnreadBelow.value = false;
+    scrollToBottom();
+  };
+
+  /** 新内容到达：停留在底部时跟随，否则只标记有未读。 */
+  const followNewContent = (throttled = false) => {
+    if (!isPinnedToBottom.value) {
+      hasUnreadBelow.value = true;
+      return;
+    }
+    if (throttled) scrollToBottomThrottled();
+    else scrollToBottom();
+  };
+
+  const updateScrollMetrics = (metrics: ScrollMetrics) => {
+    const pinned = isNearBottom(metrics);
+    isPinnedToBottom.value = pinned;
+    if (pinned) hasUnreadBelow.value = false;
+  };
+
+  /** 切换故事或重新进入时重置跟随状态。 */
+  const resetPinState = () => {
+    isPinnedToBottom.value = true;
+    hasUnreadBelow.value = false;
+  };
+
   const scrollToBottomThrottled = () => {
     if (throttleTimer !== null) return;
     throttleTimer = schedule(() => {
@@ -51,6 +84,7 @@ export function useChatScroll() {
   };
 
   const triggerPhasedScroll = () => {
+    resetPinState();
     scrollToBottom();
     // 覆盖键盘动画的中段与结束阶段，避免每次焦点变化创建大量定时器。
     schedule(scrollToBottom, 120);
@@ -104,8 +138,14 @@ export function useChatScroll() {
     scrollWithAnimation,
     keyboardHeight,
     isAndroid,
+    isPinnedToBottom,
+    hasUnreadBelow,
     scrollToBottom,
     scrollToBottomThrottled,
+    pinToBottom,
+    followNewContent,
+    updateScrollMetrics,
+    resetPinState,
     triggerPhasedScroll,
     maintainScrollPosition,
   };

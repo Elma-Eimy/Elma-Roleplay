@@ -222,10 +222,21 @@
   }
   ```
 
+## GET `/sessions/{session_id}/memory-processing`
+只读当前故事 Persona 的提纯任务状态，不继承父故事任务，不入队、不调用模型。会话不存在返回 `404`，缺少 Persona 返回 `409`。使用统一鉴权头。
+
+响应包含 `session_id`、`status`、`pending_count`、`processing_count`、`error_codes` 和 `last_completed_at`。`pending_count` 包含排队、运行及重试中的任务，`processing_count` 是其中正在运行的数量。存在重试任务时 `status=retrying`，其余未完成任务为 `pending`；没有未完成任务时，最近任务被取消则为 `failed`，否则为 `completed`。后者只表示当前没有待处理任务，不保证新增长期记忆，也不表示所有消息均已提取或向量同步完成。
+
+`last_completed_at` 是本故事成功任务的最近提交时间，使用带 `Z` 的 UTC ISO 8601 字符串；无记录或只有升级前历史任务时为 `null`，不推测旧时间。进行中事件仍可能保留在缓冲中。`error_codes` 沿用脱敏原因码，前端转换为可理解的提示，不显示模型原文或异常正文。
+
+```json
+{"session_id": 1, "status": "retrying", "pending_count": 2, "processing_count": 1, "error_codes": ["extraction_failed"], "last_completed_at": "2026-10-28T01:02:03Z"}
+```
+
 ## POST `/sessions/{session_id}/trigger_summary`
 手动提纯只可靠入队，立即返回当前处理状态，不在 HTTP 请求内调用模型。Worker 会提取新消息并收尾本故事的有效进行中事件；没有新消息时也可处理已保存缓冲。缓冲本身不计入记忆列表或统计。
 
-`extracted_count` 保留兼容，但该异步入口本次固定返回 `0`；实际新增结果通过记忆列表与日志查看。候选可靠保存后推进接收指针，关系判断失败不必重新提取。`status` 为 `completed/pending/retrying/failed`，`pending_count` 表示尚未完成的任务数，`error_codes` 仅返回脱敏原因码；`failed` 表示最近任务因来源失效被取消。新请求通常返回 `pending`，前端不能把受理提示显示成整理完成。失败候选由独立 Worker 退避重试，无需继续聊天。
+`extracted_count` 保留兼容，但该异步入口本次固定返回 `0`；实际新增结果通过记忆列表与日志查看。响应同时包含只读进度接口的 `processing_count` 和 `last_completed_at`，持续进度请查询上述 GET 接口，不要通过重复 POST 轮询。候选可靠保存后推进接收指针，关系判断失败不必重新提取。`status` 为 `completed/pending/retrying/failed`，`pending_count` 表示尚未完成的任务数，`error_codes` 仅返回脱敏原因码；`failed` 表示最近任务因来源失效被取消。新请求通常返回 `pending`，前端不能把受理提示显示成整理完成。失败候选由独立 Worker 退避重试，无需继续聊天。
 
 * **Response (200 OK)**:
   ```json
@@ -235,7 +246,9 @@
     "extracted_count": 0,
     "status": "pending",
     "pending_count": 1,
-    "error_codes": []
+    "processing_count": 0,
+    "error_codes": [],
+    "last_completed_at": null
   }
   ```
 

@@ -142,12 +142,18 @@ function close() { if (!saving.value) emit("close"); }
 .charx-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
 .charx-description { max-height: 240rpx; overflow: auto; font-size: 24rpx; }
 .charx-actions { display: flex; gap: 10rpx; flex-wrap: wrap; align-items: center; }
-.charx-pill-active { border-color: var(--app-color-primary, #4f8e7c); color: var(--app-color-primary, #4f8e7c); font-weight: 600; }
+.charx-sheet button { margin: 0; padding: 0 20rpx; height: 56rpx; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; font-size: 23rpx; font-weight: 500; line-height: 1; border-radius: 12rpx; background: #f2f5f3; color: #3d4b45; border: 2rpx solid transparent; box-sizing: border-box; }
+.charx-sheet button::after { border: 0; display: none; }
+.charx-sheet button[disabled] { opacity: 0.48; }
+.charx-pill-active { border-color: var(--app-color-primary, #4f8e7c) !important; background: rgba(112, 174, 155, 0.14) !important; color: #3b7666 !important; font-weight: 600 !important; }
 .charx-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16rpx; }
-.charx-asset { display: flex; flex-direction: column; gap: 12rpx; padding: 12rpx; border: 2rpx solid var(--app-color-border, #e1e8e2); border-radius: 14rpx; min-width: 0; }
-.charx-asset.chosen { border-color: var(--app-color-primary, #4f8e7c); }
-.charx-thumbnail { width: 100%; height: 230rpx; }
-.charx-placeholder { display: flex; align-items: center; justify-content: center; font-size: 22rpx; }
+.charx-asset { display: flex; flex-direction: column; gap: 12rpx; padding: 14rpx; border: 2rpx solid var(--app-color-border, #e1e8e2); border-radius: 18rpx; background: #fff; min-width: 0; }
+.charx-asset.chosen { border-color: var(--app-color-primary, #4f8e7c); background: rgba(112, 174, 155, 0.05); }
+.charx-asset .charx-name { font-size: 23rpx; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.charx-asset .charx-actions { flex-wrap: nowrap; gap: 8rpx; }
+.charx-asset .charx-actions button { flex: 1; min-width: 0; height: 48rpx; padding: 0 8rpx; font-size: 21rpx; border-radius: 10rpx; }
+.charx-thumbnail { width: 100%; height: 224rpx; border-radius: 12rpx; background: #f3f6f4; }
+.charx-placeholder { display: flex; align-items: center; justify-content: center; font-size: 22rpx; color: #7c8983; }
 .charx-footer { padding: 20rpx 24rpx calc(20rpx + env(safe-area-inset-bottom)); border-top: 1px solid var(--app-color-border, #e1e8e2); }
-.charx-sheet button { margin: 0; font-size: 24rpx; }
+.charx-footer button { width: 100%; height: 76rpx; border-radius: 16rpx; background: var(--app-color-primary, #62a390); color: #fff; font-size: 26rpx; font-weight: 600; }
 </style>

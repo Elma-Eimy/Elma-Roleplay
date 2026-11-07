@@ -100,6 +100,7 @@ class ExtractionJobTests(unittest.TestCase):
             self.assertEqual(0, process_due_jobs(self.db, self.persona.id))
         primary.assert_not_called()
         self.assertEqual("completed", processing_status(self.persona.id, self.db)["status"])
+        self.assertIsNotNone(processing_status(self.persona.id, self.db)["last_completed_at"])
         self.assertEqual(2, self.db.query(MemoryChunk).count())
 
     def test_same_content_with_more_precise_time_creates_a_version(self):

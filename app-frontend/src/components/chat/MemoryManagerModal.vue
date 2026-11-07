@@ -16,6 +16,7 @@
         </view>
       </view>
 
+      <view class="processing-container"><MemoryProcessingPanel :session-id="sessionId" @completed="loadMemories" /></view>
       <view class="mode-tabs">
         <button size="mini" :class="{ 'mode-active': !showConsolidation }" @tap="showConsolidation = false">浏览记忆</button>
         <button size="mini" :class="{ 'mode-active': showConsolidation }" @tap="showConsolidation = true">整理记忆</button>
@@ -159,6 +160,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
+import MemoryProcessingPanel from "./MemoryProcessingPanel.vue";
 import MemoryConsolidationPanel from "./MemoryConsolidationPanel.vue";
 import {
   getSessionMemories,
@@ -484,6 +486,7 @@ const addMemory = async () => {
 </script>
 
 <style scoped>
+.processing-container { padding: 0 24rpx 12rpx; }
 .mode-tabs { display: flex; padding: 16rpx 32rpx 0; gap: 18rpx; }
 .mode-tabs button { margin: 0; font-size: 24rpx; }
 .mode-tabs .mode-active { background: #1c1c1e; color: white; }

@@ -35,7 +35,7 @@
     </AppPageHeader>
 
     <scroll-view scroll-y class="home-scroll">
-      <view class="home-content">
+      <view class="home-content" :class="{ 'has-recent-stories': recentSessions.length > 0 }">
         <view v-if="isHomeLoading && !hasHomeContent" class="home-skeleton">
           <view class="skeleton-feature"></view>
           <view class="skeleton-heading"></view>
@@ -60,12 +60,13 @@
               @contextmenu.prevent="onSessionLongPress(featuredSession)"
             >
               <AvatarImage
+                v-if="featuredSession.characterAvatar"
                 class="featured-art"
                 :src="getAvatarUrl(featuredSession.characterAvatar)"
                 :lazy-load="false"
               />
               <view class="featured-image-wash"></view>
-              <view class="featured-card-glow"></view>
+              <view class="featured-cover-label">未完 · 待续</view>
 
               <view class="featured-copy">
                 <view class="featured-character-row">
@@ -76,7 +77,7 @@
                 <text class="featured-preview">{{ getSessionPreview(featuredSession) }}</text>
 
                 <view class="continue-button" @tap.stop="goToChat(featuredSession)">
-                  <text class="continue-label">继续</text>
+                  <text class="continue-label">继续这段故事</text>
                   <text class="continue-arrow">→</text>
                 </view>
               </view>
@@ -99,7 +100,7 @@
             <view class="section-heading">
               <view class="section-heading-copy">
                 <text class="section-title">我的角色</text>
-                <text class="section-caption">从熟悉的面孔开启故事</text>
+                <text class="section-caption">每一次相遇，都有新的可能</text>
               </view>
               <view class="section-link" @tap="goToCharacterLibrary">
                 <text>查看全部</text>
@@ -113,16 +114,24 @@
                   v-for="character in quickCharacters"
                   :key="character.id"
                   class="character-shortcut"
+                  :class="{ 'has-portrait': !!character.avatar_path }"
+                  role="button"
+                  :aria-label="`查看${character.name || '未命名角色'}的档案`"
                   @tap="goToCharacter(character.id)"
                 >
                   <view class="character-portrait-wrap">
                     <AvatarImage
+                      v-if="character.avatar_path"
                       class="character-portrait"
                       :src="getAvatarUrl(character.avatar_path)"
                     />
-                    <view class="portrait-ring"></view>
+                    <text v-else class="character-initial">{{ (character.name || '角色').slice(0, 1) }}</text>
+                    <view class="portrait-shade"></view>
                   </view>
-                  <text class="character-name">{{ character.name || "未命名角色" }}</text>
+                  <view class="character-card-copy">
+                    <text class="character-name">{{ character.name || "未命名角色" }}</text>
+                    <text class="character-card-link">人物档案 ↗</text>
+                  </view>
                 </view>
 
                 <view class="character-shortcut add-character-shortcut" @tap="goToCreateCharacter">
@@ -130,6 +139,7 @@
                     <text class="add-character-plus">＋</text>
                   </view>
                   <text class="character-name add-character-label">新角色</text>
+                  <text class="add-character-hint">开启另一段相遇</text>
                 </view>
               </view>
             </scroll-view>
@@ -139,7 +149,7 @@
             <view class="section-heading recent-heading">
               <view class="section-heading-copy">
                 <text class="section-title">最近故事</text>
-                <text class="section-caption">每条故事线都保留自己的记忆</text>
+                <text class="section-caption">翻开其他未完的篇章</text>
               </view>
             </view>
 
@@ -593,7 +603,10 @@ const formatDate = (dateString: string) => {
 }
 
 .home-content {
+  max-width: 1180px;
+  margin: 0 auto;
   padding: 28rpx var(--app-page-gutter, 36rpx) 196rpx;
+  box-sizing: border-box;
 }
 
 .section-kicker-row,
@@ -620,13 +633,12 @@ const formatDate = (dateString: string) => {
 .featured-card {
   position: relative;
   display: flex;
-  height: 408rpx;
+  height: 490rpx;
   margin-top: 18rpx;
   overflow: hidden;
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: var(--app-radius-lg, 36rpx);
-  background-color: var(--app-color-surface, #ffffff);
-  box-shadow: var(--app-shadow-raised, 0 20rpx 52rpx rgba(45, 72, 62, 0.12));
+  background: radial-gradient(ellipse at 85% 5%, #749b8b 0%, #3e5d50 38%, #21372f 100%);
+  box-shadow: 0 16rpx 40rpx rgba(33, 55, 47, .15);
   transition: transform var(--app-motion-fast, 160ms) ease;
 }
 
@@ -636,82 +648,79 @@ const formatDate = (dateString: string) => {
 
 .featured-art {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 64%;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .featured-image-wash {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 1) 8%,
-      rgba(255, 255, 255, 0.96) 34%,
-      rgba(255, 255, 255, 0.48) 64%,
-      rgba(255, 255, 255, 0.08) 100%
-    ),
-    linear-gradient(0deg, rgba(38, 51, 46, 0.18), rgba(38, 51, 46, 0) 58%);
+  background: linear-gradient(180deg, rgba(12, 23, 19, .12) 0%, rgba(12, 23, 19, .1) 20%, rgba(12, 23, 19, .72) 63%, rgba(12, 23, 19, .94) 100%);
 }
 
-.featured-card-glow {
+.featured-cover-label {
   position: absolute;
-  left: -80rpx;
-  bottom: -120rpx;
-  width: 340rpx;
-  height: 300rpx;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    var(--app-color-primary-soft, rgba(112, 174, 155, 0.14)),
-    rgba(112, 174, 155, 0) 70%
-  );
+  top: 30rpx;
+  right: 30rpx;
+  padding: 10rpx 18rpx;
+  border: 1px solid rgba(255, 255, 255, .36);
+  border-radius: 999rpx;
+  color: #fff;
+  background: rgba(18, 32, 26, .4);
+  font-size: 20rpx;
+  letter-spacing: 3rpx;
 }
 
 .featured-copy {
   position: relative;
   z-index: 2;
   display: flex;
-  width: 72%;
+  width: 100%;
   height: 100%;
-  padding: 40rpx 0 34rpx 36rpx;
+  padding: 32rpx;
+  box-sizing: border-box;
   flex-direction: column;
+  align-items: flex-start;
 }
 
 .featured-character-row {
   display: flex;
+  max-width: 60%;
   align-items: center;
-  gap: 10rpx;
+  gap: 12rpx;
+  padding: 10rpx 18rpx;
+  border-radius: 999rpx;
+  background: rgba(18, 32, 26, .55);
 }
 
 .featured-status-dot {
-  width: 12rpx;
-  height: 12rpx;
+  width: 10rpx;
+  height: 10rpx;
+  flex-shrink: 0;
   border-radius: 50%;
-  background-color: var(--app-color-primary, #70ae9b);
-  box-shadow: 0 0 0 8rpx var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  background: #c7e4d5;
 }
 
 .featured-character {
   overflow: hidden;
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  font-weight: 650;
+  color: #f5faf7;
+  font-size: 22rpx;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .featured-title {
   display: -webkit-box;
-  margin-top: 22rpx;
+  margin-top: auto;
   overflow: hidden;
-  color: var(--app-color-text-primary, #26332e);
-  font-size: 40rpx;
-  font-weight: 720;
-  line-height: 1.22;
+  color: #fff;
+  font-size: 46rpx;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: 1rpx;
+  text-shadow: 0 2rpx 12rpx rgba(0, 0, 0, .2);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -720,33 +729,30 @@ const formatDate = (dateString: string) => {
   display: -webkit-box;
   margin-top: 14rpx;
   overflow: hidden;
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  line-height: 1.55;
+  color: #e0e9e3;
+  font-size: 24rpx;
+  line-height: 1.65;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .continue-button {
   display: inline-flex;
-  min-width: 132rpx;
-  height: 62rpx;
-  margin-top: auto;
-  padding: 0 22rpx;
-  align-self: flex-start;
+  min-height: 68rpx;
+  margin-top: 24rpx;
+  padding: 0 24rpx;
   align-items: center;
   justify-content: center;
-  gap: 12rpx;
-  border-radius: var(--app-radius-pill, 999rpx);
-  background-color: var(--app-color-primary, #70ae9b);
-  box-shadow: 0 10rpx 24rpx rgba(79, 142, 124, 0.22);
+  gap: 36rpx;
+  border-radius: 999rpx;
+  background: #f1f7f3;
 }
 
 .continue-label,
 .continue-arrow {
-  color: #ffffff;
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  font-weight: 700;
+  color: #284c3d;
+  font-size: 24rpx;
+  font-weight: 650;
 }
 
 /* ===== 无会话但已有角色 ===== */
@@ -854,65 +860,68 @@ const formatDate = (dateString: string) => {
 .character-strip {
   display: inline-flex;
   padding-right: var(--app-page-gutter, 36rpx);
-  gap: 22rpx;
+  gap: 18rpx;
 }
 
 .character-shortcut {
+  position: relative;
   display: inline-flex;
-  width: 132rpx;
-  flex-direction: column;
-  align-items: center;
+  width: 204rpx;
+  height: 276rpx;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, .08));
+  border-radius: 24rpx;
+  background: var(--app-color-primary-soft, #e6efea);
   vertical-align: top;
+  transition: transform var(--app-motion-fast, 160ms) ease;
 }
 
 .character-portrait-wrap {
-  position: relative;
-  width: 128rpx;
-  height: 154rpx;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .character-portrait {
-  width: 128rpx;
-  height: 154rpx;
-  border-radius: 42rpx;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.08));
+  width: 100%;
+  height: 100%;
 }
 
-.portrait-ring {
+.portrait-shade {
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 42rpx;
-  box-shadow: inset 0 0 0 1px var(--app-color-border, rgba(38, 51, 46, 0.08));
   pointer-events: none;
 }
 
 .character-name {
   display: block;
   width: 100%;
-  margin-top: 14rpx;
   overflow: hidden;
   color: var(--app-color-text-primary, #26332e);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  font-weight: 600;
-  text-align: center;
+  font-size: 27rpx;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .add-character-portrait {
+  position: static;
   display: flex;
+  width: 68rpx;
+  height: 68rpx;
+  margin-bottom: 20rpx;
   align-items: center;
   justify-content: center;
-  border: 2rpx dashed var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
-  border-radius: 42rpx;
-  background-color: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, .14));
+  border-radius: 50%;
+  background: var(--app-color-surface, #fff);
 }
 
 .add-character-plus {
-  color: var(--app-color-primary, #70ae9b);
-  font-size: 54rpx;
+  color: var(--app-color-primary-strong, #4f8e7c);
+  font-size: 40rpx;
   font-weight: 300;
 }
 
@@ -928,21 +937,16 @@ const formatDate = (dateString: string) => {
 .recent-story-list {
   display: flex;
   flex-direction: column;
-  gap: 16rpx;
 }
 
 .story-row {
   display: flex;
   min-height: 142rpx;
-  padding: 20rpx 18rpx;
+  padding: 22rpx 0;
   align-items: center;
-  gap: 20rpx;
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  border-radius: var(--app-radius-md, 24rpx);
-  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.78));
-  transition:
-    border-color var(--app-motion-fast, 160ms) ease,
-    transform var(--app-motion-fast, 160ms) ease;
+  gap: 22rpx;
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, .08));
+  transition: transform var(--app-motion-fast, 160ms) ease;
 }
 
 .story-row:active {
@@ -951,11 +955,11 @@ const formatDate = (dateString: string) => {
 }
 
 .story-avatar {
-  width: 94rpx;
-  height: 110rpx;
+  width: 100rpx;
+  height: 124rpx;
   flex-shrink: 0;
-  border-radius: 30rpx;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border-radius: 16rpx;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, .14));
 }
 
 .story-copy {
@@ -1077,7 +1081,7 @@ const formatDate = (dateString: string) => {
 }
 
 .skeleton-feature {
-  height: 408rpx;
+  height: 490rpx;
   border-radius: var(--app-radius-lg, 36rpx);
 }
 
@@ -1095,9 +1099,10 @@ const formatDate = (dateString: string) => {
 }
 
 .skeleton-character {
-  width: 128rpx;
-  height: 154rpx;
-  border-radius: 42rpx;
+  width: 204rpx;
+  height: 276rpx;
+  flex-shrink: 0;
+  border-radius: 24rpx;
 }
 
 @keyframes skeleton-shimmer {
@@ -1215,5 +1220,37 @@ const formatDate = (dateString: string) => {
 .is-android .rename-modal-backdrop {
   backdrop-filter: none !important;
   background-color: rgba(0, 0, 0, 0.5) !important;
+}
+
+/* 人物卡保留无图角色的文字入口。 */
+.character-shortcut:active { transform: scale(.97); }
+.character-card-copy { position: absolute; bottom: 22rpx; left: 22rpx; right: 18rpx; }
+.character-card-link { display: block; margin-top: 8rpx; color: var(--app-color-text-secondary, #64716b); font-size: 19rpx; letter-spacing: 1rpx; }
+.character-initial { position: absolute; top: 24rpx; left: 24rpx; color: var(--app-color-primary-strong, #4f8e7c); opacity: .3; font-size: 100rpx; font-weight: 300; }
+.has-portrait .portrait-shade { background: linear-gradient(180deg, transparent 25%, rgba(12, 23, 19, .85) 100%); }
+.has-portrait .character-name { color: #fff; }
+.has-portrait .character-card-link { color: #e0e9e3; }
+.add-character-shortcut { flex-direction: column; align-items: center; justify-content: center; border-style: dashed; background: var(--app-color-surface-soft, rgba(255, 255, 255, .78)); }
+.add-character-label { text-align: center; }
+.add-character-hint { margin-top: 10rpx; font-size: 19rpx; color: var(--app-color-text-secondary, #64716b); }
+.skeleton-characters { overflow: hidden; }
+@media (min-width: 1000px) {
+  .home-content { padding-top: 36px; }
+  .home-content.has-recent-stories { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); column-gap: 44px; align-items: start; }
+  .has-recent-stories .featured-section { grid-column: 1; grid-row: 1; }
+  .has-recent-stories .characters-section { grid-column: 1; grid-row: 2; margin-top: 32px; }
+  .has-recent-stories .recent-section { grid-column: 2; grid-row: 1 / span 2; margin-top: 0; padding-left: 32px; border-left: 1px solid var(--app-color-border); }
+  .has-recent-stories .start-story-card { grid-column: 1; grid-row: 1; }
+  .characters-scroll { width: 100%; }
+  .featured-card { height: 360px; }
+  .featured-copy { padding: 28px; }
+  .featured-title { font-size: 32px; }
+  .featured-preview { font-size: 15px; }
+  .featured-cover-label { top: 24px; right: 24px; }
+  .character-shortcut { width: 132px; height: 180px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .featured-card, .character-shortcut, .story-row { transition: none; }
+  .skeleton-feature, .skeleton-heading, .skeleton-character { animation: none; }
 }
 </style>

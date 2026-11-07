@@ -25,11 +25,11 @@
       </view>
     </view>
 
-    <view class="input-area" :class="{ 'is-focused': isFocused }">
+    <view class="input-area" :class="{ 'is-focused': isFocused, 'is-generating': isGenerating }">
       <textarea
         class="chat-input"
         :value="modelValue"
-        placeholder="写下接下来的故事…"
+        :placeholder="placeholderText"
         :auto-height="true"
         :maxlength="-1"
         :adjust-position="false"
@@ -44,10 +44,20 @@
       />
       <view
         class="send-btn"
-        :class="{ 'is-active': modelValue.trim().length > 0 }"
-        @tap="emit('send')"
+        :class="{
+          'is-active': !isGenerating && modelValue.trim().length > 0,
+          'is-generating': isGenerating,
+        }"
+        :aria-disabled="isGenerating"
+        @tap="!isGenerating && emit('send')"
       >
+        <view v-if="isGenerating" class="send-busy-dots">
+          <view class="busy-dot"></view>
+          <view class="busy-dot delay-1"></view>
+          <view class="busy-dot delay-2"></view>
+        </view>
         <image
+          v-else
           class="send-icon"
           src="/static/icons/chat_send.svg"
           mode="aspectFit"
@@ -63,9 +73,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import type { CSSProperties } from "vue";
 
-defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string;
   useReasoning: boolean;
   modelSummary: string;
@@ -73,7 +84,18 @@ defineProps<{
   isAndroid: boolean;
   keyboardHeight: number;
   wrapperStyle: CSSProperties;
-}>();
+  isGenerating?: boolean;
+  characterName?: string;
+}>(), {
+  isGenerating: false,
+  characterName: "",
+});
+
+const placeholderText = computed(() => {
+  if (!props.isGenerating) return "写下接下来的故事…";
+  const name = props.characterName?.trim();
+  return name && name !== "Unknown" ? `${name} 正在回应…` : "正在回应…";
+});
 
 const emit = defineEmits<{
   (event: "update:modelValue", value: string): void;
@@ -128,7 +150,7 @@ const handleInput = (event: Event) => {
   padding: 0 16rpx;
   border-radius: var(--app-radius-pill, 999rpx);
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  background-color: rgba(255, 255, 255, 0.56);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.56));
   transition:
     transform var(--app-motion-normal, 0.25s) cubic-bezier(0.16, 1, 0.3, 1),
     background-color var(--app-motion-normal, 0.25s),
@@ -165,9 +187,9 @@ const handleInput = (event: Event) => {
   display: flex;
   align-items: flex-end;
   padding: 7rpx 7rpx 7rpx 26rpx;
-  border: 1px solid rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--app-color-border, rgba(255, 255, 255, 0.78));
   border-radius: 34rpx;
-  background-color: rgba(255, 255, 255, 0.92);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.92));
   box-shadow:
     0 16rpx 42rpx rgba(45, 72, 62, 0.13),
     inset 0 0 0 1px var(--app-color-border, rgba(38, 51, 46, 0.08));
@@ -224,6 +246,37 @@ const handleInput = (event: Event) => {
 
 .send-btn.is-active .send-icon {
   filter: brightness(0) invert(1);
+}
+
+.send-btn.is-generating {
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+}
+
+.send-busy-dots {
+  display: flex;
+  align-items: center;
+  gap: 5rpx;
+}
+
+.busy-dot {
+  width: 7rpx;
+  height: 7rpx;
+  border-radius: 50%;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
+  animation: busy-pulse 1.1s ease-in-out infinite;
+}
+
+.busy-dot.delay-1 {
+  animation-delay: 0.18s;
+}
+
+.busy-dot.delay-2 {
+  animation-delay: 0.36s;
+}
+
+@keyframes busy-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 
 .send-icon {

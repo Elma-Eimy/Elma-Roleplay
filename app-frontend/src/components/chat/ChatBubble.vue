@@ -5,6 +5,7 @@
     :class="{
       'is-user': isUser,
       'is-ai-continuation': !isUser && !showAvatar,
+      'is-entering': animateEntry,
     }"
   >
     <AvatarImage
@@ -24,19 +25,21 @@
         :class="[isUser ? 'user-bubble' : 'ai-bubble']"
         @touchstart="handleTouchStart"
         @touchend="handleTouchEnd"
+        @tap="toggleMetaReveal"
         @longpress.stop="handleLongPress"
         @contextmenu.prevent.stop="handleLongPress"
       >
         
         <!-- AI 的深度思考过程容器 -->
         <view v-if="!isUser && hasThought" class="thought-container" :class="{ 'is-expanded': isThoughtExpanded }">
-          <view class="thought-header" @tap="isThoughtExpanded = !isThoughtExpanded">
+          <view class="thought-header" @tap.stop="isThoughtExpanded = !isThoughtExpanded">
             <view class="thought-header-left">
-              <view class="brain-spark"></view>
+              <view class="brain-spark" :class="{ 'is-thinking': isThinking }"></view>
               <text class="thought-title">{{ thoughtTitle }}</text>
             </view>
             <view class="thought-arrow" :class="{ 'is-up': isThoughtExpanded }">▾</view>
           </view>
+          <text v-if="!isThoughtExpanded && isThinking && thoughtPreview" class="thought-preview">{{ thoughtPreview }}</text>
           <view v-if="isThoughtExpanded" class="thought-body">
             <rich-text class="thought-markdown-content" :nodes="renderedThought" />
           </view>
@@ -65,8 +68,13 @@
           </view>
           <view v-else class="cursor-blink"></view>
         </view>
-        <view v-if="message.status === 'error'" class="error-text">
-          发送失败
+        <view v-if="message.status === 'error'" class="error-row">
+          <text class="error-text">发送失败</text>
+          <text
+            v-if="isUser && message.id < 0"
+            class="retry-link"
+            @tap.stop="emit('retry-failed', message)"
+          >编辑后重发</text>
         </view>
 
       </view>
@@ -75,31 +83,62 @@
       <view 
         v-if="!isUser && message.candidates && message.candidates.length > 1" 
         class="candidate-pager"
+        :class="{ 'is-disabled': isCandidateSwitchLocked }"
         @longpress.stop=""
         @contextmenu.prevent.stop=""
       >
         <view class="pager-btn prev" @tap.stop="switchCandidateVersion(-1)">
           <text class="pager-arrow">‹</text>
         </view>
-        <view class="pager-dots">
-          <view
-            v-for="(_, index) in message.candidates"
-            :key="index"
-            class="pager-dot"
-            :class="{ 'is-active': index === (message.active_index ?? 0) }"
-          ></view>
-        </view>
-        <text class="pager-text">{{ (message.active_index ?? 0) + 1 }}/{{ message.candidates.length }}</text>
+        <text class="pager-text">{{ (message.active_index ?? 0) + 1 }} / {{ message.candidates.length }}</text>
         <view class="pager-btn next" @tap.stop="switchCandidateVersion(1)">
           <text class="pager-arrow">›</text>
         </view>
       </view>
 
+      <!-- 最新回复常驻操作条 -->
+      <view
+        v-if="!isUser && isLatestAssistant && message.status === 'done'"
+        class="latest-action-bar"
+        @longpress.stop=""
+        @contextmenu.prevent.stop=""
+      >
+        <view
+          class="action-bar-btn"
+          :class="{ 'is-disabled': chatStore.isLoading }"
+          @tap.stop="!chatStore.isLoading && emit('regenerate-message')"
+        >
+          <image class="action-bar-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+          <text class="action-bar-label">重新生成</text>
+        </view>
+        <view
+          class="action-bar-btn"
+          :class="{ 'is-playing': activeAudioMessageId === message.id }"
+          @tap.stop="playTTS"
+        >
+          <view v-if="activeAudioMessageId === message.id" class="waveform">
+            <view class="wave-bar bar-1"></view>
+            <view class="wave-bar bar-2"></view>
+            <view class="wave-bar bar-3"></view>
+          </view>
+          <image v-else class="action-bar-icon tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
+          <text class="action-bar-label">{{ activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
+        </view>
+        <view class="action-bar-btn" @tap.stop="emit('copy-message', message)">
+          <image class="action-bar-icon" src="/static/icons/char_list.svg" mode="aspectFit" />
+          <text class="action-bar-label">复制</text>
+        </view>
+        <view class="action-bar-btn" @tap.stop="emit('longpress-message', message)">
+          <text class="action-bar-more">···</text>
+          <text class="action-bar-label">更多</text>
+        </view>
+      </view>
+
       <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
-      <view v-if="!isUser" class="meta-area">
-        <!-- 语音播报按钮 -->
+      <view v-if="!isUser && isMetaVisible" class="meta-area">
+        <!-- 语音播报按钮（最新回复已由操作条承载） -->
         <view 
-          v-if="message.status === 'done'"
+          v-if="message.status === 'done' && !isLatestAssistant"
           class="meta-tag tts-btn" 
           :class="{ 'is-playing': activeAudioMessageId === message.id }"
           @tap="playTTS"
@@ -118,8 +157,13 @@
         <view v-if="message.affection_change" class="meta-tag affection" :class="{ positive: message.affection_change > 0, negative: message.affection_change < 0 }">
           <text>{{ message.affection_change > 0 ? '+' : '' }}{{ message.affection_change }}</text>
           <image class="affection-heart-icon-bubble" :src="message.affection_change >= 0 ? '/static/icons/meta_heart.svg' : '/static/icons/meta_heart_broken.svg'" mode="aspectFit" />
+          <text
+            v-if="showAffectionPop"
+            class="affection-pop"
+            :class="{ negative: message.affection_change < 0 }"
+          >{{ message.affection_change > 0 ? '+' : '' }}{{ message.affection_change }} ♥</text>
         </view>
-        <view v-if="message.model_used" class="meta-tag model-used">
+        <view v-if="isMetaRevealed && message.model_used" class="meta-tag model-used">
           {{ message.model_used }}
         </view>
       </view>
@@ -134,6 +178,11 @@ import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { renderRoleplayStateBlock } from "@/utils/markdown";
+import {
+  createBoundedCache,
+  formatThoughtTitle,
+  lastNonEmptyLine,
+} from "@/utils/chatDisplay";
 import MarkdownIt from "markdown-it";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
@@ -149,6 +198,8 @@ md.renderer.rules.fence = (tokens, index) =>
   renderRoleplayStateBlock(tokens[index].content);
 
 const STREAM_MARKDOWN_RENDER_DELAY = 48;
+// 已完成消息的 Markdown 渲染结果按内容键缓存，避免翻页或重排时重复解析。
+const markdownCache = createBoundedCache<string>(240);
 
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
@@ -161,18 +212,50 @@ const props = withDefaults(
     characterName?: string;
     showName?: boolean;
     showAvatar?: boolean;
+    isLatestAssistant?: boolean;
+    animateEntry?: boolean;
   }>(),
   {
     avatarUrl: "",
     characterName: "",
     showName: false,
     showAvatar: true,
+    isLatestAssistant: false,
+    animateEntry: false,
   }
 );
 
 const emit = defineEmits<{
   (e: "longpress-message", message: ChatMessage): void;
+  (e: "retry-failed", message: ChatMessage): void;
+  (e: "copy-message", message: ChatMessage): void;
+  (e: "regenerate-message"): void;
 }>();
+
+// 元数据默认只在最新回复展示；点按其他 AI 气泡可临时展开（含模型名）。
+const isMetaRevealed = ref(false);
+const isMetaVisible = computed(() => props.isLatestAssistant || isMetaRevealed.value);
+const toggleMetaReveal = () => {
+  if (isUser.value || props.message?.status === "streaming") return;
+  isMetaRevealed.value = !isMetaRevealed.value;
+};
+
+// 新回复到达时短暂浮出好感变化；减少动画模式下由全局规则压缩动画，静态标签仍保留。
+const AFFECTION_POP_DURATION = 1800;
+const showAffectionPop = ref(false);
+let affectionPopTimer: ReturnType<typeof setTimeout> | null = null;
+watch(
+  () => props.message?.status,
+  (status, previous) => {
+    if (previous !== "streaming" || status !== "done" || !props.message?.affection_change) return;
+    if (affectionPopTimer !== null) clearTimeout(affectionPopTimer);
+    showAffectionPop.value = true;
+    affectionPopTimer = setTimeout(() => {
+      affectionPopTimer = null;
+      showAffectionPop.value = false;
+    }, AFFECTION_POP_DURATION);
+  }
+);
 
 // 部分移动端 WebView 会为同一次长按先后派发 longpress 和 contextmenu。
 // 在气泡这一层合并它们，避免重复震动和重复打开操作菜单。
@@ -224,8 +307,12 @@ const handleTouchEnd = (e: TouchEvent) => {
   }
 };
 
+const isCandidateSwitchLocked = computed(() =>
+  chatStore.isLoading || props.message?.status === "streaming"
+);
+
 const switchCandidateVersion = async (direction: number) => {
-  if (chatStore.isLoading || !props.message?.candidates || props.message.status === 'streaming') return;
+  if (isCandidateSwitchLocked.value || !props.message?.candidates) return;
   const len = props.message.candidates.length;
   const currentIdx = props.message.active_index ?? 0;
   let targetIdx = currentIdx + direction;
@@ -367,6 +454,17 @@ const renderedMarkdown = ref("");
 const renderedThought = ref("");
 let markdownRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
+const renderCachedMarkdown = (scope: "reply" | "thought", raw: string): string => {
+  if (!raw) return "";
+  if (props.message?.status !== "done") return renderMarkdown(raw);
+  const key = `${scope}:${props.message.id ?? 0}:${raw}`;
+  const hit = markdownCache.get(key);
+  if (hit !== undefined) return hit;
+  const rendered = renderMarkdown(raw);
+  markdownCache.set(key, rendered);
+  return rendered;
+};
+
 const updateRenderedMarkdown = () => {
   if (markdownRenderTimer !== null) {
     clearTimeout(markdownRenderTimer);
@@ -377,12 +475,12 @@ const updateRenderedMarkdown = () => {
     const replyContent = parsedContent.value.reply;
     renderedMarkdown.value =
       !isUser.value && replyContent
-        ? renderMarkdown(String(replyContent))
+        ? renderCachedMarkdown("reply", String(replyContent))
         : "";
 
     const thoughtContent = parsedContent.value.thought;
     renderedThought.value = thoughtContent
-      ? renderMarkdown(String(thoughtContent))
+      ? renderCachedMarkdown("thought", String(thoughtContent))
       : "";
   } catch (err) {
     console.error("[ChatBubble] renderedMarkdown error:", err, "message:", props.message);
@@ -412,28 +510,69 @@ watch(
   { immediate: true }
 );
 
+// 思考区默认折叠，仅显示计时与最后一行预览；时长只对本次实时生成的消息可知。
+const isThinking = computed(() =>
+  props.message?.status === "streaming" && !parsedContent.value.reply
+);
+const thoughtStartedAt = ref<number | null>(null);
+const thoughtEndedAt = ref<number | null>(null);
+const thoughtNow = ref(Date.now());
+let thoughtTicker: ReturnType<typeof setInterval> | null = null;
+
+const stopThoughtTicker = () => {
+  if (thoughtTicker === null) return;
+  clearInterval(thoughtTicker);
+  thoughtTicker = null;
+};
+
+watch(
+  [
+    () => parsedContent.value.thought,
+    () => parsedContent.value.reply,
+    () => props.message?.status,
+  ],
+  ([thought, reply, status]) => {
+    if (status === "streaming" && thought && thoughtStartedAt.value === null) {
+      thoughtStartedAt.value = Date.now();
+    }
+    if (thoughtStartedAt.value !== null && thoughtEndedAt.value === null && (reply || status !== "streaming")) {
+      thoughtEndedAt.value = Date.now();
+    }
+    if (isThinking.value && thoughtStartedAt.value !== null) {
+      thoughtNow.value = Date.now();
+      if (thoughtTicker === null) {
+        thoughtTicker = setInterval(() => { thoughtNow.value = Date.now(); }, 1000);
+      }
+    } else {
+      stopThoughtTicker();
+    }
+  },
+  { immediate: true }
+);
+
+const thoughtTitle = computed(() => {
+  const startedAt = thoughtStartedAt.value;
+  const elapsedMs = startedAt === null
+    ? null
+    : (thoughtEndedAt.value ?? thoughtNow.value) - startedAt;
+  return formatThoughtTitle({ isThinking: isThinking.value, elapsedMs });
+});
+
+const thoughtPreview = computed(() =>
+  lastNonEmptyLine(parsedContent.value.thought).replace(/^[#>*\-\s]+/, "")
+);
+
 onUnmounted(() => {
   if (markdownRenderTimer !== null) {
     clearTimeout(markdownRenderTimer);
     markdownRenderTimer = null;
   }
-});
-
-const thoughtTitle = computed(() => {
-  if (props.message?.status === "streaming") {
-    if (!props.message.content) {
-      return "AI 正在思考中...";
-    }
+  if (affectionPopTimer !== null) {
+    clearTimeout(affectionPopTimer);
+    affectionPopTimer = null;
   }
-  return isThoughtExpanded.value ? "深度思考过程" : "AI 已完成思考 (点击展开)";
+  stopThoughtTicker();
 });
-
-// 监听流式思考过程流入，在流式输出思考期间自动展开思考区
-watch(() => props.message?.reasoning_content, (newVal) => {
-  if (props.message?.status === "streaming" && newVal) {
-    isThoughtExpanded.value = true;
-  }
-}, { immediate: true });
 </script>
 
 <style scoped>
@@ -444,6 +583,10 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   margin-bottom: 2rpx;
   gap: 18rpx;
   align-items: flex-start;
+}
+
+/* 仅本地新消息播放入场动画，历史与分页加载直接显示。 */
+.chat-bubble-wrapper.is-entering {
   animation: bubble-fade-in var(--app-motion-slow, 360ms) cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -516,11 +659,11 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 
 /* ===== AI 轻纸片 ===== */
 .ai-bubble {
-  background-color: rgba(255, 255, 255, 0.62);
+  background-color: var(--app-color-bubble-ai, rgba(255, 255, 255, 0.62));
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: var(--app-color-text-primary, #26332e);
-  border: 1px solid rgba(255, 255, 255, 0.56);
+  border: 1px solid var(--app-color-bubble-ai-border, rgba(255, 255, 255, 0.56));
   border-top-left-radius: 10rpx;
   box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.04);
 }
@@ -528,27 +671,27 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 /* ===== 用户浅薄荷气泡 ===== */
 .user-bubble {
   padding: 18rpx 24rpx;
-  background-color: rgba(215, 236, 228, 0.9);
+  background-color: var(--app-color-bubble-user, rgba(215, 236, 228, 0.9));
   color: var(--app-color-text-primary, #26332e);
-  border: 1px solid rgba(112, 174, 155, 0.16);
+  border: 1px solid var(--app-color-bubble-user-border, rgba(112, 174, 155, 0.16));
   border-top-right-radius: 10rpx;
   box-shadow: 0 8rpx 24rpx rgba(79, 142, 124, 0.08);
 }
 
-/* ===== 文本渲染样式 ===== */
+/* ===== 文本渲染样式（可由页面阅读偏好覆盖） ===== */
 .plain-text {
-  font-size: 28rpx;
-  line-height: 1.58;
+  font-size: var(--chat-font-size, 28rpx);
+  line-height: var(--chat-user-line-height, 1.58);
 }
 
 .markdown-content {
-  font-size: 28rpx;
-  line-height: 1.72;
+  font-size: var(--chat-font-size, 28rpx);
+  line-height: var(--chat-line-height, 1.72);
 }
 
 .markdown-content :deep(.md-p) {
   margin: 12rpx 0;
-  line-height: 1.72;
+  line-height: var(--chat-line-height, 1.72);
 }
 
 .markdown-content :deep(.md-strong) {
@@ -651,6 +794,64 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   height: 8rpx;
 }
 
+/* ===== 最新回复操作条 ===== */
+.latest-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 10rpx;
+  margin-left: 6rpx;
+}
+
+.action-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  min-height: 48rpx;
+  padding: 0 18rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.64));
+  color: var(--app-color-text-secondary, #64716b);
+  transition:
+    transform var(--app-motion-fast, 160ms) ease,
+    background-color var(--app-motion-fast, 160ms) ease;
+}
+
+.action-bar-btn:active {
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  transform: scale(0.95);
+}
+
+.action-bar-btn.is-disabled {
+  opacity: 0.45;
+}
+
+.action-bar-btn.is-playing {
+  color: var(--app-color-primary-strong, #4f8e7c);
+  border-color: rgba(112, 174, 155, 0.2);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+}
+
+.action-bar-icon {
+  width: 22rpx;
+  height: 22rpx;
+  flex-shrink: 0;
+  opacity: 0.78;
+}
+
+.action-bar-more {
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.action-bar-label {
+  font-size: 21rpx;
+  font-weight: 560;
+}
+
 /* ===== 元数据区域 ===== */
 .meta-area {
   display: flex;
@@ -664,7 +865,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   font-size: 20rpx;
   padding: 3rpx 12rpx;
   border-radius: 40rpx;
-  background-color: rgba(255, 255, 255, 0.5);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.5));
   color: var(--app-color-text-secondary, #7c8983);
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
@@ -674,9 +875,33 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .meta-tag.affection {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6rpx;
+}
+
+.affection-pop {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  color: var(--app-color-primary-strong, #4f8e7c);
+  font-size: 24rpx;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: affection-float 1.8s ease-out both;
+}
+
+.affection-pop.negative {
+  color: var(--app-color-danger, #d9655d);
+}
+
+@keyframes affection-float {
+  0% { opacity: 0; transform: translate(-50%, 8rpx); }
+  15% { opacity: 1; transform: translate(-50%, 0); }
+  70% { opacity: 1; transform: translate(-50%, -16rpx); }
+  100% { opacity: 0; transform: translate(-50%, -28rpx); }
 }
 
 .meta-tag.affection.positive {
@@ -850,15 +1075,35 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   }
 }
 
+.error-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 8rpx;
+}
+
 .error-text {
   font-size: 22rpx;
   color: var(--app-color-danger, #d9655d);
-  margin-top: 8rpx;
+}
+
+.retry-link {
+  padding: 4rpx 16rpx;
+  border: 1px solid rgba(217, 101, 93, 0.24);
+  border-radius: var(--app-radius-pill, 999rpx);
+  color: var(--app-color-danger, #d9655d);
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.retry-link:active {
+  background-color: rgba(217, 101, 93, 0.08);
 }
 
 /* ===== 推理思考容器 ===== */
 .thought-container {
-  background-color: rgba(247, 249, 247, 0.72);
+  background-color: var(--app-color-thought-bg, rgba(247, 249, 247, 0.72));
   border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-left: 4rpx solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 16rpx;
@@ -868,7 +1113,7 @@ watch(() => props.message?.reasoning_content, (newVal) => {
 }
 
 .thought-container.is-expanded {
-  background-color: rgba(238, 246, 241, 0.82);
+  background-color: var(--app-color-thought-expanded-bg, rgba(238, 246, 241, 0.82));
   border-left-color: var(--app-color-primary, #70ae9b);
 }
 
@@ -893,8 +1138,29 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   border-radius: 50%;
 }
 
-.is-expanded .brain-spark {
+.is-expanded .brain-spark,
+.brain-spark.is-thinking {
   background-color: var(--app-color-primary, #70ae9b);
+}
+
+.brain-spark.is-thinking {
+  animation: thought-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes thought-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.thought-preview {
+  display: block;
+  padding: 0 20rpx 14rpx 42rpx;
+  overflow: hidden;
+  color: var(--app-color-text-muted, #89958f);
+  font-size: 22rpx;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thought-title {
@@ -984,32 +1250,15 @@ watch(() => props.message?.reasoning_content, (newVal) => {
   font-weight: 300;
 }
 
-.pager-dots {
-  display: flex;
-  align-items: center;
-  gap: 7rpx;
-}
-
-.pager-dot {
-  width: 8rpx;
-  height: 8rpx;
-  border-radius: var(--app-radius-pill, 999rpx);
-  background-color: var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
-  transition:
-    width var(--app-motion-fast, 160ms) ease,
-    background-color var(--app-motion-fast, 160ms) ease;
-}
-
-.pager-dot.is-active {
-  width: 20rpx;
-  background-color: var(--app-color-primary, #70ae9b);
+.candidate-pager.is-disabled {
+  opacity: 0.45;
 }
 
 .pager-text {
-  font-size: 19rpx;
-  color: var(--app-color-text-muted, #a4aea9);
-  font-weight: 550;
-  min-width: 42rpx;
+  font-size: 22rpx;
+  color: var(--app-color-text-secondary, #64716b);
+  font-weight: 600;
+  min-width: 64rpx;
   text-align: center;
   letter-spacing: 0.5px;
 }

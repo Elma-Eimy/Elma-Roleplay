@@ -712,6 +712,22 @@ export const useChatStore = defineStore("chat", () => {
     errorMessage.value = null;
   }
 
+  /**
+   * 移除仅存在于本地的失败用户消息（负数 ID），供“编辑后重发”回填输入框。
+   * 已持久化的消息或生成中的会话不处理；成功时返回被移除的原文。
+   */
+  function discardFailedMessage(clientId: string | undefined): string | null {
+    if (!clientId || isLoading.value) return null;
+    const index = messages.value.findIndex((message) =>
+      message.clientId === clientId && message.role === "user" &&
+      message.status === "error" && message.id < 0
+    );
+    if (index === -1) return null;
+    const [removed] = messages.value.splice(index, 1);
+    errorMessage.value = null;
+    return removed.content;
+  }
+
   async function switchActiveCandidate(messageId: number, targetCandidateId: number): Promise<MessageActionResult> {
     if (activeSessionId.value === null) return { status: "stale" };
     const current = captureContext();
@@ -844,6 +860,7 @@ export const useChatStore = defineStore("chat", () => {
     loadMoreHistory,
     setError,
     clearError,
+    discardFailedMessage,
     $reset,
   };
 });

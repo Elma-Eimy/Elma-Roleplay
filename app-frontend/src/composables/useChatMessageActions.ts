@@ -1,4 +1,4 @@
-import { ref, watch, onScopeDispose } from "vue";
+import { ref, computed, watch, onScopeDispose } from "vue";
 import type { Ref } from "vue";
 import { createSession } from "@/api/sessions";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
@@ -8,10 +8,27 @@ import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { getBaseUrl } from "@/api/config";
 import { onServerChange } from "@/utils/connectionEvents";
+import type { ActionSheetItem } from "@/components/common/AppActionSheet.vue";
+
+export type MessageActionKey =
+  | "copy"
+  | "keepsake"
+  | "tts"
+  | "edit"
+  | "branch"
+  | "regenerate"
+  | "delete";
+
+interface PendingActionContext {
+  version: number;
+  sessionId: number | null;
+  endpoint: string;
+}
 
 export function useChatMessageActions(
   currentSessionId: Ref<number | null>,
-  scrollToBottom: () => Promise<void>
+  scrollToBottom: () => Promise<void>,
+  saveKeepsake?: (message: ChatMessage) => void
 ) {
   const chatStore = useChatStore();
   const personaStore = usePersonaStore();
@@ -20,11 +37,28 @@ export function useChatMessageActions(
   const editMessageContent = ref("");
   const editError = ref("");
   const isSavingEdit = ref(false);
+  const actionSheetMessage = ref<ChatMessage | null>(null);
   let editVersion = 0;
   let isMessageActionSheetOpen = false;
+  let actionContext: PendingActionContext | null = null;
+
+  const isContextValid = (ctx: PendingActionContext | null): boolean =>
+    Boolean(
+      ctx &&
+        ctx.version === editVersion &&
+        ctx.sessionId === currentSessionId.value &&
+        ctx.endpoint === getBaseUrl()
+    );
+
+  const closeActionSheet = () => {
+    actionSheetMessage.value = null;
+    actionContext = null;
+    isMessageActionSheetOpen = false;
+  };
 
   const cancelEdit = () => {
     editVersion++;
+    closeActionSheet();
     editingMessageId.value = null;
     editMessageContent.value = "";
     editError.value = "";
@@ -114,57 +148,108 @@ export function useChatMessageActions(
     }
   };
 
+  const copyMessageContent = (message: ChatMessage) => {
+    if (!message?.content) return;
+    uni.setClipboardData({
+      data: message.content,
+      success: () => uni.showToast({ title: "复制成功", icon: "none" }),
+    });
+  };
+
+  const buildItemsForMessage = (message: ChatMessage): ActionSheetItem[] => {
+    const items: ActionSheetItem[] = [
+      { key: "copy", label: "复制内容", icon: "/static/icons/char_list.svg" },
+    ];
+    if (saveKeepsake && message.id > 0 && message.content.trim() && (!message.status || message.status === "done")) {
+      items.push({ key: "keepsake", label: "收藏这一刻", icon: "/static/icons/meta_heart.svg" });
+    }
+    if (message.role === "assistant") {
+      items.push({ key: "tts", label: "朗读消息", icon: "/static/icons/tts_play.svg" });
+    }
+    items.push(
+      { key: "edit", label: "编辑消息", icon: "/static/icons/char_pencil.svg" },
+      { key: "branch", label: "创建分支（多宇宙）", icon: "/static/icons/char_branch.svg" }
+    );
+    const isLatestAssistant = message.id === chatStore.lastAssistantMessage?.id;
+    if (message.role === "assistant" && isLatestAssistant && !chatStore.isLoading) {
+      items.push({ key: "regenerate", label: "重新生成回复", icon: "/static/icons/drawer_sync.svg" });
+    }
+    items.push({ key: "delete", label: "删除此消息", icon: "/static/icons/drawer_trash.svg", danger: true });
+    return items;
+  };
+
+  const actionSheetItems = computed<ActionSheetItem[]>(() =>
+    actionSheetMessage.value ? buildItemsForMessage(actionSheetMessage.value) : []
+  );
+
+  const runAction = (action: MessageActionKey | string, message: ChatMessage) => {
+    if (action === "keepsake" || action === "收藏这一刻") {
+      saveKeepsake?.(message);
+    } else if (action === "copy" || action === "复制内容") {
+      copyMessageContent(message);
+    } else if (action === "tts" || action === "朗读消息") {
+      void playMessageTTS(message);
+    } else if (action === "edit" || action === "编辑消息") {
+      cancelEdit();
+      editingMessageId.value = message.id;
+      editMessageContent.value = message.content;
+    } else if (action === "branch" || action === "创建分支（多宇宙）") {
+      createBranchFromMessage(message);
+    } else if (action === "delete" || action === "删除此消息") {
+      deleteMessage(message);
+    } else if (action === "regenerate" || action === "重新生成回复") {
+      void regenerateLatestReply();
+    }
+  };
+
+  const selectActionSheetItem = (key: string) => {
+    const message = actionSheetMessage.value;
+    const ctx = actionContext;
+    closeActionSheet();
+    if (!message || !isContextValid(ctx)) return;
+    runAction(key, message);
+  };
+
   const onMessageLongPress = (message: ChatMessage) => {
     if (!message?.id || isMessageActionSheetOpen) return;
-    const version = editVersion, sessionId = currentSessionId.value, endpoint = getBaseUrl();
-
-    const itemList = ["复制内容"];
-    if (message.role === "assistant") {
-      itemList.push("朗读消息");
-    }
-    itemList.push("编辑消息", "创建分支（多宇宙）");
-
-    const isLatestAssistant =
-      message.id === chatStore.lastAssistantMessage?.id;
-    if (message.role === "assistant" && isLatestAssistant) {
-      itemList.push("重新生成回复");
-    }
-    itemList.push("删除此消息");
+    const ctx: PendingActionContext = {
+      version: editVersion,
+      sessionId: currentSessionId.value,
+      endpoint: getBaseUrl(),
+    };
+    const items = buildItemsForMessage(message);
+    const itemList = items.map((item) => item.label);
 
     isMessageActionSheetOpen = true;
-    try {
-      uni.showActionSheet({
-        itemList,
-        success: (result) => {
-          if (version !== editVersion || sessionId !== currentSessionId.value || endpoint !== getBaseUrl()) return;
-          const action = itemList[result.tapIndex];
-          if (action === "复制内容") {
-            uni.setClipboardData({
-              data: message.content,
-              success: () =>
-                uni.showToast({ title: "复制成功", icon: "none" }),
-            });
-          } else if (action === "朗读消息") {
-            void playMessageTTS(message);
-          } else if (action === "编辑消息") {
-            cancelEdit();
-            editingMessageId.value = message.id;
-            editMessageContent.value = message.content;
-          } else if (action === "创建分支（多宇宙）") {
-            createBranchFromMessage(message);
-          } else if (action === "删除此消息") {
-            deleteMessage(message);
-          } else if (action === "重新生成回复") {
-            void regenerateLatestReply();
-          }
-        },
-        complete: () => {
-          isMessageActionSheetOpen = false;
-        },
-      });
-    } catch (error) {
-      isMessageActionSheetOpen = false;
-      throw error;
+    actionContext = ctx;
+    actionSheetMessage.value = message;
+
+    // 仅在 Node 离线测试（非浏览器/小程序/App 宿主）且注入了 showActionSheet 替身时保留回调路径。
+    const host = globalThis as Record<string, unknown>;
+    if (
+      !("window" in host) &&
+      !("wx" in host) &&
+      !("plus" in host) &&
+      typeof uni !== "undefined" &&
+      typeof uni.showActionSheet === "function"
+    ) {
+      try {
+        uni.showActionSheet({
+          itemList,
+          success: (result) => {
+            if (!isContextValid(ctx)) return;
+            closeActionSheet();
+            const action = itemList[result.tapIndex];
+            if (action) runAction(action, message);
+          },
+          complete: () => {
+            isMessageActionSheetOpen = false;
+          },
+        });
+      } catch (error) {
+        closeActionSheet();
+        throw error;
+      }
     }
   };
 
@@ -177,7 +262,13 @@ export function useChatMessageActions(
     editMessageContent,
     editError,
     isSavingEdit,
+    actionSheetMessage,
+    actionSheetItems,
     onMessageLongPress,
+    selectActionSheetItem,
+    closeActionSheet,
+    copyMessageContent,
+    regenerateLatestReply,
     cancelEdit,
     saveEdit,
   };

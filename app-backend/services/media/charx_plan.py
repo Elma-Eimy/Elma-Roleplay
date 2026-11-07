@@ -5,7 +5,7 @@ from services.parse import _extract_v2_data
 TEXT_FIELDS = (
     'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
     'creator_notes', 'system_prompt', 'system_prompt_override', 'post_history_instructions',
-    'creator', 'character_version',
+    'physical_description', 'creator', 'character_version',
 )
 SUPPORTED = set(TEXT_FIELDS) | {'tags', 'alternate_greetings', 'character_book', 'extensions', 'assets'}
 IGNORED = {'nickname', 'group_only_greetings', 'creation_date', 'modification_date', 'source', 'creator_notes_multilingual'}
