@@ -137,6 +137,12 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 
 current 为 `{group_revision, latest, active_operation, capabilities}`。latest 为空或 `{round_id, candidate_id, candidate_revision, confirmed}`，active_operation 为空或当前活动回执摘要；capabilities 为 can_send、can_regenerate、can_select、can_discard。生成服务不可用时 can_generate、can_send、can_regenerate 和候选 can_resume 为 false；短事务选择和撤回仍按当前状态判断。候选 can_resume 同时核对可靠前缀与提供方，旧失败候选不会伪造参数。以上 GET 均不返回调用参数、凭据、Prompt、reasoning、导演审计、知情行或原始状态增量。
 
+候选详情的 `state_preview.members` 每项包含 `persona_id`、`affection_score`、`current_mood`、`role_state`，并提供入群时的 `cognition_state`（文本或 null）及该候选可用的 `insights` 数组。每条认识为 `{kind, content, target_persona_id, target_name}`：kind 为 cognition/user/member，分别表示个人认识、对用户的看法和对指定成员的看法；仅 member 类型的目标字段有值。接口不返回原始证据引文或内部 ref。
+
+好感、心情和角色状态按此前已确认所选轮次及目标候选的已保存发言重放，失败候选仅反映保存前缀。`insights` 与实际角色输入使用同一成员投影，受该候选冻结的结果上界、此前已确认所选轮次和成员归属约束；迟到提纯不回填旧候选，返回空数组也不表示所有后台任务都已完成。入群认知是起点，群内成长由 insights 单独表示。此查询面向操作者，不应将所有成员的认识拼接到单个角色输入中。
+
+详情页的“当前采用状态”复用此 GET，只有返回的群版本、最新采用轮次、候选及候选 revision 与本页所见一致时显示；查看其他候选不覆盖该面板。无采用候选时引导查看入群起点，旧服务器缺少新字段时明确提示资料不可用，不从其他候选或本机缓存补出成长结果。Mock 继续明确拒绝候选操作与查询。
+
 Mock 对这些新写操作、请求和候选查询明确报“不支持”，不伪造接受或恢复成功；旧管理和虚构轮次只读行为保留。
 
 ## 删除与错误

@@ -74,6 +74,8 @@
 
 个人上下文由 `group_context_service.py` 在读快照中装配。`services/memory/group_memory_index.py` 统一召回发言 Persona 的入群快照与已确认群内卡；`group_memory_recall.py` 保留仅匹配入群快照的旧策略兼容入口。两者均不访问来源会话。
 
+操作者的候选查询复用 `_member_state` 和 `member_insights` 读取成员状态、继承认知及候选冻结范围内的成长。输出只包含认识正文、类型和关系目标，不返回证据引文或 ref；不改变成员起点，不推进后台任务，也不扩大实际角色输入的可见范围。详情契约见 [群聊 API](../api/GROUP_SESSIONS.md)。
+
 新轮次在接受事务内向 `group_memory_captures` 登记上一轮的成员任务。`application/lifecycle.py` 管理群聊提纯循环，`services/memory/group_memory_capture.py` 负责领取、个人取证、记忆模型调用与幂等写入。退出时等待该任务结束再释放数据库运行权。成员成长在同一事务向 group_member_insights 写入带引文的个人认知和关系印象。新候选保存当时可用的结果编号上界，角色生成按成员和已确认轮次读取。统一召回用 group_recall_cards 指向快照或提纯结果中的卡位。SQLite 触发器在写入、级联删除时登记 Outbox；独立的 group_memory_v1 向量集合只提供相关编号。Embedding 查询在读事务之外运行，装配输入时重新检查轮次、采用候选和成员归属。
 
 `services/memory/group_memory_assertions.py` 在模型调用前释放读事务，对成员获准知情的用户原文与角色台词独立分类；请求授权不扩大取证范围。`services/memory/group_memory_facts.py` 校验来源类型、旧卡完整分段与局部更正关系，并在候选卡片上界内计算有效片段。`parts_json` 首次写入后由 SQLite 触发器禁止修改，旧卡原文和父卡向量保持不变。部分撤回的父卡不沿用整卡语义分数；按保留片段做词面匹配。分段、提纯结果和 Outbox 同事务提交，版本竞争整体回滚。迁移 `b6e7f8a9b0c1` 不回填历史正文，已有新版候选或事实数据时拒绝有损降级。

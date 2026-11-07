@@ -8,6 +8,7 @@ from services.conversation import group_history_service as history, group_operat
 from services.conversation.group_call_snapshot import restore_group_calls
 from services.conversation.group_checkpoint_service import validate_prefix, saved_steps
 from services.conversation.group_context_service import _member_state
+from services.memory.group_member_insights import member_insights
 from services.conversation.group_session_service import GroupSessionNotFound
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 
@@ -138,8 +139,13 @@ def get_group_candidate(session_id, round_id, candidate_id, db):
         preview = []
         for member in members:
             role_state, persona = _member_state(member, group, round_, candidate, 2**63-1, db)
+            insights = member_insights(member.id, round_, candidate, db)
             preview.append({"persona_id": member.id, "role_state": role_state,
-                            "affection_score": persona.affection_score, "current_mood": persona.current_mood})
+                            "affection_score": persona.affection_score, "current_mood": persona.current_mood,
+                            "cognition_state": persona.cognition_state,
+                            "insights": [{"kind": row["kind"], "content": row["content"],
+                                "target_persona_id": row.get("persona_id"), "target_name": row.get("name")}
+                                for row in insights]})
         return {"round": _round_view(round_), "candidate": _candidate(candidate, round_, state, db), "current": state,
                 "utterances": [{"item_id": item.id, "sequence": item.sequence,
                     "speaker_persona_id": item.speaker_persona_id, "speaker_name": names[item.speaker_persona_id],

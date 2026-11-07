@@ -85,7 +85,7 @@
 | **POST** | `/group-sessions/{session_id}/rounds/{round_id}/discard` | 撤回最新未确认轮次并保留请求回执 |
 | **GET** | `/group-sessions/{session_id}/requests/{client_request_id}` | 查询接受结果、执行终态与当前选择，不派发模型 |
 | **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates` | 分页读取同轮候选元数据与可用操作 |
-| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}` | 读取指定候选前缀及独立状态预览 |
+| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}` | 读取指定候选前缀、成员状态及冻结范围内的个人认识 |
 | **POST** | `/group-sessions/{session_id}/delete` | 删除整个群聊并登记资源清理 |
 
 ### 会话、消息与记忆 API
