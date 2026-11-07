@@ -31,6 +31,8 @@ src/main.ts + App.vue + pages.json
 
 `GroupMemberStates.vue` 共用于当前采用状态和候选预览，按成员展示状态、继承认知与候选可用的个人认识，不发起请求。`useGroupRoundFlow.loadAdoptedState()` 独立保存当前采用状态，按群版本、最新轮次/候选及 revision 校验读取结果；选择或确认变化、处理操作、离页和切服使旧数据与在途读取失效。读取不改变采用选择、不派发模型，也不影响原有候选预览。
 
+`useGroupPortraits.ts` 管理成员立绘查询、素材分页与一次性选择写入，复用群聊详情的页面/服务器代际。写入时暂停旧轮次视图并阻止聊天写操作，结束后通过 GET 重读；不自动重发 PUT，也不调用单聊选择接口。轮次发言和候选状态展示各自快照中的图像，缺失素材及旧响应回退头像。上传和素材管理仍由角色档案负责。
+
 ## 流式聊天与会话隔离
 
 普通发送从 `store/chatStore.ts` 调用 `api/chat.ts`。H5 与小程序接收逻辑见 `api/chatStream.ts`；App 经 `composables/useChatStreamBridge.ts`、`components/chat/ChatStreamBridge.vue` 与 `api/transports/appStream.ts` 接入。三端共用 `utils/chatStreamProtocol.ts` 解释 SSE 事件和终态。

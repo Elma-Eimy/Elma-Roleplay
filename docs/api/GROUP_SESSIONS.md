@@ -123,7 +123,9 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 
 新候选在后台对当前阶段的 `invalid_output` 最多调用三次（含首次），覆盖非法 JSON、缺字段及字段校验失败；不重新发送 HTTP 请求或重跑已保存的发言。重试附带格式纠正要求，每次调用均在派发前扣除持久额度，共享原有整轮期限。超时、网络错误、输出截断、取消和语义审查拒绝不走此重试。三次仍失败时保留检查点供显式续接。策略随候选冻结，旧快照没有该策略时保持一次调用；显式重生成使用新策略。
 
-设本次剩余成功发言上限为 K，新策略调用上限为 `3 × (3K + 1)`，旧策略为 `3K + 1`；不代表必定用完额度。仅需最终提交的续接仍为零次模型调用。重试会延长等待并增加实际模型费用，达到原有时间或调用上限时立即停止。
+设本次剩余成功发言上限为 K，有界格式重试的调用上限为 `3 × (3K + 1)`，早期策略为 `3K + 1`；不代表必定用完额度。仅需最终提交的续接仍为零次模型调用。重试会延长等待并增加实际模型费用，达到原有时间或调用上限时立即停止。
+
+新候选另冻结亲历审查策略，在角色发言保存前独立核对本人可见依据。`unsupported_experience` 只在角色生成层触发有界重写；无效审查最多三次后以 `experience_check_failed` 停止，不反复改判。通常每个发言增加一次审查调用，该策略每次操作额度为 `output_attempts × (4K+1)`，仍共用原期限。旧候选缺字段时不追溯启用，显式重生成使用新策略；HTTP 请求格式与 GET 恢复规则不变。
 
 新候选可按服务器冻结的回合策略，对推进请求、承接依据和角色发言进行内部校验，不改变以上请求结构。`invalid_basis` 表示导演返回了不可用的承接依据，`agency_conflict` 或 `unsupported_history` 表示提交前审查发现明确冲突；生成仍以 failed 结束，未通过的发言及状态不会提交，已保存前缀保留。是否提供显式续接仍以 can_resume 为准，续接不跳过原审查，也不通过重复发送原聊天恢复。以上为固定错误码，不包含原始模型解释；前端错误字段保持字符串，Mock 仍不模拟真实生成规则。
 
@@ -144,6 +146,29 @@ current 为 `{group_revision, latest, active_operation, capabilities}`。latest 
 详情页的“当前采用状态”复用此 GET，只有返回的群版本、最新采用轮次、候选及候选 revision 与本页所见一致时显示；查看其他候选不覆盖该面板。无采用候选时引导查看入群起点，旧服务器缺少新字段时明确提示资料不可用，不从其他候选或本机缓存补出成长结果。Mock 继续明确拒绝候选操作与查询。
 
 Mock 对这些新写操作、请求和候选查询明确报“不支持”，不伪造接受或恢复成功；旧管理和虚构轮次只读行为保留。
+
+## 成员立绘
+
+`GET /group-sessions/{session_id}/portraits` 返回 `{session_id, current, can_update, members}`。current 与轮次查询使用相同的版本快照；members 每项为 `{persona_id, portrait_id, image_path}`，无可用立绘时 portrait_id 为 null，image_path 回退角色头像。can_update 只在没有活动任务、没有正在生成的采用候选，且尚无轮次或最新采用轮次未确认时为 true；查看历史候选不授予修改权限。
+
+`PUT /group-sessions/{session_id}/members/{persona_id}/portrait` 在会话锁和短写事务内修改一个成员的选择。portrait_id 必须显式给出：正整数引用该成员角色的现有立绘，null 表示头像。群版本与所见轮次、候选、revision 必须匹配；后三项同时为空或同时提供。不能使用单聊立绘选择接口操作群聊。
+
+<!-- request-example: PUT /group-sessions/{session_id}/members/{persona_id}/portrait -->
+```json
+{
+  "portrait_id": null,
+  "expected_group_revision": 0,
+  "observed_round_id": null,
+  "observed_candidate_id": null,
+  "observed_candidate_revision": null
+}
+```
+
+成功返回 `{session_id, persona_id, portrait_id, group_revision}`。成员不属于本群返回 404，跨角色或已删除的立绘返回 422，版本变化、活动任务或已确认轮次返回 409。PUT 不派发模型，不包含 client_request_id；提交结果不确定时通过 GET 重新核对，不自动重发。相同旧版本重复 PUT 会被拒绝，不再次修改选择。
+
+没有轮次时选择保存为群内成员的可变起步选择，不改写不可变的来源快照。新发送与整轮重生成冻结当前采用的全员选择到新候选；重生成失败保留原采用候选，显式续接沿用失败候选自己的快照。修改最新未确认采用候选只改变该候选，并递增群版本与候选 revision。切换候选恢复各自选择，撤回回到此前采用轮次，全部撤回后回到群内起步选择。
+
+旧候选缺少立绘快照时使用不可变入群资料中的 portrait_base，不读取后来修改的起步选择。素材删除或归属不符时回退头像，不删除候选或改写原快照。轮次列表新增 portraits 数组，候选 state_preview.members 每项新增 portrait 对象，形状均与上述成员项相同；未升级服务器缺少这些字段时前端沿用头像。资源上传和管理继续使用角色立绘接口，Mock 明确拒绝群聊立绘查询和修改。
 
 ## 删除与错误
 
