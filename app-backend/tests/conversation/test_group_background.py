@@ -3,6 +3,7 @@ import asyncio
 import json
 import unittest
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta
 from uuid import uuid4
 from unittest.mock import patch
@@ -36,6 +37,8 @@ class Model:
                      if self.saved < self.steps else {"action": "end", "reason_code": "wait_user"})
         elif stage == "role_generation":
             value = {"units": [{"kind": "speech", "text": self.text}], "status": {"emotion": "平静", "affection_change": 2}}
+        elif stage == 'role_experience_review':
+            value = {'claims': []}
         else:
             value = {"units": [{"unit_index": 0, "recipients": recipients}]}
             self.saved += 1
@@ -75,14 +78,19 @@ class GroupBackgroundTests(unittest.TestCase):
         return dict(observed_round_id=round_.id if round_ else None, observed_candidate_id=candidate.id if candidate else None,
                     observed_candidate_revision=candidate.revision if candidate else None), group.group_revision
 
-    async def submit(self, sid, owner, model, kind="send", request_id=None, **kwargs):
+    async def submit(self, sid, owner, model, kind="send", request_id=None, experience_guard=False, **kwargs):
         seen, revision = self.observed(sid)
         if kind == "send":
             kwargs.setdefault("user_content", "hello")
         if kind != "resume":
             kwargs.setdefault("model", "fixture")
-        return await background.submit_group_operation(sid, request_id or str(uuid4()), kind, revision, self.db,
-            runtime=owner, call_model=model, **seen, **kwargs)
+        capture = background.capture_group_calls
+        def frozen(*args, **kw):
+            return replace(capture(*args, **kw), experience_guard=experience_guard)
+        # 旧专项保持旧调用阶段；亲历审查由独立专项显式启用。
+        with patch.object(background, 'capture_group_calls', side_effect=frozen):
+            return await background.submit_group_operation(sid, request_id or str(uuid4()), kind, revision, self.db,
+                runtime=owner, call_model=model, **seen, **kwargs)
 
     async def drain(self, owner):
         while owner.tasks:
@@ -329,7 +337,8 @@ class GroupBackgroundTests(unittest.TestCase):
             self.assertEqual((deadline, count), (operation.deadline_at, operation.call_count))
             release.set()
             await self.drain(owner)
-            self.assertEqual(5, self.db.get(GroupRoundOperation, receipt["operation_id"]).call_count)
+            self.assertEqual(6, self.db.get(GroupRoundOperation, receipt["operation_id"]).call_count)
+            self.assertEqual(1, sum(stage == 'role_experience_review' for stage, _ in model.calls))
         with group_runtime(self.engine) as owner:
             asyncio.run(scenario(owner))
     def test_cancelled_database_commits_preserve_accepted_round_and_saved_utterance(self):

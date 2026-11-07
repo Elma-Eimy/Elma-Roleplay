@@ -30,6 +30,7 @@ class GroupMemberContext:
     generation_json: str
     protocol_version: int = 1
     response_request: dict | None = None
+    experience_evidence_json: str | None = None
 
 
 def _member_state(persona, group, round_, candidate, before_sequence, db):
@@ -126,16 +127,22 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         memories = _member_memories(persona.id, round_, candidate, rows, requests, basis, db, distances)
         if isinstance(memories, SemanticQuery):
             return memories
+        policy = json.loads(candidate.call_snapshot_json or '{}')
+        evidence = None
+        if candidate.protocol_version == 2 and policy.get('experience_guard'):
+            from services.conversation.group_experience_guard import experience_evidence
+            evidence = experience_evidence(persona_id, rows, memories, requests)
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
             shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,
             current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories,
-            insights=member_insights(persona.id, round_, candidate, db))
+            insights=member_insights(persona.id, round_, candidate, db), experience_evidence=evidence)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
             json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version,
-            basis if basis and basis.get("reply_mode") else None)
+            basis if basis and basis.get("reply_mode") else None,
+            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None)
     finally:
         db.rollback()

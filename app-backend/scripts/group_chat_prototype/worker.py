@@ -31,6 +31,8 @@ class ReplayModel:
                                          for i, pid in enumerate(self.ids)]})
 
     async def __call__(self, stage, messages):
+        if stage == 'role_experience_review':
+            return _response('{"claims":[]}')
         if self.case.get("fail_at") == stage and self.role_index == self.case.get("fail_step", 0):
             return _response('{"invalid":true}')
         if stage == "user_visibility":

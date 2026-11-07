@@ -220,6 +220,8 @@ class GroupTurnPlanTests(unittest.TestCase):
         async def model(stage, parameters):
             nonlocal reject
             calls.append(stage)
+            if stage == 'role_experience_review':
+                return _response('{"claims":[]}')
             if stage == "user_visibility":
                 return _response(json.dumps({"units": [{"start": 0, "end": 5, "meaning": "request", "reply_mode": "speech", "request_to": [self.ids[0]],
                     "recipients": [{"persona_id": pid, "decision": "hidden"} for pid in self.ids]}]}))

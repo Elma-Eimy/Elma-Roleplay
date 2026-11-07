@@ -942,7 +942,7 @@ def build_chat_messages(
 
 def build_group_messages(character, persona, history, speaker_names, *, persona_id,
                          user_nickname, shared_setting, current_role_state, protocol_version=1, current_round_id=None,
-                         turn_requests=(), response_basis=None, inherited_memories=(), insights=()):
+                         turn_requests=(), response_basis=None, inherited_memories=(), insights=(), experience_evidence=None):
     """只接收个人可见历史；群聊身份不依赖正文里的角色名。"""
     if not history and not turn_requests:
         raise ValueError("没有可见内容，不能生成角色发言")
@@ -1036,6 +1036,10 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
             context += ("\n【本次承接依据】\n" + json.dumps(response_basis, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e") +
                 "\n仅按来源理解：user_request 是未来请求，user 可能叙述或转述，self 和 group_member 分别标记本人及其他成员的记录；仅 speech 是说出的台词，action 是可见动作。")
     contract = None
+    if experience_evidence is not None:
+        context += ('\n【本人亲历依据】\n' + json.dumps(experience_evidence, ensure_ascii=False).replace('<', '\\u003c').replace('>', '\\u003e') +
+                    '\n只用这些来源核对本人过去经历。听说、计划、请求和旧的本人说法不能证明亲历；'
+                    '没有明确依据时用转述或不确定措辞，不声称亲眼见过、亲手做过。否定和更正优先核对，不能用早先的自述推翻后来的撤回。')
     if protocol_version == 2:
         prior_speakers = list(dict.fromkeys(item.speaker_persona_id for item in history
             if item.speaker_persona_id is not None and item.round_id == current_round_id

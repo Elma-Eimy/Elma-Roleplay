@@ -171,7 +171,7 @@ async def generate_group_utterance(session_id, candidate_id, speaker_persona_id,
 async def _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, execution, decide_visibility, model=None, call_model=None,
                                    generation_parameters_json=None, history_limit=None, fail_candidate=True, scope=None,
-                                   output_attempts=1):
+                                   output_attempts=1, call_review=None):
     require_group_execution(execution, session_id, db.get_bind())
     if scope is not None and scope.execution is not execution:
         raise RuntimeError("不能借用其他任务的持久目标")
@@ -192,13 +192,31 @@ async def _generate_with_execution(session_id, candidate_id, speaker_persona_id,
             attempted = True
             return await (get_llm_provider().generate_async(**parameters, _group_no_retry=True)
                           if call_model is None else call_model(parameters))
-        def validate(choice):
+        async def validate(choice):
             if choice.finish_reason not in (None, "stop"):
                 raise GroupGenerationError("incomplete_output")
             return _parse(choice.message.content, context)
-        _, result = await validated_output(invoke, parameters, validate, output_attempts)
-        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else (),
-            context.response_request))
+        async def reviewed(choice):
+            result = await validate(choice)
+            if context.experience_evidence_json:
+                from services.conversation.group_experience_guard import review_parameters, validate_experience_review
+                if call_review is None:
+                    raise GroupGenerationError('experience_check_unavailable')
+                evidence = json.loads(context.experience_evidence_json)
+                async def invoke_review(kwargs):
+                    await _database(_check_retry_target, session_id, candidate_id, expected_revision, db, scope=scope)
+                    return await call_review(kwargs)
+                def check_review(answer):
+                    value = load_object(answer.message.content, answer.finish_reason)
+                    validate_experience_review(value, result[4], evidence)
+                try:
+                    await validated_output(invoke_review, review_parameters(parameters, result[4], evidence), check_review, output_attempts)
+                except GroupUnitError as exc:
+                    raise GroupGenerationError('experience_check_failed' if exc.code == 'invalid_output' else exc.code) from None
+            return result
+        _, result = await validated_output(invoke, parameters, reviewed, output_attempts,
+            retry_experience=bool(context.experience_evidence_json))
+        audience = await decide_visibility(ProposedGroupUtterance(speaker_persona_id, result[0], result[4] if len(result) == 5 else (), context.response_request))
         try:
             saved = await _database(_save, session_id, candidate_id, speaker_persona_id,
                 expected_revision, result, audience, db, runtime,

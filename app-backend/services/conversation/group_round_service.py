@@ -68,7 +68,7 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
                 parameters = json.loads(encoded)
                 parameters.pop("response_format", None)
                 members.append((pid, json.dumps(parameters, ensure_ascii=False)))
-            snapshot = replace(snapshot, turn_policy=0, members=tuple(members), output_attempts=1)
+            snapshot = replace(snapshot, turn_policy=0, members=tuple(members), output_attempts=1, experience_guard=False)
         if not math.isfinite(snapshot.call_timeout) or snapshot.call_timeout <= 0:
             raise ValueError("单次模型超时无效")
         budget.call_timeout = snapshot.call_timeout
@@ -86,7 +86,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
     runtime = execution.owner
     model = json.loads(snapshot.director_json)["model"]
     selected_sources = None
-    budget.limit *= snapshot.output_attempts
+    budget.limit = (budget.limit + (budget.max_steps if snapshot.experience_guard else 0)) * snapshot.output_attempts
 
     async def call(stage, parameters, persona_id=None):
         require_group_execution(execution, session_id, db.get_bind())
@@ -215,11 +215,18 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     raise generation.GroupGenerationError("timeout") from None
                 except director.GroupDirectorError as exc:
                     raise generation.GroupGenerationError(exc.code) from None
+            async def role_review(parameters):
+                try:
+                    return await call('role_experience_review', parameters, action.speaker_persona_id)
+                except TimeoutError:
+                    raise generation.GroupGenerationError('timeout') from None
+                except director.GroupDirectorError as exc:
+                    raise generation.GroupGenerationError(exc.code) from None
             saved = await generation._generate_with_execution(session_id, target["candidate_id"], action.speaker_persona_id,
                 target["revision"], db, execution=execution, decide_visibility=audience, call_model=role_call,
                 generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id),
                 history_limit=snapshot.history_limit, fail_candidate=False,
-                output_attempts=snapshot.output_attempts,
+                output_attempts=snapshot.output_attempts, call_review=role_review,
                 **({"scope": scope} if scope is not None else {}))
             target["revision"] = saved["revision"]
         personal_inputs = {}
