@@ -8,7 +8,13 @@ import unittest
 import zlib
 
 from services.media.character_card_import import import_character_card
-from services.parse import _extract_v2_data, parse_character_card, read_png_card_payloads
+from services.parse import (
+    _extract_v2_data,
+    parse_character_card,
+    read_png_card_payloads,
+    write_png_card_payloads,
+)
+from scripts.patch_character_card import apply_patch_spec
 
 
 def chunk(kind, content):
@@ -124,3 +130,31 @@ class CharacterCardImportTests(unittest.TestCase):
         self.assertFalse(any('physical_description' in item['label'] for item in plan['compatibility']))
         with self.assertRaisesRegex(ValueError, 'physical_description'):
             _extract_v2_data(card(physical_description=['not', 'text']))
+
+    def test_write_png_card_payloads_and_patch_spec_roundtrip(self):
+        original = card(
+            system_prompt='原始系统提示词',
+            post_history_instructions='原始末端指令',
+            mes_example='Example 1（初遇）\n{{user}}: 你好 {{char}}: 晚上好',
+        )
+        source = self.root / 'patchable.png'
+        source.write_bytes(png(chunk(b'tEXt', b'chara\0' + encoded(original))))
+
+        patched = apply_patch_spec(
+            read_png_card_payloads(str(source))[0],
+            {
+                'replace': {
+                    'system_prompt': [{'target': '原始系统提示词', 'replacement': '更新后系统提示词'}]
+                },
+                'append': {'post_history_instructions': '追加末端规范'},
+            },
+        )
+        write_png_card_payloads(str(source), [patched])
+        reloaded = parse_character_card(str(source))
+        self.assertEqual(reloaded['system_prompt_override'], '更新后系统提示词')
+        self.assertEqual(reloaded['post_history_instructions'], '原始末端指令\n\n追加末端规范')
+        # 输入/存储端保持 mes_example 原文无损，组装期再由 prompt_compiler 解析
+        self.assertEqual(
+            reloaded['mes_example'],
+            'Example 1（初遇）\n{{user}}: 你好 {{char}}: 晚上好',
+        )
