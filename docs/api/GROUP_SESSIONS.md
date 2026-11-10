@@ -96,6 +96,8 @@ utterances 按轮内 sequence 正序，每项为 `{item_id, sequence, speaker_pe
 
 `POST /group-sessions/{session_id}/rounds` 接受原文（1–20000 个码点，保留首尾空白但拒绝纯空白）。可选 model、thinking_mode（inherit/enabled/disabled）、reasoning_effort，以及 max_steps（默认 4，1–6）。只有新消息与回执一起提交才确认上一成功轮次，后续生成失败不解冻上一轮。
 
+请求规划 v2 的轮次尚无角色发言时，若存在可调度成员的 `user_request` 且 `reply_mode=speech`，导演不能直接 `wait_user`。校正复用当前阶段既有尝试次数与持久调用预算，耗尽返回候选/操作失败，`error_code=pending_response`，不保存未通过的结束决定。其他请求类型、已有发言和旧规划策略不启用该拦截。
+
 <!-- request-example: POST /group-sessions/{session_id}/rounds -->
 ```json
 {"client_request_id":"00000000-0000-4000-8000-000000000001","expected_group_revision":0,"observed_round_id":null,"observed_candidate_id":null,"observed_candidate_revision":null,"user_content":"  大家好。  ","thinking_mode":"inherit","max_steps":4}

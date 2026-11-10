@@ -92,7 +92,7 @@ def parse_visibility(raw, member_ids, *, author_id=None, finish_reason="stop"):
     return VisibilityDecision(tuple(pid for pid in member_ids if decisions[pid] == "visible"))
 
 
-def parse_next_action(raw, member_ids, eligible_ids, *, finish_reason="stop", response_sources=None):
+def parse_next_action(raw, member_ids, eligible_ids, *, finish_reason="stop", response_sources=None, require_response=False):
     members = _ids(member_ids)
     if (not isinstance(eligible_ids, tuple) or any(type(pid) is not int or pid not in members for pid in eligible_ids)
             or len(set(eligible_ids)) != len(eligible_ids)):
@@ -100,6 +100,9 @@ def parse_next_action(raw, member_ids, eligible_ids, *, finish_reason="stop", re
     value = _json(raw, finish_reason)
     if value.get("action") == "end":
         if set(value) == {"action", "reason_code"} and value["reason_code"] == "wait_user":
+            if require_response and any(source.get('source') == 'user_request' and source.get('reply_mode') == 'speech'
+                    for pid in eligible_ids for source in (response_sources or {}).get(str(pid), {}).values()):
+                raise GroupDirectorError('pending_response')
             return NextAction("end", None, "wait_user")
     elif value.get("action") == "speak":
         if (set(value) in ({"action", "speaker_persona_id", "reason_code"}, {"action", "speaker_persona_id", "reason_code", "basis"})
@@ -154,6 +157,7 @@ def _stage_contract(context, stage, protocol_version, user_content, proposed, tu
             '允许成员根据自己看见的动作或听到的话主动插话、询问；未完成的安排不要求持续点名。'
             '根据已发生的场景选择下一步，不预演未来台词。允许同一成员再次回应，也允许知情成员沉默；'
             '可见依据不等于发言请求；遵守用户指定的回应对象、顺序和暂时沉默安排。'
+            '本轮尚无角色发言时，若仍有明确要求口头回答的用户请求（user_request 且 reply_mode=speech），先安排对应成员回应，不直接结束。'
             '被要求沉默的成员即使知情也不为附和、告别或确认而发言，除非后续内容明确改变该安排。'
             '先检查 history 末尾已经发生的发言，不要反复响应开头的用户消息。'
             'direct_response 只用于尚未回应的用户内容；后续有新的可见发言或需要继续的行动时使用 follow_up。'

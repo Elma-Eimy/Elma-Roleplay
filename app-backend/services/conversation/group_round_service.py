@@ -180,7 +180,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     break
                 action = await decide(context, "next_action", lambda answer: director.parse_next_action(
                     answer.message.content, context.member_ids, context.eligible_ids,
-                    finish_reason=answer.finish_reason, response_sources=selected_sources))
+                    finish_reason=answer.finish_reason, response_sources=selected_sources,
+                    require_response=snapshot.turn_policy >= 2 and context.current_item_count == 1))
                 if action.action == "end":
                     finish_reason = action.reason_code
                     break

@@ -1,4 +1,4 @@
-"""只重试尚未提交的格式无效响应，调用与期限仍由整轮执行器计费。"""
+"""有界校正尚未提交的输出和首条回应调度，调用与期限沿用整轮预算。"""
 import inspect
 
 
@@ -14,13 +14,17 @@ async def validated_output(invoke, parameters, validate, attempts, *, retry_expe
                 value = await value
             return response, value
         except (ValueError, RuntimeError) as exc:
-            retry_codes = ('invalid_output', 'unsupported_experience') if retry_experience else ('invalid_output',)
+            retry_codes = ('invalid_output', 'pending_response', 'unsupported_experience') if retry_experience else ('invalid_output', 'pending_response')
             if getattr(exc, "code", None) not in retry_codes or attempt + 1 == attempts:
                 raise
             # 不把非法正文当作历史，也不允许它扩散到导演或其他成员输入。
             feedback = ('上次发言含缺乏本人可见依据的亲历表述，尚未提交。按原始来源重新生成；'
                         '听说改为明确转述，不确定就说明不确定，不补造本人见过或做过，也不要重演旧动作。'
                         if getattr(exc, 'code', None) == 'unsupported_experience' else '')
+            if getattr(exc, 'code', None) == 'pending_response':
+                feedback = ('本轮尚无角色发言，仍有明确要求口头回答的用户请求。上次结束决定未提交。'
+                            '请从 response_sources 的 user_request、reply_mode=speech 中选择对应成员及有效 basis，'
+                            '返回 speak 决定；不要让其他成员代答，不要生成台词。')
             parameters = {**parameters, "messages": [*original_messages, {
                 "role": "system",
                 "content": (feedback + "上次响应未通过输出协议校验，尚未提交。请根据原始资料重新生成完整 JSON 对象；"
