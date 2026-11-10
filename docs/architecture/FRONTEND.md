@@ -27,6 +27,8 @@ src/main.ts + App.vue + pages.json
 | `App.vue` 与 `uni.scss` | 全局基础样式与语义设计变量；页面专属样式留在对应页面 |
 | `api/transports/` | App 流传输适配，配合 renderjs 桥接组件使用 |
 
+群聊详情复用 `ChatHeader.vue`、`ChatComposer.vue` 和 `useChatScroll.ts`，固定输入区，按时间顺序显示轮次。`ChatTranscriptMessage.vue` 提供不访问单聊 Store 的展示组件，与 `ChatBubble.vue` 共用 `chatMessage.css` 和 `utils/markdown.ts` 的 Markdown 渲染。两种聊天共用 `ChatSceneBackground.vue`、`ChatReadingPreferences.vue`、聊天页阅读样式与 `chatDrawer.css` 抽屉样式；字号、行距、小说/气泡排版与色调沿用同一阅读设置。群聊背景使用当前采用的立绘，可跟随最后发言成员或固定成员，图片失败回退头像；候选预览不会改写背景。抽屉分成员、外观、起点和管理，候选预览使用独立面板。
+
 群聊页面由 `pages/group/` 提供，继续由 `useGroupSessions.ts` 和 `useGroupRoundFlow.ts` 管理请求与候选生命周期。`components/chat/GroupUtterances.vue` 只展示按 Persona 匹配头像的发言正文，共用于采用内容和候选预览，不负责提交、轮询或状态重放。入群资料与候选状态仍显式区分，完整界面批次见 [M6 计划](../plans/group-chat/M6_INTERFACE_AND_ACCEPTANCE.md)。
 
 `GroupMemberStates.vue` 共用于当前采用状态和候选预览，按成员展示状态、继承认知与候选可用的个人认识，不发起请求。`useGroupRoundFlow.loadAdoptedState()` 独立保存当前采用状态，按群版本、最新轮次/候选及 revision 校验读取结果；选择或确认变化、处理操作、离页和切服使旧数据与在途读取失效。读取不改变采用选择、不派发模型，也不影响原有候选预览。
@@ -34,6 +36,8 @@ src/main.ts + App.vue + pages.json
 `useGroupPortraits.ts` 管理成员立绘查询、素材分页与一次性选择写入，复用群聊详情的页面/服务器代际。写入时暂停旧轮次视图并阻止聊天写操作，结束后通过 GET 重读；不自动重发 PUT，也不调用单聊选择接口。轮次发言和候选状态展示各自快照中的图像，缺失素材及旧响应回退头像。上传和素材管理仍由角色档案负责。
 
 ## 流式聊天与会话隔离
+
+群聊通过 `useGroupSessionDetail` 向轮次流程注入模型参数读取函数，复用 `chatSettingsStore` 的故事偏好和 `GenerationSettingsSheet.vue`。只有发送与重生成解析点击时的模型选择；等待期间仍由原流程占用提交状态并检查页面代际，未接受的请求不登记恢复 UUID。续接继续使用后端冻结参数。`useChatScroll` 共用于单聊和群聊，按原生 `height` 或 H5 可见视口计算键盘占位；群聊 App 页面也配置 `adjustResize`。
 
 普通发送从 `store/chatStore.ts` 调用 `api/chat.ts`。H5 与小程序接收逻辑见 `api/chatStream.ts`；App 经 `composables/useChatStreamBridge.ts`、`components/chat/ChatStreamBridge.vue` 与 `api/transports/appStream.ts` 接入。三端共用 `utils/chatStreamProtocol.ts` 解释 SSE 事件和终态。
 
