@@ -263,6 +263,9 @@ def build_director_messages(context, stage, *, user_content=None, proposed=None,
                 '仅按作者可见的单元与面向作者的请求判断其依据，导演全局看见不等于作者知情。'
                 '引用、转述已发生内容不等于控制别人；用户明确授权代写时尊重该范围。'
                 '意图不是执行，用户的未来安排不是已发生对话。正常描写作者自己的新台词、动作与合理创作不算冲突。'
+                '采用宽松标准：玩笑、修辞、暧昧试探、当前感官细节和对可见动作的自然承接默认通过；'
+                '不要把普通互动接触或不决定他人回应的细微动作判为夺取控制；'
+                'agency_conflict 仅用于明确代写他人台词、决定或关键行动。'
                 '不确定或只是措辞不理想时用 ok，不做逐句出处审查。review 与 units 同级，不添加解释。')
     if turn_policy >= 2 and stage == "user_visibility":
         contract += ('对每个 meaning=request 的单元另给 reply_mode，其他单元省略此字段。明确要求说话、解释或口头回答用 speech，'

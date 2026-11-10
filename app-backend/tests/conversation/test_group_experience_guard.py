@@ -25,6 +25,38 @@ class GroupExperienceGuardTests(unittest.TestCase):
     drain = fixtures.GroupBackgroundTests.drain
     candidate = fixtures.GroupBackgroundTests.candidate
 
+    def test_uncertain_review_does_not_rewrite_or_interrupt_a_reply(self):
+        sid, ids = self.group()
+        base = fixtures.Model(ids, text='刚才那一下，心跳都乱了。')
+        async def model(stage, parameters):
+            if stage == 'role_experience_review':
+                return _response(json.dumps({'claims': [{'quote': '刚才那一下', 'mode': 'witnessed',
+                    'basis_refs': [], 'certainty': 'uncertain'}]}))
+            return await base(stage, parameters)
+        async def scenario(owner):
+            receipt = await self.submit(sid, owner, model, max_steps=1, experience_guard=True)
+            await self.drain(owner)
+            candidate = self.candidate(receipt)
+            self.assertEqual('awaiting_confirmation', candidate.status)
+            row = self.db.query(GroupContentItem).filter_by(candidate_id=candidate.id, kind='utterance').one()
+            self.assertEqual(base.text, row.content)
+            self.assertEqual(1, sum(stage == 'role_generation' for stage, _ in base.calls))
+            self.assertFalse(is_session_locked(sid))
+        with group_runtime(self.engine) as owner:
+            asyncio.run(scenario(owner))
+
+    def test_lenient_review_keeps_clear_rejections_and_validates_uncertain_claims(self):
+        units = (ContentUnit('speech', '我亲眼见过。'),)
+        evidence = {'sources': []}
+        claim = {'quote': '我亲眼见过。', 'mode': 'witnessed', 'basis_refs': [], 'certainty': 'uncertain'}
+        validate_experience_review({'claims': [claim]}, units, evidence)
+        with self.assertRaisesRegex(GroupUnitError, 'unsupported_experience'):
+            validate_experience_review({'claims': [dict(claim, certainty='clear')]}, units, evidence)
+        for changes in ({'certainty': 'probably'}, {'basis_refs': ['private-not-provided']},
+                        {'quote': '不在回复中的原文'}, {'mode': 'invented'}):
+            with self.subTest(changes=changes), self.assertRaises(GroupUnitError):
+                validate_experience_review({'claims': [{**claim, **changes}]}, units, evidence)
+
     def test_frozen_review_effort_does_not_change_role_generation_parameters(self):
         from services.conversation import group_background_service as background
         sid, ids = self.group()
