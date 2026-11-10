@@ -155,7 +155,7 @@ def _embedded_path(uri):
 
 
 def _referenced_tokens(data):
-    texts = [str(data.get(key) or "") for key in (*CARD_TEXT_KEYS, "system_prompt")]
+    texts = [str(data.get(key) or "") for key in (*CARD_TEXT_KEYS, "system_prompt", "physical_description")]
     alternates = data.get("alternate_greetings") or (data.get("extensions") or {}).get("alternate_greetings") or []
     if isinstance(alternates, list):
         texts.extend(item for item in alternates if isinstance(item, str))

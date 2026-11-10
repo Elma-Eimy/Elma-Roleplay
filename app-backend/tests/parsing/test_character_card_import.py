@@ -109,3 +109,18 @@ class CharacterCardImportTests(unittest.TestCase):
             self.assertEqual(parsed[key], '')
         with self.assertRaisesRegex(ValueError, 'description'):
             _extract_v2_data(card(description={'not': 'text'}))
+
+    def test_physical_description_merges_into_description_without_duplication(self):
+        from services.media.charx_plan import build_card_plan
+        merged = _extract_v2_data(card(description='角色基础背景', physical_description='<b>象牙白色华丽长裙</b>'))
+        self.assertEqual(merged['description'], '角色基础背景\n\n【外貌与服装】\n**象牙白色华丽长裙**')
+        deduped = _extract_v2_data(card(description='角色基础背景\n**象牙白色华丽长裙**', physical_description='<b>象牙白色华丽长裙</b>'))
+        self.assertEqual(deduped['description'], '角色基础背景\n**象牙白色华丽长裙**')
+        only_phys = _extract_v2_data(card(description=None, physical_description='浅色高跟鞋'))
+        self.assertEqual(only_phys['description'], '浅色高跟鞋')
+        plan = build_card_plan({'spec': 'chara_card_v3', 'spec_version': '3.0', 'data': {
+            'name': '测试角色', 'description': '人设', 'physical_description': '外貌装束'}})
+        self.assertIn('【外貌与服装】\n外貌装束', plan['card']['description'])
+        self.assertFalse(any('physical_description' in item['label'] for item in plan['compatibility']))
+        with self.assertRaisesRegex(ValueError, 'physical_description'):
+            _extract_v2_data(card(physical_description=['not', 'text']))
