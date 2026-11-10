@@ -289,6 +289,10 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
         payload = {"shared_setting": group.shared_setting, "user_nickname": group.user_nickname,
                    "members": [{"persona_id": member.id, "name": member.character.name} for member in members],
                    "history": [], "eligible_persona_ids": [], "history_incomplete": False}
+        from services.conversation.group_session_service import public_greetings
+        greetings = public_greetings(group)
+        if greetings:
+            payload["greetings"] = greetings
         response_sources = None
         query = db.query(GroupContentItem, GroupRound).join(GroupRoundCandidate,
             GroupContentItem.candidate_id == GroupRoundCandidate.id).join(GroupRound,

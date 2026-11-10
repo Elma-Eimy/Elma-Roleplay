@@ -35,6 +35,8 @@ class GroupMember:
     character_id: int
     mode: str = "card"
     source_session_id: int | None = None
+    greeting_index: int | None = None
+    greeting_content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,12 @@ def _draft(draft):
         if member.character_id in seen:
             raise GroupSessionValidationError("同一角色卡不能重复加入群聊")
         seen.add(member.character_id)
+        if member.greeting_index is not None and (type(member.greeting_index) is not int or member.greeting_index < 0):
+            raise GroupSessionValidationError("开场索引必须为非负整数")
+        if member.greeting_content is not None and (not isinstance(member.greeting_content, str) or len(member.greeting_content) > 20000):
+            raise GroupSessionValidationError("开场白最多 20000 字")
+        if member.mode != "card" and (member.greeting_index is not None or member.greeting_content is not None):
+            raise GroupSessionValidationError("导入人格不能指定开场白")
         if member.mode == "card":
             if member.source_session_id is not None:
                 raise GroupSessionValidationError("原卡起步不能指定来源故事")
@@ -164,6 +172,34 @@ async def create_group_session(draft: GroupSessionDraft, db):
     return await _locked_write(sources, _create, draft, db)
 
 
+def _greeting(member, character, nickname):
+    if member.mode != "card":
+        return None
+    content = character.first_mes or ""
+    if member.greeting_index is not None:
+        try:
+            extensions = json.loads(character.extensions or '{}') if isinstance(character.extensions, str) else character.extensions or {}
+            content = extensions.get('alternate_greetings', [])[member.greeting_index]
+            if not isinstance(content, str):
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError, IndexError, KeyError):
+            raise GroupSessionValidationError("备用开场不存在，请重新选择") from None
+    if member.greeting_content is not None:
+        content = member.greeting_content
+    from services.conversation.prompt_compiler import replace_placeholders
+    content = replace_placeholders(content, character.name, nickname).strip()
+    if len(content) > 20000:
+        raise GroupSessionValidationError("开场白最多 20000 字")
+    return content or None
+
+
+def public_greetings(group):
+    """只返回创建时冻结的公开开场，不读取其他成员的角色卡设定。"""
+    return [{"persona_id": member.id, "speaker_name": member.character.name, "content": member.group_origin.greeting_content}
+            for member in sorted(group.personas, key=lambda member: member.member_slot)
+            if member.group_origin and member.group_origin.greeting_content]
+
+
 def _create(draft, db):
     try:
         _begin_write(db)
@@ -183,6 +219,7 @@ def _create(draft, db):
                     raise GroupSessionNotFound("来源故事或人格不存在")
                 if source.persona.character_id != member.character_id:
                     raise GroupSessionValidationError("来源单聊必须属于该成员的角色卡")
+            greeting = _greeting(member, character, draft.user_nickname)
             state = _initial_state(character, source, db)
             receiver = SessionPersona(session_id=group.id, character_id=member.character_id,
                 member_slot=slot, role_state_base=encode_state(state["role_state"]),
@@ -196,7 +233,8 @@ def _create(draft, db):
                 initial_state_json=encode_state(state), source_session_id=source.id if source else None,
                 source_persona_id=source.persona.id if source else None,
                 source_last_active_message_id=last_active, source_confirmed_before_id=confirmed_before,
-                content_fingerprint=_fingerprint({"state": state, "memories": fingerprints})))
+                greeting_content=greeting,
+                content_fingerprint=_fingerprint({"state": state, "memories": fingerprints, "greeting": greeting})))
         db.flush()
         # 响应也在提交前构造，避免提交后查询失败诱发重复创建。
         result = _detail(group, db)
@@ -227,6 +265,7 @@ def _serialize(group, counts):
             "state": {"affection_score": persona.affection_score, "current_mood": persona.current_mood,
                       "cognition_state": persona.cognition_state, "current_scenario_override": persona.current_scenario_override,
                       "role_state": decode_state(persona.role_state_base), "portrait_base": persona.portrait_base},
+            "greeting_content": origin.greeting_content,
             "origin": {"mode": origin.mode, "snapshot_version": origin.snapshot_version,
                        "captured_at": _iso(origin.captured_at), "source_session_id": origin.source_session_id,
                        "source_persona_id": origin.source_persona_id,

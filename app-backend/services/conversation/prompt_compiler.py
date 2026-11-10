@@ -954,7 +954,7 @@ def build_chat_messages(
     return messages
 
 
-def build_group_messages(character, persona, history, speaker_names, *, persona_id,
+def build_group_messages(character, persona, history, speaker_names, *, persona_id, greetings=None,
                          user_nickname, shared_setting, current_role_state, protocol_version=1, current_round_id=None,
                          turn_requests=(), response_basis=None, inherited_memories=(), insights=(), experience_evidence=None):
     """只接收个人可见历史；群聊身份不依赖正文里的角色名。"""
@@ -1007,6 +1007,9 @@ def build_group_messages(character, persona, history, speaker_names, *, persona_
         "不能重新回答已经回应的旧问题，也不能复述或重演自己的上一条；"
         "意图、请求、提议和承诺不等于已经执行；从历史实际记录的进展继续，不补写他人已完成的行动。"
         "只能使用已提供的内容，不猜测未提供的私人历史。")
+    if greetings:
+        context += ("\n【全员可见的冻结开场】\n" + json.dumps(greetings, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e") +
+                    "\n开场发生在第一轮用户消息之前，保留其中的发言、叙事与心理区别；可见不代表每个人亲身参与。不要重演开场。")
     if insights:
         personal = json.dumps(insights, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
         context += ("\n【本人在群聊中形成的认识】\n" + personal +

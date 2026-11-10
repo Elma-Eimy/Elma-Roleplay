@@ -39,7 +39,8 @@ def _available(result, request):
 @router.post("")
 async def create_group_session(request: GroupSessionCreate, http: Request, db: Session = Depends(get_db)):
     draft = service.GroupSessionDraft(
-        members=tuple(service.GroupMember(member.character_id, member.origin.mode, member.origin.source_session_id)
+        members=tuple(service.GroupMember(member.character_id, member.origin.mode, member.origin.source_session_id,
+                                          member.greeting_index, member.greeting_content)
                       for member in request.members), title=request.title,
         user_nickname=request.user_nickname, shared_setting=request.shared_setting,
     )

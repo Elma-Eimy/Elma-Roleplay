@@ -69,7 +69,7 @@ class GroupSessionServiceTests(unittest.TestCase):
         return {table: self.db.execute(text('SELECT * FROM "' + table + '" ORDER BY 1')).all()
                 for table in Base.metadata.tables}
 
-    def test_card_members_are_independent_without_openings_or_progress(self):
+    def test_card_members_are_independent_without_generated_messages_or_progress(self):
         for size in (2, 3):
             result = self.create(GroupSessionDraft(tuple(GroupMember(i) for i in range(1, size + 1)), shared_setting="  "))
             group = self.db.get(Session, result["session_id"])
@@ -201,7 +201,7 @@ class GroupSessionServiceTests(unittest.TestCase):
         self.assertTrue(page["has_more"])
         self.assertEqual([ids[0]], [g["session_id"] for g in service.list_group_sessions(self.db, limit=2, offset=2)["sessions"]])
         self.assertEqual(1, get_recent_sessions(20, 0, self.db)["total"])
-        self.assertNotIn("content", json.dumps(page))
+        self.assertNotIn('"content":', json.dumps(page))
 
     def test_group_delete_cascades_all_members_and_queues_only_local_resources(self):
         result = self.create()

@@ -35,6 +35,7 @@ EXPERIENCE_CONTRACT = (
     '听别人说他们做过，只能支持 heard，不能变成本人的经历。旧的本人台词也不能自证亲历。'
     'heard 可由已提供的 speech/statement 证明听到该说法，但不能证明其内容真实发生。'
     '请求、计划、心理、来源不明的 legacy、受到异议的资料均不能证明亲历；'
+    'opening 是全员可读的混合开场，可能同时包含台词、叙事和心理；只在具体原文明确证明参与或听到时引用，不能把整段都当成亲历。'
     '还需核对原文中的人称、否定与更正，不可因话题相似而通过。缺依据时 basis_refs 返回空数组，'
     '不得遗漏可疑表述、伪造ref或补出未提供的事实。')
 
@@ -57,7 +58,7 @@ def validate_experience_review(value, units, evidence):
                 or any(not isinstance(ref, str) or ref not in sources for ref in claim['basis_refs'])
                 or len(set(claim['basis_refs'])) != len(claim['basis_refs'])):
             raise GroupUnitError()
-        permitted = {'action', 'fact', 'narration', 'observed'}
+        permitted = {'action', 'fact', 'narration', 'observed', 'opening'}
         if claim['mode'] == 'heard':
             permitted |= {'speech', 'statement'}
         if not claim['basis_refs'] or any(sources[ref]['kind'] not in permitted or sources[ref].get('disputed')

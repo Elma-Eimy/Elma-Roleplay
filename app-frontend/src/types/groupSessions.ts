@@ -15,12 +15,13 @@ export interface CreateGroupSessionParams {
   title?: string;
   user_nickname?: string;
   shared_setting?: string | null;
-  members: { character_id: number; origin: GroupMemberOrigin }[];
+  members: { character_id: number; origin: GroupMemberOrigin; greeting_index?: number | null; greeting_content?: string | null }[];
 }
 
 export interface GroupSessionMember {
   persona_id: number;
   slot: number;
+  greeting_content?: string | null;
   character: { id: number; name: string; avatar_path: string | null };
   state: {
     affection_score: number | null;

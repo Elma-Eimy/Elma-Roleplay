@@ -34,6 +34,7 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
     throw new Error("成员角色 ID 无效或重复");
   }
   for (const member of params.members) {
+    if (member.greeting_content != null && (typeof member.greeting_content !== "string" || member.greeting_content.length > 20000)) throw new Error("开场白最多 20000 字");
     if (member.origin?.mode === "single_snapshot") {
       throw new Error("离线模式暂不支持导入单聊状态与记忆快照");
     }
@@ -54,6 +55,17 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
     shared_setting: params.shared_setting?.trim() || null,
     created_at: now, updated_at: now, can_generate: false, group_revision: 0,
     members: characters.map((character, index) => ({
+      greeting_content: (() => {
+        const member = params.members[index];
+        const alternates = character.extensions?.alternate_greetings;
+        if (member.greeting_index != null && (!Number.isInteger(member.greeting_index) || member.greeting_index < 0 || !Array.isArray(alternates) || typeof alternates[member.greeting_index] !== "string")) throw new Error("备用开场不存在，请重新选择");
+        const raw = member.greeting_content ?? (member.greeting_index != null && Array.isArray(alternates) ? String(alternates[member.greeting_index]) : character.first_mes || "");
+        const replace = (_: string, key: string) => key.toLowerCase() === "user" ? nickname : character.name;
+        const content = raw.replace(/\{\{\s*(char|user)\s*\}\}/gi, replace)
+          .replace(/<\s*(char|character|user)\s*>/gi, replace).replace(/\{\s*\$\s*(char|character|user)\s*\}/gi, replace).trim();
+        if (content.length > 20000) throw new Error("开场白最多 20000 字");
+        return content || null;
+      })(),
       persona_id: personaId + index, slot: index + 1,
       character: { id: character.id, name: character.name, avatar_path: character.avatar_path ?? null },
       state: { affection_score: 0, current_mood: null, cognition_state: null,

@@ -13,6 +13,11 @@
             <text class="group-copy">{{ memberNames }}</text>
             <button class="group-action" :aria-expanded="showOrigins" @tap="showOrigins = !showOrigins">{{ showOrigins ? '收起设定与成员起点' : '查看设定与成员起点' }}</button>
           </view>
+          <view v-for="member in group.members.filter(item => item.greeting_content)" :key="'greeting-' + member.persona_id" class="group-card">
+            <text class="group-heading">{{ member.character.name }} · 开场</text>
+            <text class="group-caption">全员可见 · 创建时固定</text>
+            <text class="group-copy" style="white-space: pre-wrap">{{ member.greeting_content }}</text>
+          </view>
           <view v-if="showOrigins" class="group-card">
             <text class="group-heading">共同设定</text>
             <text class="group-copy">{{ group.shared_setting || '未填写共同设定，角色保留各自的角色卡设定。' }}</text>

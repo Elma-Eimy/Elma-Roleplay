@@ -5,7 +5,7 @@
 - [Character Card V2 原始规范](https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md)：V2 使用 `spec`、`spec_version` 与 `data` 封装，包含备用开场白、作者信息、扩展和可选世界书。第三方扩展应保留。
 - [Character Card V3 原始规范](https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md)：PNG/APNG 的 V3 数据使用 `ccv3` 文本块；同时存在 `ccv3` 与 `chara` 时，V3 实现应优先采用 `ccv3`。
 
-本项目支持 PNG 的 `chara` 元数据与 V1/V2 风格 JSON。读取 `tEXt`、`zTXt`、`iTXt`，兼容 Base64 JSON 与原始 JSON 文本。另有保守的 CCv3 3.0 CHARX/ZIP 设定与图片（含动图）导入入口；尚未完整支持 V3、昵称和群聊开场白语义，不应视为完整 V3 支持。
+本项目支持 PNG 的 `chara` 元数据与 V1/V2 风格 JSON。读取 `tEXt`、`zTXt`、`iTXt`，兼容 Base64 JSON 与原始 JSON 文本。另有保守的 CCv3 3.0 CHARX/ZIP 设定与图片（含动图）导入入口；尚未完整支持 V3、昵称和 `group_only_greetings` 专用字段，不应视为完整 V3 支持。群聊原卡成员可选择普通默认/备用开场，规则见[群聊功能](GROUP_CHAT.md)。
 
 ## CHARX 首版
 

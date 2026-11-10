@@ -1,6 +1,8 @@
 import { computed, onScopeDispose, ref } from "vue";
 import { getBaseUrl, USE_MOCK } from "@/api/config";
-import { getCharacters } from "@/api/characters";
+import { getCharacters, getCharacter } from "@/api/characters";
+import { greetingOptions, getCardGreetings } from "@/utils/characterCard";
+import type { GreetingOption } from "@/utils/characterCard";
 import { getSessions } from "@/api/sessions";
 import { createGroupSession, deleteGroupSession, getGroupSession, getGroupSessions } from "@/api/groupSessions";
 import { onServerChange } from "@/utils/connectionEvents";
@@ -100,6 +102,13 @@ interface DraftMember {
   pendingSourcePage: "first" | "more" | null;
   sourceError: string;
   sourceVersion: number;
+  greetings: GreetingOption[];
+  greetingIndex: number;
+  greetingContent: string;
+  greetingLoaded: boolean;
+  greetingError: string;
+  loadingGreeting: boolean;
+  greetingVersion: number;
 }
 
 export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => void) {
@@ -126,7 +135,10 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
       error.value = "创建结果待确认，请先到群聊列表查看，避免重复创建。";
     }
     submitting.value = false;
-    for (const member of members.value) { member.sourceVersion++; member.loadingSources = false; }
+    for (const member of members.value) {
+      member.sourceVersion++; member.loadingSources = false;
+      member.greetingVersion++; member.loadingGreeting = false;
+    }
     if (reason === "server" || reason === "dispose") {
       title.value = ""; nickname.value = "用户"; sharedSetting.value = "";
       characters.value = []; members.value = []; characterOffset = 0;
@@ -142,6 +154,8 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
     if (sharedSetting.value.length > 20000) return "共同设定最多 20000 字。";
     if (members.value.length < 2 || members.value.length > 3) return "请选择 2–3 名角色。";
     if (members.value.some(member => member.mode === "single_snapshot" && !member.sourceSessionId)) return "请为导入成员选择来源单聊。";
+    if (members.value.some(member => member.mode === "card" && !member.greetingLoaded)) return "请先完成原卡开场读取，可在失败后重试。";
+    if (members.value.some(member => member.mode === "card" && member.greetingContent.length > 20000)) return "每名成员的开场最多 20000 字。";
     return "";
   });
   async function loadCharacters(more = false) {
@@ -165,9 +179,33 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
     if (locked.value) return;
     const index = members.value.findIndex(member => member.character.id === character.id);
     if (index >= 0) members.value.splice(index, 1);
-    else if (members.value.length < 3) members.value.push({ character, mode: "card", sourceSessionId: null,
-      sources: [], sourceOffset: 0, hasMoreSources: false, loadingSources: false, pendingSourcePage: null, sourceError: "", sourceVersion: 0 });
+    else if (members.value.length < 3) {
+      members.value.push({ character, mode: "card", sourceSessionId: null,
+        sources: [], sourceOffset: 0, hasMoreSources: false, loadingSources: false, pendingSourcePage: null, sourceError: "", sourceVersion: 0,
+        greetings: [], greetingIndex: 0, greetingContent: "", greetingLoaded: false, greetingError: "", loadingGreeting: false, greetingVersion: 0 });
+      void loadGreetings(members.value[members.value.length - 1]);
+    }
     else error.value = "最多选择 3 名角色，请先移除一名成员。";
+  }
+  async function loadGreetings(member: DraftMember) {
+    if (!scope.active() || locked.value || member.mode !== "card" || member.loadingGreeting || !members.value.includes(member)) return;
+    const current = scope.capture();
+    const token = ++member.greetingVersion;
+    const valid = () => current() && token === member.greetingVersion && members.value.includes(member) && member.mode === "card";
+    member.loadingGreeting = true; member.greetingError = "";
+    try {
+      const card = await getCharacter(member.character.id);
+      if (!valid()) return;
+      member.greetings = greetingOptions(card.first_mes || "", getCardGreetings(card));
+      member.greetingIndex = 0; member.greetingContent = member.greetings[0]?.content || "";
+      member.greetingLoaded = true;
+    } catch (cause) { if (valid()) member.greetingError = message(cause); }
+    finally { if (valid()) member.loadingGreeting = false; }
+  }
+  function selectGreeting(member: DraftMember, index: number) {
+    if (locked.value || member.mode !== "card" || !members.value.includes(member) || !member.greetings[index]) return;
+    member.greetingIndex = index;
+    member.greetingContent = member.greetings[index].content;
   }
   async function loadSources(member: DraftMember, more = false) {
     if (!scope.active() || locked.value || member.loadingSources || member.mode !== "single_snapshot" || !members.value.includes(member)
@@ -191,9 +229,11 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
   function setMode(member: DraftMember, mode: "card" | "single_snapshot") {
     if (locked.value || !members.value.includes(member) || member.mode === mode || (mode === "single_snapshot" && !supportsSnapshots)) return;
     member.sourceVersion++;
+    member.greetingVersion++; member.loadingGreeting = false;
     member.mode = mode; member.sourceSessionId = null; member.sources = [];
     member.sourceOffset = 0; member.loadingSources = false; member.pendingSourcePage = null; member.hasMoreSources = false; member.sourceError = "";
     if (mode === "single_snapshot") void loadSources(member);
+    else if (!member.greetingLoaded) void loadGreetings(member);
   }
   async function submit() {
     if (!scope.active() || locked.value) return;
@@ -203,6 +243,7 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
     const params: CreateGroupSessionParams = { title: title.value.trim(), user_nickname: nickname.value.trim(),
       shared_setting: sharedSetting.value.trim() || null,
       members: members.value.map(member => ({ character_id: member.character.id,
+        ...(member.mode === "card" ? { greeting_index: member.greetings[member.greetingIndex]?.index ?? null, greeting_content: member.greetingContent } : {}),
         origin: member.mode === "card" ? { mode: "card" } : { mode: "single_snapshot", session_id: member.sourceSessionId! } })),
     };
     submitting.value = true;
@@ -220,11 +261,12 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
   }
   return { title, nickname, sharedSetting, characters, members, loadingCharacters, hasMoreCharacters,
     characterError, submitting, error, uncertain, created, locked, validation, supportsSnapshots,
-    loadCharacters, toggleCharacter, setMode, loadSources, submit,
+    loadCharacters, toggleCharacter, setMode, loadSources, loadGreetings, selectGreeting, submit,
     show() {
       if (!scope.activate()) return;
       void loadCharacters();
       for (const member of members.value) {
+        if (member.mode === "card" && !member.greetingLoaded) void loadGreetings(member);
         if (member.pendingSourcePage) void loadSources(member, member.pendingSourcePage === "more");
       }
     }, hide: scope.deactivate };

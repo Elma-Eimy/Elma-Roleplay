@@ -322,6 +322,7 @@ class GroupPersonaOrigin(Base):
     source_last_active_message_id = Column(Integer, nullable=True)
     source_confirmed_before_id = Column(Integer, nullable=True)
     content_fingerprint = Column(String(64), nullable=False)
+    greeting_content = Column(Text, nullable=True)
     persona = relationship("SessionPersona", back_populates="group_origin")
 
 

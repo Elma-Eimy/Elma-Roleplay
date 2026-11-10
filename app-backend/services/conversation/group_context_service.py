@@ -127,14 +127,18 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         memories = _member_memories(persona.id, round_, candidate, rows, requests, basis, db, distances)
         if isinstance(memories, SemanticQuery):
             return memories
+        from services.conversation.group_session_service import public_greetings
+        greetings = public_greetings(group)
         policy = json.loads(candidate.call_snapshot_json or '{}')
         evidence = None
         if candidate.protocol_version == 2 and policy.get('experience_guard'):
             from services.conversation.group_experience_guard import experience_evidence
             evidence = experience_evidence(persona_id, rows, memories, requests)
+            evidence["sources"].extend({"ref": f"greeting:{entry['persona_id']}", "kind": "opening",
+                "speaker_id": entry["persona_id"], "text": entry["content"]} for entry in greetings)
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
-            shared_setting=group.shared_setting, current_role_state=state, protocol_version=candidate.protocol_version,
+            shared_setting=group.shared_setting, greetings=greetings, current_role_state=state, protocol_version=candidate.protocol_version,
             current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories,
             insights=member_insights(persona.id, round_, candidate, db), experience_evidence=evidence)
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。

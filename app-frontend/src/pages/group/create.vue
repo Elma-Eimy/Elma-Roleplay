@@ -33,9 +33,20 @@
           <picker :range="modeLabels" :value="member.mode === 'card' ? 0 : 1" :disabled="locked" @change="changeMode(member.character.id, $event)">
             <view class="group-picker">{{ member.mode === 'card' ? '从原卡开始' : '导入单聊快照' }}　⌄</view>
           </picker>
-          <text v-if="member.mode === 'card'" class="group-copy">保留原卡设定，不导入私人对话与记忆。</text>
+          <template v-if="member.mode === 'card'">
+            <text class="group-copy">保留原卡设定，不导入私人对话与记忆。开场白对全体成员可见，保存后固定；请检查人物、场景和私密描写。</text>
+            <text v-if="member.loadingGreeting" class="group-copy">正在读取开场…</text>
+            <template v-if="member.greetingLoaded">
+              <picker :range="member.greetings" range-key="title" :value="member.greetingIndex" :disabled="locked" @change="state.selectGreeting(member, Number($event.detail.value))">
+                <view class="group-picker">{{ member.greetings[member.greetingIndex]?.title || '默认开场' }}　⌄</view>
+              </picker>
+              <textarea v-model="member.greetingContent" class="group-textarea" :maxlength="20000" :disabled="locked" placeholder="预览并编辑开场；清空可跳过" :aria-label="member.character.name + '的公开开场'" />
+            </template>
+            <text v-if="member.greetingError" class="group-error">{{ member.greetingError }}</text>
+            <button v-if="member.greetingError" class="group-action" :disabled="locked || member.loadingGreeting" @tap="state.loadGreetings(member)">重新读取开场</button>
+          </template>
           <template v-else>
-            <text class="group-copy">导入当前已保存状态与记忆。原单聊后续变化不会影响群聊起点。</text>
+            <text class="group-copy">导入当前已保存状态与记忆，不插入开场白，等待你的第一条消息。原单聊后续变化不会影响群聊起点。</text>
             <text v-if="member.loadingSources" class="group-copy">正在读取来源故事…</text>
             <picker v-if="member.sources.length" :range="member.sources" range-key="title" :value="sourceIndex(member.character.id)" :disabled="locked || member.loadingSources" @change="selectSource(member.character.id, $event)">
               <view class="group-picker">{{ sourceTitle(member.character.id) }}　⌄</view>

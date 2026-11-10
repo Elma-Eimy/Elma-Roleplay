@@ -15,6 +15,20 @@ function fixture({ mock = false, request = async () => ({ ok: true }), db } = {}
   return { api: load("api/groupSessions.ts"), load, get db() { return db; }, get writes() { return writes; } };
 }
 
+test("Mock freezes edited and alternate group openings without creating generated rounds", async () => {
+  const f = fixture({ mock: true });
+  f.db.characters[0].extensions = { alternate_greetings: ["", "{{char}} meets {{user}}"] };
+  const params = cards(); params.user_nickname = "visitor";
+  params.members[0].greeting_index = 1;
+  params.members[1].greeting_content = "";
+  const created = await f.api.createGroupSession(params);
+  assert.equal(created.members[0].greeting_content, "actor1 meets visitor");
+  assert.equal(created.members[1].greeting_content, null);
+  f.db.characters[0].extensions.alternate_greetings[1] = "changed";
+  assert.equal((await f.api.getGroupSession(created.session_id)).members[0].greeting_content, "actor1 meets visitor");
+  assert.equal((await f.api.getGroupRounds(created.session_id)).total, 0);
+});
+
 test("group operation APIs keep request IDs and query URLs without retrying POST", async () => {
   const calls = [];
   const f = fixture({ request: async (...args) => { calls.push(args); return {}; } });

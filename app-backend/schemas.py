@@ -112,6 +112,14 @@ class GroupMemberCreate(BaseModel):
     model_config = {"extra": "forbid"}
     character_id: int = Field(gt=0, le=SQLITE_INT_MAX, strict=True)
     origin: GroupMemberOrigin
+    greeting_index: Optional[int] = Field(default=None, ge=0, le=SQLITE_INT_MAX, strict=True)
+    greeting_content: Optional[str] = Field(default=None, max_length=20000)
+
+    @model_validator(mode="after")
+    def greeting_source(self):
+        if self.origin.mode != "card" and (self.greeting_index is not None or self.greeting_content is not None):
+            raise ValueError("导入人格不能指定开场白")
+        return self
 
 
 class GroupSessionCreate(BaseModel):

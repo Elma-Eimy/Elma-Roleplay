@@ -29,7 +29,8 @@ function fixture(kind, overrides = {}, mock = false, platform = "H5") {
     removeStorageSync: key => storage.delete(key),
   } }, mocks: {
     "@/api/config": { getBaseUrl: () => server, USE_MOCK: mock },
-    "@/api/characters": { getCharacters: overrides.getCharacters ?? (async () => ({ characters: [1, 2, 3, 4].map(character) })) },
+    "@/api/characters": { getCharacters: overrides.getCharacters ?? (async () => ({ characters: [1, 2, 3, 4].map(character) })),
+      getCharacter: overrides.getCharacter ?? (async id => ({ ...character(id), first_mes: "hello {{user}}", extensions: { alternate_greetings: ["", "alternate {{char}}"] } })) },
     "@/api/sessions": { getSessions: overrides.getSessions ?? (async () => page()) },
     "@/api/groupSessions": api,
     "@/api/portraits": { getPortraits: async () => ({ portraits: [], total: 0, has_more: false }) },
@@ -52,6 +53,46 @@ const roundPage = (items = [], more = false, offset = 0) => ({ rounds: items, to
   limit: 20, offset, has_more: more });
 const round = id => ({ round_id: id, round_index: id, candidate_id: id,
   status: "failed", confirmed: false, user_content: "sample", utterances: [] });
+
+test("mixed origins submit edited public openings only for card members and retain alternate indexes", async () => {
+  const f = fixture("create", { getSessions: async () => page([{ id: 10, title: "source" }]) });
+  f.state.show(); await flush(); fill(f); await flush();
+  const [a, b] = f.state.members.value;
+  f.state.selectGreeting(a, 2);
+  assert.equal(a.greetingContent, "alternate {{char}}");
+  a.greetingContent = "edited {{user}}";
+  f.state.setMode(b, "single_snapshot"); await flush(); b.sourceSessionId = 10;
+  await f.state.submit();
+  assert.deepEqual(plain(f.calls[0].members), [
+    { character_id: 1, greeting_index: 1, greeting_content: "edited {{user}}", origin: { mode: "card" } },
+    { character_id: 2, origin: { mode: "single_snapshot", session_id: 10 } },
+  ]);
+  f.scope.stop();
+});
+
+test("late opening reads cannot overwrite a replacement, mode change or server and failed reads can retry", async () => {
+  const old = deferred(); let reads = 0;
+  const f = fixture("create", { getCharacter: async () => {
+    if (++reads === 1) return old.promise;
+    if (reads === 2) throw new Error("offline");
+    return { first_mes: "fresh", extensions: {} };
+  } });
+  f.state.show(); await flush();
+  f.state.toggleCharacter(character(1));
+  const removed = f.state.members.value[0];
+  f.state.toggleCharacter(character(1)); f.state.toggleCharacter(character(1)); await flush();
+  const member = f.state.members.value[0];
+  assert.match(member.greetingError, /offline/);
+  await f.state.loadGreetings(member);
+  assert.equal(member.greetingContent, "fresh");
+  old.resolve({ first_mes: "stale", extensions: {} }); await flush();
+  assert.equal(member.greetingContent, "fresh"); assert.equal(removed.greetingLoaded, false);
+  f.state.setMode(member, "single_snapshot");
+  assert.equal(member.mode, "single_snapshot");
+  f.setServer("https://b.invalid"); await flush();
+  assert.equal(f.state.members.value.length, 0);
+  f.scope.stop();
+});
 
 test("round pagination preserves failure prefixes and retries the failed page", async () => {
   let fail = true;
@@ -141,7 +182,7 @@ for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
   test(`${platform}: duplicate submission is blocked and payload is frozen while the request runs`, async () => {
     const pending = deferred(), requests = [];
     const f = fixture("create", { createGroupSession: value => { requests.push(value); return pending.promise; } }, false, platform);
-    f.state.show(); await flush(); fill(f);
+    f.state.show(); await flush(); fill(f); await flush();
     const saving = f.state.submit();
     await f.state.submit();
     f.state.title.value = "changed locally";
@@ -159,7 +200,7 @@ for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
 test("validation retains the draft, caps members and requires an explicit snapshot source", async () => {
   const f = fixture("create"); f.state.show(); await flush();
   await f.state.submit(); assert.equal(f.calls.length, 0);
-  fill(f);
+  fill(f); await flush();
   f.state.toggleCharacter(character(3)); f.state.toggleCharacter(character(4));
   assert.equal(f.state.members.value.length, 3);
   const member = f.state.members.value[0];
@@ -172,7 +213,7 @@ test("validation retains the draft, caps members and requires an explicit snapsh
 test("a removed and re-added member cannot receive an old source list", async () => {
   const pending = deferred();
   const f = fixture("create", { getSessions: () => pending.promise });
-  f.state.show(); await flush(); fill(f);
+  f.state.show(); await flush(); fill(f); await flush();
   const old = f.state.members.value[0]; f.state.setMode(old, "single_snapshot");
   f.state.toggleCharacter(character(1)); f.state.toggleCharacter(character(1));
   pending.resolve(page([{ id: 99, title: "old source" }])); await flush();
@@ -187,7 +228,7 @@ test("snapshot source pagination is scoped to its member and serializes the sele
     requests.push([id, limit, offset, last]);
     return { ...page([{ id: offset + 10, title: `source ${offset}` }]), has_more: offset === 0 };
   } });
-  f.state.show(); await flush(); fill(f);
+  f.state.show(); await flush(); fill(f); await flush();
   const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot"); await flush();
   await f.state.loadSources(member, true);
   member.sourceSessionId = member.sources[1].id;
@@ -205,7 +246,7 @@ for (const more of [false, true]) {
       if (more && offsets.length === 1) return page([{ id: 10, title: "selected source" }], true);
       return offsets.length === (more ? 2 : 1) ? old.promise : resumed.promise;
     } });
-    f.state.show(); await flush(); fill(f);
+    f.state.show(); await flush(); fill(f); await flush();
     const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot");
     if (more) {
       await flush(); member.sourceSessionId = 10;
@@ -231,7 +272,7 @@ for (const more of [false, true]) {
 test("confirming an unchanged origin mode preserves pending reads, selection and pagination", async () => {
   const pending = deferred(); let reads = 0;
   const f = fixture("create", { getSessions: () => { reads++; return pending.promise; } });
-  f.state.show(); await flush(); fill(f);
+  f.state.show(); await flush(); fill(f); await flush();
   const member = f.state.members.value[0]; f.state.setMode(member, "single_snapshot");
   f.state.setMode(member, "single_snapshot");
   assert.equal(reads, 1); assert.equal(member.loadingSources, true);
@@ -250,7 +291,7 @@ test("known validation failure permits correction while uncertain creation never
   for (const [failure, uncertain] of [[new Error('[API Error 422] /group-sessions: {"detail":"bad source"}'), false], [new Error("timeout"), true]]) {
     let calls = 0;
     const f = fixture("create", { createGroupSession: async () => { calls++; throw failure; } });
-    f.state.show(); await flush(); fill(f);
+    f.state.show(); await flush(); fill(f); await flush();
     await f.state.submit();
     assert.equal(f.state.uncertain.value, uncertain);
     assert.equal(f.state.title.value, "group");
@@ -264,7 +305,7 @@ test("hiding during creation marks the result uncertain and ignores success or f
   for (const failed of [false, true]) {
     const pending = deferred();
     const f = fixture("create", { createGroupSession: () => pending.promise });
-    f.state.show(); await flush(); fill(f); const saving = f.state.submit();
+    f.state.show(); await flush(); fill(f); await flush(); const saving = f.state.submit();
     f.state.hide(); f.state.show();
     if (failed) pending.reject(new Error("late")); else pending.resolve(group(50));
     await saving;
@@ -278,10 +319,10 @@ test("hiding during creation marks the result uncertain and ignores success or f
 test("A→B→A clears creation data and old completion cannot navigate or unlock a new submit", async () => {
   const old = deferred(), current = deferred(); let count = 0;
   const f = fixture("create", { createGroupSession: () => (++count === 1 ? old : current).promise });
-  f.state.show(); await flush(); fill(f); const savingOld = f.state.submit();
+  f.state.show(); await flush(); fill(f); await flush(); const savingOld = f.state.submit();
   f.setServer("https://b.invalid"); f.setServer("https://a.invalid"); await flush();
   assert.equal(f.state.members.value.length, 0); assert.equal(f.state.title.value, "");
-  fill(f); const savingCurrent = f.state.submit();
+  fill(f); await flush(); const savingCurrent = f.state.submit();
   old.resolve(group(50)); await savingOld;
   assert.equal(f.state.submitting.value, true); assert.equal(f.navigations.length, 0);
   current.resolve(group(51)); await savingCurrent;
@@ -362,7 +403,7 @@ test("a stale delete confirmation cannot send POST and a stale delete completion
 test("leaving a scope unsubscribes and prevents pending writes from producing UI effects", async () => {
   const pending = deferred();
   const f = fixture("create", { createGroupSession: () => pending.promise });
-  f.state.show(); await flush(); fill(f); const saving = f.state.submit();
+  f.state.show(); await flush(); fill(f); await flush(); const saving = f.state.submit();
   f.scope.stop(); pending.resolve(group(50)); await saving;
   assert.equal(f.navigations.length, 0); assert.equal(f.listeners.size, 0);
 });

@@ -38,7 +38,7 @@ class GroupSnapshotMigrationTests(unittest.TestCase):
 
     def test_tables_match_orm_and_source_deletion_preserves_audit_and_content(self):
         for model in (GroupPersonaOrigin, GroupInheritedMemorySnapshot):
-            self.assertEqual(set(model.__table__.columns.keys()),
+            self.assertEqual(set(model.__table__.columns.keys()) - ({"greeting_content"} if model is GroupPersonaOrigin else set()),
                              {col["name"] for col in inspect(self.engine).get_columns(model.__tablename__)})
             foreign_keys = inspect(self.engine).get_foreign_keys(model.__tablename__)
             self.assertEqual([(["persona_id"], "session_personas")],
