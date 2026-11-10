@@ -401,6 +401,51 @@ class DialogueExampleCompilationTests(unittest.TestCase):
             [message["role"] for message in examples],
         )
 
+    def test_inline_speaker_macro_and_example_headers_are_parsed_into_role_pairs(self):
+        examples = compile_dialogue_examples(
+            _character(
+                mes_example=(
+                    "Example 1（街头初遇）\n\n"
+                    "{{user}}: 你脸色不太好，我扶着{{char}}好吗？ {{char}}: （她轻轻扶住你的手臂）「谢谢你，我还能站稳。」\n\n"
+                    "Example 2（烛下交谈）\n"
+                    "{{user}}: 听说你是烛骑士？ {{char}}: （她搁下羽毛笔）「今夜请叫我露娜吧。」"
+                )
+            ),
+            "小明",
+        )
+
+        self.assertEqual(
+            ["user", "assistant", "user", "assistant"],
+            [message["role"] for message in examples],
+        )
+        self.assertEqual("你脸色不太好，我扶着露娜好吗？", examples[0]["content"])
+        self.assertIn("谢谢你，我还能站稳。", examples[1]["content"])
+        self.assertNotIn("Example 2", examples[1]["content"])
+        self.assertEqual("听说你是烛骑士？", examples[2]["content"])
+        self.assertIn("今夜请叫我露娜吧。", examples[3]["content"])
+
+    def test_sillytavern_implicit_prefix_before_start_and_inline_start_are_preserved(self):
+        examples = compile_dialogue_examples(
+            _character(
+                mes_example=(
+                    "{{user}}: 第一段未写START\n"
+                    "{{char}}: 依然保留。\n"
+                    "<START> {{user}}: 第二段同行START\n"
+                    "{{char}}: 正常切分。"
+                )
+            ),
+            "小明",
+        )
+
+        self.assertEqual(
+            ["user", "assistant", "user", "assistant"],
+            [message["role"] for message in examples],
+        )
+        self.assertEqual("第一段未写START", examples[0]["content"])
+        self.assertIn("依然保留。", examples[1]["content"])
+        self.assertEqual("第二段同行START", examples[2]["content"])
+        self.assertIn("正常切分。", examples[3]["content"])
+
     def test_unstructured_nonempty_example_is_preserved_as_fallback(self):
         messages = self._build_messages(
             _character(mes_example="<START>\n她说话总是简短而克制。")

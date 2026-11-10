@@ -65,8 +65,10 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
 1. 保留旧认知中仍然有效的部分
 2. 融入新对话中产生的重要认知变化
 3. 必须使用角色（名字为：{character_name}）自己的第一人称视角描述（如"作为 {character_name}，我认为..."、"我知道..."、"我感觉..."），禁止使用第三人称（如"他"、"她"、"{character_name}认为..."），以使生成的内容能够作为 {character_name} 的第一人称心声无缝融入扮演设定。
-4. 控制在 {settings.APP_COGNITION_MAX_WORDS} 字以内
-5. 直接返回纯文本，不要使用 JSON 或 markdown 格式"""
+4. 保持现代、克制、客观的心理画像表述，聚焦于关系定位、情感依恋、信任度与既定事实认知；严禁使用市井民俗俚语、民国或明清旧白话口癖（如"方才"、"没个消停"、"自个儿"、"心里才不凉"等）以及戏剧化的怨妇独白，防止污染后续对话文风。
+5. 仅归纳已被角色实质接纳的当前关系与心理状态，不把对话中过渡性的修辞推拉或羞怯反应固化为永久抗拒原则。
+6. 控制在 {settings.APP_COGNITION_MAX_WORDS} 字以内
+7. 直接返回纯文本，不要使用 JSON 或 markdown 格式"""
     user_content = f"""当前认知状态：
 {old_cognition}
 
