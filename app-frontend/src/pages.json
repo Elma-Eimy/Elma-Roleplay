@@ -16,7 +16,7 @@
 		},
 		{
 			"path": "pages/group/detail",
-			"style": { "navigationStyle": "custom" }
+			"style": { "navigationStyle": "custom", "app-plus": { "softinputMode": "adjustResize" } }
 		},
 		{
 			"path": "pages/character/index",

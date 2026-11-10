@@ -6,7 +6,7 @@ import type { GreetingOption } from "@/utils/characterCard";
 import { getSessions } from "@/api/sessions";
 import { createGroupSession, deleteGroupSession, getGroupSession, getGroupSessions } from "@/api/groupSessions";
 import { onServerChange } from "@/utils/connectionEvents";
-import type { CreateGroupSessionParams, GroupCharacterOption, GroupSessionDetail } from "@/types/groupSessions";
+import type { CreateGroupSessionParams, GroupCharacterOption, GroupSessionDetail, GroupGenerationOptions } from "@/types/groupSessions";
 import { useGroupRoundFlow } from "@/composables/useGroupRoundFlow";
 import { useGroupPortraits } from "@/composables/useGroupPortraits";
 import type { SessionSummary } from "@/types/sessions";
@@ -272,7 +272,7 @@ export function useGroupSessionCreate(onCreated: (group: GroupSessionDetail) => 
     }, hide: scope.deactivate };
 }
 
-export function useGroupSessionDetail(onDeleted: () => void) {
+export function useGroupSessionDetail(onDeleted: () => void, generation?: (id: number) => Promise<GroupGenerationOptions>) {
   const group = ref<GroupSessionDetail | null>(null);
   const loading = ref(false);
   const deleting = ref(false);
@@ -293,7 +293,7 @@ export function useGroupSessionDetail(onDeleted: () => void) {
       error.value = reason === "server" ? "服务器已变更，请返回群聊列表重新选择。" : "";
     }
   });
-  const flow = useGroupRoundFlow({ id: () => sessionId, active: scope.active, capture: scope.capture,
+  const flow = useGroupRoundFlow({ id: () => sessionId, active: scope.active, capture: scope.capture, generation,
     blocked: () => loading.value || deleting.value || !group.value || portraits.portraitWriting.value });
   const portraits = useGroupPortraits({ id: () => sessionId, active: scope.active, capture: scope.capture,
     current: () => flow.current.value, members: () => group.value?.members || [],

@@ -3,13 +3,14 @@ import { getBaseUrl, USE_MOCK } from "@/api/config";
 import { getGroupRounds, getGroupRequest, getGroupCandidates, getGroupCandidate,
   sendGroupRound, regenerateGroupRound, resumeGroupRound, selectGroupCandidate, discardGroupRound } from "@/api/groupSessions";
 import type { GroupRound, GroupCurrentState, GroupCandidateSummary, GetGroupCandidateResponse,
-  GroupOperationKind, GroupObservedCommand, GroupRoundCommand, GroupAcceptedOperation, GetGroupRoundsResponse } from "@/types/groupSessions";
+  GroupOperationKind, GroupObservedCommand, GroupRoundCommand, GroupAcceptedOperation, GetGroupRoundsResponse, GroupGenerationOptions } from "@/types/groupSessions";
 
 interface Context {
   id: () => number | null;
   active: () => boolean;
   capture: () => () => boolean;
   blocked: () => boolean;
+  generation?: (id: number) => Promise<GroupGenerationOptions>;
 }
 interface PendingRequest { request_id: string; kind: GroupOperationKind; rejected?: boolean }
 
@@ -283,13 +284,22 @@ export function useGroupRoundFlow(context: Context) {
     try {
       if (confirm && (!await confirm() || !valid())) return;
       if (!valid()) return;
+      let generation: GroupGenerationOptions = {};
+      if ((kind === 'send' || kind === 'regenerate') && context.generation) {
+        try { generation = { ...await context.generation(id) }; }
+        catch {
+          if (valid()) operationError.value = '模型配置尚未加载，请检查连接后重试。';
+          return;
+        }
+        if (!valid()) return;
+      }
       remember({ request_id: body.client_request_id, kind });
       if (kind === "send") submittedContent = content;
       // 后续恢复仅使用 GET。接受回执的旧版本不回写到当前选择。
       sent = true;
       let receipt: GroupAcceptedOperation;
-      if (kind === "send") receipt = await sendGroupRound(id, { ...body, user_content: content });
-      else if (kind === "regenerate") receipt = await regenerateGroupRound(id, latest!.round_id, body as GroupRoundCommand);
+      if (kind === "send") receipt = await sendGroupRound(id, { ...body, ...generation, user_content: content });
+      else if (kind === "regenerate") receipt = await regenerateGroupRound(id, latest!.round_id, { ...body, ...generation } as GroupRoundCommand);
       else if (kind === "discard") receipt = await discardGroupRound(id, latest!.round_id, body as GroupRoundCommand);
       else {
         const target = { ...body as GroupRoundCommand, target_candidate_id: targetId!, target_candidate_revision: targetRevision! };

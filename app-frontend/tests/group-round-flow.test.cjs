@@ -18,7 +18,7 @@ const operation = (status = 'running') => ({ request_id: uuid, operation_id: 1, 
 const page = current => ({ can_generate: true, current, rounds: current.latest ? [round(current.latest.candidate_id)] : [],
   offset: 0, limit: 20, total: current.latest ? 1 : 0, has_more: false });
 
-function fixture(overrides = {}, { platform = 'H5', storage = new Map(), mock = false } = {}) {
+function fixture(overrides = {}, { platform = 'H5', storage = new Map(), mock = false, generation: resolveGeneration } = {}) {
   let server = 'https://a.invalid', id = 1, active = true, generation = 0, nextTimer = 0;
   const timers = new Map(), posts = [], queries = [];
   const model = { current: state(), rows: [candidate(11), candidate(12, 'failed', false)] };
@@ -43,7 +43,7 @@ function fixture(overrides = {}, { platform = 'H5', storage = new Map(), mock = 
     removeStorageSync: key => storage.delete(key) },
     setTimeout: callback => { timers.set(++nextTimer, callback); return nextTimer; }, clearTimeout: key => timers.delete(key),
   } });
-  const flow = load('composables/useGroupRoundFlow.ts').useGroupRoundFlow({ id: () => id, active: () => active,
+  const flow = load('composables/useGroupRoundFlow.ts').useGroupRoundFlow({ id: () => id, active: () => active, generation: resolveGeneration,
     capture: () => { const version = generation, oldId = id, oldServer = server;
       return () => active && generation === version && id === oldId && server === oldServer; }, blocked: () => false });
   return { flow, model, posts, queries, storage, timers, api,
@@ -57,6 +57,42 @@ function fixture(overrides = {}, { platform = 'H5', storage = new Map(), mock = 
 }
 
 for (const platform of ['H5', 'APP-PLUS', 'MP-WEIXIN']) {
+  test(`${platform}: send and regenerate use chosen model parameters while resume keeps frozen parameters`, async () => {
+    let resolutions = 0;
+    const selected = { model: 'chosen-model', thinking_mode: 'enabled', reasoning_effort: 'high' };
+    const f = fixture({}, { platform, generation: async id => { assert.equal(id, 1); resolutions++; return selected; } });
+    await f.start(); f.flow.draft.value = 'hello';
+    await f.flow.command('send'); await flush();
+    assert.equal(f.posts[0].body.model, selected.model);
+    assert.equal(f.posts[0].body.thinking_mode, 'enabled');
+    assert.equal(f.posts[0].body.reasoning_effort, 'high');
+    f.model.current = state(1, latest()); await f.flow.loadRounds();
+    await f.flow.command('regenerate'); await flush();
+    assert.equal(f.posts[1].body.model, selected.model);
+    await f.flow.loadCandidates(1);
+    await f.flow.command('resume', f.flow.candidates.value.find(row => row.candidate_id === 12)); await flush();
+    assert.equal(resolutions, 2);
+    assert.equal(f.posts[2].kind, 'resume');
+    assert.equal(f.posts[2].body.model, undefined);
+    assert.equal(f.posts[2].body.thinking_mode, undefined);
+    f.stop();
+  });
+
+  test(`${platform}: waiting for model settings blocks duplicate sends and leaving cancels the pending submission`, async () => {
+    const pending = deferred();
+    const f = fixture({}, { platform, generation: () => pending.promise });
+    await f.start(); f.flow.draft.value = 'kept draft';
+    const sending = f.flow.command('send');
+    await f.flow.command('send');
+    assert.equal(f.flow.submitting.value, true);
+    assert.equal(f.posts.length, 0); assert.equal(f.storage.size, 0);
+    f.hide(); await f.show();
+    pending.resolve({ model: 'late-model', thinking_mode: 'disabled' }); await sending;
+    assert.equal(f.posts.length, 0); assert.equal(f.storage.size, 0);
+    assert.equal(f.flow.draft.value, 'kept draft');
+    f.stop();
+  });
+
   test(`${platform}: submits one frozen command, persists UUID first and reads results with GET`, async () => {
     const post = deferred(); let body;
     const f = fixture({ sendGroupRound: (sid, params) => { body = plain(params); assert.equal(f.storage.size, 1); return post.promise; } }, { platform });
@@ -72,6 +108,17 @@ for (const platform of ['H5', 'APP-PLUS', 'MP-WEIXIN']) {
     assert.equal(f.storage.size, 0); assert.equal(f.flow.pending.value, null); f.stop();
   });
 }
+
+test('model resolution failure preserves the draft and creates no request receipt', async () => {
+  const f = fixture({}, { generation: async () => { throw new Error('settings unavailable'); } });
+  await f.start(); f.flow.draft.value = 'kept';
+  await f.flow.command('send');
+  assert.equal(f.posts.length, 0); assert.equal(f.storage.size, 0);
+  assert.equal(f.flow.draft.value, 'kept');
+  assert.match(f.flow.operationError.value, /模型配置/);
+  assert.equal(f.flow.submitting.value, false);
+  f.stop();
+});
 
 test('unknown POST and 404 never send again; manual GET restores the accepted result and clears its draft', async () => {
   let posts = 0, accepted = false;

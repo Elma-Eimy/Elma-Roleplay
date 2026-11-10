@@ -153,22 +153,25 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
       selection.value.reasoning_effort = value;
     },
   });
-  async function requestGeneration(id: number) {
+  async function requestGeneration(id: number, override?: GenerationOverride) {
+    const requested = override ? normalizeOverride({ ...override }) : null;
     const endpoint = getBaseUrl();
     if (pendingModels?.endpoint === endpoint) await pendingModels.promise;
     else if (readyEndpoint !== endpoint) await refreshModels();
     if (endpoint !== getBaseUrl() || readyEndpoint !== endpoint)
       throw new Error("模型配置尚未加载，请检查连接后重试。");
-    const value =
+    const value = requested ?? (
       activeSessionId.value === id && server === getBaseUrl()
         ? selection.value
-        : normalizeOverride(readSelections()[String(id)]);
+        : normalizeOverride(readSelections()[String(id)]));
     if (settingsError.value && (!value.model || value.thinking_mode === "inherit" || value.reasoning_effort === "inherit"))
       throw new Error("模型配置尚未加载，请检查连接后重试。");
     const resolved = snapshotGeneration(defaults.value, value);
-    const values = readSelections();
-    values[String(id)] = resolved;
-    uni.setStorageSync(storageKey(), JSON.stringify(values));
+    if (!requested) {
+      const values = readSelections();
+      values[String(id)] = resolved;
+      uni.setStorageSync(storageKey(), JSON.stringify(values));
+    }
     return {
       model: resolved.model,
       thinking_mode: resolved.thinking_mode,

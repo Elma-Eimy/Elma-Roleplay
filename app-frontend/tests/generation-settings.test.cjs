@@ -46,6 +46,25 @@ function fixture(getSettings = async () => ({})) {
   };
 }
 
+test("an explicit request snapshot survives settings loading without replacing newer choices", async () => {
+  const pending = deferred();
+  const f = fixture(() => pending.promise);
+  f.store.activateSession(1);
+  f.store.modelId = "deepseek-flash";
+  f.store.thinkingMode = "disabled";
+  f.store.reasoningEffort = "high";
+  const snapshot = { ...f.store.selection };
+  const request = f.store.requestGeneration(1, snapshot);
+  f.store.modelId = "deepseek-v4-pro";
+  pending.resolve({});
+  const result = await request;
+  assert.equal(result.model, "deepseek-flash");
+  assert.equal(f.store.modelId, "deepseek-v4-pro");
+  const stored = JSON.parse(f.storage.get("story_generation_v1:https://one.test"));
+  assert.equal(stored['1'].model, "deepseek-v4-pro");
+  f.store.$dispose();
+});
+
 test("story choices are concrete and persist independently without legacy switching", async () => {
   const { store } = fixture();
   store.activateSession(1);
