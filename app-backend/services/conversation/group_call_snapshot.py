@@ -29,6 +29,7 @@ class GroupCallSnapshot:
     output_attempts: int = 1
     fact_recall: bool = False
     experience_guard: bool = False
+    review_reasoning_effort: str | None = None
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
@@ -112,6 +113,10 @@ def persist_group_calls(snapshot, max_steps, member_ids):
         raise error("亲历审查策略无效")
     if snapshot.experience_guard:
         value["experience_guard"] = True
+    if snapshot.review_reasoning_effort not in (None, 'low'):
+        raise error('审查思考参数无效')
+    if snapshot.review_reasoning_effort is not None:
+        value['review_reasoning_effort'] = snapshot.review_reasoning_effort
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False), hashlib.sha256(normalized.encode()).hexdigest()
 
 
@@ -144,7 +149,7 @@ def restore_group_calls(candidate, member_ids):
         limit = value.get("group_card_limit", 0)
         if type(limit) is not int or limit < 0:
             raise ValueError
-        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard"} != {
+        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard", "review_reasoning_effort"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -153,7 +158,7 @@ def restore_group_calls(candidate, member_ids):
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
             value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
-            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False))
+            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False), value.get('review_reasoning_effort'))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -190,7 +195,11 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
             top_p=ext.get("top_p", config.LLM_TOP_P), presence_penalty=ext.get("presence_penalty", config.LLM_PRESENCE_PENALTY),
             frequency_penalty=ext.get("frequency_penalty", config.LLM_FREQUENCY_PENALTY),
             repetition_penalty=ext.get("repetition_penalty", config.LLM_REPETITION_PENALTY), config=config)
-        return json.dumps({"model": selection.model, "max_tokens": config.LLM_MAX_TOKENS, **controls,
+        output_limit = config.LLM_MAX_TOKENS
+        if selection.thinking and model_capability(selection.model, config)['adapter'] == 'deepseek':
+            # 思考与最终 JSON 共用输出额度；4K 可能全部被审查推理耗尽。
+            output_limit = max(output_limit, 16384)
+        return json.dumps({"model": selection.model, "max_tokens": output_limit, **controls,
             **({"response_format": {"type": "json_object"}} if settings.LLM_GROUP_JSON_MODE else {})}, ensure_ascii=False)
     db.rollback()
     db.expire_all()
@@ -201,6 +210,8 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
                                  connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0, inherited_recall=True,
-                                 output_attempts=3, fact_recall=True, experience_guard=True)
+                                 output_attempts=3, fact_recall=True, experience_guard=True,
+                                 review_reasoning_effort=('low' if selection.thinking and selection.model.startswith('deepseek-v4')
+                                     and model_capability(selection.model, config)['adapter'] == 'deepseek' else None))
     finally:
         db.rollback()

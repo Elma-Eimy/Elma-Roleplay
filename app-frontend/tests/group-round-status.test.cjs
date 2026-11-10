@@ -19,5 +19,8 @@ test("failed prefix and in-progress states never show a successful stop reason o
   assert.match(groupRoundNotice(round), /已保存的发言仍可查看/);
   assert.doesNotMatch(groupRoundNotice(round), /PRIVATE|上限/);
   assert.match(groupRoundNotice({ ...round, error_code: "timeout" }), /超时/);
+  assert.match(groupRoundNotice({ ...round, error_code: "incomplete_output" }), /截断/);
+  assert.match(groupRoundNotice({ ...round, error_code: "invalid_output" }), /格式校验/);
+  assert.match(groupRoundNotice({ ...round, error_code: "experience_check_failed" }), /亲历审查/);
   assert.equal(groupRoundNotice({ ...round, status: "generating" }), "");
 });

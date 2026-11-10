@@ -9,7 +9,7 @@ from application.group_runtime import group_runtime
 from core.locking import is_session_locked
 from core.models import GroupContentItem, GroupDirectorStep, GroupRoundOperation, SessionPersona
 from scripts.group_chat_prototype.worker import _response
-from services.conversation import group_background_service as background
+from services.conversation import group_background_service as background, group_generation_service as generation
 from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
 from services.conversation.group_output_retry import validated_output
 from services.conversation.group_unit_protocol import GroupUnitError, load_object
@@ -23,6 +23,102 @@ class GroupOutputRetryTests(unittest.TestCase):
     drain = fixtures.GroupBackgroundTests.drain
     observed = fixtures.GroupBackgroundTests.observed
     candidate = fixtures.GroupBackgroundTests.candidate
+
+    def test_broken_json_punctuation_can_be_repaired_but_values_cannot_change(self):
+        from types import SimpleNamespace
+        context = SimpleNamespace(protocol_version=2, speaker_name='角色', state_json='{}')
+        valid = {'units': [{'kind': 'speech', 'text': '原文保持不变'}, {'kind': 'thought', 'text': '私密心理'}],
+                 'status': {'emotion': '开心', 'affection_change': 1},
+                 'state_update': {'characters': {'角色': {'posture': '坐着', 'location': '房间'}}}}
+        raw = json.dumps(valid, ensure_ascii=False)
+        broken = raw.replace('], "status"', ']}, "status"')
+        source = generation._format_repair_source(broken, context)
+        self.assertIn('raw_json', source)
+        result = generation._parse(raw, context)
+        generation._check_format_repair(result, source, raw)
+        for changed in (raw.replace('原文保持不变', '改写剧情'), raw.replace('thought', 'speech'),
+                        raw.replace('"affection_change": 1', '"affection_change": 2'),
+                        raw.replace('坐着', '站着'), raw.replace('角色', '其他角色')):
+            with self.subTest(changed=changed), self.assertRaises(generation.GroupGenerationError):
+                parsed = generation._parse(changed, context)
+                generation._check_format_repair(parsed, source, changed)
+        self.assertIsNone(generation._format_repair_source('{"units":[{"text":"未结束', context))
+
+    def test_complete_legacy_reply_is_formatted_without_changing_text_or_metadata(self):
+        for raw in ('「原始台词。」', '<reply>「原始台词。」</reply><status emotion="开心" affection_change="1"/>'):
+            with self.subTest(raw=raw):
+                sid, ids = self.group()
+                model = fixtures.Model(ids)
+                role_calls = []
+                async def legacy_then_format(stage, parameters):
+                    if stage != 'role_generation':
+                        return await model(stage, parameters)
+                    role_calls.append(parameters)
+                    if len(role_calls) == 1:
+                        return _response(raw)
+                    self.assertEqual(2, len(parameters['messages']))
+                    self.assertEqual(generation.FORMAT_REPAIR_CONTRACT, parameters['messages'][0]['content'])
+                    source = json.loads(parameters['messages'][1]['content'])
+                    return _response(json.dumps({'units': [{'kind': 'speech', 'text': source['reply']}],
+                                                 'status': source['status']}, ensure_ascii=False))
+                async def scenario(owner):
+                    receipt = await self.submit(sid, owner, legacy_then_format, max_steps=1)
+                    await self.drain(owner)
+                    self.assertEqual('awaiting_confirmation', self.candidate(receipt).status)
+                    rows = self.db.query(GroupContentItem).filter_by(candidate_id=receipt['accepted']['candidate_id'], kind='utterance').all()
+                    self.assertEqual(1, len(rows))
+                    self.assertEqual('「原始台词。」', rows[0].content)
+                    self.assertEqual(1 if raw.startswith('<reply>') else 0, rows[0].affection_change)
+                with group_runtime(self.engine) as owner:
+                    asyncio.run(scenario(owner))
+
+    def test_format_conversion_cannot_rewrite_text_affection_or_role_state(self):
+        for changed in ('text', 'affection', 'state'):
+            with self.subTest(changed=changed):
+                sid, ids = self.group()
+                model = fixtures.Model(ids)
+                calls = []
+                async def invalid_conversion(stage, parameters):
+                    if stage != 'role_generation':
+                        return await model(stage, parameters)
+                    calls.append(parameters)
+                    if len(calls) == 1:
+                        return _response('「必须完整保留的原文。」')
+                    source = json.loads(parameters['messages'][1]['content'])
+                    value = {'units': [{'kind': 'speech', 'text': source['reply']}], 'status': source['status']}
+                    if changed == 'text': value['units'][0]['text'] += '额外剧情'
+                    if changed == 'affection': value['status']['affection_change'] = 5
+                    if changed == 'state': value['state_update'] = {'scene': '新场景'}
+                    return _response(json.dumps(value, ensure_ascii=False))
+                async def scenario(owner):
+                    receipt = await self.submit(sid, owner, invalid_conversion, max_steps=1)
+                    await self.drain(owner)
+                    self.assertEqual('invalid_output', self.candidate(receipt).error_code)
+                    self.assertEqual(0, self.db.query(GroupContentItem).filter_by(
+                        candidate_id=receipt['accepted']['candidate_id'], kind='utterance').count())
+                    self.assertEqual(3, len(calls))
+                with group_runtime(self.engine) as owner:
+                    asyncio.run(scenario(owner))
+
+    def test_truncated_legacy_reply_is_never_converted_or_committed(self):
+        sid, ids = self.group()
+        model = fixtures.Model(ids)
+        role_calls = []
+        async def truncated(stage, parameters):
+            if stage != 'role_generation': return await model(stage, parameters)
+            role_calls.append(parameters)
+            response = _response('「尚未输出完整')
+            response.choices[0].finish_reason = 'length'
+            return response
+        async def scenario(owner):
+            receipt = await self.submit(sid, owner, truncated, max_steps=1)
+            await self.drain(owner)
+            self.assertEqual('incomplete_output', self.candidate(receipt).error_code)
+            self.assertEqual(1, len(role_calls))
+            self.assertEqual(0, self.db.query(GroupContentItem).filter_by(
+                candidate_id=receipt['accepted']['candidate_id'], kind='utterance').count())
+        with group_runtime(self.engine) as owner:
+            asyncio.run(scenario(owner))
 
     def test_each_stage_can_recover_twice_and_commits_one_utterance(self):
         sid, ids = self.group()

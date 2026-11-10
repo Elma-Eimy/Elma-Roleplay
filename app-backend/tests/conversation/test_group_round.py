@@ -27,6 +27,28 @@ run_group_round = partial(_run_group_round, protocol_version=1)
 class GroupRoundTests(unittest.TestCase):
     setUp = fixtures.GroupSessionServiceTests.setUp
 
+    def test_deepseek_thinking_snapshot_reserves_room_for_reasoning_and_json(self):
+        sid, ids = self.group()
+        with patch.object(settings, 'LLM_MAX_TOKENS', 4096):
+            thinking = capture_group_calls(sid, self.db, model='deepseek-v4-flash', thinking_mode='enabled', reasoning_effort='high')
+            plain = capture_group_calls(sid, self.db, model='deepseek-v4-flash', thinking_mode='disabled')
+        for encoded in [thinking.director_json, *(encoded for _, encoded in thinking.members)]:
+            self.assertEqual(16384, json.loads(encoded)['max_tokens'])
+            self.assertEqual('high', json.loads(encoded)['reasoning_effort'])
+        self.assertEqual(4096, json.loads(plain.director_json)['max_tokens'])
+        self.assertEqual('low', thinking.review_reasoning_effort)
+        self.assertIsNone(plain.review_reasoning_effort)
+        from types import SimpleNamespace
+        from services.conversation.group_call_snapshot import persist_group_calls, restore_group_calls
+        encoded, fingerprint = persist_group_calls(thinking, 1, set(ids))
+        candidate = SimpleNamespace(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
+        restored, _ = restore_group_calls(candidate, set(ids))
+        self.assertEqual('low', restored.review_reasoning_effort)
+        legacy = json.loads(encoded); del legacy['review_reasoning_effort']
+        candidate.call_snapshot_json = json.dumps(legacy)
+        restored, _ = restore_group_calls(candidate, set(ids))
+        self.assertIsNone(restored.review_reasoning_effort)
+
     def group(self):
         group = asyncio.run(create_group_session(self.cards, self.db))
         return group["session_id"], tuple(member["persona_id"] for member in group["members"])

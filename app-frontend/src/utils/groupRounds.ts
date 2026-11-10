@@ -7,8 +7,11 @@ export function groupRoundStatus(round: GroupRound): string {
 
 export function groupRoundNotice(round: GroupRound): string {
   if (round.status === "failed") {
-    return round.error_code === "timeout" ? "本轮等待超时，已保存的发言仍可查看。"
-      : "本轮未完成，已保存的发言仍可查看。";
+    const reason = ({ timeout: '本轮等待超时', incomplete_output: '模型输出被截断，本轮未完成',
+      invalid_output: '模型回复格式校验未通过，本轮未完成',
+      experience_check_failed: '角色亲历审查未完成，本轮未完成',
+      unsupported_experience: '回复含缺乏依据的亲历表述，本轮未完成' } as Record<string, string>)[round.error_code || ''];
+    return `${reason || '本轮未完成'}，已保存的发言仍可查看。`;
   }
   if (round.status !== "awaiting_confirmation" || round.confirmed) return "";
   switch (round.finish_reason) {

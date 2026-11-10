@@ -31,6 +31,7 @@ class GroupMemberContext:
     protocol_version: int = 1
     response_request: dict | None = None
     experience_evidence_json: str | None = None
+    current_mood: str | None = None
 
 
 def _member_state(persona, group, round_, candidate, before_sequence, db):
@@ -147,6 +148,6 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
             json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version,
             basis if basis and basis.get("reply_mode") else None,
-            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None)
+            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None, state_persona.current_mood)
     finally:
         db.rollback()

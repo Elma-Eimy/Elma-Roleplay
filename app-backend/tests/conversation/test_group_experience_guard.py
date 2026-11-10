@@ -2,6 +2,8 @@
 import asyncio
 import json
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from application.group_runtime import group_runtime
@@ -22,6 +24,24 @@ class GroupExperienceGuardTests(unittest.TestCase):
     submit = fixtures.GroupBackgroundTests.submit
     drain = fixtures.GroupBackgroundTests.drain
     candidate = fixtures.GroupBackgroundTests.candidate
+
+    def test_frozen_review_effort_does_not_change_role_generation_parameters(self):
+        from services.conversation import group_background_service as background
+        sid, ids = self.group()
+        base = fixtures.Model(ids)
+        capture = background.capture_group_calls
+        async def scenario(owner):
+            with patch.object(background, 'capture_group_calls', side_effect=lambda *args, **kwargs:
+                    replace(capture(*args, **kwargs), review_reasoning_effort='low')):
+                receipt = await self.submit(sid, owner, base, max_steps=1, experience_guard=True)
+                await self.drain(owner)
+            self.assertEqual('awaiting_confirmation', self.candidate(receipt).status)
+            role = next(parameters for stage, parameters in base.calls if stage == 'role_generation')
+            review = next(parameters for stage, parameters in base.calls if stage == 'role_experience_review')
+            self.assertEqual('low', review['reasoning_effort'])
+            self.assertNotEqual('low', role.get('reasoning_effort'))
+        with group_runtime(self.engine) as owner:
+            asyncio.run(scenario(owner))
 
     def test_unsupported_experience_rewrites_before_any_visibility_or_state_is_saved(self):
         sid, ids = self.group()

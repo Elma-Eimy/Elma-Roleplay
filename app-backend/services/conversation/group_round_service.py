@@ -228,6 +228,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id),
                 history_limit=snapshot.history_limit, fail_candidate=False,
                 output_attempts=snapshot.output_attempts, call_review=role_review,
+                review_reasoning_effort=snapshot.review_reasoning_effort,
                 **({"scope": scope} if scope is not None else {}))
             target["revision"] = saved["revision"]
         personal_inputs = {}

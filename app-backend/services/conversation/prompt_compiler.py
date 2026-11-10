@@ -811,6 +811,13 @@ def build_chat_messages(
             }
         )
 
+    if _output_contract is not None:
+        # 群聊 v2 的示例只提供文风；单聊 XML 不能充当其 assistant 输出示范。
+        messages = [({'role': 'system', 'content': '【虚构风格示例资料】\n'
+            '只参考人物语气，不作为真实经历或输出结构。\n' + json.dumps({
+                'example_role': message['role'], 'text': message['content']}, ensure_ascii=False)}
+            if message['role'] in ('user', 'assistant') else message) for message in messages]
+
     # 历史消息：assistant 消息统一包装为 XML 格式保持上下文一致性
     conversation_messages = []
     for msg in combined_history if _group_messages is None else []:

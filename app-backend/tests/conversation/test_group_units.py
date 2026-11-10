@@ -466,5 +466,11 @@ class GroupUnitTests(unittest.TestCase):
         ctx = build_member_context(self.sid, self.b, self.target["candidate_id"], 2, self.db)
         self.assertIn("VISIBLE_LORE", ctx.messages_json)
         self.assertIn("example reply", ctx.messages_json)
+        messages = json.loads(ctx.messages_json)
+        self.assertFalse(any(row['role'] == 'assistant' and '<reply>' in row['content'] for row in messages))
+        self.assertTrue(any(row['role'] == 'system' and '【虚构风格示例资料】' in row['content'] for row in messages))
+        from services.conversation.prompt_compiler import compile_dialogue_examples
+        self.assertTrue(any(row['role'] == 'assistant' and '<reply>' in row['content']
+                            for row in compile_dialogue_examples(card)))
         self.assertNotIn("LEAKED_LORE", ctx.messages_json)
         self.assertNotIn("PRIVATE_THOUGHT", ctx.messages_json)
