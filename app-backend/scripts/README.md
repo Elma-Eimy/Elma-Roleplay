@@ -6,6 +6,7 @@
 | --- | --- |
 | `python -m scripts.query_db` | 查看当前配置的 SQLite 和 ChromaDB 数据概览 |
 | `python -m scripts.export_character_card <PNG路径> <输出文件夹>` | 无损导出 PNG 内每个有效 chara JSON，不连接数据库、不覆盖已有输出 |
+| `python -m scripts.patch_character_card <卡片路径> [--patch <规则JSON>] [--in-place\|--output <输出路径>] [--inspect]` | 通用角色卡提示词修缮与无损 PNG/JSON 写回工具 |
 | `python -m scripts.memory_quality` | 在临时副本中运行固定虚构记忆样本，生成整理前后与召回对照报告；默认离线 |
 | `python -m scripts.group_chat_prototype` | 在临时源码和虚构库中回放导演选人、个人生成、知情后判与只读 HTTP，默认离线 |
 | `python -m scripts.query_session_messages 12 15` | 查看会话 12 的最近 15 条消息 |
