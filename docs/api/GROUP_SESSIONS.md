@@ -112,9 +112,9 @@ utterances 按轮内 sequence 正序，每项为 `{item_id, sequence, speaker_pe
 
 全部写请求拒绝未知字段。client_request_id 为客户端在提交前生成的 UUID；expected_group_revision 为会话版本。observed_round_id、observed_candidate_id、observed_candidate_revision 为上次读取的 current.latest，首轮发送时全部为空；后续三者必须同时提供。操作路径的 round_id 必须与所见轮次一致，候选必须属于该群该轮。以下示例 ID 仅说明结构。
 
-`POST /group-sessions/{session_id}/rounds` 接受原文（1–20000 个码点，保留首尾空白但拒绝纯空白）。可选 model、thinking_mode（inherit/enabled/disabled）、reasoning_effort，以及 max_steps（默认 4，1–6）。只有新消息与回执一起提交才确认上一成功轮次，后续生成失败不解冻上一轮。
+`POST /group-sessions/{session_id}/rounds` 接受原文（1–20000 个码点，保留首尾空白但拒绝纯空白）。可选 model、thinking_mode（inherit/enabled/disabled）、reasoning_effort，以及兼容字段 max_steps（默认 4，1–6；新候选不再将它作为发言条数上限）。只有新消息与回执一起提交才确认上一成功轮次，后续生成失败不解冻上一轮。
 
-请求规划 v2 的轮次尚无角色发言时，若存在可调度成员的 `user_request` 且 `reply_mode=speech`，导演不能直接 `wait_user`。校正复用当前阶段既有尝试次数与持久调用预算，耗尽返回候选/操作失败，`error_code=pending_response`，不保存未通过的结束决定。其他请求类型、已有发言和旧规划策略不启用该拦截。
+新候选冻结 `director_ending=true`，每条发言保存后重新调用导演，只有导演结束才完成。旧快照缺少该字段时沿用原条数、检查点与续接语义，不自动转成新策略。
 
 <!-- request-example: POST /group-sessions/{session_id}/rounds -->
 ```json
@@ -148,7 +148,9 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 
 每个导演调度或角色生成步骤只调用一次模型。非法输出、空正文、网络错误、截断或超时按原检查点失败，保留已提交的发言；不再执行格式纠正重试、JSON 转换或发言审查。角色回复复用单聊 XML 解析，导演只返回调度动作。
 
-设本次剩余发言上限为 K，最多 K 次角色生成和 K+1 次导演调度，调用上限为 `2K+1`；仅需最终提交的续接为零次模型调用。每次派发前扣除持久额度，单次与整轮期限继续有效，模型阶段耗时分别记录。
+新候选每次显式执行最多调用模型 64 次、总时限 300 秒，单次模型超时仍使用冻结配置。这是资源保护，不是整轮发言条数或自然结束条件。触发资源保护时以兼容的 `status=failed`、`error_code=resource_paused` 保存暂停状态，`finish_reason` 不伪装为 step_limit 完成；前端显示“已暂停”并提供继续。暂停不会确认轮次、采用未完成重生成候选或触发记忆提纯。每次显式继续使用新的执行预算，沿同一候选检查点前进，不重放已保存正文或调度。
+
+导演结束决定先与 finish 检查点保存，再提交最终完成；最后提交失败后续接为零次模型调用。旧候选仍按冻结的 `2K+1` 等额度处理，旧 step_limit 结果不重写。
 
 `invalid_basis` 表示导演返回了不可用的回应来源；校验失败时不调用该角色。旧审查错误码仍可出现在历史候选里，但不再产生对应的模型审查调用。旧快照、正文和权限保留；内部服务与 HTTP 均拒绝恢复退役策略，不能用续接静默转为全文共享。是否提供续接以 `can_resume` 为准，Mock 不模拟真实模型规则。
 
