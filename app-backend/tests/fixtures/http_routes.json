@@ -4,6 +4,7 @@
   ["GET", "/group-sessions/{session_id}"],
   ["GET", "/group-sessions/{session_id}/portraits"],
   ["GET", "/group-sessions/{session_id}/members/{persona_id}/compile_prompt"],
+  ["GET", "/group-sessions/{session_id}/members/{persona_id}/memories"],
   ["PUT", "/group-sessions/{session_id}/members/{persona_id}/portrait"],
   ["POST", "/group-sessions/{session_id}/delete"],
   ["POST", "/characters/charx/preview"],

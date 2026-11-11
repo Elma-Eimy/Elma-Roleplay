@@ -16,6 +16,14 @@
 
 群聊路径与请求中的资源 ID（含成员角色及来源单聊 ID）范围为 1–9223372036854775807；版本及 offset 范围为 0–9223372036854775807，limit 和 max_steps 继续使用各自更小的上限。超范围参数在资源加载或 SQL 绑定前返回 422，不派发模型、不消费请求 UUID、不确认上一轮。范围内但不存在的 ID 仍返回 404；合法的大 offset 返回空页。
 
+## 成员记忆浏览
+
+`GET /group-sessions/{session_id}/members/{persona_id}/memories` 只读该成员的入群继承快照及群内已确认、仍采用的有效来源，不访问来源单聊或其他成员，不调用 Embedding 或生成模型。返回 SQLite 正文，`indexed` 表示群聊向量索引的同步状态；向量索引不是业务正文来源。
+
+查询参数：`q` 最长 1000 字；`scope=all/local/inherited`（默认 all）；`status=active/superseded/all`（默认 active）；`limit` 为 1–100（默认 20），`offset` 为 0–9223372036854775807。全文替换和局部撤回沿用已有记忆有效性规则，部分失效时有效列表只展示保留片段，历史列表保留原卡。
+
+返回 `items/total/limit/offset/has_more/facets`，结构复用单聊记忆浏览。每条包含 `id/content/memory_type/importance_score/is_local/is_superseded/created_at/indexed`；旧来源缺少时间时 created_at 为 null。facets 包含有效总数、群内有效、继承有效与历史原卡数，按搜索词计数。成员不属于本群返回 404；单聊类型冲突返回 409；非法参数返回 422。当前只提供浏览，不开放群聊记忆编辑、删除或整理接口。
+
 ## 创建
 
 `POST /group-sessions` 返回新建群聊详情，状态码 200。数组顺序成为稳定的 slot 1–3，同一角色卡不能重复加入。标题和昵称为 1–50 字（默认“新的群聊”和“用户”），首尾空白移除；共同设定最多 20000 字，空白归一为 null。请求及嵌套模型拒绝未知字段。

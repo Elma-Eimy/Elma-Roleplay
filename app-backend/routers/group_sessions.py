@@ -1,7 +1,7 @@
 """群聊创建与读取的 HTTP 契约；来源快照由服务端冻结。"""
 from fastapi import Depends, HTTPException, Query, Request, Path
 from uuid import UUID
-from typing import Annotated
+from typing import Annotated, Literal
 from sqlalchemy.orm import Session
 
 from application.session_routes import GroupSessionAPIRouter
@@ -18,6 +18,18 @@ from services.media.group_portraits import update_group_portrait
 
 router = GroupSessionAPIRouter()
 GroupResourceId = Annotated[int, Path(gt=0, le=SQLITE_INT_MAX)]
+
+
+@router.get('/{session_id}/members/{persona_id}/memories')
+def get_group_member_memories(session_id: GroupResourceId, persona_id: GroupResourceId,
+    q: str = Query('', max_length=1000), scope: Literal['all', 'local', 'inherited'] = 'all',
+    status: Literal['active', 'superseded', 'all'] = 'active',
+    limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0, le=SQLITE_INT_MAX), db: Session = Depends(get_db)):
+    try:
+        return queries.get_member_memories(session_id, persona_id, db, q=q, scope=scope, status=status,
+                                           limit=limit, offset=offset)
+    except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
 
 
 @router.get('/{session_id}/members/{persona_id}/compile_prompt')

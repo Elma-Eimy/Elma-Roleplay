@@ -199,3 +199,13 @@ def get_group_portraits(session_id, db):
         return {'session_id': session_id, 'current': state, 'members': _current_portraits(session_id, db),
                 'can_update': bool(state['capabilities']['can_send'] if latest is None else
                                    state['capabilities']['can_regenerate'] and latest['candidate_id'] is not None)}
+
+
+@group_session_operation
+def get_member_memories(session_id, persona_id, db, **options):
+    from services.memory.group_memory_view import list_member_memories
+    with _read(session_id, db):
+        member = db.get(SessionPersona, persona_id)
+        if member is None or member.session_id != session_id:
+            raise GroupSessionNotFound('成员不属于本群或不存在')
+        return list_member_memories(persona_id, db, **options)

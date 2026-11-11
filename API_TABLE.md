@@ -77,6 +77,7 @@
 | **POST** | `/group-sessions` | 原子创建固定成员群聊与来源快照 |
 | **GET** | `/group-sessions` | 群聊摘要稳定分页 |
 | **GET** | `/group-sessions/{session_id}/members/{persona_id}/compile_prompt` | [成员提示词组装预览](docs/api/GROUP_SESSIONS.md) |
+| **GET** | `/group-sessions/{session_id}/members/{persona_id}/memories` | [按成员浏览群聊记忆](docs/api/GROUP_SESSIONS.md) |
 | **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
 | **GET** | `/group-sessions/{session_id}/portraits` | 读取当前采用候选的成员立绘与选择权限 |
 | **PUT** | `/group-sessions/{session_id}/members/{persona_id}/portrait` | 按所见群与候选版本修改单个成员立绘 |

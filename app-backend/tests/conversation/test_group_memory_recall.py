@@ -106,6 +106,12 @@ class GroupMemoryRecallTests(unittest.TestCase):
                     self.assertTrue(process_one_capture(db, extract=extract))
             local = self.db.query(GroupRecallCard).filter(GroupRecallCard.capture_id.isnot(None)).one()
             self.assertGreater(local.id, ceiling)
+            from services.conversation.group_query_service import get_member_memories
+            browsing = get_member_memories(sid, ids[0], self.db)
+            self.assertIn(updated, str(browsing['items']))
+            self.assertNotIn('Q17', str(browsing['items']))
+            historical = get_member_memories(sid, ids[0], self.db, status='superseded')
+            self.assertIn('Q17', str(historical['items']))
             earlier = unified_memories(ids[0], 2, ceiling, ["铜铃"], self.db, {})
             self.assertEqual(1, len(earlier))
             self.assertIn("Q17", str(earlier))
