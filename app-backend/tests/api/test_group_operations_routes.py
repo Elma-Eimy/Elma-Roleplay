@@ -45,7 +45,13 @@ class GroupOperationRoutesTests(unittest.TestCase):
                 content = options.get("user_content", latest.user_content if latest else "hello")
             model = models.Model(ids, fail=self.fail_stage, text=f"REPLY_{len(self.models)}", user=content)
             self.models.append(model)
-            return await background.submit_group_operation(session_id, request_id, kind, revision, db, call_model=model, **options)
+            async def shared(stage, parameters):
+                if stage == 'role_generation' and stage != model.fail:
+                    model.calls.append((stage, parameters))
+                    model.saved += 1
+                    return models._response(f'<reply>{model.text}</reply><status emotion="平静" affection_change="2"/>')
+                return await model(stage, parameters)
+            return await background.submit_group_operation(session_id, request_id, kind, revision, db, call_model=shared, **options)
         dispatch_patch = patch("routers.group_sessions.submit_group_operation", side_effect=dispatch)
         dispatch_patch.start()
         self.addCleanup(dispatch_patch.stop)
@@ -111,6 +117,32 @@ class GroupOperationRoutesTests(unittest.TestCase):
         self.assertEqual(receipt["operation_id"], duplicate.json()["operation_id"])
         changed = {**body, "user_content": "changed"}
         self.assertEqual(409, self.client.post(f"/group-sessions/{self.sid}/rounds", json=changed).status_code)
+
+    def test_member_prompt_reuses_xml_context_and_old_resume_is_frozen(self):
+        self.assertEqual(422, self.client.get(f'/group-sessions/{self.sid}/members/1/compile_prompt').status_code)
+        body, receipt = self.send()
+        self.done(body['client_request_id'])
+        member = self.client.get(f'/group-sessions/{self.sid}').json()['members'][0]['persona_id']
+        path = f'/group-sessions/{self.sid}/members/{member}/compile_prompt'
+        response = self.client.get(path)
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertIn('<reply>', json.dumps(response.json()['messages']))
+        self.assertEqual(422, self.client.get(f'/group-sessions/{self.sid}/members/999999/compile_prompt').status_code)
+        with patch.object(settings, 'ACCESS_API_KEY', 'test-key'):
+            self.assertEqual(403, self.client.get(path).status_code)
+        cid = receipt['accepted']['candidate_id']
+        self.db.expire_all()
+        candidate = self.db.get(GroupRoundCandidate, cid)
+        frozen = json.loads(candidate.call_snapshot_json)
+        frozen.pop('shared_chat')
+        candidate.call_snapshot_json = json.dumps(frozen)
+        self.db.commit()
+        calls = sum(len(model.calls) for model in self.models)
+        response = self.client.post(f"/group-sessions/{self.sid}/rounds/{candidate.round_id}/resume",
+            json=self.command(target_candidate_id=cid, target_candidate_revision=candidate.revision))
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertIn('冻结', response.json()['detail'])
+        self.assertEqual(calls, sum(len(model.calls) for model in self.models))
 
     def test_regenerate_resume_select_and_discard_preserve_identities_and_old_receipts(self):
         body, first = self.send()
@@ -198,9 +230,12 @@ class GroupOperationRoutesTests(unittest.TestCase):
             with self.sessions() as read:
                 model = models.Model(tuple(sorted(_members(session_id, read))), user=options["user_content"])
             async def hold(stage, parameters):
-                if stage == "user_visibility":
+                if stage == "next_action":
                     entered.set()
                     await release.wait()
+                if stage == 'role_generation':
+                    model.saved += 1
+                    return models._response('<reply>回复</reply><status emotion="平静" affection_change="2"/>')
                 return await model(stage, parameters)
             return await background.submit_group_operation(session_id, request_id, kind, revision, db, call_model=hold, **options)
         body = self.command(user_content="hello", model="fixture")

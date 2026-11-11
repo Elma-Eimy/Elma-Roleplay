@@ -114,14 +114,6 @@ class DirectorContextTests(unittest.TestCase):
         with self.assertRaisesRegex(director.GroupDirectorError, "context_budget"):
             director.build_director_context(sid, self.db, candidate_id=target["candidate_id"], expected_revision=1, max_chars=400)
 
-    def test_pending_user_and_unpublished_utterance_also_obey_context_budget(self):
-        from services.conversation.group_generation_service import ProposedGroupUtterance
-        sid, ids = self.group()
-        ctx = director.build_director_context(sid, self.db, max_chars=500)
-        with self.assertRaisesRegex(director.GroupDirectorError, "context_budget"):
-            director.build_director_messages(ctx, "user_visibility", user_content="X" * 500)
-        with self.assertRaisesRegex(director.GroupDirectorError, "context_budget"):
-            director.build_director_messages(ctx, "utterance_visibility", proposed=ProposedGroupUtterance(ids[0], "X" * 500))
 
     def test_older_context_budget_omits_whole_items_and_signals_incomplete_history(self):
         sid, ids = self.group()
@@ -134,35 +126,6 @@ class DirectorContextTests(unittest.TestCase):
         self.assertTrue(payload["history_incomplete"])
         self.assertEqual([], payload["history"])
 
-    def test_stage_budget_trims_older_items_and_protects_current_prefix(self):
-        from dataclasses import replace
-        from services.conversation.group_generation_service import ProposedGroupUtterance
-        sid, ids = self.group()
-        target = asyncio.run(history.prepare_group_round(sid, "OLD" * 200, ids, self.db))
-        asyncio.run(history.finish_group_round(sid, target["candidate_id"], 1, self.db))
-        self.db.get(GroupRound, target["round_id"]).confirmed_at = datetime.utcnow()
-        self.db.commit()
-        initial = director.build_director_context(sid, self.db)
-        current = asyncio.run(history.prepare_group_round(sid, "CURRENT_KEEP", ids, self.db))
-        ctx = director.build_director_context(sid, self.db, candidate_id=current["candidate_id"], expected_revision=1)
-        for stage, scene, arguments in (
-            ("user_visibility", initial, {"user_content": "new input"}),
-            ("next_action", ctx, {}),
-            ("utterance_visibility", ctx, {"proposed": ProposedGroupUtterance(ids[0], "new utterance")}),
-        ):
-            with self.subTest(stage=stage):
-                scene = replace(scene, max_chars=len(scene.payload_json))
-                messages = director.build_director_messages(scene, stage, **arguments)
-                payload = json.loads(messages[1]["content"])
-                self.assertLessEqual(len(messages[1]["content"]), scene.max_chars)
-                self.assertTrue(payload["history_incomplete"])
-                self.assertNotIn("OLD" * 200, messages[1]["content"])
-                if stage != "user_visibility":
-                    self.assertEqual(["CURRENT_KEEP"], [item["content"] for item in payload["history"]])
-        required = replace(ctx, max_chars=500)
-        with self.assertRaisesRegex(director.GroupDirectorError, "context_budget"):
-            director.build_director_messages(required, "utterance_visibility", proposed=ProposedGroupUtterance(ids[0], "X" * 500))
-        self.assertIn("CURRENT_KEEP", ctx.payload_json)
 
     def test_clean_transaction_and_type_checks_preserve_caller_writes(self):
         with self.assertRaises(SessionKindConflict):
@@ -179,7 +142,7 @@ class DirectorPrototypeTests(unittest.TestCase):
     setUp = fixtures.GroupSessionServiceTests.setUp
 
     def case(self):
-        path = Path(__file__).resolve().parents[1] / "fixtures/group_director_cases.json"
+        path = Path(__file__).resolve().parents[1] / "fixtures/group_shared_director_cases.json"
         return json.loads(path.read_text(encoding="utf-8"))["cases"][0]
 
     def run_case(self, case=None, intercept=None, **kwargs):
@@ -205,50 +168,21 @@ class DirectorPrototypeTests(unittest.TestCase):
         self.assertIsNone(result["error_code"])
         rows = history.list_group_rounds(group["session_id"], self.db)["rounds"][0]
         self.assertEqual([ids[0], ids[1], ids[0]], [row["speaker_persona_id"] for row in rows["utterances"]])
-        self.assertEqual(11, len(result["calls"]))
+        self.assertEqual(7, len(result["calls"]))
         b_input = json.dumps(result["personal_inputs"][str(ids[1])], ensure_ascii=False)
         self.assertNotIn("SECRET_VAULT_731", b_input)
-        self.assertIn("PUBLIC_RELAY", b_input)
+        self.assertIn(self.case()["steps"][0]["content"], b_input)
         role_calls = [c for c in result["calls"] if c["stage"] == "role_generation"]
         self.assertNotIn("SECRET_VAULT_731", json.dumps(role_calls[1], ensure_ascii=False))
         self.assertNotIn("eligible_persona_ids", json.dumps(role_calls, ensure_ascii=False))
 
-    def test_mixed_item_is_hidden_but_loses_public_trigger(self):
-        case = self.case()
-        case["user_visible"] = [0, 1]
-        case["steps"] = [{"speaker": 0, "content": "PUBLIC_CUE (PRIVATE_THOUGHT)", "visible": [0]}]
-        _, ids, result = self.run_case(case)
-        b_input = json.dumps(result["personal_inputs"][str(ids[1])])
-        self.assertNotIn("PRIVATE_THOUGHT", b_input)
-        self.assertNotIn("PUBLIC_CUE", b_input)
 
-    def test_invalid_initial_visibility_never_creates_round(self):
-        async def invalid(stage, parameters, replay, group):
-            return _response('{"recipients":[]}')
-        _, _, result = self.run_case(intercept=invalid)
-        self.assertEqual("invalid_output", result["error_code"])
-        self.assertEqual(0, self.db.query(GroupRound).count())
-        self.assertEqual(1, len(result["calls"]))
 
-    def test_invalid_post_visibility_keeps_prefix_and_stops_without_retry(self):
-        calls = 0
-        async def invalid(stage, parameters, replay, group):
-            nonlocal calls
-            if stage == "utterance_visibility":
-                calls += 1
-                if calls == 2:
-                    return _response('{"recipients":[]}')
-        group, _, result = self.run_case(intercept=invalid)
-        self.assertEqual("invalid_output", result["error_code"])
-        row = history.list_group_rounds(group["session_id"], self.db)["rounds"][0]
-        self.assertEqual("failed", row["status"])
-        self.assertEqual(1, len(row["utterances"]))
-        self.assertEqual(7, len(result["calls"]))
 
     def test_budget_stops_without_extra_director_call(self):
         _, _, result = self.run_case(max_steps=2)
         self.assertEqual("step_limit", result["finish_reason"])
-        self.assertEqual(7, len(result["calls"]))
+        self.assertEqual(4, len(result["calls"]))
 
     def test_full_old_history_cannot_block_a_short_new_user_input(self):
         group = asyncio.run(create_group_session(self.cards, self.db))
@@ -269,15 +203,9 @@ class DirectorPrototypeTests(unittest.TestCase):
         with group_runtime(self.engine) as runtime:
             result = asyncio.run(_run_round(sid, "new small input", self.db, runtime, model))
         self.assertIsNone(result["error_code"])
-        self.assertEqual(2, len(result["calls"]))
+        self.assertEqual(1, len(result["calls"]))
         self.assertEqual(original, self.db.get(GroupRound, old["round_id"]).user_content)
 
-    def test_no_visible_basis_uses_only_initial_call(self):
-        case = self.case()
-        case["user_visible"] = []
-        _, _, result = self.run_case(case)
-        self.assertEqual("no_visible_basis", result["finish_reason"])
-        self.assertEqual(1, len(result["calls"]))
 
     def test_model_timeout_marks_failure_without_retry(self):
         async def slow(stage, parameters, replay, group):
@@ -286,7 +214,7 @@ class DirectorPrototypeTests(unittest.TestCase):
         group, _, result = self.run_case(intercept=slow, timeout=0.5)
         self.assertEqual("failed", result["finish_reason"])
         self.assertEqual("timeout", result["error_code"])
-        self.assertEqual(2, len(result["calls"]))
+        self.assertEqual(1, len(result["calls"]))
         self.assertEqual("failed", history.list_group_rounds(group["session_id"], self.db)["rounds"][0]["status"])
 
     def test_cancellation_marks_candidate_failed_and_releases_whole_round_lock(self):
@@ -308,7 +236,7 @@ class DirectorPrototypeTests(unittest.TestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-            self.assertEqual(["user_visibility", "next_action", "role_generation"], calls)
+            self.assertEqual(["next_action", "role_generation"], calls)
         with group_runtime(self.engine) as runtime:
             asyncio.run(scenario(runtime))
         self.assertFalse(is_session_locked(group["session_id"]))
@@ -322,13 +250,13 @@ class DirectorPrototypeTests(unittest.TestCase):
         ids = tuple(member["persona_id"] for member in group["members"])
         entered, release = threading.Event(), threading.Event()
         original = history._finish
-        def finish(*args):
+        def finish(*args, **kwargs):
             entered.set()
             if not release.wait(5):
                 raise RuntimeError("finish probe timeout")
             if fail:
                 raise RuntimeError("injected finish failure")
-            return original(*args)
+            return original(*args, **kwargs)
         async def scenario(runtime):
             replay = ReplayModel({"user_visible": [0, 1], "steps": []}, ids)
             calls = []
@@ -350,7 +278,7 @@ class DirectorPrototypeTests(unittest.TestCase):
                 result = None
             else:
                 result = await task
-            self.assertEqual(["user_visibility", "next_action"], calls)
+            self.assertEqual(["next_action"], calls)
             return result
         with group_runtime(self.engine) as runtime, patch.object(history, "_finish", finish):
             result = asyncio.run(scenario(runtime))
@@ -378,7 +306,7 @@ class DirectorPrototypeTests(unittest.TestCase):
                     connection.execute(text("UPDATE group_round_candidates SET revision=99"))
         _, _, result = self.run_case(intercept=advance)
         self.assertEqual("failed", result["finish_reason"])
-        self.assertEqual(2, len(result["calls"]))
+        self.assertEqual(1, len(result["calls"]))
         self.db.expire_all()
         candidate = self.db.query(GroupRoundCandidate).one()
         self.assertEqual(("generating", 99), (candidate.status, candidate.revision))
@@ -400,14 +328,12 @@ class DirectorPrototypeTests(unittest.TestCase):
             report = json.loads(paths[0].read_text(encoding="utf-8"))
             self.assertEqual("offline", report["mode"])
             self.assertEqual("pending", report["semantic_review"])
-            self.assertEqual(9, len(report["results"]))
+            self.assertEqual(5, len(report["results"]))
             for result in report["results"]:
                 self.assertEqual("invalid_output" if result["id"] == "failed-prefix" else None, result["error_code"], result["id"])
                 self.assertTrue(all(result["checks"].values()), result["checks"])
                 self.assertEqual("failed" if result["id"] == "failed-prefix" else "awaiting_confirmation",
                                  result["http_rounds"]["rounds"][0]["status"])
-            mixed = next(row for row in report["results"] if row["id"] == "mixed-private-thought")
-            self.assertTrue(mixed["granularity_review"].startswith("offline_units_passed"))
             for row in report["results"]:
                 self.assertEqual(2, row["candidate_state"]["protocol_version"])
                 if row["id"] == "failed-prefix":

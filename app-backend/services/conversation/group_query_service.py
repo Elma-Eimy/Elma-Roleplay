@@ -5,7 +5,7 @@ from sqlalchemy import text
 from core.locking import is_session_locked
 from core.models import GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem, SessionPersona
 from services.conversation import group_history_service as history, group_operation_service as operations
-from services.conversation.group_call_snapshot import restore_group_calls
+from services.conversation.group_call_snapshot import restore_group_calls, require_executable_calls
 from services.conversation.group_checkpoint_service import validate_prefix, saved_steps
 from services.conversation.group_context_service import _member_state
 from services.memory.group_member_insights import member_insights
@@ -77,10 +77,11 @@ def _candidate(row, round_, state, db):
     resumable = False
     if idle and row.status == "failed":
         try:
-            _, maximum = restore_group_calls(row, history._members(row.session_id, db))
+            snapshot, maximum = restore_group_calls(row, history._members(row.session_id, db))
+            require_executable_calls(snapshot)
             validate_prefix(round_, row, db)
             count = saved_steps(row.id, db)
-            resumable = count <= maximum and (row.checkpoint == "finish") == (count == maximum)
+            resumable = snapshot.shared_chat and count <= maximum and (row.checkpoint == "finish") == (count == maximum)
         except (ValueError, TypeError, KeyError, SessionKindConflict):
             pass
     return {"candidate_id": row.id, "version": row.version, "revision": row.revision,
@@ -94,6 +95,39 @@ def _candidate(row, round_, state, db):
 def get_group_state(session_id, db):
     with _read(session_id, db) as group:
         return _state(group, db)
+
+
+@group_session_operation
+def compile_member_prompt(session_id, persona_id, db):
+    """复用生成装配入口预览当前所选候选，不派发生成或改变检查点。"""
+    from services.conversation.group_context_service import build_member_context
+    from services.conversation.prompt_token_estimator import estimate_prompt_tokens
+    with _read(session_id, db) as group:
+        latest = operations._latest(session_id, db)
+        if latest is None or latest.selected_candidate_id is None:
+            raise history.GroupSessionValidationError('尚无群聊轮次，请发送首条消息后查看')
+        candidate = db.get(GroupRoundCandidate, latest.selected_candidate_id)
+        cid, revision = candidate.id, candidate.revision
+        policy = json.loads(candidate.call_snapshot_json or '{}')
+        parameters = next((json.dumps(row['parameters']) for row in policy.get('members', [])
+                           if row['persona_id'] == persona_id), None)
+        limit = policy.get('history_limit')
+    context = build_member_context(session_id, persona_id, cid, revision, db,
+        generation_parameters_json=parameters, history_limit=limit, preview=True)
+    messages = json.loads(context.messages_json)
+    return {'messages': messages, 'token_estimate': estimate_prompt_tokens(messages),
+            'candidate_id': cid, 'revision': revision}
+
+
+@group_session_operation
+def require_shared_resume(session_id, candidate_id, db):
+    """冻结旧裁决任务，不把原候选静默改成全文共享。"""
+    with _read(session_id, db):
+        candidate = db.get(GroupRoundCandidate, candidate_id)
+        if candidate is None or candidate.session_id != session_id:
+            raise GroupSessionNotFound('候选不属于本群或不存在')
+        if not json.loads(candidate.call_snapshot_json or '{}').get('shared_chat', False):
+            raise SessionKindConflict('旧候选的裁决执行已冻结，已保存内容保留；请重新生成共同群聊候选')
 
 
 @group_session_operation

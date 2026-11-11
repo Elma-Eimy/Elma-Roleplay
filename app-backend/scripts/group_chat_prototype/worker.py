@@ -21,53 +21,41 @@ def _response(raw):
 
 
 class ReplayModel:
-    def __init__(self, case, member_ids, *, protocol_version=1):
+    def __init__(self, case, member_ids):
         self.case, self.ids = case, member_ids
-        self.protocol_version = protocol_version
         self.role_index = 0
 
-    def _visibility(self, slots):
-        return json.dumps({"recipients": [{"persona_id": pid, "decision": "visible" if i in slots else "hidden"}
-                                         for i, pid in enumerate(self.ids)]})
-
     async def __call__(self, stage, messages):
-        if stage == 'role_experience_review':
-            return _response('{"claims":[]}')
-        if self.case.get("fail_at") == stage and self.role_index == self.case.get("fail_step", 0):
-            return _response('{"invalid":true}')
-        if stage == "user_visibility":
-            if self.protocol_version == 2:
-                return _response(json.dumps({"units": [{"start": 0, "end": len(self.case["user"]),
-                    "recipients": json.loads(self._visibility(self.case["user_visible"]))["recipients"]}]}))
-            return _response(self._visibility(self.case["user_visible"]))
-        steps = self.case["steps"]
-        if stage == "next_action":
+        steps = self.case['steps']
+        if self.case.get('fail_at') == stage and self.role_index == self.case.get('fail_step', 0):
+            return _response('')
+        if stage == 'next_action':
             if self.role_index >= len(steps):
                 return _response('{"action":"end","reason_code":"wait_user"}')
-            return _response(json.dumps({"action": "speak", "speaker_persona_id": self.ids[steps[self.role_index]["speaker"]],
-                                         "reason_code": "follow_up"}))
-        if stage == "role_generation":
             step = steps[self.role_index]
-            if self.protocol_version == 2:
-                return _response(json.dumps({"units": [{"kind": unit["kind"], "text": unit["text"]}
-                    for unit in step.get("units", [{"kind": "speech", "text": step["content"]}])],
-                    "status": {"emotion": "平静", "affection_change": 0}}, ensure_ascii=False))
-            return _response('<reply>' + step["content"] + '</reply><status emotion="平静" affection_change="0"/>')
-        step = steps[self.role_index]
-        raw = self._visibility(step["visible"])
-        if self.protocol_version == 2:
-            raw = json.dumps({"units": [{"unit_index": index,
-                "recipients": json.loads(self._visibility(unit.get("visible", step["visible"])))["recipients"]}
-                for index, unit in enumerate(step.get("units", [{"kind": "speech", "text": step["content"]}]))]})
-        result = _response(raw)
+            speaker = self.ids[step['speaker']]
+            payload = json.loads(messages[1]['content'])
+            sources = payload['response_sources'][str(speaker)]
+            choices = list(sources)
+            if 'reply_to_step' in step:
+                utterances = [row for row in payload['history'] if row['kind'] == 'utterance']
+                basis = utterances[step['reply_to_step']]['reference']
+            else:
+                basis = choices[-1]
+            return _response(json.dumps(dict(action='speak', speaker_persona_id=speaker,
+                reason_code='follow_up', basis=basis)))
+        if stage != 'role_generation':
+            raise AssertionError('unsupported model stage: ' + stage)
+        text = steps[self.role_index]['content']
         self.role_index += 1
-        return result
+        return _response('<reply>' + text + '</reply><status emotion="平静" affection_change="0"/>')
 
 
-async def _run_round(session_id, user_content, db, runtime, call_model, *, model="fixture-replay", max_steps=4, timeout=300, protocol_version=1):
+async def _run_round(session_id, user_content, db, runtime, call_model, *, model="fixture-replay", max_steps=4, timeout=300):
     from services.conversation.group_round_service import run_group_round
     return await run_group_round(session_id, user_content, db, runtime=runtime, call_model=call_model,
-                                 model=model, max_steps=max_steps, timeout=timeout, collect_inputs=True, protocol_version=protocol_version)
+                                 model=model, max_steps=max_steps, timeout=timeout, collect_inputs=True,
+                                 protocol_version=2)
 
 
 async def _run_suite(request):
@@ -97,11 +85,11 @@ async def _run_suite(request):
                     group = await create_group_session(GroupSessionDraft(tuple(GroupMember(card.id) for card in cards),
                         shared_setting=case["setting"]), db)
                     ids = tuple(member["persona_id"] for member in group["members"])
-                    replay = ReplayModel(case, ids, protocol_version=2)
+                    replay = ReplayModel(case, ids)
                     async def call_model(stage, kwargs):
                         return await replay(stage, kwargs["messages"])
                     result = await _run_round(group["session_id"], case["user"], db, runtime, None if request["online"] else call_model,
-                        model=request["model"], max_steps=case.get("max_steps", 4), protocol_version=2)
+                        model=request["model"], max_steps=case.get("max_steps", 4))
                     app = create_app()
                     app.dependency_overrides[get_db] = lambda: db
                     # 不启动 lifespan；原型自身持有运行权，仅调用只读 HTTP。
@@ -113,7 +101,7 @@ async def _run_suite(request):
                     finally:
                         client.close()
                     checks = {"read_only_http": rounds["total"] == 1,
-                              "call_bound": len(result["calls"]) <= 3 * case.get("max_steps", 4) + 1}
+                              "call_bound": len(result["calls"]) <= 2 * case.get("max_steps", 4) + 1}
                     if case.get("expected_error") is None:
                         checks["input_collection"] = result.get("error_code") is None and result.get("diagnostic_error_code") is None
                     if not request["online"]:

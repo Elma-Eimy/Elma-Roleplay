@@ -29,7 +29,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     backend = Path(__file__).resolve().parents[2]
     try:
-        suite = json.loads((backend / "tests/fixtures/group_director_cases.json").read_text(encoding="utf-8"))
+        suite = json.loads((backend / "tests/fixtures/group_shared_director_cases.json").read_text(encoding="utf-8"))
         cases = suite["cases"]
         if set(args.case) - {case["id"] for case in cases}:
             raise ValueError("场景 ID 不存在")
@@ -71,7 +71,7 @@ def main(argv=None):
             config = {"llm": {"chat_base_url": args.base_url if args.online else "https://example.invalid/v1",
                               "embedding_base_url": "https://example.invalid/v1",
                               "default_chat_model": args.model or "fixture-replay"},
-                      "app": {"sqlite_db_path": "data/prototype.db", "chroma_db_path": "data/chroma", "group_turn_planning": args.online},
+                      "app": {"sqlite_db_path": "data/prototype.db", "chroma_db_path": "data/chroma"},
                       "tts": {"cache_dir": "data/audio"}}
             (root / "config.yaml").write_text(json.dumps(config), encoding="utf-8")
             (root / "request.json").write_text(json.dumps({"cases": cases, "online": args.online,

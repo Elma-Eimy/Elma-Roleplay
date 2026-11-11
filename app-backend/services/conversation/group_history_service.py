@@ -109,7 +109,7 @@ async def prepare_group_round(session_id, user_content, visible_to, db):
     return await _locked_write([session_id], _prepare, session_id, user_content, visible_to, db)
 
 
-def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=None):
+def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=None, call_snapshot_json=None):
     try:
         _begin_write(db)
         group = _require_group(session_id, db)
@@ -126,7 +126,9 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
         db.flush()
         candidate = GroupRoundCandidate(round_id=round_.id, session_id=session_id,
                                         portrait_selections_json=portrait_snapshot,
-                                        protocol_version=2 if unit_plan is not None else 1)
+                                        protocol_version=2 if unit_plan is not None else 1,
+                                        call_snapshot_json=call_snapshot_json,
+                                        checkpoint='next_action' if call_snapshot_json else 'done')
         db.add(candidate)
         db.flush()
         round_.selected_candidate_id = candidate.id
@@ -238,7 +240,7 @@ def _accept_action(session_id, candidate_id, revision, action, model, db, *, sco
         if action.speaker_persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("调度成员不属于本群")
         from services.conversation.group_turn_plan import _planning, _validate_basis
-        if action.basis is not None or _planning(candidate, db):
+        if action.basis is not None or _planning(candidate, db) or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
             before = (db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() or 0) + 1
             _validate_basis(session_id, action.speaker_persona_id, round_, candidate, before, action.basis, db)
         audit.record(candidate, "next_action", action, model, db)
@@ -340,6 +342,15 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
         rounds = query.order_by(GroupRound.round_index.desc()).offset(offset).limit(limit).all()
         ids = [row.selected_candidate_id for row in rounds if row.selected_candidate_id is not None]
         candidates = {row.id: row for row in db.query(GroupRoundCandidate).filter(GroupRoundCandidate.id.in_(ids)).all()}
+        pending = {}
+        for row in rounds:
+            if row.confirmed_at is not None:
+                continue
+            newest = db.query(GroupRoundCandidate).filter_by(round_id=row.id).order_by(GroupRoundCandidate.version.desc()).first()
+            if (newest and newest.id != row.selected_candidate_id and newest.status in ('generating', 'failed')
+                    and json.loads(newest.call_snapshot_json or '{}').get('shared_chat')):
+                pending[row.id] = newest
+                ids.append(newest.id)
         items = db.query(GroupContentItem).filter(GroupContentItem.candidate_id.in_(ids),
             GroupContentItem.kind == "utterance").order_by(GroupContentItem.sequence).all()
         members = {row.id: row.character for row in db.query(SessionPersona).filter_by(session_id=session_id)}
@@ -362,6 +373,9 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
                 "portraits": _candidate_portraits(session_id, candidate, db) if candidate else [],
                 "user_content": row.user_content, "created_at": row.created_at.isoformat(),
                 "utterances": by_candidate.get(row.selected_candidate_id, [])})
+            preview = pending.get(row.id)
+            result[-1]['pending_candidate'] = ({'candidate_id': preview.id, 'status': preview.status,
+                'error_code': preview.error_code, 'utterances': by_candidate.get(preview.id, [])} if preview else None)
         from services.conversation.group_query_service import _state
         return {"current": _state(_require_group(session_id, db), db),
                 "rounds": result, "total": total, "limit": limit, "offset": offset,

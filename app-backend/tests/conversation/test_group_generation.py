@@ -147,8 +147,8 @@ class GroupGenerationTests(unittest.TestCase):
         self.assertFalse(is_session_locked(self.sid))
 
     def test_invalid_output_or_truncation_never_saves_fallback_dialogue(self):
-        invalid = [response(raw="plain text"), response(""), response(affection=9), response(finish="length"),
-            response(state={"characters": {"actor2": {"location": "secret"}}}), response(state={"unknown": "field"})]
+        invalid = [response(""), response(finish="length"),
+            response(raw='{"units":[],"status":{"emotion":"平静","affection_change":0}}')]
         for reply in invalid:
             self.group()
             revision = history._require_group(self.sid, self.db).group_revision
@@ -416,7 +416,7 @@ class GroupGenerationTests(unittest.TestCase):
         self.group()
         with patch.object(self.db, "commit", side_effect=RuntimeError("PRIVATE_DB_ERROR")):
             with self.assertRaises(generation.GroupGenerationError) as caught:
-                self.generate(reply=response(raw="invalid output"))
+                self.generate(reply=response(raw=""))
         self.assertEqual("invalid_output", caught.exception.code)
         self.assertNotIn("PRIVATE_DB_ERROR", str(caught.exception))
         self.assertEqual(1, self.db.query(GroupContentItem).count())

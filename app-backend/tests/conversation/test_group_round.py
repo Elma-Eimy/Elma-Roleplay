@@ -21,7 +21,7 @@ from scripts.group_chat_prototype.worker import ReplayModel, _response
 from tests.conversation import test_group_session_service as fixtures
 
 # 既有执行权测试保留 v1 替身，v2 端到端覆盖在 test_group_units。
-run_group_round = partial(_run_group_round, protocol_version=1)
+run_group_round = _run_group_round
 
 
 class GroupRoundTests(unittest.TestCase):
@@ -33,18 +33,18 @@ class GroupRoundTests(unittest.TestCase):
             thinking = capture_group_calls(sid, self.db, model='deepseek-v4-flash', thinking_mode='enabled', reasoning_effort='high')
             plain = capture_group_calls(sid, self.db, model='deepseek-v4-flash', thinking_mode='disabled')
         for encoded in [thinking.director_json, *(encoded for _, encoded in thinking.members)]:
-            self.assertEqual(16384, json.loads(encoded)['max_tokens'])
+            self.assertEqual(4096, json.loads(encoded)['max_tokens'])
             self.assertEqual('high', json.loads(encoded)['reasoning_effort'])
         self.assertEqual(4096, json.loads(plain.director_json)['max_tokens'])
-        self.assertEqual('low', thinking.review_reasoning_effort)
+        self.assertIsNone(thinking.review_reasoning_effort)
         self.assertIsNone(plain.review_reasoning_effort)
         from types import SimpleNamespace
         from services.conversation.group_call_snapshot import persist_group_calls, restore_group_calls
         encoded, fingerprint = persist_group_calls(thinking, 1, set(ids))
         candidate = SimpleNamespace(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
         restored, _ = restore_group_calls(candidate, set(ids))
-        self.assertEqual('low', restored.review_reasoning_effort)
-        legacy = json.loads(encoded); del legacy['review_reasoning_effort']
+        self.assertIsNone(restored.review_reasoning_effort)
+        legacy = json.loads(encoded); legacy.pop('review_reasoning_effort', None)
         candidate.call_snapshot_json = json.dumps(legacy)
         restored, _ = restore_group_calls(candidate, set(ids))
         self.assertIsNone(restored.review_reasoning_effort)
@@ -54,7 +54,7 @@ class GroupRoundTests(unittest.TestCase):
         return group["session_id"], tuple(member["persona_id"] for member in group["members"])
 
     def case(self):
-        return json.loads((Path(__file__).resolve().parents[1] / "fixtures/group_director_cases.json").read_text(encoding="utf-8"))["cases"][0]
+        return json.loads((Path(__file__).resolve().parents[1] / "fixtures/group_shared_director_cases.json").read_text(encoding="utf-8"))["cases"][0]
 
     def test_execution_rejects_forged_cross_task_cross_session_and_expired_tokens(self):
         sid, _ = self.group()
@@ -91,7 +91,7 @@ class GroupRoundTests(unittest.TestCase):
         async def model(stage, kwargs):
             recorded.append((stage, kwargs))
             self.assertFalse(self.db.connection().connection.driver_connection.in_transaction)
-            if stage == "user_visibility":
+            if stage == "next_action":
                 settings.LLM_DEFAULT_CHAT_MODEL = "changed-model"
                 settings.LLM_MAX_TOKENS = 999
                 settings.LLM_TEMPERATURE = 0.99
@@ -107,7 +107,7 @@ class GroupRoundTests(unittest.TestCase):
         self.assertIsNone(result["error_code"])
         roles = [kwargs for stage, kwargs in recorded if stage == "role_generation"]
         self.assertEqual([0.1, 0.9, 0.1], [kwargs["temperature"] for kwargs in roles])
-        self.assertIn("SECRET_VAULT_731", json.dumps(roles[-1]["messages"], ensure_ascii=False))
+        self.assertIn(case["user"], json.dumps(roles[-1]["messages"], ensure_ascii=False))
         for _, kwargs in recorded:
             self.assertEqual("fixture-replay", kwargs["model"])
             self.assertEqual(111, kwargs["max_tokens"])
@@ -136,11 +136,11 @@ class GroupRoundTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 GroupRoundBudget(steps, timeout, 1)
         budget = GroupRoundBudget(1, 20, 2)
-        for _ in range(4):
+        for _ in range(3):
             self.assertLessEqual(budget.consume(), 2)
         with self.assertRaisesRegex(ValueError, "call_budget"):
             budget.consume()
-        self.assertEqual(4, budget.used)
+        self.assertEqual(3, budget.used)
         with patch("services.conversation.group_round_service.time.monotonic", return_value=budget.deadline + 1):
             with self.assertRaisesRegex(ValueError, "call_budget"):
                 budget.remaining()
@@ -157,12 +157,12 @@ class GroupRoundTests(unittest.TestCase):
         with patch.object(settings, "LLM_TIMEOUT", 0.1), group_runtime(self.engine) as owner:
             result = asyncio.run(run_group_round(sid, self.case()["user"], self.db, runtime=owner, call_model=model))
         self.assertEqual("timeout", result["error_code"])
-        self.assertEqual(["user_visibility", "next_action", "role_generation"], calls)
+        self.assertEqual(["next_action", "role_generation"], calls)
         self.assertEqual("failed", self.db.query(GroupRoundCandidate).one().status)
         self.assertFalse(is_session_locked(sid))
 
     def test_single_timeout_rejects_late_results_in_every_model_stage(self):
-        stages = ["user_visibility", "next_action", "role_generation", "utterance_visibility"]
+        stages = ["next_action", "role_generation"]
         for late_stage in stages:
             with self.subTest(stage=late_stage):
                 sid, ids = self.group()
@@ -184,10 +184,7 @@ class GroupRoundTests(unittest.TestCase):
                 self.assertEqual("timeout", result["error_code"])
                 self.assertEqual(stages[:stages.index(late_stage) + 1], called)
                 candidate = self.db.query(GroupRoundCandidate).filter_by(session_id=sid).first()
-                if late_stage == "user_visibility":
-                    self.assertIsNone(candidate)
-                else:
-                    self.assertEqual("failed", candidate.status)
+                self.assertEqual("failed", candidate.status)
                 self.assertEqual(0, self.db.query(GroupContentItem).filter_by(session_id=sid, kind="utterance").count())
                 self.assertFalse(is_session_locked(sid))
                 self.db.rollback()
@@ -198,17 +195,11 @@ class GroupRoundTests(unittest.TestCase):
             sid, ids = self.group()
             latest = {}
             async def model(stage, kwargs):
-                if stage == "next_action":
-                    latest.update(json.loads(kwargs["messages"][1]["content"]))
-                    return _response(json.dumps({"action": "speak", "speaker_persona_id": ids[0], "reason_code": "direct_response"}))
-                if stage == "role_generation":
-                    payload = {**latest, "stage": "utterance_visibility",
-                               "pending_utterance": {"speaker_persona_id": ids[0], "content": ""}}
-                    body = "x" * (24000 - len(json.dumps(payload, ensure_ascii=False)))
-                    return _response('<reply>' + body + '</reply><status emotion="calm" affection_change="0"/>')
-                if stage == "utterance_visibility":
-                    self.assertEqual(24000, len(kwargs["messages"][1]["content"]))
-                return _response(json.dumps({"recipients": [{"persona_id": pid, "decision": "visible"} for pid in ids]}))
+                if stage == 'next_action':
+                    payload = json.loads(kwargs['messages'][1]['content'])
+                    basis = next(iter(payload['response_sources'][str(ids[0])]))
+                    return _response(json.dumps(dict(action='speak', speaker_persona_id=ids[0], reason_code='direct_response', basis=basis)))
+                return _response('<reply>' + 'x' * 24000 + '</reply>')
             with group_runtime(self.engine) as owner:
                 result = asyncio.run(run_group_round(sid, "user", self.db, runtime=owner, max_steps=1,
                                                     call_model=model, collect_inputs=collect))
@@ -218,7 +209,7 @@ class GroupRoundTests(unittest.TestCase):
             outcomes.append((result["error_code"], candidate.status, len(result["calls"])))
             self.assertEqual("context_budget" if collect else None, result.get("diagnostic_error_code"))
             self.assertEqual({}, result["personal_inputs"])
-        self.assertEqual([(None, "awaiting_confirmation", 4)] * 2, outcomes)
+        self.assertEqual([(None, "awaiting_confirmation", 2)] * 2, outcomes)
 
     def test_diagnostic_exception_is_sanitized_without_failing_business(self):
         sid, ids = self.group()
@@ -268,8 +259,7 @@ class GroupRoundTests(unittest.TestCase):
     def test_default_client_runs_whole_round_against_local_http(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         sid, ids = self.group()
-        responses = [json.dumps({"recipients": [{"persona_id": pid, "decision": "visible"} for pid in ids]}),
-                     '{"action":"end","reason_code":"wait_user"}']
+        responses = ['{"action":"end","reason_code":"wait_user"}']
         requests = []
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -292,7 +282,7 @@ class GroupRoundTests(unittest.TestCase):
                 result = asyncio.run(run_group_round(sid, "hello", self.db, runtime=owner))
             self.assertIsNone(result["error_code"])
             self.assertEqual("wait_user", result["finish_reason"])
-            self.assertEqual(2, len(requests))
+            self.assertEqual(1, len(requests))
             self.assertEqual("awaiting_confirmation", self.db.query(GroupRoundCandidate).one().status)
         finally:
             server.shutdown()
@@ -316,11 +306,11 @@ class GroupRoundTests(unittest.TestCase):
         async def scenario():
             entered, stopping, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
             loop = asyncio.get_running_loop()
-            def save(*args):
+            def save(*args, **kwargs):
                 loop.call_soon_threadsafe(entered.set)
                 if not thread_release.wait(5):
                     raise RuntimeError("save probe timeout")
-                return original(*args)
+                return original(*args, **kwargs)
             replay = ReplayModel(self.case(), ids)
             async def model(stage, kwargs):
                 if stage == "role_generation" and not during_save:

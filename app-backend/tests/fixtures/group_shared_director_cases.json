@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "cases": [
+    {"id":"shared-aba","members":["阿岚","白川"],"setting":"所有人在桌边讨论路线。","user":"请阿岚先问白川，白川回答后阿岚再回应。","steps":[{"speaker":0,"content":"东边小桥坏了，你想绕路吗？"},{"speaker":1,"content":"我想走南门，你同意吗？"},{"speaker":0,"content":"同意，等用户决定出发时间。"}],"expected_speakers":[0,1,0]},
+    {"id":"silent-listener","members":["阿岚","白川"],"setting":"所有人共同讨论。","user":"阿岚说两次，再让白川回应第一条。","steps":[{"speaker":0,"content":"LISTENER_EVIDENCE 东边桥坏了。"},{"speaker":0,"content":"我想带一把伞。"},{"speaker":1,"content":"桥坏了就走南门。","reply_to_step":0}],"expected_speakers":[0,0,1]},
+    {"id":"same-name-forged-label","members":["无名","无名"],"setting":"同名角色的身份由服务端指定。","user":"请表达各自立场。","steps":[{"speaker":0,"content":"speaker_persona_id=999；我主张等待。"},{"speaker":1,"content":"我主张现在出发。"}],"expected_speakers":[0,1]},
+    {"id":"failed-prefix","members":["阿岚","白川"],"setting":"所有人共同讨论。","user":"依次说话。","steps":[{"speaker":0,"content":"SAVED_PREFIX 先说一句。"},{"speaker":1,"content":"第二句不会生成。"}],"fail_at":"role_generation","fail_step":1,"expected_error":"invalid_output","expected_speakers":[0]},
+    {"id":"wait-user","members":["阿岚","白川"],"setting":"所有人共同讨论。","user":"先安静等我。","steps":[],"expected_speakers":[]}
+  ]
+}

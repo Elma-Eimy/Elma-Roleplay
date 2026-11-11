@@ -84,7 +84,7 @@ def validate_prefix(round_, candidate, db):
         base = {"action": "speak", "speaker_persona_id": step.speaker_persona_id, "reason_code": step.reason_code}
         if value != {**base, **({"basis": value["basis"]} if "basis" in value else {})}:
             invalid()
-        if "basis" in value or turn_policy:
+        if "basis" in value or turn_policy or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
             return _validate_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
     if candidate.protocol_version != 2 or candidate.checkpoint not in (
             "user_visibility", "next_action", "role_generation", "finish"):

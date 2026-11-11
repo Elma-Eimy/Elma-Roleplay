@@ -29,9 +29,7 @@ class GroupMemberContext:
     messages_json: str
     generation_json: str
     protocol_version: int = 1
-    response_request: dict | None = None
-    experience_evidence_json: str | None = None
-    current_mood: str | None = None
+    shared_chat: bool = False
 
 
 def _member_state(persona, group, round_, candidate, before_sequence, db):
@@ -85,10 +83,10 @@ def _member_memories(persona_id, round_, candidate, rows, requests, basis, db, d
 
 @group_session_operation
 def build_member_context(session_id, persona_id, candidate_id, expected_revision, db, *, model=None,
-                         generation_parameters_json=None, history_limit=None, scope=None):
+                         generation_parameters_json=None, history_limit=None, scope=None, preview=False):
     def read(distances):
         return _read_context(session_id, persona_id, candidate_id, expected_revision, db, model,
-                             generation_parameters_json, history_limit, scope, distances)
+                             generation_parameters_json, history_limit, scope, distances, preview)
     context = read(None)
     if isinstance(context, SemanticQuery):
         # Embedding 期间不持有数据库事务，重读时复核候选 revision 与成员归属。
@@ -97,7 +95,7 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
 
 
 def _read_context(session_id, persona_id, candidate_id, expected_revision, db, model,
-                  generation_parameters_json, history_limit, scope, distances):
+                  generation_parameters_json, history_limit, scope, distances, preview=False):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     history._positive(persona_id, "成员")
@@ -105,7 +103,16 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
     db.expire_all()
     db.execute(text("BEGIN"))
     try:
-        round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
+        if preview:
+            from services.conversation.session_access import SessionKindConflict
+            candidate = db.get(GroupRoundCandidate, candidate_id)
+            if candidate is None or candidate.session_id != session_id:
+                raise GroupSessionValidationError('候选不属于本群')
+            round_ = db.get(GroupRound, candidate.round_id)
+            if candidate.revision != expected_revision or round_.selected_candidate_id != candidate.id:
+                raise SessionKindConflict('剧情已变化，请刷新后查看提示词')
+        else:
+            round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
         persona = db.get(SessionPersona, persona_id)
         if persona is None or persona.session_id != session_id:
             raise GroupSessionValidationError("发言成员不属于本群")
@@ -114,11 +121,19 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         if last_sequence is None:
             raise GroupSessionValidationError("候选缺少用户内容项")
         before = last_sequence + 1
+        policy = json.loads(candidate.call_snapshot_json or '{}')
+        limit = min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit))
+        if policy.get('reply_target'):
+            limit = max(limit, before)
         rows = history._member_history(session_id, persona_id, round_, candidate, before,
-            min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit)), db)
+            limit, db)
         from services.conversation.group_turn_plan import _pending_requests, _current_basis
         requests = _pending_requests(round_, candidate, persona_id, before, db)
         basis = _current_basis(session_id, persona_id, round_, candidate, before, db)
+        if basis is not None and json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
+            basis['turn_reply_number'] = db.query(GroupContentItem.id).filter_by(
+                candidate_id=candidate.id, kind='utterance', speaker_persona_id=persona_id).filter(
+                    GroupContentItem.sequence < before).count() + 1
         if not rows and not requests:
             raise GroupSessionValidationError("没有可见内容，不能生成角色发言")
         state, state_persona = _member_state(persona, group, round_, candidate, before, db)
@@ -130,24 +145,17 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
             return memories
         from services.conversation.group_session_service import public_greetings
         greetings = public_greetings(group)
-        policy = json.loads(candidate.call_snapshot_json or '{}')
-        evidence = None
-        if candidate.protocol_version == 2 and policy.get('experience_guard'):
-            from services.conversation.group_experience_guard import experience_evidence
-            evidence = experience_evidence(persona_id, rows, memories, requests)
-            evidence["sources"].extend({"ref": f"greeting:{entry['persona_id']}", "kind": "opening",
-                "speaker_id": entry["persona_id"], "text": entry["content"]} for entry in greetings)
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,
-            shared_setting=group.shared_setting, greetings=greetings, current_role_state=state, protocol_version=candidate.protocol_version,
+            shared_setting=group.shared_setting, greetings=greetings, current_role_state=state,
+            protocol_version=1 if policy.get('shared_chat') else candidate.protocol_version,
             current_round_id=round_.id, turn_requests=requests, response_basis=basis, inherited_memories=memories,
-            insights=member_insights(persona.id, round_, candidate, db), experience_evidence=evidence)
+            insights=member_insights(persona.id, round_, candidate, db))
         # 所有 ORM 读取与参数准备在事务内完成，外部调用仅使用序列化快照。
         kwargs = (_prepare_generation_kwargs(persona.character, messages, model=model) if generation_parameters_json is None
                   else {**json.loads(generation_parameters_json), "messages": messages})
         return GroupMemberContext(candidate.id, candidate.revision, before, persona.character.name,
             json.dumps(state, ensure_ascii=False), json.dumps(messages, ensure_ascii=False), json.dumps(kwargs, ensure_ascii=False), candidate.protocol_version,
-            basis if basis and basis.get("reply_mode") else None,
-            json.dumps(evidence, ensure_ascii=False) if evidence is not None else None, state_persona.current_mood)
+            policy.get('shared_chat', False))
     finally:
         db.rollback()

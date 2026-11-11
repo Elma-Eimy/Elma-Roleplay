@@ -62,14 +62,23 @@ def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
     from core.config import settings
     limit = (json.loads(candidate.call_snapshot_json)["history_limit"] if candidate.call_snapshot_json else
              min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT)))
+    reply_target = json.loads(candidate.call_snapshot_json or '{}').get('reply_target', False)
+    if reply_target:
+        current_count = db.query(GroupContentItem.id).filter_by(candidate_id=candidate.id).filter(
+            GroupContentItem.sequence < before_sequence).count()
+        limit = max(limit, current_count)
     rows = history._member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db)
     sources = {}
     for row in rows:
         if row.kind == "user" and row.visible_units and all(unit.meaning == "request" for unit in row.visible_units):
             continue
         source = "user" if row.kind == "user" else "self" if row.speaker_persona_id == persona_id else "group_member"
+        if reply_target and source == 'self':
+            continue
         entry = {"source": source, "speaker_persona_id": row.speaker_persona_id,
                  "meanings": [unit.meaning for unit in row.visible_units if unit.meaning]}
+        if reply_target:
+            entry['turn'] = 'current' if row.round_id == round_.id else 'previous'
         if row.kind != "user" and row.visible_units:
             entry["units"] = [{"kind": unit.kind, "text": unit.text} for unit in row.visible_units]
         else:

@@ -20,6 +20,15 @@ router = GroupSessionAPIRouter()
 GroupResourceId = Annotated[int, Path(gt=0, le=SQLITE_INT_MAX)]
 
 
+@router.get('/{session_id}/members/{persona_id}/compile_prompt')
+def compile_group_member_prompt(session_id: GroupResourceId, persona_id: GroupResourceId,
+                                db: Session = Depends(get_db)):
+    try:
+        return queries.compile_member_prompt(session_id, persona_id, db)
+    except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
+
+
 def _http_error(exc):
     return HTTPException(404 if isinstance(exc, service.GroupSessionNotFound) else 422, detail=str(exc))
 
@@ -134,6 +143,10 @@ async def regenerate_group_round(session_id: GroupResourceId, body: GroupRoundRe
 @router.post("/{session_id}/rounds/{round_id}/resume", status_code=202)
 async def resume_group_round(session_id: GroupResourceId, body: GroupCandidateCommand, http: Request,
                              round_id: int = Path(gt=0, le=SQLITE_INT_MAX), db: Session = Depends(get_db)):
+    try:
+        queries.require_shared_resume(session_id, body.target_candidate_id, db)
+    except (service.GroupSessionNotFound, service.GroupSessionValidationError) as exc:
+        raise _http_error(exc) from exc
     return await _generate(session_id, "resume", body, http, db, round_id)
 
 

@@ -30,12 +30,23 @@ class GroupCallSnapshot:
     fact_recall: bool = False
     experience_guard: bool = False
     review_reasoning_effort: str | None = None
+    shared_chat: bool = False
+    reply_target: bool = False
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
             if pid == persona_id:
                 return parameters
         raise ValueError("发言成员不属于调用快照")
+
+
+def require_executable_calls(snapshot):
+    """旧策略字段只用于读取快照，不能恢复已移除的执行链路。"""
+    if (not snapshot.shared_chat or snapshot.turn_policy or snapshot.experience_guard
+            or snapshot.review_reasoning_effort is not None or snapshot.output_attempts != 1
+            or any('response_format' in json.loads(encoded) for _, encoded in snapshot.members)):
+        from services.conversation.session_access import SessionKindConflict
+        raise SessionKindConflict('旧群聊生成、转换和审查链路已移除，请重新生成共同群聊候选')
 
 
 def persist_group_calls(snapshot, max_steps, member_ids):
@@ -95,6 +106,17 @@ def persist_group_calls(snapshot, max_steps, member_ids):
     value = dict(policy_version=2, max_steps=max_steps, history_limit=snapshot.history_limit,
                  call_timeout=snapshot.call_timeout, director=parameters(snapshot.director_json),
                  members=[dict(persona_id=pid, parameters=parameters(encoded)) for pid, encoded in snapshot.members])
+    if type(snapshot.shared_chat) is not bool:
+        raise error("共同群聊策略无效")
+    if snapshot.shared_chat:
+        if snapshot.turn_policy or snapshot.experience_guard or any(
+                'response_format' in json.loads(encoded) for _, encoded in snapshot.members):
+            raise error('共同群聊不能启用角色 JSON 或裁决审查')
+        value["shared_chat"] = True
+    if type(snapshot.reply_target) is not bool or snapshot.reply_target and not snapshot.shared_chat:
+        raise error('明确回应对象只能用于共同群聊')
+    if snapshot.reply_target:
+        value['reply_target'] = True
     if type(snapshot.inherited_recall) is not bool:
         raise error("继承记忆策略无效")
     if snapshot.inherited_recall:
@@ -149,7 +171,7 @@ def restore_group_calls(candidate, member_ids):
         limit = value.get("group_card_limit", 0)
         if type(limit) is not int or limit < 0:
             raise ValueError
-        if (candidate.protocol_version != 2 or set(value) - {"turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard", "review_reasoning_effort"} != {
+        if (candidate.protocol_version != 2 or set(value) - {"reply_target", "shared_chat", "turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard", "review_reasoning_effort"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -158,7 +180,7 @@ def restore_group_calls(candidate, member_ids):
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
             value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
-            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False), value.get('review_reasoning_effort'))
+            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False), value.get('review_reasoning_effort'), value.get('shared_chat', False), value.get('reply_target', False))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -173,7 +195,9 @@ def restore_group_calls(candidate, member_ids):
 
 
 @group_session_operation
-def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reasoning_effort=None):
+def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reasoning_effort=None, shared_chat=True):
+    if shared_chat is not True:
+        raise history.GroupSessionValidationError('旧群聊生成链路已移除')
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     # 只复制模型参数，不复制或序列化连接凭据。
@@ -196,11 +220,8 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
             frequency_penalty=ext.get("frequency_penalty", config.LLM_FREQUENCY_PENALTY),
             repetition_penalty=ext.get("repetition_penalty", config.LLM_REPETITION_PENALTY), config=config)
         output_limit = config.LLM_MAX_TOKENS
-        if selection.thinking and model_capability(selection.model, config)['adapter'] == 'deepseek':
-            # 思考与最终 JSON 共用输出额度；4K 可能全部被审查推理耗尽。
-            output_limit = max(output_limit, 16384)
         return json.dumps({"model": selection.model, "max_tokens": output_limit, **controls,
-            **({"response_format": {"type": "json_object"}} if settings.LLM_GROUP_JSON_MODE else {})}, ensure_ascii=False)
+            **({"response_format": {"type": "json_object"}} if character is None and settings.LLM_GROUP_JSON_MODE else {})}, ensure_ascii=False)
     db.rollback()
     db.expire_all()
     db.execute(text("BEGIN"))
@@ -209,9 +230,6 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection, 2 if settings.APP_GROUP_TURN_PLANNING else 0, inherited_recall=True,
-                                 output_attempts=3, fact_recall=True, experience_guard=True,
-                                 review_reasoning_effort=('low' if selection.thinking and selection.model.startswith('deepseek-v4')
-                                     and model_capability(selection.model, config)['adapter'] == 'deepseek' else None))
+                                 connection, inherited_recall=True, fact_recall=True, shared_chat=True, reply_target=True)
     finally:
         db.rollback()

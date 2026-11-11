@@ -13,7 +13,9 @@ from services.conversation import group_history_service as history, group_sessio
 from services.conversation import group_background_service as background
 from services.conversation.group_director_service import NextAction, parse_next_action, GroupDirectorError, DirectorContext, build_director_messages
 from services.conversation.group_context_service import build_member_context
-from services.conversation.group_round_service import run_group_round
+from services.conversation.group_round_service import run_group_round as _legacy_round
+from functools import partial
+run_group_round = _legacy_round
 from services.conversation.group_turn_plan import _sources
 from services.conversation.group_unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError, UnitPlan, ContentUnit
 from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
@@ -143,7 +145,7 @@ class GroupTurnPlanTests(unittest.TestCase):
             NextAction("speak", b, "follow_up", basis), "fixture", self.db)
         context = build_member_context(self.sid, b, candidate.id, accepted["revision"], self.db)
         messages = json.loads(context.messages_json)
-        boundary = json.loads(messages[-1]["content"].split("\n")[1])
+        boundary = fixtures.grounding(messages)
         self.assertEqual([], boundary["visible_current_turn_speakers"])
         self.assertNotIn("HIDDEN_THOUGHT_72", context.messages_json)
         self.assertNotIn(content, context.messages_json)
@@ -159,6 +161,8 @@ class GroupTurnPlanTests(unittest.TestCase):
         self.create()
         with patch.object(settings, "APP_GROUP_TURN_PLANNING", True):
             snapshot = capture_group_calls(self.sid, self.db, model="fixture")
+        from dataclasses import replace
+        snapshot = replace(snapshot, shared_chat=False, reply_target=False, turn_policy=2)
         encoded, fingerprint = persist_group_calls(snapshot, 2, set(self.ids))
         candidate = GroupRoundCandidate(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
         with patch.object(settings, "APP_GROUP_TURN_PLANNING", False):
@@ -197,71 +201,3 @@ class GroupTurnPlanTests(unittest.TestCase):
         self.assertTrue(actual["history_incomplete"])
         self.assertEqual("item:20", actual["history"][-1]["reference"])
         self.assertEqual({row["reference"] for row in actual["history"]}, set(actual["response_sources"]["7"]))
-
-    def test_explicit_legacy_protocol_keeps_xml_roles_with_new_settings(self):
-        self.create()
-        async def model(stage, parameters):
-            if stage == "role_generation":
-                self.assertNotIn("response_format", parameters)
-                return _response('<reply>答复</reply><status emotion="平静" affection_change="0"/>')
-            self.assertNotIn("request_to", parameters["messages"][0]["content"])
-            if stage == "next_action":
-                return _response(json.dumps(dict(action="speak", speaker_persona_id=self.ids[0], reason_code="direct_response")))
-            return _response(json.dumps({"recipients": [{"persona_id": pid, "decision": "visible"} for pid in self.ids]}))
-        with patch.object(settings, "APP_GROUP_TURN_PLANNING", True), patch.object(settings, "LLM_GROUP_JSON_MODE", True), group_runtime(self.engine) as owner:
-            result = asyncio.run(run_group_round(self.sid, "你好", self.db, runtime=owner, model="fixture",
-                max_steps=1, protocol_version=1, call_model=model))
-        self.assertIsNone(result["error_code"])
-
-    def test_rejected_reply_stays_uncommitted_and_resumes_with_original_basis(self):
-        self.create()
-        calls = []
-        reject = True
-        async def model(stage, parameters):
-            nonlocal reject
-            calls.append(stage)
-            if stage == 'role_experience_review':
-                return _response('{"claims":[]}')
-            if stage == "user_visibility":
-                return _response(json.dumps({"units": [{"start": 0, "end": 5, "meaning": "request", "reply_mode": "speech", "request_to": [self.ids[0]],
-                    "recipients": [{"persona_id": pid, "decision": "hidden"} for pid in self.ids]}]}))
-            if stage == "next_action":
-                scene = json.loads(parameters["messages"][1]["content"])
-                if len(scene["history"]) > 1:
-                    return _response('{"action":"end","reason_code":"wait_user"}')
-                return _response(json.dumps(dict(action="speak", speaker_persona_id=self.ids[0], reason_code="direct_response",
-                    basis=next(iter(scene["response_sources"][str(self.ids[0])])))))
-            if stage == "role_generation":
-                self.assertIn("待执行安排", json.dumps(parameters["messages"], ensure_ascii=False))
-                return _response('{"units":[{"kind":"speech","text":"我愿意。"}],"status":{"emotion":"平静","affection_change":1}}')
-            return _response(json.dumps({"request_result": "fulfilled", "review": "agency_conflict" if reject else "ok", "units": [{"unit_index": 0,
-                "recipients": [{"persona_id": pid, "decision": "visible"} for pid in self.ids]}]}))
-
-        async def scenario(owner):
-            first = await background.submit_group_operation(self.sid, str(uuid4()), "send", 0, self.db,
-                runtime=owner, call_model=model, user_content="请甲接话。", max_steps=2, model="fixture")
-            while owner.tasks:
-                await asyncio.gather(*tuple(owner.tasks), return_exceptions=True)
-            self.db.expire_all()
-            cid = first["accepted"]["candidate_id"]
-            candidate = self.db.get(GroupRoundCandidate, cid)
-            self.assertEqual(("failed", "role_generation", "agency_conflict"), (candidate.status, candidate.checkpoint, candidate.error_code))
-            self.assertEqual(0, self.db.query(GroupContentItem).filter_by(candidate_id=cid, kind="utterance").count())
-            before = calls.count("user_visibility"), calls.count("next_action")
-            group = history._require_group(self.sid, self.db)
-            nonlocal reject
-            reject = False
-            with patch.object(settings, "APP_GROUP_TURN_PLANNING", False):
-                await background.submit_group_operation(self.sid, str(uuid4()), "resume", group.group_revision, self.db,
-                    runtime=owner, call_model=model, round_id=candidate.round_id, target_candidate_id=cid,
-                    target_candidate_revision=candidate.revision, observed_round_id=candidate.round_id,
-                    observed_candidate_id=cid, observed_candidate_revision=candidate.revision)
-                while owner.tasks:
-                    await asyncio.gather(*tuple(owner.tasks), return_exceptions=True)
-            self.db.expire_all()
-            self.assertEqual("awaiting_confirmation", self.db.get(GroupRoundCandidate, cid).status)
-            self.assertEqual(before[0], calls.count("user_visibility"))
-            self.assertEqual(before[1] + 1, calls.count("next_action"))
-            self.assertEqual(1, self.db.query(GroupContentItem).filter_by(candidate_id=cid, kind="utterance").count())
-        with patch.object(settings, "APP_GROUP_TURN_PLANNING", True), group_runtime(self.engine) as owner:
-            asyncio.run(scenario(owner))

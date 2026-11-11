@@ -1,22 +1,20 @@
-"""持有任务执行权串行推进群聊，按冻结策略重试无效格式。"""
+"""持有任务执行权串行推进群聊，仅调度成员与单次 XML 生成。"""
 import asyncio
 import json
 import logging
 import math
 import time
 from datetime import datetime
-from dataclasses import replace
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_director_service as director, group_generation_service as generation
 from services.conversation import group_history_service as history
 from services.conversation import group_checkpoint_service as checkpoints
-from services.conversation.group_call_snapshot import capture_group_calls
+from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls
 from services.conversation.group_context_service import build_member_context
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.llm_provider import group_model_session
-from services.conversation.group_unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError
-from services.conversation.group_output_retry import validated_output
+from services.conversation.group_unit_protocol import ContentUnit, UnitPlan, GroupUnitError
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +25,7 @@ class GroupRoundBudget:
                 or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in (timeout, call_timeout))):
             raise ValueError("群聊调用预算无效")
         self.max_steps = max_steps
-        self.limit = 3 * max_steps + 1
+        self.limit = 2 * max_steps + 1
         self.used = 0
         self.deadline = time.monotonic() + timeout
         self.call_timeout = call_timeout
@@ -49,12 +47,12 @@ class GroupRoundBudget:
 @group_session_operation
 async def run_group_round(session_id, user_content, db, *, runtime, model=None, thinking_mode=None,
                           reasoning_effort=None, max_steps=4, timeout=300, call_model=None, collect_inputs=False,
-                          protocol_version=2):
+                          protocol_version=2, shared_chat=True):
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     require_group_runtime(runtime, db.get_bind())
-    if type(protocol_version) is not int or protocol_version not in (1, 2):
-        raise ValueError("群聊协议版本无效")
+    if type(protocol_version) is not int or protocol_version != 2 or shared_chat is not True:
+        raise ValueError("旧群聊生成链路已移除，只支持共同群聊 XML")
     if not isinstance(user_content, str) or not user_content.strip():
         raise ValueError("用户输入不能为空")
     # 参数在取得锁后和任何调用前验证；预算从执行权取得时开始计时。
@@ -62,13 +60,6 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
         budget = GroupRoundBudget(max_steps, timeout, timeout)
         snapshot = await generation._database(capture_group_calls, session_id, db, model=model,
                                              thinking_mode=thinking_mode, reasoning_effort=reasoning_effort)
-        if protocol_version == 1:
-            members = []
-            for pid, encoded in snapshot.members:
-                parameters = json.loads(encoded)
-                parameters.pop("response_format", None)
-                members.append((pid, json.dumps(parameters, ensure_ascii=False)))
-            snapshot = replace(snapshot, turn_policy=0, members=tuple(members), output_attempts=1, experience_guard=False)
         if not math.isfinite(snapshot.call_timeout) or snapshot.call_timeout <= 0:
             raise ValueError("单次模型超时无效")
         budget.call_timeout = snapshot.call_timeout
@@ -82,11 +73,11 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
 
 async def _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version,
                          *, target=None, scope=None, progress=None):
+    require_executable_calls(snapshot)
     calls = []
     runtime = execution.owner
     model = json.loads(snapshot.director_json)["model"]
     selected_sources = None
-    budget.limit = (budget.limit + (budget.max_steps if snapshot.experience_guard else 0)) * snapshot.output_attempts
 
     async def call(stage, parameters, persona_id=None):
         require_group_execution(execution, session_id, db.get_bind())
@@ -104,7 +95,12 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         if collect_inputs:
             entry["messages"] = parameters["messages"]
         calls.append(entry)
-        response = await asyncio.wait_for(call_model(stage, {**parameters, "timeout": wait}), wait)
+        started = time.monotonic()
+        try:
+            response = await asyncio.wait_for(call_model(stage, {**parameters, "timeout": wait}), wait)
+        finally:
+            entry['elapsed_ms'] = round((time.monotonic() - started) * 1000)
+            logger.info('群聊模型调用 stage=%s speaker=%s elapsed_ms=%s', stage, persona_id, entry['elapsed_ms'])
         budget.remaining()
         if time.monotonic() >= call_deadline or (deadline is not None and datetime.utcnow() >= deadline):
             raise TimeoutError
@@ -114,7 +110,8 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         require_group_execution(execution, session_id, db.get_bind())
         return await generation._database(director.build_director_context, session_id, db,
             candidate_id=target["candidate_id"] if target else None, expected_revision=target["revision"] if target else None,
-            **({"scope": scope} if scope is not None else {}), turn_policy=snapshot.turn_policy)
+            **({"scope": scope} if scope is not None else {}), turn_policy=snapshot.turn_policy,
+            reply_target=snapshot.reply_target)
 
     async def decide(context, stage, validate, **kwargs):
         nonlocal selected_sources
@@ -122,40 +119,19 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             turn_policy=snapshot.turn_policy, **kwargs)
         if stage == "next_action":
             selected_sources = json.loads(messages[1]["content"]).get("response_sources")
-        attempted = False
-        async def invoke(parameters):
-            nonlocal attempted
-            if attempted and target is not None and scope is None:
-                await generation._database(generation._check_retry_target, session_id, target["candidate_id"],
-                                           target["revision"], db)
-            attempted = True
-            return await call(stage, parameters)
-        _, value = await validated_output(invoke, {**json.loads(snapshot.director_json), "messages": messages},
-                                          validate, snapshot.output_attempts)
-        return value
+        response = await call(stage, {**json.loads(snapshot.director_json), "messages": messages})
+        return validate(response.choices[0])
 
     try:
         if scope is None or progress["checkpoint"] == "user_visibility":
             context = await scene()
-            plan = None
-            if protocol_version == 2:
-                def user_plan(answer):
-                    plan = parse_user_units(answer.message.content, user_content, context.member_ids,
-                        finish_reason=answer.finish_reason, require_meaning=bool(snapshot.turn_policy),
-                        require_reply_mode=snapshot.turn_policy >= 2)
-                    if not snapshot.turn_policy and any(unit.meaning for unit in plan.units):
-                        raise GroupUnitError()
-                    return plan
-                plan = await decide(context, "user_visibility", user_plan, user_content=user_content)
-                visible_to = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
-            else:
-                visible_to = await decide(context, "user_visibility", lambda answer: director.parse_visibility(
-                    answer.message.content, context.member_ids, finish_reason=answer.finish_reason).visible_to,
-                    user_content=user_content)
+            plan = UnitPlan((ContentUnit('user', start=0, end=len(user_content)),), (context.member_ids,))
+            visible_to = context.member_ids
             try:
                 if scope is None:
                     target = await generation._database(history._prepare, session_id, user_content, visible_to, db,
-                                                        unit_plan=plan, model=model)
+                                                        unit_plan=plan, model=model,
+                                                        call_snapshot_json=persist_group_calls(snapshot, budget.max_steps, set(context.member_ids))[0])
                 else:
                     saved_user = await generation._database(checkpoints.save_user, scope, target["revision"], plan, model, db)
                     target.update(saved_user)
@@ -180,8 +156,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     break
                 action = await decide(context, "next_action", lambda answer: director.parse_next_action(
                     answer.message.content, context.member_ids, context.eligible_ids,
-                    finish_reason=answer.finish_reason, response_sources=selected_sources,
-                    require_response=snapshot.turn_policy >= 2 and context.current_item_count == 1))
+                    finish_reason=answer.finish_reason, response_sources=selected_sources))
                 if action.action == "end":
                     finish_reason = action.reason_code
                     break
@@ -195,20 +170,7 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                         raise
                     target["revision"] = accepted["revision"]
             async def audience(proposed):
-                try:
-                    if protocol_version == 2:
-                        return await decide(context, "utterance_visibility", lambda answer: parse_unit_visibility(
-                            answer.message.content, proposed.units, context.member_ids,
-                            proposed.speaker_persona_id, finish_reason=answer.finish_reason,
-                            require_review=bool(snapshot.turn_policy),
-                            reply_mode=(proposed.response_request or {}).get("reply_mode")), proposed=proposed)
-                    return await decide(context, "utterance_visibility", lambda answer: director.parse_visibility(
-                        answer.message.content, context.member_ids,
-                        author_id=proposed.speaker_persona_id, finish_reason=answer.finish_reason).visible_to, proposed=proposed)
-                except TimeoutError:
-                    raise generation.GroupGenerationError("timeout") from None
-                except (director.GroupDirectorError, GroupUnitError) as exc:
-                    raise generation.GroupGenerationError(exc.code) from None
+                return UnitPlan((ContentUnit('speech', proposed.content),), (context.member_ids,))
             async def role_call(parameters):
                 try:
                     return await call("role_generation", parameters, action.speaker_persona_id)
@@ -216,19 +178,10 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     raise generation.GroupGenerationError("timeout") from None
                 except director.GroupDirectorError as exc:
                     raise generation.GroupGenerationError(exc.code) from None
-            async def role_review(parameters):
-                try:
-                    return await call('role_experience_review', parameters, action.speaker_persona_id)
-                except TimeoutError:
-                    raise generation.GroupGenerationError('timeout') from None
-                except director.GroupDirectorError as exc:
-                    raise generation.GroupGenerationError(exc.code) from None
             saved = await generation._generate_with_execution(session_id, target["candidate_id"], action.speaker_persona_id,
                 target["revision"], db, execution=execution, decide_visibility=audience, call_model=role_call,
                 generation_parameters_json=snapshot.member_parameters(action.speaker_persona_id),
                 history_limit=snapshot.history_limit, fail_candidate=False,
-                output_attempts=snapshot.output_attempts, call_review=role_review,
-                review_reasoning_effort=snapshot.review_reasoning_effort,
                 **({"scope": scope} if scope is not None else {}))
             target["revision"] = saved["revision"]
         personal_inputs = {}

@@ -1,6 +1,7 @@
 """成员立绘归属、候选冻结、版本竞争及撤回恢复；只用临时库。"""
 import asyncio
 import json
+from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
@@ -62,7 +63,7 @@ class GroupPortraitTests(unittest.TestCase):
         self.settle(first)
         self.choose(1001)
         first_id = first['accepted']['candidate_id']
-        second = self.command(self.sid, kind='regenerate', call_snapshot=self.calls(self.ids))
+        second = self.command(self.sid, kind='regenerate', call_snapshot=replace(self.calls(self.ids), shared_chat=True))
         self.settle(second)
         second_id = second['accepted']['candidate_id']
         self.command(self.sid, kind='select', target_candidate_id=second_id,
@@ -74,7 +75,7 @@ class GroupPortraitTests(unittest.TestCase):
         self.assertEqual(1001, self.chosen()[self.ids[0]])
         preview = queries.get_group_candidate(self.sid, first['accepted']['round_id'], second_id, self.db)
         self.assertEqual(1002, preview['state_preview']['members'][0]['portrait']['portrait_id'])
-        failed = self.command(self.sid, kind='regenerate', call_snapshot=self.calls(self.ids))
+        failed = self.command(self.sid, kind='regenerate', call_snapshot=replace(self.calls(self.ids), shared_chat=True))
         self.settle(failed, False)
         self.assertEqual(1001, self.chosen()[self.ids[0]])
         failed_id = failed['accepted']['candidate_id']

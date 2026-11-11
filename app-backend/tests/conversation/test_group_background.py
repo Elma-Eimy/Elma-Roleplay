@@ -29,20 +29,19 @@ class Model:
         self.calls.append((stage, parameters))
         if stage == self.fail:
             raise RuntimeError("PRIVATE_FAILURE")
-        recipients = [{"persona_id": pid, "decision": "visible"} for pid in self.ids]
-        if stage == "user_visibility":
-            value = {"units": [{"start": 0, "end": len(self.user), "recipients": recipients}]}
-        elif stage == "next_action":
-            value = ({"action": "speak", "speaker_persona_id": self.ids[self.saved % len(self.ids)], "reason_code": "follow_up"}
-                     if self.saved < self.steps else {"action": "end", "reason_code": "wait_user"})
-        elif stage == "role_generation":
-            value = {"units": [{"kind": "speech", "text": self.text}], "status": {"emotion": "平静", "affection_change": 2}}
-        elif stage == 'role_experience_review':
-            value = {'claims': []}
-        else:
-            value = {"units": [{"unit_index": 0, "recipients": recipients}]}
-            self.saved += 1
-        return _response(json.dumps(value, ensure_ascii=False))
+        if stage == "next_action":
+            if self.saved >= self.steps:
+                return _response('{"action":"end","reason_code":"wait_user"}')
+            speaker = self.ids[self.saved % len(self.ids)]
+            payload = json.loads(parameters['messages'][1]['content'])
+            sources = payload['response_sources'][str(speaker)]
+            return _response(json.dumps(dict(action='speak', speaker_persona_id=speaker,
+                reason_code='follow_up', basis=list(sources)[-1])))
+        if stage != 'role_generation':
+            raise AssertionError('removed model stage: ' + stage)
+        self.saved += 1
+        return _response('<reply>' + self.text + '</reply><status emotion="平静" affection_change="2"/>')
+
 
 
 class GroupBackgroundTests(unittest.TestCase):
@@ -78,19 +77,14 @@ class GroupBackgroundTests(unittest.TestCase):
         return dict(observed_round_id=round_.id if round_ else None, observed_candidate_id=candidate.id if candidate else None,
                     observed_candidate_revision=candidate.revision if candidate else None), group.group_revision
 
-    async def submit(self, sid, owner, model, kind="send", request_id=None, experience_guard=False, **kwargs):
+    async def submit(self, sid, owner, model, kind="send", request_id=None, **kwargs):
         seen, revision = self.observed(sid)
         if kind == "send":
             kwargs.setdefault("user_content", "hello")
         if kind != "resume":
             kwargs.setdefault("model", "fixture")
-        capture = background.capture_group_calls
-        def frozen(*args, **kw):
-            return replace(capture(*args, **kw), experience_guard=experience_guard)
-        # 旧专项保持旧调用阶段；亲历审查由独立专项显式启用。
-        with patch.object(background, 'capture_group_calls', side_effect=frozen):
-            return await background.submit_group_operation(sid, request_id or str(uuid4()), kind, revision, self.db,
-                runtime=owner, call_model=model, **seen, **kwargs)
+        return await background.submit_group_operation(sid, request_id or str(uuid4()), kind, revision, self.db,
+            runtime=owner, call_model=model, **seen, **kwargs)
 
     async def drain(self, owner):
         while owner.tasks:
@@ -111,7 +105,7 @@ class GroupBackgroundTests(unittest.TestCase):
             candidate = self.candidate(receipt)
             self.assertEqual(("awaiting_confirmation", "done"), (candidate.status, candidate.checkpoint))
             operation = self.db.get(GroupRoundOperation, receipt["operation_id"])
-            self.assertEqual(("succeeded", 5), (operation.status, operation.call_count))
+            self.assertEqual(("succeeded", 3), (operation.status, operation.call_count))
             self.assertEqual(["user_visibility", "next_action", "utterance_visibility", "finish"],
                 [row.stage for row in self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.step_index)])
             self.assertFalse(is_session_locked(sid))
@@ -119,8 +113,7 @@ class GroupBackgroundTests(unittest.TestCase):
             asyncio.run(scenario(owner))
 
     def test_every_failed_stage_resumes_only_unfinished_steps(self):
-        for stage, checkpoint in (("user_visibility", "user_visibility"), ("next_action", "next_action"),
-                                  ("role_generation", "role_generation"), ("utterance_visibility", "role_generation")):
+        for stage, checkpoint in (("next_action", "next_action"), ("role_generation", "role_generation")):
             with self.subTest(stage=stage):
                 sid, ids = self.group()
                 async def scenario(owner):
@@ -135,7 +128,7 @@ class GroupBackgroundTests(unittest.TestCase):
                     self.assertEqual(candidate.id, resumed["accepted"]["candidate_id"])
                     self.assertEqual("done", self.candidate(resumed).checkpoint)
                     stages = [name for name, _ in model.calls]
-                    self.assertEqual(stage == "user_visibility", "user_visibility" in stages)
+                    self.assertNotIn("user_visibility", stages)
                     if checkpoint == "role_generation":
                         self.assertEqual("role_generation", stages[0])
                     self.assertEqual(1, self.db.query(GroupContentItem).filter_by(candidate_id=candidate.id, kind="utterance").count())
@@ -319,9 +312,13 @@ class GroupBackgroundTests(unittest.TestCase):
             entered, release = asyncio.Event(), asyncio.Event()
             model = Model(ids)
             async def wait(stage, parameters):
-                if stage == "user_visibility":
+                if stage == "next_action" and not model.saved:
                     entered.set()
                     await release.wait()
+                if stage == 'role_generation':
+                    model.calls.append((stage, parameters))
+                    model.saved += 1
+                    return _response('<reply>NEW_REPLY</reply><status emotion="平静" affection_change="2"/>')
                 return await model(stage, parameters)
             seen, revision = self.observed(sid)
             receipt = await background.submit_group_operation(sid, request_id, "send", revision, self.db,
@@ -337,8 +334,8 @@ class GroupBackgroundTests(unittest.TestCase):
             self.assertEqual((deadline, count), (operation.deadline_at, operation.call_count))
             release.set()
             await self.drain(owner)
-            self.assertEqual(6, self.db.get(GroupRoundOperation, receipt["operation_id"]).call_count)
-            self.assertEqual(1, sum(stage == 'role_experience_review' for stage, _ in model.calls))
+            self.assertEqual(3, self.db.get(GroupRoundOperation, receipt["operation_id"]).call_count)
+            self.assertEqual(0, sum(stage == 'role_experience_review' for stage, _ in model.calls))
         with group_runtime(self.engine) as owner:
             asyncio.run(scenario(owner))
     def test_cancelled_database_commits_preserve_accepted_round_and_saved_utterance(self):
@@ -373,7 +370,7 @@ class GroupBackgroundTests(unittest.TestCase):
                 await self.submit(sid, owner, after, "resume", target_candidate_id=candidate.id,
                                   target_candidate_revision=candidate.revision)
                 await self.drain(owner)
-                self.assertEqual([] if phase == "save" else ["user_visibility", "next_action", "role_generation", "utterance_visibility"],
+                self.assertEqual([] if phase == "save" else ["next_action", "role_generation"],
                                  [stage for stage, _ in after.calls])
             with group_runtime(self.engine) as owner:
                 asyncio.run(scenario(owner))
@@ -442,7 +439,7 @@ class GroupBackgroundTests(unittest.TestCase):
                 return await model(stage, parameters)
             receipt = await self.submit(sid, owner, limit)
             await self.drain(owner)
-            self.assertEqual(["user_visibility"], [stage for stage, _ in model.calls])
+            self.assertEqual(["next_action"], [stage for stage, _ in model.calls])
             candidate = self.candidate(receipt)
             self.assertEqual(("failed", "call_budget"), (candidate.status, candidate.error_code))
             operation = self.db.get(GroupRoundOperation, receipt["operation_id"])
@@ -458,7 +455,7 @@ class GroupBackgroundTests(unittest.TestCase):
             await self.drain(owner)
             await self.submit(sid, owner, Model(ids, fail="role_generation"), "regenerate")
             await self.drain(owner)
-            await self.submit(sid, owner, Model(ids, fail="user_visibility"))
+            await self.submit(sid, owner, Model(ids, fail="next_action"))
             await self.drain(owner)
             round_ = self.db.get(GroupRound, first["accepted"]["round_id"])
             self.assertIsNotNone(round_.confirmed_at)
@@ -535,7 +532,7 @@ class GroupBackgroundTests(unittest.TestCase):
                 receipt = await self.submit(sid, owner, model)
                 await self.drain(owner)
             self.assertEqual("done", self.candidate(receipt).checkpoint)
-            self.assertEqual(2, len(model.calls))
+            self.assertEqual(1, len(model.calls))
             for _, parameters in model.calls:
                 self.assertGreater(parameters["timeout"], 0)
                 self.assertLessEqual(parameters["timeout"], 1)
@@ -554,10 +551,10 @@ class GroupBackgroundTests(unittest.TestCase):
                 receipt = await self.submit(sid, owner, late)
                 await self.drain(owner)
             candidate = self.candidate(receipt)
-            self.assertEqual(("failed", "timeout", "user_visibility"),
+            self.assertEqual(("failed", "timeout", "next_action"),
                              (candidate.status, candidate.error_code, candidate.checkpoint))
             self.assertEqual(1, len(model.calls))
             self.assertEqual(1, self.db.get(GroupRoundOperation, receipt["operation_id"]).call_count)
-            self.assertEqual(0, self.db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).count())
+            self.assertEqual(1, self.db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).count())
         with group_runtime(self.engine) as owner:
             asyncio.run(scenario(owner))

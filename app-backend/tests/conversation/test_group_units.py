@@ -16,11 +16,15 @@ from services.conversation import group_session_service as groups
 from services.conversation.session_access import SessionKindConflict
 from services.conversation.group_context_service import build_member_context
 from services.conversation.group_director_service import NextAction, build_director_context
-from services.conversation.group_round_service import run_group_round
 from services.conversation.group_session_service import create_group_session
 from services.conversation.group_unit_protocol import (ContentUnit, UnitPlan, GroupUnitError, parse_user_units,
     parse_unit_visibility, load_object)
-from scripts.group_chat_prototype.worker import _response
+
+
+def grounding(messages):
+    marker = '【本次发言依据】\n'
+    return next(json.loads(row['content'].split(marker, 1)[1].split('\n', 1)[0])
+                for row in messages if marker in row['content'])
 from tests.conversation import test_group_session_service as fixtures
 
 
@@ -83,9 +87,10 @@ class GroupUnitTests(unittest.TestCase):
         self.assertEqual([("speech", "桥坏了。")], [(unit.kind, unit.text) for unit in listener.visible_units])
         own = json.loads(build_member_context(self.sid, self.a, self.target["candidate_id"],
             self.target["revision"], self.db).messages_json)
-        event = json.loads(next(row["content"] for row in own if row["role"] == "assistant"))
-        self.assertEqual("self", event["source"])
-        self.assertEqual(["speech", "thought"], [unit["kind"] for unit in event["units"]])
+        from services.parse import extract_xml_block
+        own_reply = next(row['content'] for row in own if row['role'] == 'assistant')
+        self.assertEqual('桥坏了。PRIVATE_THOUGHT', extract_xml_block(own_reply)['reply'])
+        self.assertTrue(own_reply.startswith('<reply>'))
         other = json.loads(build_member_context(self.sid, self.b, self.target["candidate_id"],
             self.target["revision"], self.db).messages_json)
         event = next(json.loads(row["content"].split("\n")[-1]) for row in other
@@ -95,7 +100,7 @@ class GroupUnitTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_THOUGHT", json.dumps(other))
         self.assertNotIn("recipients", json.dumps(other))
         self.assertEqual(["😀公开。"], [row["content"] for row in other if row["role"] == "user"])
-        boundary = json.loads(other[-1]["content"].split("\n")[1])
+        boundary = grounding(other)
         self.assertEqual(self.b, boundary["speaker_persona_id"])
         self.assertEqual([self.a], boundary["visible_current_turn_speakers"])
 
@@ -111,8 +116,11 @@ class GroupUnitTests(unittest.TestCase):
         context = build_member_context(self.sid, self.a, self.target["candidate_id"],
             self.target["revision"], self.db, history_limit=1)
         messages = json.loads(context.messages_json)
-        event = json.loads(next(row["content"] for row in messages if row["role"] == "assistant"))
-        self.assertEqual(1, event["order"])
+        marker = '【个人可见历史顺序】\n'
+        timeline = next(json.loads(row['content'].split(marker, 1)[1].split('\n', 1)[0])
+                        for row in messages if marker in row['content'])
+        self.assertEqual(1, timeline[0]['order'])
+        self.assertTrue(next(row['content'] for row in messages if row['role'] == 'assistant').startswith('<reply>'))
         self.assertNotIn("HIDDEN_EVENT", context.messages_json)
         combined = "\n".join(row["content"] for row in messages)
         self.assertNotIn('"sequence"', combined)
@@ -124,7 +132,7 @@ class GroupUnitTests(unittest.TestCase):
         context = build_member_context(self.sid, self.b, self.target["candidate_id"],
             self.target["revision"], self.db)
         messages = json.loads(context.messages_json)
-        boundary = json.loads(messages[-1]["content"].split("\n")[1])
+        boundary = grounding(messages)
         self.assertEqual([], boundary["visible_current_turn_speakers"])
         self.assertEqual("user", boundary["latest_visible_source"])
         self.assertEqual(self.b, boundary["speaker_persona_id"])
@@ -166,17 +174,18 @@ class GroupUnitTests(unittest.TestCase):
         ctx = build_member_context(self.sid, self.a, self.target["candidate_id"], self.target["revision"], self.db)
         self.assertNotIn("UNIQUE_STATE", ctx.state_json)
 
-    def test_v2_contract_replaces_xml_and_preserves_phi(self):
+    def test_old_v2_candidate_uses_single_chat_xml_and_preserves_phi(self):
         self.group()
         self.db.get(Character, 1).post_history_instructions = "PHI {{char}}"
         self.db.commit()
         ctx = build_member_context(self.sid, self.a, self.target["candidate_id"], 1, self.db)
         last = json.loads(ctx.messages_json)[-1]["content"]
         self.assertIn("PHI actor1", last)
-        self.assertIn("群聊单元输出协议 v2", last)
-        self.assertNotIn("<reply>", last)
-        self.assertNotIn("<state_update>", last)
-        self.assertNotIn("自闭合", last)
+        self.assertNotIn('群聊单元输出协议', ctx.messages_json)
+        self.assertNotIn('仅输出一个 JSON 对象', ctx.messages_json)
+        self.assertIn('<reply>', last)
+        self.assertIn('<state_update>', last)
+        self.assertIn('自闭合', last)
         self.assertIn("不能复述或重演自己的上一条", ctx.messages_json)
 
     def test_user_and_role_protocol_reject_incomplete_duplicate_or_cross_member_decisions(self):
@@ -197,18 +206,6 @@ class GroupUnitTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(GroupUnitError):
                 load_object(raw)
 
-    def test_invalid_role_output_is_not_repaired_and_other_actor_state_is_rejected(self):
-        self.group()
-        ctx = build_member_context(self.sid, self.a, self.target["candidate_id"], 1, self.db)
-        valid = {"units": [{"kind": "speech", "text": "text"}], "status": {"emotion": "平静", "affection_change": 1}}
-        self.assertEqual("text", generation._parse(json.dumps(valid), ctx)[0])
-        invalid = [dict(valid, units=[]), dict(valid, units=[{"kind": "speech", "text": " "}]),
-                   dict(valid, status={"emotion": "平静", "affection_change": True}),
-                   dict(valid, state_update={"characters": {"actor2": {"posture": "standing"}}}),
-                   dict(valid, reasoning="secret")]
-        for value in invalid:
-            with self.subTest(value=value), self.assertRaises(generation.GroupGenerationError):
-                generation._parse(json.dumps(value), ctx)
 
     def test_audit_failure_rolls_back_parent_units_visibility_and_state_together(self):
         self.group()
@@ -242,151 +239,15 @@ class GroupUnitTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_THOUGHT", text)
         self.assertNotIn("SIBLING_SECRET", text)
 
-    def run_round(self, *, fail_stage=None, max_steps=2, initial_visible=True):
-        result = asyncio.run(create_group_session(self.cards, self.db))
-        sid = result["session_id"]
-        ids = tuple(row["persona_id"] for row in result["members"])
-        calls, role_calls = [], 0
-        def rec(visible):
-            return [{"persona_id": pid, "decision": "visible" if pid in visible else "hidden"} for pid in ids]
-        async def model(stage, kwargs):
-            nonlocal role_calls
-            calls.append(stage)
-            self.assertFalse(self.db.connection().connection.driver_connection.in_transaction)
-            if stage == fail_stage:
-                return _response('{"bad":"PRIVATE_REASONING"}')
-            if stage == "user_visibility":
-                raw = {"units": [{"start": 0, "end": 4, "recipients": rec(ids if initial_visible else ())}]}
-            elif stage == "next_action":
-                raw = ({"action": "speak", "speaker_persona_id": ids[role_calls % 2], "reason_code": "follow_up"}
-                       if role_calls < 1 else {"action": "end", "reason_code": "wait_user"})
-            elif stage == "role_generation":
-                steps = self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id).all()
-                self.assertEqual("next_action", steps[-1].stage)
-                raw = {"units": [{"kind": "speech", "text": "桥坏了。"}, {"kind": "thought", "text": "PRIVATE_THOUGHT"}],
-                       "status": {"emotion": "平静", "affection_change": 2}}
-                role_calls += 1
-            else:
-                raw = {"units": [{"unit_index": 0, "recipients": rec(ids)}, {"unit_index": 1, "recipients": rec(ids[:1])}]}
-            return _response(json.dumps(raw, ensure_ascii=False))
-        with group_runtime(self.engine) as owner:
-            result = asyncio.run(run_group_round(sid, "user", self.db, runtime=owner, model="fixture", call_model=model,
-                collect_inputs=True, max_steps=max_steps))
-        return sid, ids, result, calls
 
-    def test_v2_round_persists_revision_chain_terminal_reason_and_sanitized_audit(self):
-        sid, ids, result, calls = self.run_round()
-        self.assertIsNone(result["error_code"])
-        self.assertEqual(5, len(calls))
-        steps = self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.step_index).all()
-        self.assertEqual(["user_visibility", "next_action", "utterance_visibility", "finish"], [row.stage for row in steps])
-        self.assertEqual([(0, 1), (1, 2), (2, 3), (3, 4)], [(row.expected_revision, row.result_revision) for row in steps])
-        self.assertTrue(all(row.model == "fixture" and row.policy_version == 2 for row in steps))
-        payload = "".join(row.decision_json for row in steps)
-        self.assertNotIn("PRIVATE", payload)
-        self.assertNotIn("桥坏", payload)
-        self.assertEqual("wait_user", self.db.get(GroupRoundCandidate, result["candidate_id"]).finish_reason)
-        self.assertNotIn("PRIVATE_THOUGHT", json.dumps(result["personal_inputs"][str(ids[1])], ensure_ascii=False))
-        self.assertNotIn("decision_json", json.dumps(history.list_group_rounds(sid, self.db)))
 
-    def test_program_stops_persist_reasons_without_extra_calls(self):
-        for initial, limit, expected, count in ((False, 2, "no_visible_basis", 1), (True, 1, "step_limit", 4)):
-            with self.subTest(expected=expected):
-                _, _, result, calls = self.run_round(max_steps=limit, initial_visible=initial)
-                self.assertIsNone(result["error_code"])
-                self.assertEqual(expected, result["finish_reason"])
-                self.assertEqual(count, len(calls))
-                candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-                self.assertEqual(expected, candidate.finish_reason)
-                self.assertEqual("awaiting_confirmation", candidate.status)
 
-    def test_failed_postcheck_keeps_accepted_schedule_and_no_partial_utterance(self):
-        _, _, result, calls = self.run_round(fail_stage="utterance_visibility")
-        candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-        self.assertEqual("failed", candidate.status)
-        self.assertIsNone(candidate.finish_reason)
-        self.assertEqual("invalid_output", candidate.error_code)
-        self.assertEqual(candidate.revision, result["revision"])
-        self.assertEqual(3, result["revision"])
-        self.assertEqual(6, len(calls))
-        self.assertEqual(3, calls.count("utterance_visibility"))
-        self.assertEqual(["user_visibility", "next_action"], [row.stage for row in self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id)])
-        self.assertEqual(1, self.db.query(GroupContentItem).count())
 
-    def test_director_and_role_failures_return_only_the_committed_failure_revision(self):
-        for stage, expected in (("next_action", 2), ("role_generation", 3)):
-            with self.subTest(stage=stage):
-                _, _, result, _ = self.run_round(fail_stage=stage)
-                candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-                self.assertEqual(("failed", expected), (candidate.status, candidate.revision))
-                self.assertEqual(expected, result["revision"])
 
-    def test_revision_competition_does_not_adopt_another_writers_version(self):
-        original = generation._generate_with_execution
-        async def compete(*args, **kwargs):
-            async def late_call(parameters):
-                candidate = self.db.get(GroupRoundCandidate, args[1])
-                candidate.revision += 10
-                self.db.commit()
-                return _response('{"bad":"late output"}')
-            return await original(*args, **{**kwargs, "call_model": late_call})
-        with patch.object(generation, "_generate_with_execution", side_effect=compete):
-            _, _, result, _ = self.run_round()
-        candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-        self.assertEqual(("generating", 12), (candidate.status, candidate.revision))
-        self.assertEqual(2, result["revision"])
-        self.assertIsNone(candidate.error_code)
 
-    def test_failure_marker_error_never_fabricates_a_committed_revision(self):
-        with patch.object(generation, "_fail", side_effect=RuntimeError("marker unavailable")):
-            _, _, result, _ = self.run_round(fail_stage="utterance_visibility")
-        candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-        self.assertEqual(("generating", 2), (candidate.status, candidate.revision))
-        self.assertEqual(2, result["revision"])
-        self.assertEqual("invalid_output", result["error_code"])
-        self.assertIsNone(candidate.error_code)
 
-    def test_cancel_after_utterance_commit_marks_failure_at_the_saved_revision(self):
-        original = generation._database
-        async def cancel_after(operation, *args, **kwargs):
-            result = await original(operation, *args, **kwargs)
-            if operation is generation._save:
-                raise generation._DatabaseCancelled(result)
-            return result
-        with patch.object(generation, "_database", side_effect=cancel_after), self.assertRaises(asyncio.CancelledError):
-            self.run_round()
-        candidate = self.db.query(GroupRoundCandidate).one()
-        self.assertEqual(("failed", "cancelled", 4), (candidate.status, candidate.error_code, candidate.revision))
-        self.assertEqual(2, self.db.query(GroupContentItem).count())
-        self.assertEqual("utterance_visibility", self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id.desc()).first().stage)
 
-    def test_cancel_after_schedule_commit_keeps_audit_and_marks_new_revision_failed(self):
-        original = generation._database
-        async def cancel_after(operation, *args, **kwargs):
-            result = await original(operation, *args, **kwargs)
-            if operation is history._accept_action:
-                raise generation._DatabaseCancelled(result)
-            return result
-        with patch.object(generation, "_database", side_effect=cancel_after), self.assertRaises(asyncio.CancelledError):
-            self.run_round()
-        candidate = self.db.query(GroupRoundCandidate).one()
-        self.assertEqual(("failed", "cancelled", 3), (candidate.status, candidate.error_code, candidate.revision))
-        self.assertEqual(["user_visibility", "next_action"], [row.stage for row in self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id)])
-        self.assertEqual(1, self.db.query(GroupContentItem).count())
 
-    def test_final_commit_wins_late_cancellation_with_terminal_audit(self):
-        original = generation._database
-        async def cancel_after(operation, *args, **kwargs):
-            result = await original(operation, *args, **kwargs)
-            if operation is history._finish:
-                raise generation._DatabaseCancelled(result)
-            return result
-        with patch.object(generation, "_database", side_effect=cancel_after):
-            _, _, result, _ = self.run_round()
-        self.assertIsNone(result["error_code"])
-        candidate = self.db.get(GroupRoundCandidate, result["candidate_id"])
-        self.assertEqual(("awaiting_confirmation", "wait_user", 4), (candidate.status, candidate.finish_reason, candidate.revision))
-        self.assertEqual("finish", self.db.query(GroupDirectorStep).order_by(GroupDirectorStep.id.desc()).first().stage)
 
     def test_stale_utterance_or_action_cannot_append_audit_or_units(self):
         self.group()
@@ -467,8 +328,8 @@ class GroupUnitTests(unittest.TestCase):
         self.assertIn("VISIBLE_LORE", ctx.messages_json)
         self.assertIn("example reply", ctx.messages_json)
         messages = json.loads(ctx.messages_json)
-        self.assertFalse(any(row['role'] == 'assistant' and '<reply>' in row['content'] for row in messages))
-        self.assertTrue(any(row['role'] == 'system' and '【虚构风格示例资料】' in row['content'] for row in messages))
+        self.assertTrue(any(row['role'] == 'assistant' and '<reply>' in row['content'] for row in messages))
+        self.assertFalse(any('【虚构风格示例资料】' in row['content'] for row in messages))
         from services.conversation.prompt_compiler import compile_dialogue_examples
         self.assertTrue(any(row['role'] == 'assistant' and '<reply>' in row['content']
                             for row in compile_dialogue_examples(card)))
