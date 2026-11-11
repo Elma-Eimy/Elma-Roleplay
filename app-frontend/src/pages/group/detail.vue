@@ -37,13 +37,13 @@
             <ChatTranscriptMessage :content="round.user_content" is-user />
             <GroupUtterances :utterances="round.utterances" :members="group.members" :portraits="round.portraits" />
             <template v-if="round.pending_candidate">
-              <text class="group-copy">{{ round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
+              <text class="candidate-notice">{{ round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
               <GroupUtterances :utterances="round.pending_candidate.utterances" :members="group.members" />
             </template>
             <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
             <view class="round-actions">
               <button v-if="current" class="group-action" :disabled="submitting || deleting || loading" @tap="openCandidates(round.round_id)">整轮候选</button>
-              <template v-if="round.round_id === current?.latest?.round_id">
+              <template v-if="round.round_id === current?.latest?.round_id && !operationBusy">
                 <button class="group-action" :disabled="!canRegenerate" @tap="state.command('regenerate')">重新生成</button>
                 <button class="group-action group-danger" :disabled="!canDiscard" @tap="state.command('discard', undefined, confirmDiscard)">撤回</button>
               </template>
@@ -53,15 +53,11 @@
       </scroll-view>
       <button v-if="hasUnreadBelow" class="group-action unread-button" @tap="pinToBottom">查看最新消息 ↓</button>
       <view v-if="group" class="group-composer">
-          <view class="group-card">
-            <text v-if="!current || !canGenerate" class="group-copy">{{ !current ? '当前仅可阅读。请刷新发言，或连接支持群聊操作的后端。' : '生成服务暂不可用，已有内容仍可阅读。' }}</text>
-            <text v-if="pending || current?.active_operation" class="group-copy">{{ submitting ? '正在提交…' : recovering ? '正在查询进展…' : '已有请求正在处理或结果待确认，请先查询。' }}</text>
-            <text v-if="notice" class="group-copy" role="status">{{ notice }}</text>
-            <text v-if="operationError" class="group-error" role="alert">{{ operationError }}</text>
-            <text v-if="historyStale" class="group-copy" role="status">剧情已有更新，请刷新当前采用的发言后再操作。</text>
-            <button v-if="historyStale" class="group-action" :disabled="loading || loadingRounds || operationBusy" @tap="refreshRounds">刷新消息</button>
-            <button role="button" v-if="pending || current?.active_operation" class="group-action" :disabled="recovering || submitting || loading" @tap="state.recover">查询请求结果</button>
-          </view>
+        <view v-if="composerFeedback" class="composer-feedback" :class="{ 'is-error': !!operationError }" role="status">
+          <text class="feedback-copy">{{ composerFeedback }}</text>
+          <button v-if="historyStale" class="feedback-action" :disabled="loading || loadingRounds || operationBusy" @tap="refreshRounds">刷新</button>
+          <button v-else-if="operationError && (pending || current?.active_operation)" class="feedback-action" :disabled="recovering || submitting || loading" @tap="state.recover">{{ recovering ? '查询中' : '查询结果' }}</button>
+        </view>
         <ChatComposer v-model="draft" :use-reasoning="chatSettingsStore.useReasoning" :model-summary="chatSettingsStore.modelSummary"
           :is-focused="isFocused" :is-android="isAndroid" :keyboard-height="keyboardHeight" :wrapper-style="inputWrapperStyle"
           :is-generating="operationBusy" :disabled="!canSend" :maxlength="20000"
@@ -71,89 +67,22 @@
     </view>
     <PromptPreviewModal :is-open="promptPreview !== null" :messages="promptPreview?.messages || []" :token-estimate="promptPreview?.token_estimate" @close="promptPreview = null" />
     <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
-    <view v-if="showDetails && group" class="status-panel-backdrop" :class="{ 'is-android': isAndroid }" @tap="showDetails = false">
-      <view class="status-panel" role="dialog" aria-label="群聊资料" @tap.stop>
-        <view class="panel-header"><text class="drawer-title">群聊资料</text><button class="close-btn" aria-label="关闭群聊资料" @tap="showDetails = false"><image class="close-icon" src="/static/icons/drawer_close.svg" /></button></view>
-        <scroll-view class="panel-content" scroll-y><view class="drawer-body">
-          <view class="char-card group-hero">
-            <view class="char-card-info"><text class="char-card-name">{{ group.title }}</text><text class="hero-subtitle">{{ group.members.length }} 位角色</text></view>
-            <view class="group-avatars"><button v-for="member in group.members" :key="member.persona_id" class="profile-avatar-link" :aria-label="`查看${member.character.name}的人物档案`" :disabled="openingProfile || loading || !member.character.id" @tap.stop="openCharacterProfile(member.persona_id)"><AvatarImage class="char-card-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /></button></view>
-          </view>
-          <view class="drawer-tabs"><button v-for="tab in drawerTabs" :key="tab.id" class="drawer-tab" :class="{ 'is-active': drawerTab === tab.id }" @tap="selectDrawerTab(tab.id)">{{ tab.label }}</button></view>
-          <template v-if="drawerTab === 'members'">
-            <view class="panel-section">
-              <text class="group-heading">各角色提示词组装</text>
-              <text class="group-copy">预览当前剧情后的组装结果，与生成使用同一入口；不是上一条回复的请求存档。</text>
-              <button v-for="member in group.members" :key="member.persona_id" class="group-action" :disabled="promptLoading || !current?.latest?.candidate_id" @tap="openMemberPrompt(member.persona_id)">查看 {{ member.character.name }} 的提示词</button>
-              <text v-if="promptError" class="group-error">{{ promptError }}</text>
-            </view>
-            <view v-if="!current?.latest?.candidate_id" class="panel-section">
-              <view v-for="member in group.members" :key="member.persona_id" class="member-summary">
-                <button class="profile-avatar-link" :aria-label="`查看${member.character.name}的人物档案`" :disabled="openingProfile || loading || !member.character.id" @tap.stop="openCharacterProfile(member.persona_id)"><AvatarImage class="member-summary-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /></button>
-                <view class="member-name"><text class="group-heading">{{ member.character.name }}</text><text class="group-copy">{{ member.state.current_mood || '—' }} · {{ member.state.affection_score ?? 0 }} / 100</text></view>
-              </view>
-            </view>
-          <view v-if="current?.latest?.candidate_id" class="panel-section">
-            <view class="group-row"><text class="group-heading">当前采用的成员状态</text><button class="group-action" :aria-expanded="showMemberStates" @tap="toggleMemberStates">{{ showMemberStates ? '收起' : '查看' }}</button></view>
-            <template v-if="showMemberStates">
-              <text class="group-copy">状态对应当前采用的剧情，候选预览不会改变这里的内容。</text>
-              <text v-if="operationBusy" class="group-copy" role="status">正在处理请求，结果确认后可重新读取成员状态。</text>
-              <text v-else-if="!current" class="group-copy">请先刷新发言，取得当前采用信息后再读取成员状态。</text>
-              <text v-else-if="!current?.latest?.candidate_id" class="group-copy">尚无采用候选，成员初始资料可在上方“设定与成员起点”查看。</text>
-              <text v-else-if="historyStale" class="group-copy">剧情已有更新，请先刷新发言。</text>
-              <template v-else>
-                <text v-if="loadingAdoptedState" class="group-copy" role="status">正在读取成员状态…</text>
-                <text v-else-if="adoptedStateError" class="group-error" role="alert">{{ adoptedStateError }}</text>
-                <text v-else-if="!adoptedState" class="group-copy">请重新读取此轮成员状态。</text>
-                <template v-if="adoptedState">
-                  <text class="group-caption">第 {{ adoptedState.round.round_index }} 轮 · 候选 {{ adoptedState.candidate.version }} · 当前采用</text>
-                  <text v-if="adoptedState.candidate.status === 'failed'" class="group-copy">本轮未完成，状态只反映已经保存的发言。</text>
-                  <GroupMemberStates :states="adoptedState.state_preview.members" :members="group.members" :user-nickname="group.user_nickname" />
-                </template>
-                <button class="group-action" :disabled="loadingAdoptedState || loading || deleting" @tap="state.loadAdoptedState">{{ loadingAdoptedState ? '正在读取…' : '重新读取成员状态' }}</button>
-              </template>
-            </template>
-          </view>
-          </template>
-          <template v-if="drawerTab === 'origins'">
-          <view v-if="showOrigins" class="panel-section">
-            <text class="group-heading">共同设定</text>
-            <text class="group-copy">{{ group.shared_setting || '未填写共同设定，角色保留各自的角色卡设定。' }}</text>
-            <text class="group-copy">以下是入群时固定的成员起点，不随剧情或候选预览改变。</text>
-          </view>
-          <template v-if="showOrigins">
-          <view v-for="member in group.members" :key="member.persona_id" class="panel-section">
-            <view class="group-row"><button class="profile-avatar-link" :aria-label="`查看${member.character.name}的人物档案`" :disabled="openingProfile || loading || !member.character.id" @tap.stop="openCharacterProfile(member.persona_id)"><AvatarImage class="group-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /></button><view class="member-name"><text class="group-heading">{{ member.character.name }}</text><text class="group-caption">成员 {{ member.slot }}</text></view></view>
-            <text class="group-label">{{ member.origin.mode === 'card' ? '从原卡开始' : '导入单聊快照' }}</text>
-            <text class="group-copy">{{ member.origin.mode === 'card' ? '没有导入单聊状态与私人记忆。' : `来源故事 #${member.origin.source_session_id} · 已导入 ${member.origin.inherited_memory_count} 张记忆卡` }}</text>
-            <text v-if="member.origin.mode === 'single_snapshot'" class="group-copy">导入时间：{{ formatTime(member.origin.captured_at) }}。来源故事之后的变化不会回写到此起点。</text>
-            <text class="group-copy">起点好感度：{{ member.state.affection_score ?? '未记录' }}　起点心情：{{ member.state.current_mood || '未记录' }}</text>
-            <text v-if="member.state.role_state.scene || member.state.current_scenario_override" class="group-copy">场景：{{ member.state.role_state.scene || member.state.current_scenario_override }}</text>
-            <text class="group-label">认知</text><text class="group-copy">{{ member.state.cognition_state || '尚未建立认知摘要。' }}</text>
-            <view v-for="(actor, name) in member.state.role_state.characters" :key="name" class="group-copy"><text>{{ name }}：{{ actorDescription(actor) }}</text></view>
-          </view>
-          </template>
-          </template>
-          <template v-if="drawerTab === 'appearance'">
-            <view class="panel-section">
-              <text class="section-title">故事模型</text>
-              <text class="group-copy">{{ chatSettingsStore.modelSummary }}</text>
-              <button class="action-btn outline" @tap="openModelSettings"><text class="btn-text">选择模型与思考强度</text></button>
-              <text class="group-copy">发送与重新生成使用当前选择；继续未完成候选时沿用原参数。</text>
-            </view>
-            <view class="panel-section"><ChatReadingPreferences /></view>
-            <view class="panel-section group-background-settings">
-              <text class="section-title">聊天背景</text>
-              <view class="background-mode-picker">
-                <button class="background-mode-option" :class="{ 'is-active': backgroundMode === 'clean' }" @tap="setBackgroundMode('clean')"><view class="background-mode-preview preview-clean" /><text class="background-mode-label">纯净背景</text></button>
-                <button class="background-mode-option" :class="{ 'is-active': backgroundMode === 'character' }" @tap="setBackgroundMode('character')"><view class="background-mode-preview preview-character"><AvatarImage class="background-mode-avatar" :src="backgroundUrl" /></view><text class="background-mode-label">角色立绘</text></button>
-              </view>
-              <text class="group-copy">默认跟随最后发言的成员，也可固定查看一名角色。</text>
-              <view class="background-members">
-                <button class="background-member" :class="{ 'is-active': focusedPersona === null }" @tap="focusedPersona = null">跟随发言</button>
-                <button v-for="member in group.members" :key="member.persona_id" class="background-member" :class="{ 'is-active': focusedPersona === member.persona_id }" @tap="focusedPersona = member.persona_id">{{ member.character.name }}</button>
-              </view>
-            </view>
+    <ChatDrawer v-if="group && drawerMember && drawerMemberState" :is-open="showDetails" :session-id="group.session_id" :background-mode="backgroundMode" :member-context="drawerMemberContext" :hide-delete="!canDelete"
+      @close="showDetails = false" @update:background-mode="setBackgroundMode" @delete-session="remove"
+      @open-prompt-preview="openMemberPrompt(drawerMember.persona_id)" @open-memory-view="openMemberMemories">
+      <template #member-picker>
+        <view class="group-member-picker"><text class="group-label">群聊成员</text><view class="background-members">
+          <button v-for="member in group.members" :key="member.persona_id" class="background-member" :class="{ 'is-active': drawerMember.persona_id === member.persona_id }" @tap="drawerPersonaId = member.persona_id">{{ member.character.name }}</button>
+        </view><text class="group-copy">切换成员，查看各自的状态与记忆。</text></view>
+      </template>
+      <template #role-state>
+        <text v-if="loadingAdoptedState" class="group-copy">正在同步成员状态…</text>
+        <text v-if="adoptedStateError" class="group-error">{{ adoptedStateError }}</text>
+        <RoleStatePanel v-if="!current?.latest?.candidate_id || adoptedState" :session-id="null" :readonly-state="drawerMemberState.role_state" :processing="operationBusy" />
+        <text v-else class="group-copy">{{ operationBusy ? '正在生成，完成后同步当前状态。' : '状态尚未同步，请刷新后查看。' }}</text>
+        <button class="group-action" :disabled="loadingAdoptedState || operationBusy" @tap="state.loadAdoptedState">刷新状态</button>
+      </template>
+      <template #portraits>
           <view class="panel-section">
             <view class="group-row"><text class="group-heading">成员立绘</text><button class="group-action" :aria-expanded="showPortraits" @tap="togglePortraits">{{ showPortraits ? '收起' : '查看' }}</button></view>
             <template v-if="showPortraits">
@@ -181,19 +110,18 @@
               <button class="group-action" :disabled="loadingPortraits || portraitWriting || operationBusy || loading || deleting" @tap="state.refreshPortraits">刷新立绘</button>
             </template>
           </view>
-          </template>
-          <template v-if="drawerTab === 'manage'">
-          <text v-if="error" class="group-error" role="alert">{{ error }}</text>
-          <view class="group-action" role="button" :aria-disabled="loading || deleting" @tap="state.load">{{ loading ? '正在刷新…' : '刷新详情' }}</view>
 
-          <view  class="panel-section">
-            <text class="group-copy">删除会移除全部成员与本群数据，来源单聊和角色卡会保留。</text>
-            <button class="action-btn danger-btn group-delete" :disabled="!canDelete" @tap="remove"><image class="danger-icon" src="/static/icons/drawer_trash.svg" /><text class="danger-btn-text">{{ deleting ? '正在处理…' : '删除整个群聊' }}</text></button>
-          </view>
-          </template>
-        </view></scroll-view>
-      </view>
-    </view>
+      </template>
+      <template #member-insights>
+        <view v-if="drawerMemberState.insights?.length" class="panel-section"><text class="section-title">认识与关系</text><text v-for="(insight, index) in drawerMemberState.insights" :key="index" class="group-copy">{{ insight.content }}</text></view>
+      </template>
+      <template #group-tools>
+        <view class="panel-section"><text class="section-title">共同设定</text><text class="group-copy">{{ group.shared_setting || '未填写共同设定。' }}</text><text class="group-copy">你的名字：{{ group.user_nickname }}</text></view>
+        <view class="panel-section"><text class="section-title">成员起点</text><text class="group-copy">{{ drawerMember.origin.mode === 'card' ? '从原卡开始' : `导入单聊快照 · ${drawerMember.origin.inherited_memory_count} 张记忆卡` }}</text><text class="group-copy">起点好感：{{ drawerMember.state.affection_score ?? '未记录' }} · 起点心情：{{ drawerMember.state.current_mood || '未记录' }}</text></view>
+        <view class="panel-section"><text class="section-title">群聊管理</text><button class="action-btn outline" :disabled="loading || deleting" @tap="state.load">刷新群聊资料</button><text v-if="error" class="group-error">{{ error }}</text></view>
+      </template>
+    </ChatDrawer>
+    <MemoryManagerModal v-if="group && memoryPersonaId" :key="`${group.session_id}:${memoryPersonaId}`" :is-open="true" :session-id="group.session_id" :group-persona-id="memoryPersonaId" :context-title="`${group.title} · ${group.members.find(member => member.persona_id === memoryPersonaId)?.character.name || ''}`" local-label="群内记忆" @close="memoryPersonaId = null" />
     <view v-if="showCandidates && group" class="status-panel-backdrop" :class="{ 'is-android': isAndroid }" @tap="showCandidates = false">
       <view class="status-panel" role="dialog" aria-label="整轮候选" @tap.stop>
         <view class="panel-header"><text class="group-heading">整轮候选</text><button class="group-action" @tap="showCandidates = false">关闭</button></view>
@@ -234,7 +162,9 @@
 import { computed, ref, watch, getCurrentInstance } from "vue";
 import { onLoad, onShow, onHide, onUnload, onReady, onResize } from "@dcloudio/uni-app";
 import ChatSceneBackground from "@/components/chat/ChatSceneBackground.vue";
-import ChatReadingPreferences from "@/components/chat/ChatReadingPreferences.vue";
+import ChatDrawer from "@/components/chat/ChatDrawer.vue";
+import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
+import RoleStatePanel from "@/components/chat/RoleStatePanel.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import { compileGroupMemberPrompt } from "@/api/groupSessions";
 import type { GroupPromptPreview } from "@/types/groupSessions";
@@ -252,7 +182,6 @@ import GroupUtterances from "@/components/chat/GroupUtterances.vue";
 import GroupMemberStates from "@/components/chat/GroupMemberStates.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
-import type { ActorState } from "@/types/roleState";
 import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/groupRounds";
 
 const promptPreview = ref<GroupPromptPreview | null>(null);
@@ -265,7 +194,7 @@ async function openMemberPrompt(personaId: number) {
   promptLoading.value = true; promptError.value = "";
   try {
     const result = await compileGroupMemberPrompt(sessionId, personaId);
-    if (valid()) promptPreview.value = result;
+    if (valid()) { showDetails.value = false; promptPreview.value = result; }
   } catch (cause) { if (valid()) promptError.value = cause instanceof Error ? cause.message : String(cause); }
   finally { if (valid()) promptLoading.value = false; }
 }
@@ -273,12 +202,21 @@ async function openMemberPrompt(personaId: number) {
 const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
 const chatSettingsStore = useChatSettingsStore();
 const state = useGroupSessionDetail(backToList, id => chatSettingsStore.requestGeneration(id, { ...chatSettingsStore.selection }));
-const showOrigins = ref(false), showManagement = ref(false), showMemberStates = ref(false), showPortraits = ref(false);
+const showPortraits = ref(false);
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,
   current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
   canSend, canRegenerate, canDiscard, candidates, candidateRoundId, loadingCandidates, candidatesError,
   hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError,
   portraitData, loadingPortraits, portraitWriting, portraitError, portraitOptions, canChoosePortrait } = state;
+const composerFeedback = computed(() => {
+  if (operationError.value) return operationError.value;
+  if (historyStale.value) return '剧情已有更新，刷新后继续。';
+  if (!current.value) return '正在同步群聊，已有消息仍可阅读。';
+  if (!canGenerate.value) return '生成服务暂不可用，已有消息仍可阅读。';
+  if (!operationBusy.value && notice.value && !notice.value.startsWith('操作已完成')
+      && !notice.value.startsWith('请求已接受')) return notice.value;
+  return '';
+});
 const palette = STORY_PALETTES[0];
 const paletteStyle = { '--story-accent': palette.color, '--story-soft': palette.soft, '--story-mist': palette.mist };
 const hasGreetings = computed(() => !!group.value?.members.some(member => member.greeting_content?.trim()));
@@ -286,8 +224,22 @@ const backgroundMode = ref<'clean' | 'character'>('character');
 const focusedPersona = ref<number | null>(null);
 const isPortraitOnly = ref(false);
 const isWideScreen = ref(uni.getSystemInfoSync().windowWidth >= 900);
-const drawerTab = ref('members');
-const drawerTabs = [{ id: 'members', label: '成员' }, { id: 'appearance', label: '外观' }, { id: 'origins', label: '起点' }, { id: 'manage', label: '管理' }];
+const drawerPersonaId = ref<number | null>(null);
+const memoryPersonaId = ref<number | null>(null);
+const drawerMember = computed(() => group.value?.members.find(member => member.persona_id === drawerPersonaId.value) || group.value?.members[0]);
+const drawerMemberState = computed(() => {
+  const member = drawerMember.value;
+  if (!member) return null;
+  return adoptedState.value?.state_preview.members.find(row => row.persona_id === member.persona_id)
+    || { persona_id: member.persona_id, ...member.state, insights: [] };
+});
+const drawerMemberContext = computed(() => drawerMember.value && drawerMemberState.value ? {
+  name: drawerMember.value.character.name, character: drawerMember.value.character,
+  affection: current.value?.latest?.candidate_id && !adoptedState.value ? null : drawerMemberState.value.affection_score ?? 0, mood: drawerMemberState.value.current_mood,
+  cognition: drawerMemberState.value.cognition_state ?? null,
+} : undefined);
+const openMemberMemories = () => { if (drawerMember.value) { memoryPersonaId.value = drawerMember.value.persona_id; showDetails.value = false; } };
+
 const lastSpokenRound = computed(() => rounds.value.find(round => round.utterances.length > 0));
 const backgroundMember = computed(() => {
   const latest = lastSpokenRound.value;
@@ -315,22 +267,16 @@ const setBackgroundMode = (mode: 'clean' | 'character') => {
   try { uni.setStorageSync(backgroundKey(), mode); } catch { /* The current view still uses the selected mode. */ }
 };
 watch([current, loading, loadingRounds, operationBusy], () => {
-  if (group.value && current.value && !loading.value && !loadingRounds.value && !operationBusy.value) void state.loadPortraits();
+  if (group.value && current.value && !loading.value && !loadingRounds.value && !operationBusy.value) {
+    void state.loadPortraits();
+    if (showDetails.value) void state.loadAdoptedState();
+  }
 });
 onResize(({ size }) => { if (size) isWideScreen.value = size.windowWidth >= 900; });
 const openDetails = () => {
   showDetails.value = true;
-  showMemberStates.value = true;
-  if (drawerTab.value === 'members') void state.loadAdoptedState();
-};
-const selectDrawerTab = (tab: string) => {
-  drawerTab.value = tab;
-  showOrigins.value = true;
-  showManagement.value = true;
-  showMemberStates.value = true;
-  showPortraits.value = true;
-  if (tab === 'members') void state.loadAdoptedState();
-  if (tab === 'appearance') void state.loadPortraits();
+  void state.loadAdoptedState();
+  void state.loadPortraits();
 };
 const showDetails = ref(false), showCandidates = ref(false), isFocused = ref(false);
 const isModelSettingsOpen = ref(false);
@@ -342,22 +288,6 @@ const openModelSettings = () => {
 };
 let pageViewVersion = 0;
 watch(() => group.value?.session_id, () => { pageViewVersion++; }, { flush: 'sync' });
-const openingProfile = ref(false);
-let profileNavigationVersion = 0;
-const resetProfileNavigation = () => { profileNavigationVersion++; openingProfile.value = false; };
-const openCharacterProfile = (personaId: number) => {
-  const member = group.value?.members.find(row => row.persona_id === personaId);
-  if (!showDetails.value || !member?.character.id || loading.value || openingProfile.value) return;
-  const sessionId = group.value!.session_id, server = getBaseUrl(), version = ++profileNavigationVersion;
-  const valid = () => version === profileNavigationVersion && group.value?.session_id === sessionId && getBaseUrl() === server;
-  openingProfile.value = true;
-  uni.navigateTo({
-    url: `/pages/character/detail?id=${member.character.id}`,
-    success: () => { if (valid()) showDetails.value = false; },
-    fail: () => { if (valid()) uni.showToast({ title: '无法打开人物档案，请重试', icon: 'none' }); },
-    complete: () => { if (valid()) openingProfile.value = false; },
-  });
-};
 const { scrollTop, scrollIntoViewId, scrollWithAnimation, keyboardHeight, isAndroid,
   followNewContent, pinToBottom, updateScrollMetrics, maintainScrollPosition, hasUnreadBelow, resetPinState, triggerPhasedScroll } = useChatScroll();
 const inputWrapperStyle = computed(() => keyboardHeight.value > 0 ? { paddingBottom: '14rpx' } : {});
@@ -388,16 +318,13 @@ watch(() => {
   return latest ? JSON.stringify([latest.round_id, latest.utterances, latest.pending_candidate]) : "";
 }, () => followNewContent());
 watch(() => group.value?.session_id, () => {
+  drawerPersonaId.value = null; memoryPersonaId.value = null;
   promptVersion++; promptPreview.value = null; promptLoading.value = false; promptError.value = "";
   isModelSettingsOpen.value = false;
   if (group.value) chatSettingsStore.activateSession(group.value.session_id);
-  resetProfileNavigation();
   showDetails.value = false;
   showCandidates.value = false;
-  showOrigins.value = false;
-  showMemberStates.value = false;
   showPortraits.value = false;
-  showManagement.value = false;
   focusedPersona.value = null;
   isPortraitOnly.value = false;
   failedBackgrounds.value = [];
@@ -421,10 +348,6 @@ const togglePortraits = () => {
 const portraitImage = (id: number) => getAvatarUrl(portraitData.value?.members.find(row => row.persona_id === id)?.image_path || "");
 const selectedPortrait = (id: number) => portraitData.value?.members.find(row => row.persona_id === id)?.portrait_id;
 const previewPortraits = computed(() => preview.value?.state_preview.members.flatMap(row => row.portrait ? [row.portrait] : []) || []);
-const toggleMemberStates = () => {
-  showMemberStates.value = !showMemberStates.value;
-  if (showMemberStates.value) void state.loadAdoptedState();
-};
 const memberNames = computed(() => group.value?.members.map(member => member.character.name).join(" · ") || "");
 onLoad(options => state.setSessionId(Number(options?.sessionId)));
 onShow(() => {
@@ -432,10 +355,8 @@ onShow(() => {
   void chatSettingsStore.refreshModels();
   state.show();
 });
-const hide = () => { promptVersion++; promptPreview.value = null; promptLoading.value = false; pageViewVersion++; resetProfileNavigation(); isModelSettingsOpen.value = false; isFocused.value = false; showDetails.value = false; showCandidates.value = false; state.hide(); };
+const hide = () => { memoryPersonaId.value = null; promptVersion++; promptPreview.value = null; promptLoading.value = false; pageViewVersion++; isModelSettingsOpen.value = false; isFocused.value = false; showDetails.value = false; showCandidates.value = false; state.hide(); };
 onHide(hide); onUnload(hide);
-const formatTime = (value: string) => value.replace("T", " ").slice(0, 19);
-const actorDescription = (actor: ActorState) => [actor.posture, actor.clothing, actor.location].filter(Boolean).join(" · ");
 const refreshRounds = () => state.loadRounds();
 const moreRounds = async () => {
   const anchor = chronologicalRounds.value[0]?.round_id;
@@ -465,27 +386,18 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 @import "../chat/chat.css";
 @import "../../components/chat/chatDrawer.css";
 .group-chat-page { height: 100vh; height: 100dvh; overflow: hidden; color: var(--app-color-text-primary); }
-.group-chat-page .status-panel { color: #26332e; }
-.drawer-title { margin-right: auto; margin-left: 32rpx; font-size: 26rpx; font-weight: 650; color: #26332e; }
-.group-chat-page .close-btn { margin: 0; padding: 0; flex-shrink: 0; }
-.group-delete::after { border: 0; }
-.group-delete[disabled] { opacity: .45; }
+.group-chat-page .status-panel {
+  width: 90vw; max-width: 760rpx; color: #26332e;
+  --app-color-text-primary: #26332e; --app-color-text-secondary: #64716b;
+  --app-color-text-muted: #7c8983; --app-color-primary-strong: #3f7e6d;
+  --app-color-primary-soft: #e8f1ed; --app-color-border: #e6ebe8;
+  --app-color-surface: #fff; --app-color-background: #f6f8f7;
+}
+.group-chat-page .panel-section { gap: 12rpx; box-shadow: none; border: 1px solid #e9eeeb; }
+.group-chat-page .panel-section .group-heading { font-size: 28rpx; }
+.group-chat-page .panel-section .group-copy { margin-top: 0; font-size: 24rpx; }
 .group-chat-page :deep(.status-text) { max-width: 250rpx; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.drawer-body { padding-bottom: calc(32rpx + env(safe-area-inset-bottom)); }
-.group-hero { flex-direction: column; align-items: stretch; gap: 8rpx; }
-.group-hero .char-card-info { flex-direction: row; justify-content: space-between; align-items: center; }
-.hero-subtitle { color: rgba(255,255,255,.6); font-size: 22rpx; }
-.group-hero .group-avatars { margin: 12rpx 0 0; }
-.group-hero .char-card-avatar { width: 80rpx; height: 80rpx; }
-.profile-avatar-link { display: flex; flex-shrink: 0; margin: 0; padding: 0; line-height: 0; background: transparent; border-radius: 24rpx; }
-.profile-avatar-link::after { border: 0; }
-.drawer-tabs { display: flex; margin: 0 20rpx 24rpx; padding: 6rpx; gap: 4rpx; background: rgba(38,51,46,.06); border-radius: 16rpx; }
-.drawer-tab { flex: 1; margin: 0; padding: 14rpx 0; line-height: 1.4; background: transparent; color: #7c8983; font-size: 24rpx; border-radius: 12rpx; }
-.drawer-tab.is-active { color: #3f7e6d; background: #fff; box-shadow: 0 2rpx 8rpx rgba(0,0,0,.04); font-weight: 650; }
-.drawer-tab::after, .close-btn::after, .background-member::after, .background-mode-option::after { border: 0; }
-.member-summary { display: flex; align-items: center; gap: 18rpx; padding: 20rpx 0; }
-.member-summary + .member-summary { border-top: 1px solid rgba(0,0,0,.05); }
-.member-summary-avatar { width: 72rpx; height: 72rpx; border-radius: 24rpx; flex-shrink: 0; }
+.background-member::after { border: 0; }
 .background-members { display: flex; gap: 12rpx; flex-wrap: wrap; margin-top: 20rpx; }
 .background-member { margin: 0; padding: 10rpx 18rpx; border-radius: 999rpx; font-size: 22rpx; line-height: 1.5; background: #f1f4f2; color: #64716b; }
 .background-member.is-active { background: #e2eee8; color: #3f7e6d; }
@@ -496,7 +408,20 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 .history-actions, .round-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12rpx; }
 .round-actions { justify-content: flex-start; padding: 0 32rpx 16rpx 122rpx; }
 .round-divider { display: block; text-align: center; font-size: var(--app-font-size-caption); color: var(--app-color-text-muted); margin: 24rpx 0 12rpx; }
-.round-notice { padding: 0 32rpx; }
+.round-notice, .candidate-notice { display: block; margin: 12rpx 28rpx; padding: 18rpx 24rpx; border-radius: 18rpx; background: var(--app-color-surface); font-size: 24rpx; line-height: 1.6; }
+.candidate-notice { color: var(--app-color-text-secondary); border: 1px dashed var(--app-color-border-strong); }
+.round-actions .group-action { padding: 8rpx 22rpx; min-height: 64rpx; background: var(--app-color-surface); border: 1px solid var(--app-color-border); border-radius: 999rpx; font-size: 22rpx; }
+.is-immersive .round-actions, .is-immersive .round-notice, .is-immersive .candidate-notice, .is-immersive .round-divider, .is-immersive .composer-feedback {
+  --app-color-surface: rgba(20,34,28,.92); --app-color-border: rgba(255,255,255,.18);
+  --app-color-border-strong: rgba(255,255,255,.35); --app-color-text-secondary: #e0eae4;
+  --app-color-primary-strong: #d2eddf; --app-color-danger: #ffb5ad;
+}
+.is-immersive .round-divider { color: #e0eae4; text-shadow: 0 1px 4px #14221c; }
+.composer-feedback { display: flex; align-items: center; gap: 16rpx; margin: 8rpx 24rpx; padding: 18rpx 22rpx; border-radius: 20rpx; color: var(--app-color-text-secondary); background: var(--app-color-surface); border: 1px solid var(--app-color-border); }
+.composer-feedback.is-error { color: var(--app-color-danger); }
+.feedback-copy { flex: 1; min-width: 0; font-size: 24rpx; line-height: 1.6; overflow-wrap: anywhere; }
+.feedback-action { flex-shrink: 0; margin: 0; padding: 10rpx 16rpx; min-height: 72rpx; line-height: 1.5; font-size: 24rpx; background: transparent; color: var(--app-color-primary-strong); }
+.feedback-action::after { border: 0; }
 .group-composer { flex-shrink: 0; }
 .group-composer .group-card { margin: 0; padding: 0 32rpx; background: transparent; border: 0; }
 .group-composer .group-copy, .group-composer .group-error { margin: 8rpx 0; font-size: var(--app-font-size-caption); }
@@ -511,4 +436,6 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 button.group-action { margin: 4rpx 0; background: transparent; border-radius: var(--app-radius-sm); }
 button.group-action::after { border: none; }
 button.group-action[disabled] { opacity: .45; }
+
+.group-member-picker { padding: 0 28rpx 24rpx; }
 </style>

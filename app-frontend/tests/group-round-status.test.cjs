@@ -7,7 +7,7 @@ test("round display distinguishes normal stops and preserves older server respon
   const round = { status: "awaiting_confirmation", confirmed: false };
   assert.equal(groupRoundStatus(round), "待确认");
   assert.equal(groupRoundNotice(round), "");
-  assert.match(groupRoundNotice({ ...round, finish_reason: "wait_user" }), /结束本轮/);
+  assert.equal(groupRoundNotice({ ...round, finish_reason: "wait_user" }), "");
   assert.match(groupRoundNotice({ ...round, finish_reason: "no_visible_basis" }), /未生成角色发言/);
   assert.match(groupRoundNotice({ ...round, finish_reason: "step_limit" }), /发言上限/);
   assert.equal(groupRoundNotice({ ...round, confirmed: true, finish_reason: "step_limit" }), "");

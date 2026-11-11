@@ -106,41 +106,6 @@ test('background failures fall back to the avatar and stale errors cannot hide a
   f.scope.stop();
 });
 
-test('drawer avatars open the corresponding character once and preserve the group draft on success or failure', () => {
-  const f = fixture();
-  f.view.showDetails.value = true;
-  f.state.draft.value = 'unfinished group message';
-  f.view.openCharacterProfile(2);
-  f.view.openCharacterProfile(1);
-  assert.equal(f.navigations.length, 1);
-  assert.equal(f.navigations[0].url, '/pages/character/detail?id=12');
-  f.navigations[0].fail(); f.navigations[0].complete();
-  assert.equal(f.view.showDetails.value, true);
-  assert.equal(f.toasts.length, 1);
-  f.view.openCharacterProfile(1);
-  assert.equal(f.navigations[1].url, '/pages/character/detail?id=11');
-  f.navigations[1].success(); f.navigations[1].complete();
-  assert.equal(f.view.showDetails.value, false);
-  assert.equal(f.state.draft.value, 'unfinished group message');
-  f.scope.stop();
-});
-
-test('leaving the group invalidates old profile navigation callbacks', () => {
-  const f = fixture();
-  f.view.showDetails.value = true;
-  f.view.openCharacterProfile(1);
-  f.view.hide();
-  f.view.showDetails.value = true;
-  f.view.openCharacterProfile(2);
-  f.navigations[0].success(); f.navigations[0].fail(); f.navigations[0].complete();
-  assert.equal(f.view.showDetails.value, true);
-  assert.equal(f.view.openingProfile.value, true);
-  assert.equal(f.toasts.length, 0);
-  f.navigations[1].complete();
-  assert.equal(f.view.openingProfile.value, false);
-  f.scope.stop();
-});
-
 test('empty and failed new rounds retain the last speaker and adopted portrait', () => {
   const f = fixture();
   f.state.rounds.value = [
@@ -205,5 +170,24 @@ test('group page restores its model scope and uses the shared keyboard padding a
   f.view.hide();
   assert.equal(f.view.isModelSettingsOpen.value, false);
   assert.equal(f.view.isFocused.value, false);
+  f.scope.stop();
+});
+
+test('routine progress stays in the composer while errors and stale history stay visible', () => {
+  const f = fixture();
+  f.state.current.value = { active_operation: { request_id: 'active' } };
+  f.state.canGenerate.value = true;
+  f.state.operationBusy.value = true;
+  f.state.notice.value = '请求已接受，正在查询后台进展。';
+  assert.equal(f.view.composerFeedback.value, '');
+  f.state.operationError.value = '结果待确认，请重新查询，勿重复发送。';
+  assert.match(f.view.composerFeedback.value, /重新查询/);
+  f.state.operationError.value = '';
+  f.state.historyStale.value = true;
+  assert.match(f.view.composerFeedback.value, /刷新/);
+  f.state.historyStale.value = false;
+  f.state.operationBusy.value = false;
+  f.state.notice.value = '操作已完成，当前采用内容以最新轮次为准。';
+  assert.equal(f.view.composerFeedback.value, '');
   f.scope.stop();
 });
