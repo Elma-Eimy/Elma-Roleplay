@@ -56,7 +56,7 @@ Prompt、世界书和 TTS 的部分机制仍在 [后端说明](../app-backend/RE
 
 | 入口 | 维护范围 |
 | --- | --- |
-| [群聊实施进度](plans/group-chat/README.md) | 最新状态与下一步；统一导航到需求基线、M1–M5 阶段设计和交接历史 |
+| [群聊实施进度](plans/group-chat/README.md)、[群聊返工问题清单](plans/group-chat/REWORK_ISSUES.md) | 最新状态、用户实测未解决问题与下一步；导航到需求基线、阶段设计和交接历史 |
 | [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) | 当前基线、样本研究与未完成事项 |
 | [聊天 Store 生命周期评估](plans/CHAT_LIFECYCLE_REVIEW.md) | 初评证据、已完成修复与待评估的 Store 拆分 |
 | [Outbox 向量同步容错与自愈待办](plans/OUTBOX_VECTOR_SELF_HEALING.md) | NULL 文档 ID 重试现象及待实施方案 |
