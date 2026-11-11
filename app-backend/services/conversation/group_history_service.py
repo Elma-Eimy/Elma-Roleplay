@@ -192,7 +192,8 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
             # 检查点与本次完整发言同事务保存。
             count = saved_steps(candidate_id, db)
             maximum = json.loads(candidate.call_snapshot_json)["max_steps"]
-            candidate.checkpoint = "finish" if count >= maximum else "next_action"
+            candidate.checkpoint = ("next_action" if json.loads(candidate.call_snapshot_json).get('director_ending')
+                                    else "finish" if count >= maximum else "next_action")
         candidate.revision += 1
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()

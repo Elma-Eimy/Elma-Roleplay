@@ -179,10 +179,10 @@ class DirectorPrototypeTests(unittest.TestCase):
 
 
 
-    def test_budget_stops_without_extra_director_call(self):
+    def test_reply_count_does_not_skip_final_director_decision(self):
         _, _, result = self.run_case(max_steps=2)
-        self.assertEqual("step_limit", result["finish_reason"])
-        self.assertEqual(4, len(result["calls"]))
+        self.assertEqual("wait_user", result["finish_reason"])
+        self.assertEqual(7, len(result["calls"]))
 
     def test_full_old_history_cannot_block_a_short_new_user_input(self):
         group = asyncio.run(create_group_session(self.cards, self.db))
@@ -207,13 +207,13 @@ class DirectorPrototypeTests(unittest.TestCase):
         self.assertEqual(original, self.db.get(GroupRound, old["round_id"]).user_content)
 
 
-    def test_model_timeout_marks_failure_without_retry(self):
+    def test_total_deadline_pauses_without_retry(self):
         async def slow(stage, parameters, replay, group):
             if stage == "next_action":
                 await asyncio.Event().wait()
         group, _, result = self.run_case(intercept=slow, timeout=0.5)
-        self.assertEqual("failed", result["finish_reason"])
-        self.assertEqual("timeout", result["error_code"])
+        self.assertEqual("paused", result["finish_reason"])
+        self.assertEqual("resource_paused", result["error_code"])
         self.assertEqual(1, len(result["calls"]))
         self.assertEqual("failed", history.list_group_rounds(group["session_id"], self.db)["rounds"][0]["status"])
 

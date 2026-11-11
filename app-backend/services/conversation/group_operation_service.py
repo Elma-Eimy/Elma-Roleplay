@@ -10,7 +10,7 @@ from core.models import GroupMemberInsight, GroupRecallCard, GroupRound, GroupRo
 from services.conversation import group_history_service as history
 from services.conversation.group_session_service import _begin_write, _locked_write, GroupSessionValidationError
 from services.conversation.session_access import group_session_operation, SessionKindConflict
-from services.conversation.group_call_snapshot import persist_group_calls, validate_group_call_selection
+from services.conversation.group_call_snapshot import persist_group_calls, validate_group_call_selection, DIRECTOR_CALL_LIMIT
 
 
 def _active(session_id, db):
@@ -206,7 +206,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 validate_prefix(latest, target, db)
                 from services.conversation.group_checkpoint_service import saved_steps
                 remaining = max_steps - saved_steps(target.id, db)
-                if remaining < 0 or (target.checkpoint == "finish") != (remaining == 0):
+                if not snapshot.director_ending and (remaining < 0 or (target.checkpoint == "finish") != (remaining == 0)):
                     raise SessionKindConflict("候选成功步数超限")
                 target.status = "generating"
                 target.error_code = None
@@ -228,7 +228,10 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
         operation = GroupRoundOperation(session_id=session_id, round_id=latest.id, candidate_id=selected.id,
             client_request_id=request_id, kind=kind, status="queued" if kind in ("send", "regenerate", "resume") else "succeeded",
             request_fingerprint=fingerprint, accepted_result_json=json.dumps(accepted),
-            call_limit=(2 * request["max_steps"] + 1 if kind in ("send", "regenerate") else
+            call_limit=(DIRECTOR_CALL_LIMIT if kind in ('send', 'regenerate', 'resume') and snapshot.director_ending
+                        and selected.checkpoint != 'finish' else
+                        0 if kind == 'resume' and selected.checkpoint == 'finish' else
+                        2 * request["max_steps"] + 1 if kind in ("send", "regenerate") else
                         2 * remaining + 1 if kind == "resume" and remaining else 0),
             finished_at=None if kind in ("send", "regenerate", "resume") else now)
         db.add(operation)

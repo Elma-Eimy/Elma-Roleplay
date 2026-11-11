@@ -78,7 +78,7 @@ async def _work(session_id, request_id, request, fingerprint, engine, runtime, a
                 if snapshot is None:
                     snapshot, _ = restore_group_calls(db.get(GroupRoundCandidate, scope.candidate_id), history._members(session_id, db))
                     db.rollback()
-                budget = GroupRoundBudget(max(1, progress["remaining"]), 300, snapshot.call_timeout)
+                budget = GroupRoundBudget(max(1, progress["remaining"]), 300, snapshot.call_timeout, director_ending=snapshot.director_ending)
                 async def execute(invoke):
                     return await _execute_round(session_id, progress["user_content"], db, execution, snapshot, budget,
                         invoke, False, 2, target=target, scope=scope, progress=progress)

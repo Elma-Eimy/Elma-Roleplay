@@ -32,6 +32,7 @@ class GroupCallSnapshot:
     review_reasoning_effort: str | None = None
     shared_chat: bool = False
     reply_target: bool = False
+    director_ending: bool = False
 
     def member_parameters(self, persona_id):
         for pid, parameters in self.members:
@@ -113,6 +114,10 @@ def persist_group_calls(snapshot, max_steps, member_ids):
                 'response_format' in json.loads(encoded) for _, encoded in snapshot.members):
             raise error('共同群聊不能启用角色 JSON 或裁决审查')
         value["shared_chat"] = True
+    if type(snapshot.director_ending) is not bool or snapshot.director_ending and not snapshot.shared_chat:
+        raise error('导演结束策略只能用于共同群聊')
+    if snapshot.director_ending:
+        value['director_ending'] = True
     if type(snapshot.reply_target) is not bool or snapshot.reply_target and not snapshot.shared_chat:
         raise error('明确回应对象只能用于共同群聊')
     if snapshot.reply_target:
@@ -171,7 +176,7 @@ def restore_group_calls(candidate, member_ids):
         limit = value.get("group_card_limit", 0)
         if type(limit) is not int or limit < 0:
             raise ValueError
-        if (candidate.protocol_version != 2 or set(value) - {"reply_target", "shared_chat", "turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard", "review_reasoning_effort"} != {
+        if (candidate.protocol_version != 2 or set(value) - {"director_ending", "reply_target", "shared_chat", "turn_policy", "inherited_recall", "group_card_limit", "output_attempts", "fact_recall", "experience_guard", "review_reasoning_effort"} != {
                 "policy_version", "max_steps", "history_limit", "call_timeout", "director", "members"}
                 or value["policy_version"] != 2):
             raise ValueError
@@ -180,7 +185,7 @@ def restore_group_calls(candidate, member_ids):
         snapshot = GroupCallSnapshot(json.dumps(value["director"]),
             tuple((member["persona_id"], json.dumps(member["parameters"])) for member in value["members"]),
             value["history_limit"], value["call_timeout"], GroupModelConnection(settings.CHAT_BASE_URL, settings.CHAT_API_KEY),
-            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False), value.get('review_reasoning_effort'), value.get('shared_chat', False), value.get('reply_target', False))
+            value.get("turn_policy", 0), value.get("inherited_recall", False), value.get("output_attempts", 1), value.get("fact_recall", False), value.get("experience_guard", False), value.get('review_reasoning_effort'), value.get('shared_chat', False), value.get('reply_target', False), value.get('director_ending', False))
         _, fingerprint = persist_group_calls(snapshot, value["max_steps"], member_ids)
         def selection(parameters):
             return (parameters["model"], parameters.get("reasoning_effort"),
@@ -230,6 +235,10 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),
-                                 connection, inherited_recall=True, fact_recall=True, shared_chat=True, reply_target=True)
+                                 connection, inherited_recall=True, fact_recall=True, shared_chat=True, reply_target=True, director_ending=True)
     finally:
         db.rollback()
+
+
+# 每次显式执行的资源保护，和整轮发言条数无关。
+DIRECTOR_CALL_LIMIT = 64

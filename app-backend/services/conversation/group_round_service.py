@@ -10,7 +10,7 @@ from core.locking import group_execution, require_group_execution, require_group
 from services.conversation import group_director_service as director, group_generation_service as generation
 from services.conversation import group_history_service as history
 from services.conversation import group_checkpoint_service as checkpoints
-from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls
+from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls, DIRECTOR_CALL_LIMIT
 from services.conversation.group_context_service import build_member_context
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.llm_provider import group_model_session
@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class GroupRoundBudget:
-    def __init__(self, max_steps, timeout, call_timeout):
+    def __init__(self, max_steps, timeout, call_timeout, *, director_ending=False):
         if (type(max_steps) is not int or not 1 <= max_steps <= 6
                 or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in (timeout, call_timeout))):
             raise ValueError("群聊调用预算无效")
         self.max_steps = max_steps
-        self.limit = 2 * max_steps + 1
+        self.limit = DIRECTOR_CALL_LIMIT if director_ending else 2 * max_steps + 1
         self.used = 0
         self.deadline = time.monotonic() + timeout
         self.call_timeout = call_timeout
@@ -63,6 +63,8 @@ async def run_group_round(session_id, user_content, db, *, runtime, model=None, 
         if not math.isfinite(snapshot.call_timeout) or snapshot.call_timeout <= 0:
             raise ValueError("单次模型超时无效")
         budget.call_timeout = snapshot.call_timeout
+        if snapshot.director_ending:
+            budget.limit = DIRECTOR_CALL_LIMIT
         if call_model is not None:
             return await _execute_round(session_id, user_content, db, execution, snapshot, budget, call_model, collect_inputs, protocol_version)
         async with group_model_session(snapshot.connection, timeout=snapshot.call_timeout) as client:
@@ -142,10 +144,12 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                     else:
                         target.update(exc.result)
                 raise
-        finish_reason = "step_limit"
+        finish_reason = (progress.get("finish_reason") if progress else None) or "step_limit"
         pending_speaker = progress["speaker"] if scope is not None else None
         iterations = progress["remaining"] if scope is not None else budget.max_steps
-        for _ in range(iterations):
+        continuous = snapshot.director_ending and not (progress and progress['checkpoint'] == 'finish')
+        while continuous or iterations > 0:
+            iterations -= 1
             context = await scene()
             if pending_speaker is not None:
                 action = director.NextAction("speak", pending_speaker, "follow_up")
@@ -184,6 +188,14 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
                 history_limit=snapshot.history_limit, fail_candidate=False,
                 **({"scope": scope} if scope is not None else {}))
             target["revision"] = saved["revision"]
+        if snapshot.director_ending and scope is not None and (not progress or progress['checkpoint'] != 'finish'):
+            try:
+                ending = await generation._database(checkpoints.prepare_finish, scope, target['revision'], finish_reason, db)
+                target.update(ending)
+            except generation._DatabaseCancelled as exc:
+                if isinstance(exc.result, dict):
+                    target.update(exc.result)
+                raise
         personal_inputs = {}
         diagnostic_error_code = None
         if collect_inputs:
@@ -213,12 +225,17 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
         return {**target, "finish_reason": finish_reason, "calls": calls, "error_code": None,
                 "personal_inputs": personal_inputs, "diagnostic_error_code": diagnostic_error_code}
     except BaseException as exc:
+        pause = snapshot.director_ending and (
+            getattr(exc, 'code', None) == 'call_budget' or
+            (isinstance(exc, TimeoutError) or getattr(exc, 'code', None) == 'timeout') and time.monotonic() >= budget.deadline)
         if target:
             if isinstance(exc, generation._DatabaseCancelled) and exc.committed_revision is not None:
                 target["revision"] = exc.committed_revision
             code = "cancelled" if isinstance(exc, asyncio.CancelledError) else (
                 exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError, GroupUnitError))
                 else "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
+            if pause:
+                code = 'resource_paused'
             try:
                 if scope is None:
                     failed_revision = await generation._database(generation._fail, session_id, target["candidate_id"],
@@ -233,4 +250,6 @@ async def _execute_round(session_id, user_content, db, execution, snapshot, budg
             raise
         code = exc.code if isinstance(exc, (director.GroupDirectorError, generation.GroupGenerationError, GroupUnitError)) else (
             "timeout" if isinstance(exc, TimeoutError) else "execution_failed")
-        return {**(target or {}), "finish_reason": "failed", "calls": calls, "error_code": code}
+        if pause:
+            code = 'resource_paused'
+        return {**(target or {}), "finish_reason": "paused" if pause else "failed", "calls": calls, "error_code": code}

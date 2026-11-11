@@ -178,6 +178,8 @@ class SharedChatTests(unittest.TestCase):
             preview = compile_member_prompt(sid, ids[1], self.db)
             self.assertIn('第一条', json.dumps(preview['messages'], ensure_ascii=False))
             async def resumed(stage, parameters):
+                if stage == 'next_action':
+                    return _response('{"action":"end","reason_code":"wait_user"}')
                 self.assertEqual('role_generation', stage)
                 self.assertIn('本次主要回应对象', json.dumps(parameters['messages'], ensure_ascii=False))
                 return _response('第二条</reply><status emotion="平静" affection_change="0"/>')
@@ -214,7 +216,7 @@ class SharedChatTests(unittest.TestCase):
             old_round = view['round_id']
             seen, revision = self.observed(sid)
             await background.submit_group_operation(sid, str(uuid4()), 'send', revision, self.db,
-                runtime=owner, call_model=regeneration, user_content='下一轮', model='fixture', max_steps=1, **seen)
+                runtime=owner, call_model=fixtures.Model(ids), user_content='下一轮', model='fixture', max_steps=1, **seen)
             await self.drain(owner)
             prior = next(row for row in list_group_rounds(sid, self.db)['rounds'] if row['round_id'] == old_round)
             self.assertTrue(prior['confirmed'])

@@ -196,11 +196,15 @@ class GroupRoundTests(unittest.TestCase):
             latest = {}
             async def model(stage, kwargs):
                 if stage == 'next_action':
+                    if latest:
+                        return _response('{"action":"end","reason_code":"wait_user"}')
+                    latest['generated'] = True
                     payload = json.loads(kwargs['messages'][1]['content'])
                     basis = next(iter(payload['response_sources'][str(ids[0])]))
                     return _response(json.dumps(dict(action='speak', speaker_persona_id=ids[0], reason_code='direct_response', basis=basis)))
-                return _response('<reply>' + 'x' * 24000 + '</reply>')
-            with group_runtime(self.engine) as owner:
+                return _response('<reply>' + 'x' * 12000 + '</reply>')
+            from services.conversation.group_director_service import GroupDirectorError
+            with patch('services.conversation.group_round_service.build_member_context', side_effect=GroupDirectorError('context_budget')), group_runtime(self.engine) as owner:
                 result = asyncio.run(run_group_round(sid, "user", self.db, runtime=owner, max_steps=1,
                                                     call_model=model, collect_inputs=collect))
             self.db.expire_all()
@@ -209,7 +213,7 @@ class GroupRoundTests(unittest.TestCase):
             outcomes.append((result["error_code"], candidate.status, len(result["calls"])))
             self.assertEqual("context_budget" if collect else None, result.get("diagnostic_error_code"))
             self.assertEqual({}, result["personal_inputs"])
-        self.assertEqual([(None, "awaiting_confirmation", 2)] * 2, outcomes)
+        self.assertEqual([(None, "awaiting_confirmation", 3)] * 2, outcomes)
 
     def test_diagnostic_exception_is_sanitized_without_failing_business(self):
         sid, ids = self.group()

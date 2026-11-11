@@ -205,6 +205,12 @@ def progress(scope, revision, db):
     speaker = validate_prefix(round_, candidate, db)
     limit = json.loads(candidate.call_snapshot_json)["max_steps"]
     count = saved_steps(candidate.id, db)
+    continuous = json.loads(candidate.call_snapshot_json).get('director_ending', False)
+    if continuous:
+        if candidate.checkpoint == 'finish' and candidate.finish_reason not in ('wait_user', 'no_visible_basis'):
+            raise SessionKindConflict('缺少已保存的结束决定')
+        return dict(checkpoint=candidate.checkpoint, speaker=speaker, remaining=0 if candidate.checkpoint == 'finish' else 1,
+                    finish_reason=candidate.finish_reason, revision=candidate.revision, user_content=round_.user_content)
     if count > limit or (candidate.checkpoint == "finish") != (count == limit):
         raise SessionKindConflict("候选步数与检查点不一致")
     return dict(checkpoint=candidate.checkpoint, speaker=speaker, remaining=limit-count,
@@ -244,6 +250,22 @@ def save_user(scope, revision, plan, model, db):
         result = dict(round_id=round_.id, candidate_id=candidate.id, revision=candidate.revision)
         db.commit()
         return result
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def prepare_finish(scope, revision, reason, db):
+    """先保存导演结束决定，最终提交失败后无需重新调度。"""
+    try:
+        _, candidate = _write(scope, revision, db)
+        if candidate.checkpoint != 'next_action' or reason not in ('wait_user', 'no_visible_basis'):
+            raise SessionKindConflict('不能保存当前结束决定')
+        candidate.checkpoint = 'finish'
+        candidate.finish_reason = reason
+        candidate.revision += 1
+        db.commit()
+        return dict(revision=candidate.revision)
     except BaseException:
         db.rollback()
         raise

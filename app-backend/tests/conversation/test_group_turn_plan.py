@@ -162,7 +162,7 @@ class GroupTurnPlanTests(unittest.TestCase):
         with patch.object(settings, "APP_GROUP_TURN_PLANNING", True):
             snapshot = capture_group_calls(self.sid, self.db, model="fixture")
         from dataclasses import replace
-        snapshot = replace(snapshot, shared_chat=False, reply_target=False, turn_policy=2)
+        snapshot = replace(snapshot, shared_chat=False, reply_target=False, director_ending=False, turn_policy=2)
         encoded, fingerprint = persist_group_calls(snapshot, 2, set(self.ids))
         candidate = GroupRoundCandidate(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
         with patch.object(settings, "APP_GROUP_TURN_PLANNING", False):

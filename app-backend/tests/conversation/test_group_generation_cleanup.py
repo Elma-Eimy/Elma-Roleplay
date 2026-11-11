@@ -77,6 +77,7 @@ class GenerationCleanupTests(unittest.TestCase):
             old = json.loads(candidate.call_snapshot_json)
             old.pop('shared_chat')
             old.pop('reply_target')
+            old.pop('director_ending')
             old.update(experience_guard=True, output_attempts=3)
             for member in old['members']:
                 member['parameters']['response_format'] = {'type': 'json_object'}

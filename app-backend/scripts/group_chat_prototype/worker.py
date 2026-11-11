@@ -67,6 +67,7 @@ async def _run_suite(request):
     from application.factory import create_app
     from fastapi.testclient import TestClient
     from services.conversation.group_session_service import create_group_session, GroupSessionDraft, GroupMember
+    from services.conversation.group_call_snapshot import DIRECTOR_CALL_LIMIT
 
     engine = create_engine("sqlite:///data/cases.db", connect_args={"check_same_thread": False})
     @event.listens_for(engine, "connect")
@@ -101,7 +102,7 @@ async def _run_suite(request):
                     finally:
                         client.close()
                     checks = {"read_only_http": rounds["total"] == 1,
-                              "call_bound": len(result["calls"]) <= 2 * case.get("max_steps", 4) + 1}
+                              "call_bound": len(result["calls"]) <= DIRECTOR_CALL_LIMIT}
                     if case.get("expected_error") is None:
                         checks["input_collection"] = result.get("error_code") is None and result.get("diagnostic_error_code") is None
                     if not request["online"]:

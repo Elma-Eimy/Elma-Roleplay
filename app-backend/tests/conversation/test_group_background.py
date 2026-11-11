@@ -159,7 +159,7 @@ class GroupBackgroundTests(unittest.TestCase):
         for maximum in (1, 3):
             sid, ids = self.group()
             async def scenario(owner):
-                model = Model(ids, steps=3)
+                model = Model(ids, steps=1 if maximum == 1 else 3)
                 if maximum == 1:
                     with patch.object(checkpoints, "finish", side_effect=RuntimeError("finish failed")):
                         receipt = await self.submit(sid, owner, model, max_steps=maximum)
@@ -363,14 +363,14 @@ class GroupBackgroundTests(unittest.TestCase):
                     await self.drain(owner)
                 candidate = self.candidate(receipt)
                 self.assertEqual("failed", candidate.status)
-                self.assertEqual("user_visibility" if phase == "accept" else "finish", candidate.checkpoint)
+                self.assertEqual("user_visibility" if phase == "accept" else "next_action", candidate.checkpoint)
                 self.assertEqual(0 if phase == "accept" else 1,
                     self.db.query(GroupContentItem).filter_by(candidate_id=candidate.id, kind="utterance").count())
-                after = Model(ids)
+                after = Model(ids, steps=0 if phase == "save" else 1)
                 await self.submit(sid, owner, after, "resume", target_candidate_id=candidate.id,
                                   target_candidate_revision=candidate.revision)
                 await self.drain(owner)
-                self.assertEqual([] if phase == "save" else ["next_action", "role_generation"],
+                self.assertEqual(["next_action"] if phase == "save" else ["next_action", "role_generation", "next_action"],
                                  [stage for stage, _ in after.calls])
             with group_runtime(self.engine) as owner:
                 asyncio.run(scenario(owner))
@@ -441,7 +441,7 @@ class GroupBackgroundTests(unittest.TestCase):
             await self.drain(owner)
             self.assertEqual(["next_action"], [stage for stage, _ in model.calls])
             candidate = self.candidate(receipt)
-            self.assertEqual(("failed", "call_budget"), (candidate.status, candidate.error_code))
+            self.assertEqual(("failed", "resource_paused"), (candidate.status, candidate.error_code))
             operation = self.db.get(GroupRoundOperation, receipt["operation_id"])
             self.assertEqual(1, operation.call_count)
             self.assertEqual("failed", operation.status)
@@ -520,7 +520,7 @@ class GroupBackgroundTests(unittest.TestCase):
             self.assertEqual([], model.calls)
             operation = self.db.get(GroupRoundOperation, receipt["operation_id"])
             self.assertEqual(("failed", 1), (operation.status, operation.call_count))
-            self.assertEqual("call_budget", self.candidate(receipt).error_code)
+            self.assertEqual("resource_paused", self.candidate(receipt).error_code)
         with group_runtime(self.engine) as owner:
             asyncio.run(scenario(owner))
 

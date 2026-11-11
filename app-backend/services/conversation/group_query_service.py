@@ -81,7 +81,8 @@ def _candidate(row, round_, state, db):
             require_executable_calls(snapshot)
             validate_prefix(round_, row, db)
             count = saved_steps(row.id, db)
-            resumable = snapshot.shared_chat and count <= maximum and (row.checkpoint == "finish") == (count == maximum)
+            resumable = snapshot.shared_chat and (snapshot.director_ending or
+                count <= maximum and (row.checkpoint == "finish") == (count == maximum))
         except (ValueError, TypeError, KeyError, SessionKindConflict):
             pass
     return {"candidate_id": row.id, "version": row.version, "revision": row.revision,
