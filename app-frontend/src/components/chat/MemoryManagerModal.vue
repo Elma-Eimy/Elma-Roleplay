@@ -16,12 +16,12 @@
         </view>
       </view>
 
-      <view class="processing-container"><MemoryProcessingPanel :session-id="sessionId" @completed="loadMemories" /></view>
-      <view class="mode-tabs">
+      <view v-if="!groupPersonaId" class="processing-container"><MemoryProcessingPanel :session-id="sessionId" @completed="loadMemories" /></view>
+      <view v-if="!groupPersonaId" class="mode-tabs">
         <button size="mini" :class="{ 'mode-active': !showConsolidation }" @tap="showConsolidation = false">浏览记忆</button>
         <button size="mini" :class="{ 'mode-active': showConsolidation }" @tap="showConsolidation = true">整理记忆</button>
       </view>
-      <MemoryConsolidationPanel v-if="showConsolidation && sessionId !== null" :key="sessionId" :session-id="sessionId" @changed="loadMemories" />
+      <MemoryConsolidationPanel v-if="!groupPersonaId && showConsolidation && sessionId !== null" :key="sessionId" :session-id="sessionId" @changed="loadMemories" />
       <template v-else>
       <view class="search-container">
         <input
@@ -93,18 +93,19 @@
             <view v-if="editingId !== item.id" class="card-meta">
               <view class="tag-row">
                 <text class="memory-type-badge">{{ getMemoryTypeLabel(item.memory_type) }}</text>
-                <text v-if="!item.is_local" class="inherited-badge">来自主故事</text>
-                <text v-else class="local-badge">当前故事</text>
+                <text v-if="!item.is_local" class="inherited-badge">{{ groupPersonaId ? '入群时继承' : '来自主故事' }}</text>
+                <text v-else class="local-badge">{{ localLabel || '当前故事' }}</text>
                 <text v-if="item.is_superseded" class="superseded-badge">历史原卡</text>
                 <text v-if="item.consolidation_id" class="local-badge">整理结果</text>
                 <text v-if="item.source_start_message_id || item.source_message_id" class="source-text">
                   {{ formatMemorySource(item) }}
                 </text>
               </view>
+              <text v-if="item.indexed !== undefined" class="source-text">{{ item.indexed ? '已建向量索引' : '向量待同步' }}</text>
               <text class="score-text">权重 {{ item.importance_score.toFixed(1) }}</text>
             </view>
 
-            <view v-if="item.is_local && !item.consolidation_id && !item.is_superseded && editingId !== item.id" class="card-actions">
+            <view v-if="!groupPersonaId && item.is_local && !item.consolidation_id && !item.is_superseded && editingId !== item.id" class="card-actions">
               <view class="action-icon-btn" @tap="startInlineEdit(item)">
                 <image class="action-svg-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
                 <text class="action-icon-text">编辑</text>
@@ -123,7 +124,7 @@
         </view>
       </scroll-view>
 
-      <view class="add-memory-container" :class="{ 'is-expanded': isAddMemoryOpen }">
+      <view v-if="!groupPersonaId" class="add-memory-container" :class="{ 'is-expanded': isAddMemoryOpen }">
         <view v-if="!isAddMemoryOpen" class="add-trigger" @tap="openAddMemory">
           <view class="add-trigger-icon">+</view>
           <view class="add-trigger-copy">
@@ -160,6 +161,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
+import { getGroupMemberMemories } from "@/api/groupSessions";
 import MemoryProcessingPanel from "./MemoryProcessingPanel.vue";
 import MemoryConsolidationPanel from "./MemoryConsolidationPanel.vue";
 import {
@@ -180,12 +182,15 @@ const props = defineProps<{
   sessionId: number | null;
   contextTitle?: string;
   localLabel?: string;
+  groupPersonaId?: number;
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
+const fetchMemories = (sessionId: number, options: import("@/types/memories").GetSessionMemoriesParams) =>
+  props.groupPersonaId ? getGroupMemberMemories(sessionId, props.groupPersonaId, options) : getSessionMemories(sessionId, options);
 const memories = ref<MemoryChunk[]>([]);
 const showConsolidation = ref(false);
 const searchQuery = ref("");
@@ -281,7 +286,7 @@ async function loadMemories() {
   hasMore.value = true;
   memories.value = [];
   try {
-    const res = await getSessionMemories(props.sessionId, {
+    const res = await fetchMemories(props.sessionId, {
       q: searchQuery.value,
       scope,
       status,
@@ -314,7 +319,7 @@ const selectFilter = async (filter: MemoryFilter) => {
 
 // Load memories when modal opens or sessionId changes
 watch(
-  [() => props.isOpen, () => props.sessionId],
+  [() => props.isOpen, () => props.sessionId, () => props.groupPersonaId],
   async ([newOpen, newSessionId]) => {
     loadRequestId++;
     showConsolidation.value = false;
@@ -360,7 +365,7 @@ const loadMore = async () => {
   const { scope, status } = getFilterQuery(filter);
   isMoreLoading.value = true;
   try {
-    const res = await getSessionMemories(sessionId, {
+    const res = await fetchMemories(sessionId, {
       q: query,
       scope,
       status,
@@ -414,7 +419,7 @@ const cancelInlineEdit = () => {
 };
 
 const saveInlineEdit = async (id: number) => {
-  if (props.sessionId === null) return;
+  if (props.sessionId === null || props.groupPersonaId) return;
   const content = editingContent.value.trim();
   if (!content) {
     uni.showToast({ title: "内容不能为空", icon: "none" });
@@ -440,7 +445,7 @@ const saveInlineEdit = async (id: number) => {
 
 // Delete memory
 const deleteMemory = (id: number) => {
-  if (props.sessionId === null) return;
+  if (props.sessionId === null || props.groupPersonaId) return;
   uni.showModal({
     title: "确认删除",
     content: "确定要永久删除这条记忆吗？AI 在检索时将不再持有该认知。",
@@ -465,7 +470,7 @@ const deleteMemory = (id: number) => {
 
 // Add memory
 const addMemory = async () => {
-  if (props.sessionId === null) return;
+  if (props.sessionId === null || props.groupPersonaId) return;
   const content = newMemoryContent.value.trim();
   if (!content) return;
 

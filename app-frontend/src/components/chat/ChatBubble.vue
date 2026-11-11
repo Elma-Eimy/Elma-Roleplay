@@ -1,7 +1,7 @@
 <template>
-  <view 
+  <view
     v-if="message"
-    class="chat-bubble-wrapper" 
+    class="chat-bubble-wrapper"
     :class="{
       'is-user': isUser,
       'is-ai-continuation': !isUser && !showAvatar,
@@ -10,7 +10,7 @@
   >
     <AvatarImage
       v-if="!isUser && showAvatar"
-      class="avatar" 
+      class="avatar"
       :src="avatarUrl"
     />
     <view v-else-if="!isUser" class="avatar-spacer"></view>
@@ -20,8 +20,8 @@
       <text v-if="!isUser && showName" class="name-tag">{{ characterName }}</text>
 
       <!-- 消息气泡 -->
-      <view 
-        class="bubble" 
+      <view
+        class="bubble"
         :class="[isUser ? 'user-bubble' : 'ai-bubble']"
         @touchstart="handleTouchStart"
         @touchend="handleTouchEnd"
@@ -29,7 +29,7 @@
         @longpress.stop="handleLongPress"
         @contextmenu.prevent.stop="handleLongPress"
       >
-        
+
         <!-- AI 的深度思考过程容器 -->
         <view v-if="!isUser && hasThought" class="thought-container" :class="{ 'is-expanded': isThoughtExpanded }">
           <view class="thought-header" @tap.stop="isThoughtExpanded = !isThoughtExpanded">
@@ -46,9 +46,9 @@
         </view>
 
         <!-- 渲染为 Markdown 的 AI 回复内容 -->
-        <rich-text 
-          v-if="!isUser" 
-          class="markdown-content" 
+        <rich-text
+          v-if="!isUser"
+          class="markdown-content"
           :nodes="renderedMarkdown"
         />
 
@@ -80,8 +80,8 @@
       </view>
 
       <!-- AI 候选版本切换器 (Swipe Multi-Replies) -->
-      <view 
-        v-if="!isUser && message.candidates && message.candidates.length > 1" 
+      <view
+        v-if="!readOnly && !isUser && message.candidates && message.candidates.length > 1"
         class="candidate-pager"
         :class="{ 'is-disabled': isCandidateSwitchLocked }"
         @longpress.stop=""
@@ -98,7 +98,7 @@
 
       <!-- 最新回复常驻操作条 -->
       <view
-        v-if="!isUser && isLatestAssistant && message.status === 'done'"
+        v-if="!readOnly && !isUser && isLatestAssistant && message.status === 'done'"
         class="latest-action-bar"
         @longpress.stop=""
         @contextmenu.prevent.stop=""
@@ -137,9 +137,9 @@
       <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
       <view v-if="!isUser && isMetaVisible" class="meta-area">
         <!-- 语音播报按钮（最新回复已由操作条承载） -->
-        <view 
-          v-if="message.status === 'done' && !isLatestAssistant"
-          class="meta-tag tts-btn" 
+        <view
+          v-if="!readOnly && message.status === 'done' && !isLatestAssistant"
+          class="meta-tag tts-btn"
           :class="{ 'is-playing': activeAudioMessageId === message.id }"
           @tap="playTTS"
         >
@@ -202,6 +202,8 @@ const props = withDefaults(
     showAvatar?: boolean;
     isLatestAssistant?: boolean;
     animateEntry?: boolean;
+    readOnly?: boolean;
+    userNickname?: string;
   }>(),
   {
     avatarUrl: "",
@@ -210,6 +212,8 @@ const props = withDefaults(
     showAvatar: true,
     isLatestAssistant: false,
     animateEntry: false,
+    readOnly: false,
+    userNickname: "",
   }
 );
 
@@ -251,6 +255,7 @@ const LONG_PRESS_DEDUPE_WINDOW = 1000;
 let lastLongPressAt = 0;
 
 const handleLongPress = (e?: Event) => {
+  if (props.readOnly) return;
   // 阻止 H5 平台上浏览器原生的右键菜单
   if (e) e.preventDefault?.();
   // 仅允许在发送完成或发送失败的消息上执行操作
@@ -276,16 +281,16 @@ const touchStartX = ref(0);
 const touchStartY = ref(0);
 
 const handleTouchStart = (e: TouchEvent) => {
-  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
+  if (props.readOnly || isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   touchStartX.value = e.touches[0].clientX;
   touchStartY.value = e.touches[0].clientY;
 };
 
 const handleTouchEnd = (e: TouchEvent) => {
-  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
+  if (props.readOnly || isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   const deltaX = e.changedTouches[0].clientX - touchStartX.value;
   const deltaY = e.changedTouches[0].clientY - touchStartY.value;
-  
+
   if (Math.abs(deltaX) > 60 && Math.abs(deltaY) < 40) {
     if (deltaX > 0) {
       switchCandidateVersion(-1);
@@ -300,17 +305,17 @@ const isCandidateSwitchLocked = computed(() =>
 );
 
 const switchCandidateVersion = async (direction: number) => {
-  if (isCandidateSwitchLocked.value || !props.message?.candidates) return;
+  if (props.readOnly || isCandidateSwitchLocked.value || !props.message?.candidates) return;
   const len = props.message.candidates.length;
   const currentIdx = props.message.active_index ?? 0;
   let targetIdx = currentIdx + direction;
-  
+
   if (targetIdx < 0) {
     targetIdx = len - 1;
   } else if (targetIdx >= len) {
     targetIdx = 0;
   }
-  
+
   const targetCandidate = props.message.candidates[targetIdx];
   if (targetCandidate) {
     try {
@@ -322,7 +327,7 @@ const switchCandidateVersion = async (direction: number) => {
 };
 
 const playTTS = () => {
-  if (props.message?.id) {
+  if (!props.readOnly && props.message?.id) {
     playMessageTTS(props.message);
   }
 };
@@ -355,7 +360,7 @@ const replacePlaceholders = (text: string) => {
     if (!text) return "";
     const str = String(text);
     const charName = props.characterName || "角色";
-    const userName = personaStore.userNickname || "用户";
+    const userName = props.userNickname || (props.readOnly ? "用户" : personaStore.userNickname) || "用户";
     return str
       .replace(/\{\{char\}\}/gi, charName)
       .replace(/\{\{user\}\}/gi, userName);
@@ -373,20 +378,20 @@ const parsedContent = computed(() => {
     } else {
       content = String(content);
     }
-    
+
     // 1. 过滤掉 <status ...> 自定义标签，防止 rich-text 渲染自定义 XML 标签导致原生端崩溃
     content = content.replace(/<status[^>]*\/?>/gi, "");
-    
+
     content = replacePlaceholders(content);
-    
+
     if (isUser.value) {
       return { thought: "", reply: content };
     }
-    
+
     // 优先采用独立的 reasoning_content 字段（API 标准格式）
     let thought = props.message?.reasoning_content ? String(props.message.reasoning_content) : "";
     let reply = content;
-    
+
     // 如果独立的 reasoning_content 为空，再尝试 fallback 从 content 中解析 <thought> 标签
     if (!thought) {
       const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
@@ -399,13 +404,13 @@ const parsedContent = computed(() => {
       // 如果是用独立的 reasoning_content，仍要清理 content 中残留的 <thought> 标签
       reply = reply.replace(/<\/?thought[^>]*>/gi, "");
     }
-    
+
     thought = replacePlaceholders(thought);
-    
+
     // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
     thought = thought.replace(/<\/?thought[^>]*>/gi, "");
     reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-    
+
     return { thought, reply };
   } catch (err) {
     console.error("[ChatBubble] parsedContent error:", err, "message:", props.message);

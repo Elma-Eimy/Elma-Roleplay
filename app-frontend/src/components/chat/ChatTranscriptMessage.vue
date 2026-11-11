@@ -1,32 +1,14 @@
 <template>
-  <view class="chat-bubble-wrapper" :class="{ 'is-user': isUser }">
-    <AvatarImage v-if="!isUser" class="avatar" :src="avatarUrl" />
-    <view class="bubble-content-area">
-      <text v-if="!isUser && name" class="name-tag">{{ name }}</text>
-      <view class="bubble" :class="isUser ? 'user-bubble' : 'ai-bubble'">
-        <text v-if="isUser" class="plain-text">{{ content }}</text>
-        <rich-text v-else class="markdown-content" :nodes="renderedContent" />
-      </view>
-    </view>
-  </view>
+  <ChatBubble :message="message" :character-name="name" :avatar-url="avatarUrl" :show-name="!!name" :user-nickname="userNickname" read-only />
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import AvatarImage from "@/components/common/AvatarImage.vue";
-import { renderChatMarkdown } from "@/utils/markdown";
-
+import ChatBubble from "./ChatBubble.vue";
+import type { ChatMessage } from "@/store/chatStore";
 const props = withDefaults(defineProps<{
-  content: string;
-  name?: string;
-  avatarUrl?: string;
-  isUser?: boolean;
-}>(), { name: "", avatarUrl: "", isUser: false });
-const renderedContent = computed(() => renderChatMarkdown(props.content));
+  content: string; name?: string; avatarUrl?: string; isUser?: boolean; userNickname?: string;
+}>(), { name: "", avatarUrl: "", isUser: false, userNickname: "" });
+const message = computed<ChatMessage>(() => ({ id: 0, role: props.isUser ? "user" : "assistant",
+  content: props.content, emotion_tag: null, affection_change: null, created_at: "", status: "done" }));
 </script>
-
-<style scoped>
-@import "./chatMessage.css";
-.chat-bubble-wrapper { box-sizing: border-box; }
-.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-</style>

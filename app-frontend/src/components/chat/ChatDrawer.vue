@@ -11,46 +11,39 @@
       </view>
 
       <scroll-view scroll-y class="panel-content">
+        <slot name="member-picker" />
 
         <!-- ① 角色卡片面板 -->
         <view class="char-card">
           <button
             class="char-card-avatar-link"
-            :aria-label="`查看${personaStore.characterName}的人物档案`"
-            :disabled="!personaStore.activeCharacter?.id || personaStore.isLoadingPersona || isOpeningProfile"
+            :aria-label="`查看${drawerName}的人物档案`"
+            :disabled="!drawerCharacter?.id || isOpeningProfile"
             @tap.stop="openCharacterProfile"
           >
             <AvatarImage
               class="char-card-avatar"
-              :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+              :src="getAvatarUrl(drawerCharacter?.avatar_path || '')"
               :lazy-load="false"
             />
           </button>
           <view class="char-card-info">
-            <text class="char-card-name">{{ personaStore.characterName }}</text>
+            <text class="char-card-name">{{ drawerName }}</text>
             <view class="mood-badge">
               <view class="mood-dot"></view>
-              <text class="mood-text">{{ personaStore.currentMood || '在线' }}</text>
+              <text class="mood-text">{{ drawerMood || '在线' }}</text>
             </view>
           </view>
         </view>
 
         <!-- ② 好感度数值与进度条 -->
         <view class="panel-section">
-          <view class="section-title-row">
-            <text class="section-title">好感度</text>
-            <view class="affection-value-wrapper">
-              <image class="affection-heart-icon-drawer" :src="affectionIcon" mode="aspectFit" />
-              <text class="affection-value">{{ personaStore.affectionScore }} / 100</text>
-            </view>
-          </view>
-          <view class="progress-bg">
-            <view class="progress-bar-gradient" :style="{ width: personaStore.affectionPercent + '%' }"></view>
-          </view>
+          <AffectionMeter :score="drawerAffection" />
         </view>
 
-        <view class="panel-section"><RoleStatePanel :session-id="props.sessionId" /></view>
-        <view v-if="personaStore.activeCharacter?.id" class="panel-section">
+        <view class="panel-section"><slot name="role-state"><RoleStatePanel :session-id="props.sessionId" /></slot></view>
+        <slot name="portraits">
+        <view v-if="!memberContext && personaStore.activeCharacter?.id" class="panel-section">
           <CharacterPortraitPanel
             :character-id="personaStore.activeCharacter.id"
             :session-id="props.sessionId"
@@ -60,6 +53,7 @@
           />
         </view>
 
+        </slot>
         <!-- ③ 微观认知状态显示区 -->
         <view class="panel-section">
           <view
@@ -70,7 +64,7 @@
           >
             <text class="section-title">微观认知</text>
             <view class="section-collapse-right">
-              <text v-if="!showCognition" class="section-collapse-summary">{{ (personaStore.cognitionState || '暂无认知记录').slice(0, 14) }}{{ (personaStore.cognitionState || '').length > 14 ? '…' : '' }}</text>
+              <text v-if="!showCognition" class="section-collapse-summary">{{ (drawerCognition || '暂无认知记录').slice(0, 14) }}{{ (drawerCognition || '').length > 14 ? '…' : '' }}</text>
               <image
                 class="advanced-chevron"
                 :class="{ 'is-active': showCognition }"
@@ -80,12 +74,13 @@
             </view>
           </view>
           <view v-if="showCognition" class="cognition-box">
-            <text class="cognition-text">{{ personaStore.cognitionState || '暂无认知记录。' }}</text>
+            <text class="cognition-text">{{ drawerCognition || '暂无认知记录。' }}</text>
           </view>
         </view>
 
+        <slot name="member-insights" />
         <!-- 👤 我的设定区域 -->
-        <view class="panel-section">
+        <view v-if="!memberContext" class="panel-section">
           <text class="section-title">我的设定</text>
           <view class="setting-row">
             <view class="setting-row-left">
@@ -111,13 +106,14 @@
         </view>
 
         <!-- ④ 对话配置开关项 -->
+        <slot name="settings">
         <view class="panel-section">
           <text class="section-title">对话设置</text>
           <text class="generation-scope">模型选择仅用于当前故事，在本机保存。</text>
           <text v-if="chatSettingsStore.isLoadingModels" class="generation-scope">正在加载模型配置…</text>
           <text v-if="chatSettingsStore.settingsError" class="generation-scope">{{ chatSettingsStore.settingsError }}</text>
           <GenerationPicker v-if="!chatSettingsStore.isLoadingModels && chatSettingsStore.modelId" v-model:model="chatSettingsStore.modelId" v-model:thinkingMode="chatSettingsStore.thinkingMode" v-model:effort="chatSettingsStore.reasoningEffort" :catalog="chatSettingsStore.catalog" :default-model="chatSettingsStore.defaults.default_chat_model" :default-thinking="chatSettingsStore.defaults.reasoning_mode" :default-effort="chatSettingsStore.defaults.reasoning_effort" />
-          <text v-if="chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
+          <text v-if="!memberContext && chatStore.lastMeta?.model_used" class="generation-scope">上次回复使用：{{ chatStore.lastMeta.model_used }}</text>
           <ChatReadingPreferences />
 
           <view class="background-setting">
@@ -142,7 +138,7 @@
                 <view class="background-mode-preview preview-character">
                   <AvatarImage
                     class="background-mode-avatar"
-                    :src="getAvatarUrl(personaStore.activeCharacter?.avatar_path || '')"
+                    :src="getAvatarUrl(drawerCharacter?.avatar_path || '')"
                     :lazy-load="false"
                   />
                 </view>
@@ -308,7 +304,8 @@
         </view>
 
         <!-- ④-2 平行时空分支树 -->
-        <view class="panel-section">
+        </slot>
+        <view v-if="!memberContext" class="panel-section">
           <text class="section-title">平行宇宙</text>
           <view class="action-btn outline" @tap="emit('open-branch-tree')">
             <image class="btn-icon" src="/static/icons/char_branch.svg" mode="aspectFit" />
@@ -323,8 +320,8 @@
             <image class="btn-icon" src="/static/icons/settings_database.svg" mode="aspectFit" />
             <text class="btn-text">查看向量记忆库</text>
           </view>
-          <MemoryProcessingPanel :session-id="props.sessionId" />
-          <view class="action-btn outline" @tap="updateCognition">
+          <slot name="memory-processing"><MemoryProcessingPanel v-if="!memberContext" :session-id="props.sessionId" /></slot>
+          <view v-if="!memberContext" class="action-btn outline" @tap="updateCognition">
             <image class="btn-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
             <text class="btn-text">更新微观认知</text>
           </view>
@@ -339,8 +336,9 @@
           </view>
         </view>
 
+        <slot name="group-tools" />
         <!-- ⑥ 危险操作区域（删除会话） -->
-        <view class="panel-section danger-section">
+        <view v-if="!hideDelete" class="panel-section danger-section">
           <text class="section-title danger-title">危险操作</text>
           <view class="action-btn danger-btn" @tap="deleteCurrentSession">
             <image class="danger-icon" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
@@ -358,10 +356,12 @@ import { ref, computed, watch } from "vue";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
+import { getBaseUrl } from "@/api/config";
 import { getAvatarUrl } from "@/api/characters";
 import { triggerCognition } from "@/api/sessions";
 import MemoryProcessingPanel from "./MemoryProcessingPanel.vue";
 import GenerationPicker from "./GenerationPicker.vue";
+import AffectionMeter from "./AffectionMeter.vue";
 import RoleStatePanel from "./RoleStatePanel.vue";
 import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
@@ -371,6 +371,9 @@ const props = defineProps<{
   isOpen: boolean;
   sessionId: number | null;
   backgroundMode: "clean" | "character";
+  hideDelete?: boolean;
+  memberContext?: { name: string; character: { id: number; avatar_path?: string | null }; affection: number | null; mood: string | null; cognition: string | null };
+
 }>();
 
 const emit = defineEmits<{
@@ -388,17 +391,27 @@ const portraitTimeline = computed(() => `${chatStore.isLoading}:${chatStore.mess
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
 const isOpeningProfile = ref(false);
+const drawerName = computed(() => props.memberContext?.name ?? personaStore.characterName);
+const drawerCharacter = computed(() => props.memberContext?.character ?? personaStore.activeCharacter);
+const drawerMood = computed(() => props.memberContext ? props.memberContext.mood : personaStore.currentMood);
+const drawerAffection = computed(() => props.memberContext ? props.memberContext.affection : personaStore.affectionScore);
+const drawerCognition = computed(() => props.memberContext ? props.memberContext.cognition : personaStore.cognitionState);
 
+let profileVersion = 0;
+watch(() => [props.isOpen, props.sessionId, drawerCharacter.value?.id], () => {
+  profileVersion++; isOpeningProfile.value = false;
+}, { flush: 'sync' });
 const openCharacterProfile = () => {
-  const characterId = personaStore.activeCharacter?.id;
-  if (!characterId || personaStore.isLoadingPersona || isOpeningProfile.value) return;
+  const characterId = drawerCharacter.value?.id;
+  if (!characterId || (!props.memberContext && personaStore.isLoadingPersona) || isOpeningProfile.value) return;
+  const version = ++profileVersion, server = getBaseUrl();
+  const valid = () => version === profileVersion && props.isOpen && getBaseUrl() === server;
   isOpeningProfile.value = true;
-  // 压入页面栈，保留原聊天页及其草稿；档案页 navigateBack 返回此处。
   uni.navigateTo({
     url: `/pages/character/detail?id=${characterId}`,
-    success: () => emit("close"),
-    fail: () => uni.showToast({ title: "无法打开人物档案，请重试", icon: "none" }),
-    complete: () => { isOpeningProfile.value = false; },
+    success: () => { if (valid()) emit("close"); },
+    fail: () => { if (valid()) uni.showToast({ title: "无法打开人物档案，请重试", icon: "none" }); },
+    complete: () => { if (valid()) isOpeningProfile.value = false; },
   });
 };
 
@@ -440,12 +453,6 @@ const updateCognition = async () => {
 const deleteCurrentSession = () => {
   emit("delete-session");
 };
-
-// 好感度 SVG 图标映射
-const affectionIcon = computed(() => {
-  const s = personaStore.affectionScore;
-  return s >= 50 ? '/static/icons/meta_heart.svg' : '/static/icons/meta_heart_broken.svg';
-});
 
 // 安卓端性能回退检查 (禁用毛玻璃效果)
 let isAndroid = false;

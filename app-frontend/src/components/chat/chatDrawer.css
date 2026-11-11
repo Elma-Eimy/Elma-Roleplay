@@ -13,6 +13,14 @@
 }
 
 .status-panel {
+  --app-color-text-primary: #26332e;
+  --app-color-text-secondary: #64716b;
+  --app-color-text-muted: #7c8983;
+  --app-color-primary-strong: #3f7e6d;
+  --app-color-primary-soft: #e8f1ed;
+  --app-color-border: #e6ebe8;
+  --app-color-background: #f6f8f7;
+  --app-color-surface: #fff;
   width: 82vw;
   max-width: 600rpx;
   height: 100%;

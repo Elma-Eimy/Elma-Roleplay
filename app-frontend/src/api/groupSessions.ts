@@ -93,3 +93,12 @@ export async function compileGroupMemberPrompt(sessionId: number, personaId: num
   if (USE_MOCK) throw new Error("演示模式不生成提示词预览");
   return request(`/group-sessions/${sessionId}/members/${personaId}/compile_prompt`);
 }
+
+
+export async function getGroupMemberMemories(sessionId: number, personaId: number,
+  options: import("@/types/memories").GetSessionMemoriesParams = {}): Promise<import("@/types/memories").GetSessionMemoriesResponse> {
+  if (USE_MOCK) throw new Error("演示模式没有群聊成员记忆");
+  const query = [`q=${encodeURIComponent(options.q || '')}`, `scope=${options.scope || 'all'}`,
+    `status=${options.status || 'active'}`, `limit=${options.limit ?? 20}`, `offset=${options.offset ?? 0}`];
+  return request(`/group-sessions/${sessionId}/members/${personaId}/memories?${query.join('&')}`);
+}
