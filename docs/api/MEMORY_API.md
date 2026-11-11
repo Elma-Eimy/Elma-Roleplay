@@ -500,3 +500,5 @@ ON chat_messages (session_id, is_active, created_at DESC, id DESC);
 | M-08 | 角色拥有父、子、兄弟三条故事线 | 概览统计符合各自 Persona 继承链 |
 | M-09 | 角色拥有大量 Session | 会话预览和记忆概览不存在逐 Session 的 N+1 查询 |
 | M-10 | Character 不存在 | `memory-overview` 返回 `404` |
+
+群聊成员的记忆浏览复用单聊记忆库界面，数据由独立的[成员记忆接口](GROUP_SESSIONS.md#成员记忆浏览)提供，仅含本成员的继承快照和已确认采用来源。该入口不读取来源故事，不提供单聊的修改与整理操作。
