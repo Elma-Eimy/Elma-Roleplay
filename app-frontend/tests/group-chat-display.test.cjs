@@ -17,7 +17,7 @@ function fixture() {
     target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
   } }).outputText;
   const members = [1, 2].map(id => ({ persona_id: id, character: { id: id + 10, avatar_path: `avatar${id}` }, greeting_content: id === 1 ? 'opening' : null }));
-  const navigations = [], toasts = [];
+  const navigations = [], toasts = [], promptRequests = [];
   const state = Object.fromEntries(source.match(/const \{ group,([\s\S]*?)\} = state;/)[0]
     .replace(/const \{|\} = state;/g, '').split(',').map(name => [name.trim(), vue.ref(null)]));
   Object.assign(state, { group: vue.ref({ session_id: 1, members }), rounds: vue.ref([]),
@@ -48,6 +48,7 @@ function fixture() {
       if (name.endsWith('/useChatScroll')) return { useChatScroll: () => scroll };
       if (name.endsWith('/chatSettingsStore')) return { useChatSettingsStore: () => settings };
       if (name.endsWith('/config')) return { getBaseUrl: () => 'isolated-server' };
+      if (name.endsWith('/groupSessions')) return { compileGroupMemberPrompt: (...args) => new Promise(resolve => promptRequests.push({ args, resolve })) };
       if (name.endsWith('/characters')) return { getAvatarUrl: value => value };
       if (name.endsWith('/useStoryKeepsakes')) return { STORY_PALETTES: [{}] };
       if (name.endsWith('/groupRounds')) return {};
@@ -55,8 +56,20 @@ function fixture() {
     } }, { filename });
     view = module.exports.default.setup({}, { expose() {} });
   });
-  return { view, state, scope, prefs, navigations, toasts, anchors, scroll, settings, modelCalls, activations, lifecycle, focusScrolls };
+  return { view, state, scope, prefs, navigations, toasts, anchors, scroll, settings, modelCalls, activations, lifecycle, focusScrolls, promptRequests };
 }
+
+test('member prompt preview ignores a late response after leaving the group', async () => {
+  const f = fixture();
+  const pending = f.view.openMemberPrompt(2);
+  assert.deepEqual(f.promptRequests[0].args, [1, 2]);
+  f.lifecycle.onHide();
+  f.promptRequests[0].resolve({ messages: [{ role: 'system', content: 'old prompt' }] });
+  await pending;
+  assert.equal(f.view.promptPreview.value, null);
+  assert.equal(f.view.promptLoading.value, false);
+  f.scope.stop();
+});
 
 test('group view uses adopted portraits, follows the speaker and keeps candidate previews separate', async () => {
   const f = fixture();

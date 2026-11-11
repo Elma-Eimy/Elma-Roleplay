@@ -89,6 +89,8 @@ export interface GroupRound {
   user_content: string;
   created_at: string;
   utterances: GroupUtterance[];
+  pending_candidate?: { candidate_id: number; status: "generating" | "failed";
+    error_code: string | null; utterances: GroupUtterance[] } | null;
   portraits?: GroupMemberPortrait[];
 }
 
@@ -196,4 +198,11 @@ export type GroupPortraitChange = Omit<GroupObservedCommand, "client_request_id"
 export interface GetGroupRequestResponse extends GroupOperationSummary {
   can_generate: boolean; accepted: GroupAcceptedOperation["accepted"];
   round: GroupRoundSummary; candidate: GroupCandidateSummary; current: GroupCurrentState;
+}
+
+export interface GroupPromptPreview {
+  messages: { role: string; content: string }[];
+  token_estimate: import("@/api/sessions").TokenEstimate;
+  candidate_id: number;
+  revision: number;
 }

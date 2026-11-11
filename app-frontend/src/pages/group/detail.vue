@@ -36,6 +36,10 @@
             <text class="round-divider">第 {{ round.round_index }} 轮 · {{ roundStatus(round) }}</text>
             <ChatTranscriptMessage :content="round.user_content" is-user />
             <GroupUtterances :utterances="round.utterances" :members="group.members" :portraits="round.portraits" />
+            <template v-if="round.pending_candidate">
+              <text class="group-copy">{{ round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
+              <GroupUtterances :utterances="round.pending_candidate.utterances" :members="group.members" />
+            </template>
             <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
             <view class="round-actions">
               <button v-if="current" class="group-action" :disabled="submitting || deleting || loading" @tap="openCandidates(round.round_id)">整轮候选</button>
@@ -65,6 +69,7 @@
           @focus-change="onFocusChange" @line-change="followNewContent" @send="send" />
       </view>
     </view>
+    <PromptPreviewModal :is-open="promptPreview !== null" :messages="promptPreview?.messages || []" :token-estimate="promptPreview?.token_estimate" @close="promptPreview = null" />
     <GenerationSettingsSheet :is-open="isModelSettingsOpen" @close="isModelSettingsOpen = false" />
     <view v-if="showDetails && group" class="status-panel-backdrop" :class="{ 'is-android': isAndroid }" @tap="showDetails = false">
       <view class="status-panel" role="dialog" aria-label="群聊资料" @tap.stop>
@@ -76,6 +81,12 @@
           </view>
           <view class="drawer-tabs"><button v-for="tab in drawerTabs" :key="tab.id" class="drawer-tab" :class="{ 'is-active': drawerTab === tab.id }" @tap="selectDrawerTab(tab.id)">{{ tab.label }}</button></view>
           <template v-if="drawerTab === 'members'">
+            <view class="panel-section">
+              <text class="group-heading">各角色提示词组装</text>
+              <text class="group-copy">预览当前剧情后的组装结果，与生成使用同一入口；不是上一条回复的请求存档。</text>
+              <button v-for="member in group.members" :key="member.persona_id" class="group-action" :disabled="promptLoading || !current?.latest?.candidate_id" @tap="openMemberPrompt(member.persona_id)">查看 {{ member.character.name }} 的提示词</button>
+              <text v-if="promptError" class="group-error">{{ promptError }}</text>
+            </view>
             <view v-if="!current?.latest?.candidate_id" class="panel-section">
               <view v-for="member in group.members" :key="member.persona_id" class="member-summary">
                 <button class="profile-avatar-link" :aria-label="`查看${member.character.name}的人物档案`" :disabled="openingProfile || loading || !member.character.id" @tap.stop="openCharacterProfile(member.persona_id)"><AvatarImage class="member-summary-avatar" :src="getAvatarUrl(member.character.avatar_path || '')" /></button>
@@ -224,6 +235,9 @@ import { computed, ref, watch, getCurrentInstance } from "vue";
 import { onLoad, onShow, onHide, onUnload, onReady, onResize } from "@dcloudio/uni-app";
 import ChatSceneBackground from "@/components/chat/ChatSceneBackground.vue";
 import ChatReadingPreferences from "@/components/chat/ChatReadingPreferences.vue";
+import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
+import { compileGroupMemberPrompt } from "@/api/groupSessions";
+import type { GroupPromptPreview } from "@/types/groupSessions";
 import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getBaseUrl } from "@/api/config";
@@ -240,6 +254,21 @@ import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
 import type { ActorState } from "@/types/roleState";
 import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/groupRounds";
+
+const promptPreview = ref<GroupPromptPreview | null>(null);
+const promptLoading = ref(false), promptError = ref("");
+let promptVersion = 0;
+async function openMemberPrompt(personaId: number) {
+  if (!group.value || promptLoading.value) return;
+  const version = ++promptVersion, sessionId = group.value.session_id, server = getBaseUrl();
+  const valid = () => version === promptVersion && group.value?.session_id === sessionId && getBaseUrl() === server;
+  promptLoading.value = true; promptError.value = "";
+  try {
+    const result = await compileGroupMemberPrompt(sessionId, personaId);
+    if (valid()) promptPreview.value = result;
+  } catch (cause) { if (valid()) promptError.value = cause instanceof Error ? cause.message : String(cause); }
+  finally { if (valid()) promptLoading.value = false; }
+}
 
 const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
 const chatSettingsStore = useChatSettingsStore();
@@ -356,9 +385,10 @@ const onScroll = (event: { detail: { scrollTop: number; scrollHeight: number } }
 };
 watch(() => {
   const latest = chronologicalRounds.value[chronologicalRounds.value.length - 1];
-  return latest ? JSON.stringify([latest.round_id, latest.utterances]) : "";
+  return latest ? JSON.stringify([latest.round_id, latest.utterances, latest.pending_candidate]) : "";
 }, () => followNewContent());
 watch(() => group.value?.session_id, () => {
+  promptVersion++; promptPreview.value = null; promptLoading.value = false; promptError.value = "";
   isModelSettingsOpen.value = false;
   if (group.value) chatSettingsStore.activateSession(group.value.session_id);
   resetProfileNavigation();
@@ -402,7 +432,7 @@ onShow(() => {
   void chatSettingsStore.refreshModels();
   state.show();
 });
-const hide = () => { pageViewVersion++; resetProfileNavigation(); isModelSettingsOpen.value = false; isFocused.value = false; showDetails.value = false; showCandidates.value = false; state.hide(); };
+const hide = () => { promptVersion++; promptPreview.value = null; promptLoading.value = false; pageViewVersion++; resetProfileNavigation(); isModelSettingsOpen.value = false; isFocused.value = false; showDetails.value = false; showCandidates.value = false; state.hide(); };
 onHide(hide); onUnload(hide);
 const formatTime = (value: string) => value.replace("T", " ").slice(0, 19);
 const actorDescription = (actor: ActorState) => [actor.posture, actor.clothing, actor.location].filter(Boolean).join(" · ");

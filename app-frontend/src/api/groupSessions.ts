@@ -88,3 +88,8 @@ export async function setGroupPortrait(sessionId: number, personaId: number, bod
   if (USE_MOCK) return mock.unsupportedGroupOperation(sessionId);
   return request(`/group-sessions/${sessionId}/members/${personaId}/portrait`, { method: "PUT", body: JSON.stringify(body) });
 }
+
+export async function compileGroupMemberPrompt(sessionId: number, personaId: number): Promise<import("@/types/groupSessions").GroupPromptPreview> {
+  if (USE_MOCK) throw new Error("演示模式不生成提示词预览");
+  return request(`/group-sessions/${sessionId}/members/${personaId}/compile_prompt`);
+}
