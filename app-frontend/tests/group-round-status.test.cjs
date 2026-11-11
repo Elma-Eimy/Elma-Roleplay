@@ -24,3 +24,10 @@ test("failed prefix and in-progress states never show a successful stop reason o
   assert.match(groupRoundNotice({ ...round, error_code: "experience_check_failed" }), /亲历审查/);
   assert.equal(groupRoundNotice({ ...round, status: "generating" }), "");
 });
+
+test('resource protection is shown as resumable pause rather than a completed round or a model failure', () => {
+  const round = {status:'failed',error_code:'resource_paused',confirmed:false};
+  assert.equal(groupRoundStatus(round),'已暂停');
+  assert.match(groupRoundNotice(round),/当前进度继续/);
+  assert.doesNotMatch(groupRoundNotice(round),/失败|发言上限/);
+});

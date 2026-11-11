@@ -432,3 +432,26 @@ test('hiding or submitting invalidates adopted state without replaying a POST', 
   await f.flow.command('discard'); assert.equal(f.flow.adoptedState.value, null);
   assert.equal(f.posts.length, 1); f.stop();
 });
+
+test('direct continue resumes the paused candidate without sending another user message', async () => {
+  const f = fixture(); await f.start();
+  f.model.current = state(1,latest()); await f.flow.loadRounds();
+  await f.flow.resumeRound({round_id:1,candidate_id:11,pending_candidate:{candidate_id:12,error_code:'resource_paused'}});
+  assert.equal(f.posts.length,1); assert.equal(f.posts[0].kind,'resume');
+  assert.equal(f.posts[0].body.target_candidate_id,12); f.stop();
+});
+
+test('leaving while locating a paused candidate cannot resume it in another story', async () => {
+  const wait = deferred(); const f = fixture({getGroupCandidates: () => wait.promise});
+  await f.start(); f.model.current = state(1,latest()); await f.flow.loadRounds();
+  const attempt = f.flow.resumeRound({round_id:1,candidate_id:12}); f.target(2);
+  wait.resolve({current:state(1,latest()),candidates:[candidate(12,'failed',false)],has_more:false,can_generate:true});
+  await attempt; assert.equal(f.posts.length,0); f.stop();
+});
+
+test('direct continue reports a failed candidate lookup without submitting', async () => {
+  const f = fixture({getGroupCandidates: async () => { throw new Error('lookup unavailable'); }});
+  await f.start(); f.model.current=state(1,latest()); await f.flow.loadRounds();
+  await f.flow.resumeRound({round_id:1,candidate_id:12});
+  assert.equal(f.posts.length,0); assert.match(f.flow.operationError.value,/lookup unavailable/); f.stop();
+});

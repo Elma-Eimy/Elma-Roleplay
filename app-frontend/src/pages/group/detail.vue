@@ -37,13 +37,14 @@
             <ChatTranscriptMessage :content="round.user_content" is-user />
             <GroupUtterances :utterances="round.utterances" :members="group.members" :portraits="round.portraits" />
             <template v-if="round.pending_candidate">
-              <text class="candidate-notice">{{ round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
+              <text class="candidate-notice">{{ round.pending_candidate.error_code === 'resource_paused' ? '重新生成已暂停，已完成回复保留，可继续。' : round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
               <GroupUtterances :utterances="round.pending_candidate.utterances" :members="group.members" />
             </template>
-            <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
+            <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' && round.error_code !== 'resource_paused' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
             <view class="round-actions">
               <button v-if="current" class="group-action" :disabled="submitting || deleting || loading" @tap="openCandidates(round.round_id)">整轮候选</button>
               <template v-if="round.round_id === current?.latest?.round_id && !operationBusy">
+                <button v-if="round.error_code === 'resource_paused' || round.pending_candidate?.error_code === 'resource_paused'" class="group-action" :disabled="locked || !canGenerate || loadingCandidates" @tap="state.resumeRound(round, confirmResume)">继续对话</button>
                 <button class="group-action" :disabled="!canRegenerate" @tap="state.command('regenerate')">重新生成</button>
                 <button class="group-action group-danger" :disabled="!canDiscard" @tap="state.command('discard', undefined, confirmDiscard)">撤回</button>
               </template>
@@ -131,7 +132,7 @@
             <text class="group-copy">查看候选不会改变采用内容。只有完整候选才能切换采用；失败前缀可查看或显式继续。</text>
             <text v-if="loadingCandidates" class="group-copy">正在读取候选…</text>
             <view v-for="candidate in candidates" :key="candidate.candidate_id" class="candidate-row">
-              <text class="group-copy">候选 {{ candidate.version }} · {{ candidateStatus(candidate.status) }}{{ isSelected(candidate.candidate_id) ? ' · 当前采用' : '' }}</text>
+              <text class="group-copy">候选 {{ candidate.version }} · {{ candidateStatus(candidate.status, candidate.error_code) }}{{ isSelected(candidate.candidate_id) ? ' · 当前采用' : '' }}</text>
               <view class="candidate-actions">
                 <button role="button" class="group-action" :disabled="submitting || deleting" @tap="state.viewCandidate(candidateRoundId, candidate.candidate_id)">查看正文与状态</button>
                 <button role="button" v-if="candidate.can_select && !isSelected(candidate.candidate_id)" class="group-action" :disabled="locked || loadingCandidates || !!candidatesError" @tap="state.command('select', candidate)">采用此候选</button>
@@ -368,7 +369,7 @@ const moreRounds = async () => {
 const retryRounds = () => state.retryRounds();
 const isSelected = (id: number) => candidateRoundId.value === current.value?.latest?.round_id
   ? current.value.latest.candidate_id === id : preview.value?.round.selected_candidate_id === id || candidates.value.some(row => row.candidate_id === id && row.selected);
-const candidateStatus = (status: string) => status === 'failed' ? '未完成' : status === 'generating' ? '处理中' : '完整结果';
+const candidateStatus = (status: string, code?: string | null) => code === 'resource_paused' ? '已暂停' : status === 'failed' ? '未完成' : status === 'generating' ? '处理中' : '完整结果';
 const confirmAction = (title: string, content: string) => new Promise<boolean>(resolve => uni.showModal({
   title, content, success: result => resolve(result.confirm), fail: () => resolve(false),
 }));

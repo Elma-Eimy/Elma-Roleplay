@@ -250,7 +250,8 @@ export function useGroupRoundFlow(context: Context) {
       if (!await refreshViews(valid)) return;
       if (terminal) {
         remember(null);
-        notice.value = result.status === "failed" ? "本次执行未完成，已保存前缀可查看。可显式继续、重新生成或撤回。"
+        notice.value = result.error_code === 'resource_paused' ? '本次执行已暂停，已保存的回复可继续。'
+          : result.status === "failed" ? "本次执行未完成，已保存前缀可查看。可显式继续、重新生成或撤回。"
           : request.kind === "discard" ? "这轮已撤回，不再进入后续剧情。" : "操作已完成，当前采用内容以最新轮次为准。";
         const active = current.value?.active_operation;
         if (active) pending.value = { request_id: active.request_id, kind: active.kind };
@@ -261,6 +262,17 @@ export function useGroupRoundFlow(context: Context) {
         ? "上次请求未被接受，但本机存储清理失败，请恢复存储后重新查询。"
         : `结果待确认，请重新查询，勿重复发送。${errorMessage(cause)}`;
     } finally { if (valid()) recovering.value = false; }
+  }
+  async function resumeRound(round: GroupRound, confirm?: () => Promise<boolean>) {
+    if (operationBusy.value || loadingCandidates.value || context.blocked()) return;
+    const valid = ticket(), targetId = round.pending_candidate?.error_code === 'resource_paused'
+      ? round.pending_candidate.candidate_id : round.candidate_id;
+    await loadCandidates(round.round_id);
+    if (!valid() || current.value?.latest?.round_id !== round.round_id) return;
+    if (candidatesError.value) { operationError.value = candidatesError.value; return; }
+    const candidate = candidates.value.find(row => row.candidate_id === targetId);
+    if (candidate?.can_resume) await command('resume', candidate, confirm);
+    else operationError.value = '当前进度已变化，请刷新消息后再继续。';
   }
   async function command(kind: GroupOperationKind, candidate?: GroupCandidateSummary, confirm?: () => Promise<boolean>) {
     if (!context.active() || !context.id() || locked.value || USE_MOCK) return;
@@ -334,7 +346,7 @@ export function useGroupRoundFlow(context: Context) {
   }
   return { rounds, loadingRounds, roundsError, hasMoreRounds, loadRounds, retryRounds: () => loadRounds(retryMore),
     current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
-    canSend, canRegenerate, canDiscard, recover, command, candidates, candidateRoundId, loadingCandidates, candidatesError,
+    canSend, canRegenerate, canDiscard, recover, command, resumeRound, candidates, candidateRoundId, loadingCandidates, candidatesError,
     hasMoreCandidates, loadCandidates, preview, loadingPreview, previewError, viewCandidate,
     adoptedState, loadingAdoptedState, adoptedStateError, loadAdoptedState, pause, reset };
 }
