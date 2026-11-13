@@ -25,7 +25,7 @@ class GroupOperationsMigrationTests(unittest.TestCase):
         inspector = inspect(self.engine)
         for model in (GroupRound, GroupRoundCandidate, GroupRoundOperation):
             table = model.__table__
-            self.assertEqual(set(table.columns.keys()) - ({"insight_watermark", "portrait_selections_json"} if model is GroupRoundCandidate else set()), {c["name"] for c in inspector.get_columns(table.name)})
+            self.assertEqual(set(table.columns.keys()) - ({"insight_watermark", "portrait_selections_json", "dispatch_version"} if model is GroupRoundCandidate else set()), {c["name"] for c in inspector.get_columns(table.name)})
             self.assertEqual({tuple(c.column_keys) for c in table.foreign_key_constraints},
                              {tuple(c["constrained_columns"]) for c in inspector.get_foreign_keys(table.name)})
         with self.engine.connect() as db:

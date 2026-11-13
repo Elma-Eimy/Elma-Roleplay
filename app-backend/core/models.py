@@ -467,10 +467,41 @@ class GroupRoundCandidate(Base):
     portrait_selections_json = Column(Text)
     call_snapshot_json = Column(Text)
     provider_fingerprint = Column(String(64))
+    dispatch_version = Column(Integer, CheckConstraint("dispatch_version IN (0, 1)", name="ck_group_dispatch_version"),
+                              nullable=False, default=0, server_default="0")
     protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),
                               nullable=False, default=1, server_default="1")
     finish_reason = Column(String(30), CheckConstraint("finish_reason IN ('wait_user', 'step_limit', 'no_visible_basis')",
                                                      name="ck_group_finish_reason"))
+
+
+class GroupDispatch(Base):
+    __tablename__ = "group_dispatches"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "session_id"],
+                             ["group_round_candidates.id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "speaker_persona_id"],
+                             ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        UniqueConstraint("candidate_id", "sequence", name="uq_group_dispatch_sequence"),
+        CheckConstraint("sequence >= 1 AND expected_revision >= 0 AND result_revision = expected_revision + 1 "
+                        "AND (completed_revision IS NULL OR completed_revision > result_revision)",
+                        name="ck_group_dispatch_revision"),
+        CheckConstraint("reason_code IN ('direct_response', 'follow_up')", name="ck_group_dispatch_reason"),
+        CheckConstraint("response_reference IS NULL OR length(response_reference) BETWEEN 1 AND 80",
+                        name="ck_group_dispatch_reference"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    speaker_persona_id = Column(Integer, nullable=False)
+    response_reference = Column(String(80))
+    reason_code = Column(String(30), nullable=False)
+    expected_revision = Column(Integer, nullable=False)
+    result_revision = Column(Integer, nullable=False)
+    completed_revision = Column(Integer)
 
 
 class GroupRoundOperation(Base):

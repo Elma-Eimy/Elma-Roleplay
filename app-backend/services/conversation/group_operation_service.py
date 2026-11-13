@@ -178,7 +178,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 policy = json.loads(encoded)
                 policy["group_card_limit"] = db.query(func.max(GroupRecallCard.id)).scalar() or 0
                 encoded = json.dumps(policy, ensure_ascii=False, sort_keys=True)
-            selected = GroupRoundCandidate(session_id=session_id, round_id=latest.id, protocol_version=2, version=version,
+            selected = GroupRoundCandidate(session_id=session_id, round_id=latest.id, protocol_version=2, version=version, dispatch_version=1 if snapshot.shared_chat else 0,
                 portrait_selections_json=portrait_snapshot,
                 insight_watermark=db.query(func.max(GroupMemberInsight.id)).scalar() or 0,
                 checkpoint="user_visibility", call_snapshot_json=encoded, provider_fingerprint=provider)

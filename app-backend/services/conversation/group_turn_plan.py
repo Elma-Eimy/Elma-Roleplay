@@ -1,60 +1,10 @@
-"""从当前候选审计恢复请求与承接依据，不改变角色感知权限。"""
+"""读取可见来源和已冻结回应目标，旧候选通过兼容层读取审计。"""
 import json
 
-from core.models import GroupContentItem, GroupDirectorStep
-from services.conversation.group_unit_protocol import parse_user_units
+from core.models import GroupContentItem
+from services.conversation.group_legacy_protocol import _user_plan, _planning, _pending_requests, _current_basis as _legacy_basis
+from services.conversation import group_dispatch_service as dispatches
 from services.conversation.session_access import SessionKindConflict
-
-
-def _user_plan(item, owner, db):
-    step = db.query(GroupDirectorStep).filter_by(candidate_id=item.candidate_id,
-        item_id=item.id, stage="user_visibility").one_or_none()
-    if step is None:
-        return None
-    value = json.loads(step.decision_json)
-    raw = {"units": [{key: field for key, field in row.items() if key != "unit_index"}
-                     for row in value["units"]]}
-    members = tuple(row["persona_id"] for row in raw["units"][0]["recipients"])
-    return parse_user_units(json.dumps(raw), owner.user_content, members)
-
-
-def _planning(candidate, db):
-    if candidate.call_snapshot_json:
-        return json.loads(candidate.call_snapshot_json).get("turn_policy", 0)
-    item = db.query(GroupContentItem).filter_by(candidate_id=candidate.id, sequence=0).one_or_none()
-    if item is None:
-        return False
-    step = db.query(GroupDirectorStep).filter_by(item_id=item.id, stage="user_visibility").one_or_none()
-    return bool(step and any("meaning" in row for row in json.loads(step.decision_json)["units"]))
-
-
-def _pending_requests(round_, candidate, persona_id, before_sequence, db):
-    if not _planning(candidate, db):
-        return []
-    item = db.query(GroupContentItem).filter_by(candidate_id=candidate.id, sequence=0).one_or_none()
-    if item is None:
-        return []
-    plan = _user_plan(item, round_, db)
-    if plan is None or not plan.request_targets:
-        return []
-    fulfilled = set()
-    steps = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index).all()
-    for index, step in enumerate(steps[:-1]):
-        following = steps[index + 1]
-        if (step.stage == "next_action" and step.speaker_persona_id == persona_id
-                and following.stage == "utterance_visibility"):
-            utterance = db.get(GroupContentItem, following.item_id)
-            outcome = json.loads(following.decision_json).get("request_result")
-            if utterance and utterance.sequence < before_sequence and outcome != "pending":
-                fulfilled.add(json.loads(step.decision_json).get("basis"))
-    result = []
-    for index, (unit, targets) in enumerate(zip(plan.units, plan.request_targets)):
-        reference = f"request:{item.id}:{index}"
-        if unit.meaning == "request" and persona_id in targets and reference not in fulfilled:
-            result.append({"reference": reference, "source": "user_request", "meaning": "request",
-                **({"reply_mode": unit.reply_mode} if unit.reply_mode else {}),
-                "content": round_.user_content[unit.start:unit.end]})
-    return result
 
 
 def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
@@ -98,10 +48,14 @@ def _validate_basis(session_id, persona_id, round_, candidate, before_sequence, 
     return source
 
 
-def _current_basis(session_id, persona_id, round_, candidate, before_sequence, db):
-    step = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index.desc()).first()
-    if step and step.stage == "next_action" and step.speaker_persona_id == persona_id:
-        basis = json.loads(step.decision_json).get("basis")
-        if basis is not None:
-            return _validate_basis(session_id, persona_id, round_, candidate, before_sequence, basis, db)
-    return None
+def _current_basis(session_id, persona_id, round_, candidate, before_sequence, db, *, preview=False):
+    if candidate.dispatch_version == 1:
+        decision = dispatches.pending(candidate, before_sequence, db)
+        if decision is not None and decision.speaker_persona_id != persona_id:
+            if preview:
+                return None
+            raise SessionKindConflict("发言成员不属于当前业务调度")
+        if decision is not None and decision.response_reference is not None:
+            return _validate_basis(session_id, persona_id, round_, candidate, before_sequence, decision.response_reference, db)
+        return None
+    return _legacy_basis(session_id, persona_id, round_, candidate, before_sequence, db)

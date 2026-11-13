@@ -129,7 +129,7 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
             limit, db)
         from services.conversation.group_turn_plan import _pending_requests, _current_basis
         requests = _pending_requests(round_, candidate, persona_id, before, db)
-        basis = _current_basis(session_id, persona_id, round_, candidate, before, db)
+        basis = _current_basis(session_id, persona_id, round_, candidate, before, db, preview=preview)
         if basis is not None and json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
             basis['turn_reply_number'] = db.query(GroupContentItem.id).filter_by(
                 candidate_id=candidate.id, kind='utterance', speaker_persona_id=persona_id).filter(

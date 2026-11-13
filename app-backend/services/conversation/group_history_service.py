@@ -14,6 +14,7 @@ from services.conversation.group_session_service import (
 from services.conversation import group_unit_service as units, group_audit_service as audit
 from services.conversation.group_unit_protocol import ContentUnit
 from services.conversation import group_candidate_state as candidate_state
+from services.conversation import group_dispatch_service as dispatches
 from services.conversation.group_execution_scope import target, has_active_operation
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
                                         portrait_selections_json=portrait_snapshot,
                                         protocol_version=2 if unit_plan is not None else 1,
                                         call_snapshot_json=call_snapshot_json,
+                                        dispatch_version=1 if json.loads(call_snapshot_json or "{}").get("shared_chat") else 0,
                                         checkpoint='next_action' if call_snapshot_json else 'done')
         db.add(candidate)
         db.flush()
@@ -166,7 +168,7 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
     try:
         _begin_write(db)
         round_, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
-        if scope is not None:
+        if scope is not None or candidate.dispatch_version == 1:
             from services.conversation.group_checkpoint_service import validate_prefix
             if candidate.checkpoint != "role_generation" or validate_prefix(round_, candidate, db) != speaker:
                 raise SessionKindConflict("发言不属于当前已接受调度")
@@ -187,9 +189,11 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
             units._write_units(item, unit_plan, members, None, db)
             audit.record(candidate, "utterance_visibility", unit_plan, model, db, item=item)
         count = None
-        if scope is not None:
+        if scope is not None or candidate.dispatch_version == 1:
             from services.conversation.group_checkpoint_service import saved_steps
             count = saved_steps(candidate_id, db)
+        if candidate.dispatch_version == 1:
+            dispatches.complete(candidate, sequence, speaker, db)
         candidate_state.utterance_saved(candidate, completed_steps=count)
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()
@@ -212,13 +216,16 @@ async def finish_group_round(session_id, candidate_id, expected_revision, db, *,
 def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=None, model=None):
     try:
         _begin_write(db)
-        _, candidate = _writable(session_id, candidate_id, revision, db)
+        round_, candidate = _writable(session_id, candidate_id, revision, db)
         if candidate.protocol_version == 2 and not failed:
             audit.record(candidate, "finish", finish_reason, model, db)
         if failed:
             candidate_state.fail(candidate, "execution_failed")
         else:
-            candidate_state.finish(candidate, finish_reason)
+            if candidate.dispatch_version == 1:
+                from services.conversation.group_checkpoint_service import validate_prefix
+                validate_prefix(round_, candidate, db)
+            candidate_state.finish(candidate, finish_reason, persistent=candidate.dispatch_version == 1)
         _require_group(session_id, db).group_revision += 1
         result = {"candidate_id": candidate.id, "revision": candidate.revision, "status": candidate.status}
         db.commit()
@@ -232,7 +239,7 @@ def _accept_action(session_id, candidate_id, revision, action, model, db, *, sco
     try:
         _begin_write(db)
         round_, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
-        if scope is not None and candidate.checkpoint != "next_action":
+        if (scope is not None or candidate.dispatch_version == 1) and candidate.checkpoint != "next_action":
             raise SessionKindConflict("调度检查点已变化")
         if action.speaker_persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("调度成员不属于本群")
@@ -240,8 +247,10 @@ def _accept_action(session_id, candidate_id, revision, action, model, db, *, sco
         if action.basis is not None or _planning(candidate, db) or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
             before = (db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() or 0) + 1
             _validate_basis(session_id, action.speaker_persona_id, round_, candidate, before, action.basis, db)
+        if candidate.dispatch_version == 1:
+            dispatches.accept(candidate, action, db)
         audit.record(candidate, "next_action", action, model, db)
-        candidate_state.action_saved(candidate, persistent=scope is not None)
+        candidate_state.action_saved(candidate, persistent=scope is not None or candidate.dispatch_version == 1)
         result = {"revision": candidate.revision}
         db.commit()
         return result

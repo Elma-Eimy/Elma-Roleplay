@@ -1,14 +1,13 @@
 """持久执行目标、检查点与请求终态；所有写入都受任务作用域保护。"""
 import json
 from datetime import datetime, timedelta
-from core.models import (GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem,
-                         GroupContentUnit, GroupUnitVisibility, GroupContentVisibility, GroupDirectorStep)
+from core.models import GroupRoundCandidate, GroupRoundOperation, GroupContentItem
 from services.conversation import group_history_service as history, group_audit_service as audit
 from services.conversation import group_candidate_state as candidate_state
+from services.conversation import group_dispatch_service as dispatches, group_legacy_protocol as legacy_protocol
 from services.conversation.group_execution_scope import GroupTargetScope, bind_target, target, _authorize
 from services.conversation import group_unit_service as units
-from services.conversation.group_unit_protocol import parse_user_units, parse_role_units, parse_unit_visibility, ContentUnit, UnitPlan
-from services.conversation.session_access import SessionKindConflict, group_session_operation
+from services.conversation.session_access import SessionKindConflict
 
 
 def _write(scope, revision, db):
@@ -21,110 +20,10 @@ def saved_steps(candidate_id, db):
 
 
 def validate_prefix(round_, candidate, db):
-    """校验整个持久前缀，不以当前 revision 大于旧审计为重复调度依据。"""
-    def invalid():
-        raise SessionKindConflict("候选检查点与前缀不一致，请整轮重生成或撤回")
-    from services.conversation.group_turn_plan import _planning, _validate_basis
-    turn_policy = _planning(candidate, db)
-
-    def action_valid(step, before):
-        value = json.loads(step.decision_json)
-        base = {"action": "speak", "speaker_persona_id": step.speaker_persona_id, "reason_code": step.reason_code}
-        if value != {**base, **({"basis": value["basis"]} if "basis" in value else {})}:
-            invalid()
-        if "basis" in value or turn_policy or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
-            return _validate_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
-    if candidate.protocol_version != 2 or candidate.checkpoint not in (
-            "user_visibility", "next_action", "role_generation", "finish"):
-        invalid()
-    members = history._members(candidate.session_id, db)
-    items = db.query(GroupContentItem).filter_by(candidate_id=candidate.id).order_by(GroupContentItem.sequence).all()
-    steps = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index).all()
-    if not items or [i.sequence for i in items] != list(range(len(items))) or items[0].kind != "user":
-        invalid()
-    if candidate.checkpoint == "user_visibility":
-        if len(items) != 1 or steps or db.query(GroupContentUnit).filter_by(candidate_id=candidate.id).count() or db.query(
-                GroupContentVisibility).filter_by(item_id=items[0].id).count():
-            invalid()
-        return None
-    if [s.step_index for s in steps] != list(range(1, len(steps) + 1)):
-        invalid()
-    expected_stages = ["user_visibility"]
-    for _ in items[1:]:
-        expected_stages.extend(("next_action", "utterance_visibility"))
-    if candidate.checkpoint == "role_generation":
-        expected_stages.append("next_action")
-    if [s.stage for s in steps] != expected_stages:
-        invalid()
-    for index, step in enumerate(steps):
-        if (step.policy_version != 2 or step.result_revision > candidate.revision
-                or (index and step.expected_revision < steps[index-1].result_revision)):
-            invalid()
-        if step.stage == "next_action" and (step.reason_code not in ("direct_response", "follow_up")
-                or step.speaker_persona_id not in members):
-            invalid()
-    for index, item in enumerate(items):
-        stage = steps[0 if index == 0 else 2 * index]
-        if (stage.item_id != item.id or item.kind != ("user" if index == 0 else "utterance")
-                or stage.speaker_persona_id != item.speaker_persona_id):
-            invalid()
-        rows = db.query(GroupContentUnit).filter_by(item_id=item.id).order_by(GroupContentUnit.unit_index).all()
-        if not rows or [row.unit_index for row in rows] != list(range(len(rows))):
-            invalid()
-        audiences = []
-        for row in rows:
-            grants = dict(db.query(GroupUnitVisibility.recipient_persona_id, GroupUnitVisibility.decision).filter_by(unit_id=row.id))
-            if set(grants) != members:
-                invalid()
-            visible = tuple(sorted(pid for pid, decision in grants.items() if decision == "visible"))
-            if item.kind != "user" and (item.speaker_persona_id not in visible
-                    or row.kind == "thought" and set(visible) != {item.speaker_persona_id}):
-                invalid()
-            audiences.append(visible)
-        stage_value = json.loads(stage.decision_json)
-        plan = UnitPlan(tuple(ContentUnit(row.kind, row.text, row.source_start, row.source_end) for row in rows), tuple(audiences))
-        if item.kind == "user":
-            try:
-                plan = parse_user_units(json.dumps({"units": [{k: v for k, v in row.items() if k != "unit_index"}
-                    for row in stage_value["units"]]}), round_.user_content, tuple(sorted(members)),
-                    require_meaning=bool(turn_policy),
-                    require_reply_mode=(turn_policy >= 2 if candidate.call_snapshot_json else None))
-                if ([(unit.start, unit.end) for unit in plan.units] != [(row.source_start, row.source_end) for row in rows]
-                        or plan.audiences != tuple(audiences) or any(row.kind != "user" for row in rows)):
-                    invalid()
-            except ValueError:
-                invalid()
-        else:
-            try:
-                checked_units = parse_role_units([{"kind": row.kind, "text": row.text} for row in rows])
-                basis = action_valid(steps[2*index-1], item.sequence) or {}
-                plan = parse_unit_visibility(json.dumps(stage_value), checked_units, tuple(sorted(members)),
-                    item.speaker_persona_id, require_review=bool(turn_policy), reply_mode=basis.get("reply_mode"))
-                if plan.audiences != tuple(audiences):
-                    invalid()
-            except ValueError:
-                invalid()
-            if "".join(row.text for row in rows) != item.content or steps[2*index-1].speaker_persona_id != item.speaker_persona_id:
-                invalid()
-        if stage_value != plan.decision(members):
-            invalid()
-        parents = dict(db.query(GroupContentVisibility.recipient_persona_id, GroupContentVisibility.decision).filter_by(item_id=item.id))
-        common = set.intersection(*(set(audience) for audience in audiences))
-        if item.speaker_persona_id is not None:
-            common.add(item.speaker_persona_id)
-        if parents != {pid: "visible" if pid in common else "hidden" for pid in members}:
-            invalid()
-    if candidate.checkpoint == "role_generation":
-        step = steps[-1]
-        payload = json.loads(step.decision_json)
-        if step.speaker_persona_id not in members:
-            invalid()
-        action_valid(step, len(items))
-        from services.conversation.group_turn_plan import _sources
-        if not _sources(candidate.session_id, step.speaker_persona_id, round_, candidate, 2**63-1, db):
-            invalid()
-        return step.speaker_persona_id
-    return None
+    from services.conversation.group_turn_plan import _validate_basis
+    if candidate.dispatch_version == 1:
+        return dispatches.validate_prefix(round_, candidate, db, resolve_basis=_validate_basis)
+    return legacy_protocol.validate_prefix(round_, candidate, db)
 
 
 def start(scope, revision, db):
