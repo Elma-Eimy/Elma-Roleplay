@@ -4,6 +4,8 @@
 
 后端职责边界见 [架构说明](../docs/architecture/BACKEND.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
 
+群聊候选生命周期集中在 `services/conversation/group_candidate_state.py`，执行权与持久目标校验在 `group_execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。
+
 群聊成员立绘使用独立的选择服务和候选快照，资源继续复用角色立绘；启动迁移追加快照列，旧候选不回填，非空快照拒绝有损降级。归属、版本与恢复规则见 [群聊架构](../docs/architecture/GROUP_CHAT.md#成员立绘快照) 和 [群聊接口](../docs/api/GROUP_SESSIONS.md#成员立绘)。
 
 聊天引擎的流式与非流式入口共用生成参数准备逻辑，统一处理请求、角色卡与全局设置的优先级及模型能力适配；Prompt 装配和消息持久化仍由各自服务负责。

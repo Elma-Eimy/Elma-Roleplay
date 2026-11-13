@@ -65,6 +65,8 @@ CHARX 确认区分新建、追加素材和更新已有角色；设定合并、�
 
 `joint_retrieval.py` 编排向量种子、图谱扩展、SQLite 支持卡回查、整理摘要映射和共同预算；`memory_facts.py` 提供共用载荷、故事时间语义及自动卡来源校验。Prompt 接收统一事实卡，图谱不单独注入重复正文；ChromaDB 继续只作可重建索引。
 
+群聊候选转换由 `services/conversation/group_candidate_state.py` 集中维护；任务与持久目标的执行校验在 `group_execution_scope.py`，事务仍由历史、检查点和操作接受服务持有。状态规则与数据库提交分开，具体边界见[群聊架构](GROUP_CHAT.md#候选生命周期与执行校验)。
+
 ## 会话类型隔离与迁移
 
 HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接口使用默认单聊的 `SessionAPIRouter`，群聊管理使用 `GroupSessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得所属策略的类型限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
