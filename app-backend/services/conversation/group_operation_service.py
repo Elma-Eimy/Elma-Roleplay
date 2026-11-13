@@ -8,14 +8,11 @@ from sqlalchemy import func, text
 
 from core.models import GroupMemberInsight, GroupRecallCard, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem
 from services.conversation import group_history_service as history
+from services.conversation import group_candidate_state as candidate_state
+from services.conversation.group_execution_scope import has_active_operation as _active
 from services.conversation.group_session_service import _begin_write, _locked_write, GroupSessionValidationError
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.conversation.group_call_snapshot import persist_group_calls, validate_group_call_selection, DIRECTOR_CALL_LIMIT
-
-
-def _active(session_id, db):
-    return db.query(GroupRoundOperation).filter(GroupRoundOperation.session_id == session_id,
-        GroupRoundOperation.status.in_(("queued", "running"))).first() is not None
 
 
 def _latest(session_id, db):
@@ -208,9 +205,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
                 remaining = max_steps - saved_steps(target.id, db)
                 if not snapshot.director_ending and (remaining < 0 or (target.checkpoint == "finish") != (remaining == 0)):
                     raise SessionKindConflict("候选成功步数超限")
-                target.status = "generating"
-                target.error_code = None
-                target.revision += 1
+                candidate_state.resume(target)
                 selected = target
             elif kind == "select":
                 target = db.get(GroupRoundCandidate, request["target_candidate_id"])

@@ -13,6 +13,8 @@ from services.conversation.group_session_service import (
 )
 from services.conversation import group_unit_service as units, group_audit_service as audit
 from services.conversation.group_unit_protocol import ContentUnit
+from services.conversation import group_candidate_state as candidate_state
+from services.conversation.group_execution_scope import target, has_active_operation
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +91,8 @@ def _target(session_id, candidate_id, db):
 def _writable(session_id, candidate_id, expected_revision, db, *, scope=None):
     _positive(expected_revision, "候选版本", 0)
     if scope is not None:
-        from services.conversation.group_checkpoint_service import target
         return target(scope, session_id, candidate_id, expected_revision, db)
-    from services.conversation.group_operation_service import _active
-    if _active(session_id, db):
+    if has_active_operation(session_id, db):
         raise SessionKindConflict("持久任务不能通过旧执行入口写入")
     round_, candidate = _target(session_id, candidate_id, db)
     if candidate.status != "generating" or candidate.revision != expected_revision:
@@ -113,8 +113,7 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
     try:
         _begin_write(db)
         group = _require_group(session_id, db)
-        from services.conversation.group_operation_service import _active
-        if _active(session_id, db):
+        if has_active_operation(session_id, db):
             raise SessionKindConflict("存在活动群聊操作")
         if db.query(GroupRound.id).filter_by(session_id=session_id, confirmed_at=None, discarded_at=None).first():
             raise SessionKindConflict("已有待处理或待确认轮次，当前不支持跨轮确认或恢复")
@@ -187,14 +186,11 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
         if unit_plan is not None:
             units._write_units(item, unit_plan, members, None, db)
             audit.record(candidate, "utterance_visibility", unit_plan, model, db, item=item)
+        count = None
         if scope is not None:
             from services.conversation.group_checkpoint_service import saved_steps
-            # 检查点与本次完整发言同事务保存。
             count = saved_steps(candidate_id, db)
-            maximum = json.loads(candidate.call_snapshot_json)["max_steps"]
-            candidate.checkpoint = ("next_action" if json.loads(candidate.call_snapshot_json).get('director_ending')
-                                    else "finish" if count >= maximum else "next_action")
-        candidate.revision += 1
+        candidate_state.utterance_saved(candidate, completed_steps=count)
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()
         return result
@@ -219,11 +215,11 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
         _, candidate = _writable(session_id, candidate_id, revision, db)
         if candidate.protocol_version == 2 and not failed:
             audit.record(candidate, "finish", finish_reason, model, db)
-        candidate.finish_reason = None if failed else finish_reason
-        candidate.status = "failed" if failed else "awaiting_confirmation"
+        if failed:
+            candidate_state.fail(candidate, "execution_failed")
+        else:
+            candidate_state.finish(candidate, finish_reason)
         _require_group(session_id, db).group_revision += 1
-        candidate.error_code = "execution_failed" if failed else None
-        candidate.revision += 1
         result = {"candidate_id": candidate.id, "revision": candidate.revision, "status": candidate.status}
         db.commit()
         return result
@@ -245,9 +241,7 @@ def _accept_action(session_id, candidate_id, revision, action, model, db, *, sco
             before = (db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() or 0) + 1
             _validate_basis(session_id, action.speaker_persona_id, round_, candidate, before, action.basis, db)
         audit.record(candidate, "next_action", action, model, db)
-        if scope is not None:
-            candidate.checkpoint = "role_generation"
-        candidate.revision += 1
+        candidate_state.action_saved(candidate, persistent=scope is not None)
         result = {"revision": candidate.revision}
         db.commit()
         return result

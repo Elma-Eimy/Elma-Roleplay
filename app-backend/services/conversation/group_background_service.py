@@ -8,6 +8,7 @@ from services.conversation import group_operation_service as operations, group_h
 from services.conversation import group_generation_service as generation, group_checkpoint_service as checkpoints
 from services.conversation.group_call_snapshot import capture_group_calls, restore_group_calls
 from services.conversation.group_round_service import _execute_round, GroupRoundBudget
+from services.conversation.group_execution_scope import bind_target
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.infrastructure.llm_provider import group_model_session
 
@@ -68,7 +69,7 @@ async def _work(session_id, request_id, request, fingerprint, engine, runtime, a
                 if not created:
                     accepted.set_result((True, receipt))
                     return
-                scope = checkpoints.bind_target(execution, receipt, db)
+                scope = bind_target(execution, receipt, db)
                 target = dict(round_id=scope.round_id, candidate_id=scope.candidate_id,
                               revision=receipt["accepted"]["candidate_revision"])
                 accepted.set_result((True, receipt))

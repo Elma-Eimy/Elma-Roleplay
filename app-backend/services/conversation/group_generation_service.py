@@ -10,6 +10,8 @@ from sqlalchemy import text
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from services.conversation import group_history_service as history
+from services.conversation import group_candidate_state as candidate_state
+from services.conversation.group_execution_scope import GroupTargetScope
 from services.conversation.group_context_service import build_member_context
 from services.conversation.group_session_service import GroupSessionValidationError
 from services.conversation.role_state_schema import merge_state, encode_state
@@ -38,7 +40,6 @@ class _DatabaseCancelled(asyncio.CancelledError):
 
 
 async def _database(operation, *args, **kwargs):
-    from services.conversation.group_checkpoint_service import GroupTargetScope
     scope = kwargs.get("scope") or next((arg for arg in args if isinstance(arg, GroupTargetScope)), None)
     if scope is not None:
         require_group_execution(scope.execution, scope.session_id, scope.execution.owner.engine)
@@ -102,11 +103,8 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
     try:
         history._begin_write(db)
         _, candidate = history._writable(session_id, candidate_id, revision, db)
-        candidate.status = "failed"
+        candidate_state.fail(candidate, code)
         history._require_group(session_id, db).group_revision += 1
-        candidate.error_code = code
-        candidate.finish_reason = None
-        candidate.revision += 1
         committed_revision = candidate.revision
         db.commit()
         return committed_revision
