@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`conversation/test_group_dispatch.py` 验证新候选在审计清空后仍能预览、续接和进入下一轮，结束检查点零调用恢复、业务调度损坏拒绝、旧候选兼容，以及审计写入失败时调度和回复原子回滚。`infrastructure/test_group_dispatch_migration.py` 验证旧数据不回填、组合归属约束、升级失败回滚及有损降级保护；均使用临时库和模型替身。
+
 `conversation/test_group_candidate_state.py` 检查终态不能被迟到步骤覆盖、持久检查点不能跳步、导演结束与旧条数限制分离，以及失败续接保留已保存的结束决定。事务回滚、版本竞争和执行作用域继续由群聊后台与生成专项覆盖。
 
 `conversation/test_group_generation_cleanup.py` 验证仅派发导演调度和 XML 角色生成、空白及旧 JSON 输出一次失败、旧快照可读但内部续接在模型调用前拒绝，以及被删除阶段不能通过旧策略或角色 JSON 参数重新启用。旧格式转换、纠正重试、亲历审查与待回应审查的执行测试已随实现删除。
