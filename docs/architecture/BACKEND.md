@@ -45,6 +45,20 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 `services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
 
+Prompt 编译由 `services/conversation/prompt_compiler.py` 保留原有入口和群聊适配，`build_chat_messages()` 只编排编译步骤。内部依赖按职责拆分：
+
+| 模块 | 职责 |
+| --- | --- |
+| `prompt_templates.py` | 角色卡宏、占位符、静态指令与后置输出协议 |
+| `prompt_examples.py` | 示例分块、发言者解析与无法结构化时的回退 |
+| `prompt_lorebook.py` | 世界书内容编译、角色深度提示词和深度插入算法 |
+| `prompt_context.py` | 世界书触发输入、记忆时间标签与当前回合动态背景 |
+| `prompt_layout.py` | 静态及示例前缀、历史格式转换、动态背景定位 |
+
+模板和示例不依赖装配入口；消息排列不计算角色状态或调用记忆检索。动态背景先编译成有序文本块，再交给排列模块插入；业务数据库查询仍由上下文装配层及其领域服务完成。静态消息合并、示例边界、当前输入定位及最终输出协议保持原规则。单聊和群聊入口仍共用编译流程，群聊输入适配保留在原入口。
+
+`conversation/test_prompt_compilation_snapshot.py` 使用拆分前保存的完整消息快照，逐项比较角色、内容和顺序，覆盖单聊、分支示例、动态状态、世界书及两种群聊协议。固定虚构输入不调用真实模型；测试临时副本按现有规则复制整个 `services/` 和 `tests/`，包含所有新增模块与快照。
+
 `application/charx_upload.py` 在读取 CHARX 请求体前完成鉴权，限制流式请求总字节与并发上传，再交给仅允许一个文件的 multipart 解析。`services/media/charx_plan.py` 明确 CCv3 字段映射与兼容性报告；`charx_import.py` 负责有界 ZIP 读取、短期预览、素材去重与确认保存。解压和像素解码在生命周期锁外运行，同一 ZIP 条目的失败也缓存；临时目录不公开。`application.lifecycle` 管理每 60 秒回收过期预览的任务。状态接口从 SQLite 幂等回执恢复已提交结果，不依赖临时文件；取消/过期仅保留短期状态标记。`character_portraits.content_sha256` 支持跨上传去重，旧资源按需填充，资源共享仍沿用 Outbox 引用检查。保持单进程部署，不引入额外任务队列。
 
 `schemas.py` 当前体量较小，仍集中管理；`core/models.py` 的 ORM 关系和迁移链保持原样。数据库、头像、音频、配置和虚拟环境位置不因代码目录整理而移动。

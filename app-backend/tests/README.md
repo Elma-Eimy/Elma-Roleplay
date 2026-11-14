@@ -114,4 +114,6 @@ python -m tests.manual.manual_lorebook
 
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
 
+`conversation/test_prompt_compilation_snapshot.py` 对照编译器拆分前保存的 `fixtures/prompt_compilation_snapshots.json`，逐字检查 10 组完整消息的内容、角色和顺序，涵盖角色卡宏、混合示例、分支、动态背景、世界书位置和两种群聊协议。快照来自固定虚构输入，不依赖真实模型；有意调整 Prompt 行为时需审查相应快照差异，不自动覆盖基线。
+
 需要保留现场或使用 IDE 单步调试时，可在准备好独立配置的数据环境中直接运行标准入口，例如 `python -m unittest tests.memory.test_memory_versioning -v`。直接运行 `unittest` 会跳过上述临时工作区隔离。
