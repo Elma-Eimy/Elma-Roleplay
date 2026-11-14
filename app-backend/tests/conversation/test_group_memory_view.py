@@ -4,7 +4,7 @@ import unittest
 from fastapi.testclient import TestClient
 from application.factory import create_app
 from core.database import get_db
-from services.conversation import group_query_service as query, group_session_service as groups
+from services.conversation.group import query_service as query, session_service as groups
 from tests.conversation import test_group_session_service as fixtures
 from tests.conversation import test_group_memory_capture as capture
 

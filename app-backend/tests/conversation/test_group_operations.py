@@ -7,9 +7,9 @@ from unittest.mock import patch
 import unittest
 
 from core.models import GroupRound, GroupRoundCandidate, GroupRoundOperation, Session, GroupContentItem, GroupContentVisibility
-from services.conversation import group_operation_service as operations, group_history_service as history
-from services.conversation import group_session_service as groups
-from services.conversation.group_call_snapshot import GroupCallSnapshot, persist_group_calls, capture_group_calls
+from services.conversation.group import operation_service as operations, history_service as history
+from services.conversation.group import session_service as groups
+from services.conversation.group.call_snapshot import GroupCallSnapshot, persist_group_calls, capture_group_calls
 from core.config import settings
 from services.infrastructure.llm_provider import GroupModelConnection
 from services.conversation.session_access import SessionKindConflict
@@ -219,7 +219,7 @@ class GroupOperationTests(unittest.TestCase):
         self.assertEqual(0, history.list_group_rounds(sid, self.db)["total"])
 
     def test_director_pending_query_excludes_discarded_round_and_old_confirmation_stays(self):
-        from services.conversation import group_director_service as director
+        from services.conversation.group import director_service as director
         sid, ids = self.group()
         first = self.command(sid)
         self.settle(first)
@@ -283,7 +283,7 @@ class GroupOperationTests(unittest.TestCase):
         expected = (0, None, None, None)
         with patch.object(settings, "LLM_REASONING_MODE", False), patch.object(settings, "LLM_REASONING_EFFORT", "max"):
             first = self.command(sid, request_id=request_id, expected=expected, call_snapshot=calls)
-        with patch("services.conversation.group_operation_service.validate_group_call_selection", side_effect=AssertionError("revalidated")):
+        with patch("services.conversation.group.operation_service.validate_group_call_selection", side_effect=AssertionError("revalidated")):
             replay = self.command(sid, request_id=request_id, expected=expected, thinking_mode="inherit",
                                   reasoning_effort="inherit", call_snapshot=None)
         self.assertEqual(first, replay)

@@ -137,7 +137,7 @@ class GroupSessionRoutesTests(unittest.TestCase):
     def test_readonly_round_history_paginates_selected_candidates_and_keeps_failed_prefix(self):
         from datetime import datetime
         from core.models import GroupRound, GroupRoundCandidate, GroupContentItem
-        from services.conversation import group_history_service as history
+        from services.conversation.group import history_service as history
         group = self.client.post("/group-sessions", json=self.payload).json()
         sid = group["session_id"]
         a, b = [member["persona_id"] for member in group["members"]]

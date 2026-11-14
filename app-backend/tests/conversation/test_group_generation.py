@@ -13,10 +13,10 @@ from application.group_runtime import group_runtime
 from core.locking import is_session_locked
 from core.models import (Character, SessionPersona, GroupRound, GroupRoundCandidate, GroupContentItem,
                          GroupContentVisibility, MemoryExtractionJob)
-from services.conversation import group_history_service as history
-from services.conversation import group_generation_service as generation
-from services.conversation.group_context_service import build_member_context
-from services.conversation.group_session_service import create_group_session, GroupSessionValidationError
+from services.conversation.group import history_service as history
+from services.conversation.group import generation_service as generation
+from services.conversation.group.context_service import build_member_context
+from services.conversation.group.session_service import create_group_session, GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_session_service as fixtures
 

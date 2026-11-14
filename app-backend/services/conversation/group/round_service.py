@@ -7,14 +7,14 @@ import time
 from datetime import datetime
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
-from services.conversation import group_director_service as director, group_generation_service as generation
-from services.conversation import group_history_service as history
-from services.conversation import group_checkpoint_service as checkpoints
-from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls, DIRECTOR_CALL_LIMIT
-from services.conversation.group_context_service import build_member_context
+from . import director_service as director, generation_service as generation
+from . import history_service as history
+from . import checkpoint_service as checkpoints
+from .call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls, DIRECTOR_CALL_LIMIT
+from .context_service import build_member_context
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.llm_provider import group_model_session
-from services.conversation.group_unit_protocol import ContentUnit, UnitPlan, GroupUnitError
+from .unit_protocol import ContentUnit, UnitPlan, GroupUnitError
 
 logger = logging.getLogger(__name__)
 

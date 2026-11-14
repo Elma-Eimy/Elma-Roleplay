@@ -8,14 +8,14 @@ from sqlalchemy import and_, or_, func, text
 from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem,
                          GroupContentVisibility, SessionPersona)
 from services.conversation.session_access import get_group_session, group_session_operation, SessionKindConflict
-from services.conversation.group_session_service import (
+from .session_service import (
     _begin_write, _locked_write, GroupSessionNotFound, GroupSessionValidationError,
 )
-from services.conversation import group_unit_service as units, group_audit_service as audit
-from services.conversation.group_unit_protocol import ContentUnit
-from services.conversation import group_candidate_state as candidate_state
-from services.conversation import group_dispatch_service as dispatches
-from services.conversation.group_execution_scope import target, has_active_operation
+from . import unit_service as units, audit_service as audit
+from .unit_protocol import ContentUnit
+from . import candidate_state as candidate_state
+from . import dispatch_service as dispatches
+from .execution_scope import target, has_active_operation
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
         _begin_write(db)
         round_, candidate = _writable(session_id, candidate_id, revision, db, scope=scope)
         if scope is not None or candidate.dispatch_version == 1:
-            from services.conversation.group_checkpoint_service import validate_prefix
+            from .checkpoint_service import validate_prefix
             if candidate.checkpoint != "role_generation" or validate_prefix(round_, candidate, db) != speaker:
                 raise SessionKindConflict("发言不属于当前已接受调度")
         if (candidate.protocol_version == 2) != (unit_plan is not None):
@@ -190,7 +190,7 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
             audit.record(candidate, "utterance_visibility", unit_plan, model, db, item=item)
         count = None
         if scope is not None or candidate.dispatch_version == 1:
-            from services.conversation.group_checkpoint_service import saved_steps
+            from .checkpoint_service import saved_steps
             count = saved_steps(candidate_id, db)
         if candidate.dispatch_version == 1:
             dispatches.complete(candidate, sequence, speaker, db)
@@ -223,7 +223,7 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
             candidate_state.fail(candidate, "execution_failed")
         else:
             if candidate.dispatch_version == 1:
-                from services.conversation.group_checkpoint_service import validate_prefix
+                from .checkpoint_service import validate_prefix
                 validate_prefix(round_, candidate, db)
             candidate_state.finish(candidate, finish_reason, persistent=candidate.dispatch_version == 1)
         _require_group(session_id, db).group_revision += 1
@@ -243,7 +243,7 @@ def _accept_action(session_id, candidate_id, revision, action, model, db, *, sco
             raise SessionKindConflict("调度检查点已变化")
         if action.speaker_persona_id not in _members(session_id, db):
             raise GroupSessionValidationError("调度成员不属于本群")
-        from services.conversation.group_turn_plan import _planning, _validate_basis
+        from .turn_plan import _planning, _validate_basis
         if action.basis is not None or _planning(candidate, db) or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
             before = (db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar() or 0) + 1
             _validate_basis(session_id, action.speaker_persona_id, round_, candidate, before, action.basis, db)
@@ -380,7 +380,7 @@ def list_group_rounds(session_id, db, *, limit=20, offset=0):
             preview = pending.get(row.id)
             result[-1]['pending_candidate'] = ({'candidate_id': preview.id, 'status': preview.status,
                 'error_code': preview.error_code, 'utterances': by_candidate.get(preview.id, [])} if preview else None)
-        from services.conversation.group_query_service import _state
+        from .query_service import _state
         return {"current": _state(_require_group(session_id, db), db),
                 "rounds": result, "total": total, "limit": limit, "offset": offset,
                 "has_more": offset + len(result) < total}

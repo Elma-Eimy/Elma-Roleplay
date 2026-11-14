@@ -14,8 +14,8 @@ from unittest.mock import patch
 from application.group_runtime import group_runtime
 from core.locking import is_session_locked
 from core.models import GroupRound, GroupRoundCandidate, GroupContentItem, Character
-from services.conversation import group_director_service as director, group_history_service as history
-from services.conversation.group_session_service import create_group_session, GroupSessionValidationError
+from services.conversation.group import director_service as director, history_service as history
+from services.conversation.group.session_service import create_group_session, GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import _run_round, ReplayModel, _response, _require_workspace
 from tests.conversation import test_group_session_service as fixtures

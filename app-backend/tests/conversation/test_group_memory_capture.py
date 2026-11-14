@@ -8,7 +8,7 @@ from unittest.mock import patch
 from application.group_runtime import group_runtime
 from core.models import GroupMemberInsight, GroupMemoryCapture, GroupRoundCandidate
 from services.memory.group_memory_capture import enqueue_confirmed_group, process_one_capture
-from services.conversation import group_session_service as groups
+from services.conversation.group import session_service as groups
 from scripts.group_chat_prototype.worker import _response
 from tests.conversation import test_group_background as fixtures
 
@@ -30,8 +30,8 @@ class GroupCaptureTests(unittest.TestCase):
         def restore_legacy_permissions(candidate_id):
             # 直接构造已保存的旧权限，不调用已移除的裁决模型。
             from core.models import GroupContentItem, GroupContentUnit, GroupUnitVisibility, GroupDirectorStep
-            from services.conversation.group_unit_protocol import ContentUnit, UnitPlan
-            from services.conversation.group_unit_service import _write_units
+            from services.conversation.group.unit_protocol import ContentUnit, UnitPlan
+            from services.conversation.group.unit_service import _write_units
             for item in self.db.query(GroupContentItem).filter_by(candidate_id=candidate_id):
                 old_ids = [row.id for row in self.db.query(GroupContentUnit).filter_by(item_id=item.id)]
                 self.db.query(GroupUnitVisibility).filter(GroupUnitVisibility.unit_id.in_(old_ids)).delete(synchronize_session=False)

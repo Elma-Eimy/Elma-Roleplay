@@ -17,8 +17,8 @@ from core.locking import get_session_lock, is_session_locked
 from core.models import (Base, Character, Session, SessionPersona, ChatMessage, MessageRole, MemoryChunk,
     MemoryType, GroupPersonaOrigin, GroupInheritedMemorySnapshot, OutboxJob, MemoryExtractionJob,
     MemoryEventBuffer, GraphEntity, MemoryConsolidation, MemoryConsolidationSource, MemoryConsolidationScope)
-from services.conversation import group_session_service as service
-from services.conversation.group_session_service import GroupSessionDraft, GroupMember
+from services.conversation.group import session_service as service
+from services.conversation.group.session_service import GroupSessionDraft, GroupMember
 from services.conversation.session_access import SessionKindConflict
 from services.conversation.session_service import safe_delete_session, create_session_service, get_recent_sessions
 from services.character_service import delete_character_service

@@ -11,9 +11,9 @@ from sqlalchemy import event
 from core.models import Session, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem, GroupDirectorStep
 from core.locking import is_session_locked, stop_group_executions
 from application.group_runtime import group_runtime
-from services.conversation import group_background_service as background, group_checkpoint_service as checkpoints
-from services.conversation import group_operation_service as operations, group_generation_service as generation
-from services.conversation import group_round_service as rounds
+from services.conversation.group import background_service as background, checkpoint_service as checkpoints
+from services.conversation.group import operation_service as operations, generation_service as generation
+from services.conversation.group import round_service as rounds
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import _response
 from tests.conversation import test_group_operations as fixtures
@@ -377,7 +377,7 @@ class GroupBackgroundTests(unittest.TestCase):
 
     def test_scope_cannot_be_forged_borrowed_or_used_by_legacy_writer(self):
         from dataclasses import replace
-        from services.conversation import group_history_service as history
+        from services.conversation.group import history_service as history
         sid, ids = self.group()
         async def scenario(owner):
             model = Model(ids)
@@ -465,7 +465,7 @@ class GroupBackgroundTests(unittest.TestCase):
             asyncio.run(scenario(owner))
     def test_resume_freezes_parameters_but_allows_same_provider_key_rotation(self):
         from core.config import settings
-        from services.conversation.group_call_snapshot import restore_group_calls
+        from services.conversation.group.call_snapshot import restore_group_calls
         sid, ids = self.group()
         async def scenario(owner):
             receipt = await self.submit(sid, owner, Model(ids, fail="role_generation"), max_steps=3)
@@ -490,7 +490,7 @@ class GroupBackgroundTests(unittest.TestCase):
 
     def test_restart_converges_unfinished_sibling_without_changing_successful_selection(self):
         from application.group_runtime import fail_interrupted_group_candidates
-        from services.conversation.group_call_snapshot import capture_group_calls
+        from services.conversation.group.call_snapshot import capture_group_calls
         sid, ids = self.group()
         async def scenario(owner):
             first = await self.submit(sid, owner, Model(ids))

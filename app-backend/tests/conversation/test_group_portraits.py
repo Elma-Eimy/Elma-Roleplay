@@ -9,8 +9,8 @@ from core.models import CharacterPortrait, GroupRoundCandidate, SessionPersona
 from core.locking import get_session_lock
 from services.media.group_portraits import update_group_portrait
 from services.media.character_portraits import delete_portrait
-from services.conversation import group_query_service as queries
-from services.conversation.group_session_service import GroupSessionValidationError
+from services.conversation.group import query_service as queries
+from services.conversation.group.session_service import GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_operations as fixtures
 

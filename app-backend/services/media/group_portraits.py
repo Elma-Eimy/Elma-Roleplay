@@ -2,7 +2,7 @@
 import json
 
 from core.models import CharacterPortrait, GroupRoundCandidate, SessionPersona
-from services.conversation.group_session_service import (
+from services.conversation.group.session_service import (
     GroupSessionNotFound, GroupSessionValidationError, _begin_write, _locked_write)
 from services.conversation.session_access import check_chat_arguments, group_session_operation, SessionKindConflict
 
@@ -25,7 +25,7 @@ def _candidate_choices(candidate, members):
 
 
 def _current_choices(session_id, db):
-    from services.conversation.group_operation_service import _latest
+    from services.conversation.group.operation_service import _latest
     latest = _latest(session_id, db)
     members = _members(session_id, db)
     candidate = db.get(GroupRoundCandidate, latest.selected_candidate_id) if latest else None
@@ -56,7 +56,7 @@ def _current_portraits(session_id, db):
 
 @group_session_operation
 async def update_group_portrait(session_id, persona_id, portrait_id, expected, db):
-    from services.conversation import group_history_service as history
+    from services.conversation.group import history_service as history
     with db.no_autoflush:
         check_chat_arguments({'session_id': session_id, 'persona_id': persona_id}, db, kind='group')
         history._require_group(session_id, db)
@@ -67,7 +67,7 @@ async def update_group_portrait(session_id, persona_id, portrait_id, expected, d
 
 
 def _update(session_id, persona_id, portrait_id, expected, db):
-    from services.conversation import group_history_service as history, group_operation_service as operations
+    from services.conversation.group import history_service as history, operation_service as operations
     try:
         _begin_write(db)
         group = history._require_group(session_id, db)

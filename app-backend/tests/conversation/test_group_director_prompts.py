@@ -1,7 +1,7 @@
 """导演仅生成调度决定；旧知情与审查阶段不能重新启用。"""
 import json
 import unittest
-from services.conversation import group_director_service as director
+from services.conversation.group import director_service as director
 
 
 class DirectorPromptTests(unittest.TestCase):

@@ -316,7 +316,7 @@ def _delete(session_id, db):
         group = get_group_session(session_id, db)
         if group is None:
             raise GroupSessionNotFound("群聊不存在")
-        from services.conversation.group_execution_scope import has_active_operation
+        from .execution_scope import has_active_operation
         if has_active_operation(session_id, db):
             raise SessionKindConflict("群聊存在活动操作，不能删除")
         personas = group.personas

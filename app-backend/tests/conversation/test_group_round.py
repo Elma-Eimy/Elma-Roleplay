@@ -13,9 +13,9 @@ from core.locking import (group_execution, require_group_execution, _GroupExecut
                           get_session_lock, is_session_locked)
 from core.models import Character, GroupRoundCandidate, GroupContentItem
 from application.group_runtime import group_runtime
-from services.conversation.group_call_snapshot import capture_group_calls
-from services.conversation.group_round_service import run_group_round as _run_group_round, GroupRoundBudget
-from services.conversation.group_session_service import create_group_session
+from services.conversation.group.call_snapshot import capture_group_calls
+from services.conversation.group.round_service import run_group_round as _run_group_round, GroupRoundBudget
+from services.conversation.group.session_service import create_group_session
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import ReplayModel, _response
 from tests.conversation import test_group_session_service as fixtures
@@ -39,7 +39,7 @@ class GroupRoundTests(unittest.TestCase):
         self.assertIsNone(thinking.review_reasoning_effort)
         self.assertIsNone(plain.review_reasoning_effort)
         from types import SimpleNamespace
-        from services.conversation.group_call_snapshot import persist_group_calls, restore_group_calls
+        from services.conversation.group.call_snapshot import persist_group_calls, restore_group_calls
         encoded, fingerprint = persist_group_calls(thinking, 1, set(ids))
         candidate = SimpleNamespace(protocol_version=2, call_snapshot_json=encoded, provider_fingerprint=fingerprint)
         restored, _ = restore_group_calls(candidate, set(ids))
@@ -141,7 +141,7 @@ class GroupRoundTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "call_budget"):
             budget.consume()
         self.assertEqual(3, budget.used)
-        with patch("services.conversation.group_round_service.time.monotonic", return_value=budget.deadline + 1):
+        with patch("services.conversation.group.round_service.time.monotonic", return_value=budget.deadline + 1):
             with self.assertRaisesRegex(ValueError, "call_budget"):
                 budget.remaining()
 
@@ -203,8 +203,8 @@ class GroupRoundTests(unittest.TestCase):
                     basis = next(iter(payload['response_sources'][str(ids[0])]))
                     return _response(json.dumps(dict(action='speak', speaker_persona_id=ids[0], reason_code='direct_response', basis=basis)))
                 return _response('<reply>' + 'x' * 12000 + '</reply>')
-            from services.conversation.group_director_service import GroupDirectorError
-            with patch('services.conversation.group_round_service.build_member_context', side_effect=GroupDirectorError('context_budget')), group_runtime(self.engine) as owner:
+            from services.conversation.group.director_service import GroupDirectorError
+            with patch('services.conversation.group.round_service.build_member_context', side_effect=GroupDirectorError('context_budget')), group_runtime(self.engine) as owner:
                 result = asyncio.run(run_group_round(sid, "user", self.db, runtime=owner, max_steps=1,
                                                     call_model=model, collect_inputs=collect))
             self.db.expire_all()
@@ -220,7 +220,7 @@ class GroupRoundTests(unittest.TestCase):
         replay = ReplayModel(self.case(), ids)
         async def model(stage, kwargs):
             return await replay(stage, kwargs["messages"])
-        with patch("services.conversation.group_round_service.build_member_context", side_effect=RuntimeError("PRIVATE_REPORT")), group_runtime(self.engine) as owner:
+        with patch("services.conversation.group.round_service.build_member_context", side_effect=RuntimeError("PRIVATE_REPORT")), group_runtime(self.engine) as owner:
             result = asyncio.run(run_group_round(sid, self.case()["user"], self.db, runtime=owner,
                                                 call_model=model, collect_inputs=True))
         self.assertIsNone(result["error_code"])
@@ -230,7 +230,7 @@ class GroupRoundTests(unittest.TestCase):
         self.assertEqual("awaiting_confirmation", self.db.query(GroupRoundCandidate).one().status)
 
     def test_cancellation_during_diagnostic_read_still_waits_and_fails_candidate(self):
-        from services.conversation.group_context_service import build_member_context
+        from services.conversation.group.context_service import build_member_context
         sid, ids = self.group()
         entered, release = threading.Event(), threading.Event()
         replay = ReplayModel(self.case(), ids)
@@ -254,7 +254,7 @@ class GroupRoundTests(unittest.TestCase):
                 release.set()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        with patch("services.conversation.group_round_service.build_member_context", read), group_runtime(self.engine) as owner:
+        with patch("services.conversation.group.round_service.build_member_context", read), group_runtime(self.engine) as owner:
             asyncio.run(scenario(owner))
         self.assertFalse(is_session_locked(sid))
         self.db.expire_all()
@@ -295,7 +295,7 @@ class GroupRoundTests(unittest.TestCase):
 
     def _assert_shutdown_waits(self, *, during_save):
         from application.lifecycle import lifespan
-        from services.conversation import group_generation_service as generation
+        from services.conversation.group import generation_service as generation
         from fastapi import FastAPI
         sid, ids = self.group()
         app = FastAPI()

@@ -5,8 +5,8 @@ import json
 import unittest
 
 from core.models import GroupMemoryCapture, GroupRound, GroupRoundCandidate
-from services.conversation import group_history_service as history, group_session_service as groups
-from services.conversation.group_unit_protocol import ContentUnit, UnitPlan
+from services.conversation.group import history_service as history, session_service as groups
+from services.conversation.group.unit_protocol import ContentUnit, UnitPlan
 from services.memory.group_memory_capture import _evidence, _capture_results, enqueue_confirmed_group
 from tests.conversation import test_group_session_service as fixtures
 

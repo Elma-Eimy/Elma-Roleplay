@@ -4,7 +4,7 @@ import json
 from sqlalchemy import func
 
 from core.models import GroupDirectorStep, SessionPersona
-from services.conversation.group_unit_protocol import UnitPlan
+from .unit_protocol import UnitPlan
 
 
 def record(candidate, stage, decision, model, db, *, item=None):

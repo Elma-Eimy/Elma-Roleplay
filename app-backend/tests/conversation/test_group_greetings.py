@@ -5,8 +5,8 @@ from dataclasses import replace
 
 from core.models import Character, Session, GroupRound, GroupRoundOperation
 from schemas import GroupSessionCreate
-from services.conversation import group_session_service as service
-from services.conversation import group_director_service as director
+from services.conversation.group import session_service as service
+from services.conversation.group import director_service as director
 from tests.conversation import test_group_session_service as fixtures
 from tests.conversation import test_group_generation as generation_fixtures
 

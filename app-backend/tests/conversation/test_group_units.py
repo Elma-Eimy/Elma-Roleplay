@@ -10,14 +10,14 @@ from application.group_runtime import group_runtime
 from core.models import (Character, GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility,
                          GroupContentUnit, GroupUnitVisibility, GroupDirectorStep)
 from core.models import ChatMessage, MessageRole
-from services.conversation import group_history_service as history, group_generation_service as generation
-from services.conversation import group_audit_service as audit
-from services.conversation import group_session_service as groups
+from services.conversation.group import history_service as history, generation_service as generation
+from services.conversation.group import audit_service as audit
+from services.conversation.group import session_service as groups
 from services.conversation.session_access import SessionKindConflict
-from services.conversation.group_context_service import build_member_context
-from services.conversation.group_director_service import NextAction, build_director_context
-from services.conversation.group_session_service import create_group_session
-from services.conversation.group_unit_protocol import (ContentUnit, UnitPlan, GroupUnitError, parse_user_units,
+from services.conversation.group.context_service import build_member_context
+from services.conversation.group.director_service import NextAction, build_director_context
+from services.conversation.group.session_service import create_group_session
+from services.conversation.group.unit_protocol import (ContentUnit, UnitPlan, GroupUnitError, parse_user_units,
     parse_unit_visibility, load_object)
 
 

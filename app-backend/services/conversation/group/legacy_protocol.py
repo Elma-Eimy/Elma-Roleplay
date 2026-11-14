@@ -2,7 +2,7 @@
 import json
 
 from core.models import (GroupContentItem, GroupDirectorStep, GroupContentUnit, GroupUnitVisibility, GroupContentVisibility)
-from services.conversation.group_unit_protocol import (parse_user_units, parse_role_units, parse_unit_visibility, ContentUnit, UnitPlan)
+from .unit_protocol import (parse_user_units, parse_role_units, parse_unit_visibility, ContentUnit, UnitPlan)
 from services.conversation.session_access import SessionKindConflict
 
 
@@ -64,8 +64,8 @@ def validate_prefix(round_, candidate, db):
     """校验整个持久前缀，不以当前 revision 大于旧审计为重复调度依据。"""
     def invalid():
         raise SessionKindConflict("候选检查点与前缀不一致，请整轮重生成或撤回")
-    from services.conversation.group_turn_plan import _validate_basis
-    from services.conversation import group_history_service as history
+    from .turn_plan import _validate_basis
+    from . import history_service as history
     turn_policy = _planning(candidate, db)
 
     def action_valid(step, before):
@@ -161,7 +161,7 @@ def validate_prefix(round_, candidate, db):
         if step.speaker_persona_id not in members:
             invalid()
         action_valid(step, len(items))
-        from services.conversation.group_turn_plan import _sources
+        from .turn_plan import _sources
         if not _sources(candidate.session_id, step.speaker_persona_id, round_, candidate, 2**63-1, db):
             invalid()
         return step.speaker_persona_id
@@ -170,7 +170,7 @@ def validate_prefix(round_, candidate, db):
 
 
 def _current_basis(session_id, persona_id, round_, candidate, before_sequence, db):
-    from services.conversation.group_turn_plan import _validate_basis
+    from .turn_plan import _validate_basis
     step = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index.desc()).first()
     if step and step.stage == "next_action" and step.speaker_persona_id == persona_id:
         basis = json.loads(step.decision_json).get("basis")

@@ -17,8 +17,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from core.database import get_db
-from services.conversation.group_session_service import create_group_session
-from services.conversation import group_history_service as history
+from services.conversation.group.session_service import create_group_session
+from services.conversation.group import history_service as history
 from scripts.group_chat_prototype.preview import preview_app
 from tests.conversation import test_group_session_service as fixtures
 

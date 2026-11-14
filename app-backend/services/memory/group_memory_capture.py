@@ -9,8 +9,8 @@ from sqlalchemy import or_, text
 from core.config import settings
 from core.models import (GroupContentItem, GroupContentUnit, GroupContentVisibility, GroupMemberInsight, GroupMemoryCapture,
                          GroupRound, GroupRoundCandidate, GroupUnitVisibility, GroupRecallCard, MemoryType, SessionPersona)
-from services.conversation.group_unit_protocol import load_object
-from services.conversation.group_unit_service import _member_projection
+from services.conversation.group.unit_protocol import load_object
+from services.conversation.group.unit_service import _member_projection
 from services.infrastructure.llm_provider import get_llm_provider
 from services.infrastructure.model_capabilities import auxiliary_controls
 from services.memory.group_member_insights import allowed_targets, member_insights, validated_insights

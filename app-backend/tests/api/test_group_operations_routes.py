@@ -14,7 +14,7 @@ from core.config import settings
 from core.locking import stop_group_executions
 from core.models import GroupRoundOperation, GroupRound, GroupRoundCandidate, Session
 from schemas import SQLITE_INT_MAX
-from services.conversation import group_background_service as background
+from services.conversation.group import background_service as background
 from tests.conversation import test_group_session_service as fixtures, test_group_background as models
 
 
@@ -38,7 +38,7 @@ class GroupOperationRoutesTests(unittest.TestCase):
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         async def dispatch(session_id, request_id, kind, revision, db, **options):
-            from services.conversation import group_history_service as history, group_operation_service as operations
+            from services.conversation.group import history_service as history, operation_service as operations
             with self.sessions() as read:
                 ids = tuple(sorted(history._members(session_id, read)))
                 latest = operations._latest(session_id, read)
@@ -226,7 +226,7 @@ class GroupOperationRoutesTests(unittest.TestCase):
             return asyncio.Event()
         release = self.client.portal.call(make_gate)
         async def dispatch(session_id, request_id, kind, revision, db, **options):
-            from services.conversation.group_history_service import _members
+            from services.conversation.group.history_service import _members
             with self.sessions() as read:
                 model = models.Model(tuple(sorted(_members(session_id, read))), user=options["user_content"])
             async def hold(stage, parameters):

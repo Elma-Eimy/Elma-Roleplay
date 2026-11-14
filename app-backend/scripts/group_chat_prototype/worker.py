@@ -52,7 +52,7 @@ class ReplayModel:
 
 
 async def _run_round(session_id, user_content, db, runtime, call_model, *, model="fixture-replay", max_steps=4, timeout=300):
-    from services.conversation.group_round_service import run_group_round
+    from services.conversation.group.round_service import run_group_round
     return await run_group_round(session_id, user_content, db, runtime=runtime, call_model=call_model,
                                  model=model, max_steps=max_steps, timeout=timeout, collect_inputs=True,
                                  protocol_version=2)
@@ -66,8 +66,8 @@ async def _run_suite(request):
     from application.group_runtime import group_runtime
     from application.factory import create_app
     from fastapi.testclient import TestClient
-    from services.conversation.group_session_service import create_group_session, GroupSessionDraft, GroupMember
-    from services.conversation.group_call_snapshot import DIRECTOR_CALL_LIMIT
+    from services.conversation.group.session_service import create_group_session, GroupSessionDraft, GroupMember
+    from services.conversation.group.call_snapshot import DIRECTOR_CALL_LIMIT
 
     engine = create_engine("sqlite:///data/cases.db", connect_args={"check_same_thread": False})
     @event.listens_for(engine, "connect")

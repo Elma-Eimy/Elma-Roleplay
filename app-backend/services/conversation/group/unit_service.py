@@ -4,7 +4,7 @@ import json
 from sqlalchemy import and_, or_
 
 from core.models import GroupContentItem, GroupContentUnit, GroupUnitVisibility, GroupRoundCandidate
-from services.conversation.group_unit_protocol import ContentUnit, UnitPlan, GroupUnitError, parse_role_units, parse_user_units
+from .unit_protocol import ContentUnit, UnitPlan, GroupUnitError, parse_role_units, parse_user_units
 
 
 def _write_units(item, plan, members, user_content, db):
@@ -61,7 +61,7 @@ def _member_projection(item, owner, persona_id, db):
         GroupContentUnit.session_id == item.session_id, GroupUnitVisibility.recipient_persona_id == persona_id,
         GroupUnitVisibility.decision == "visible",
         or_(GroupContentUnit.kind != "thought", item.speaker_persona_id == persona_id)).order_by(GroupContentUnit.unit_index).all()
-    from services.conversation.group_legacy_protocol import _user_plan
+    from .legacy_protocol import _user_plan
     candidate = db.get(GroupRoundCandidate, item.candidate_id)
     plan = _user_plan(item, owner, db) if item.kind == "user" and candidate.dispatch_version == 0 else None
     units = []

@@ -9,15 +9,15 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import text
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
-from services.conversation import group_history_service as history
-from services.conversation import group_candidate_state as candidate_state
-from services.conversation.group_execution_scope import GroupTargetScope
-from services.conversation.group_context_service import build_member_context
-from services.conversation.group_session_service import GroupSessionValidationError
+from . import history_service as history
+from . import candidate_state as candidate_state
+from .execution_scope import GroupTargetScope
+from .context_service import build_member_context
+from .session_service import GroupSessionValidationError
 from services.conversation.role_state_schema import merge_state, encode_state
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.infrastructure.llm_provider import get_llm_provider
-from services.conversation.group_unit_protocol import UnitPlan
+from .unit_protocol import UnitPlan
 
 logger = logging.getLogger(__name__)
 

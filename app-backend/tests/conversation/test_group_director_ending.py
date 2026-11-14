@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import patch
 from core.models import GroupContentItem, GroupRoundCandidate, GroupRoundOperation, GroupRound
 from application.group_runtime import group_runtime
-from services.conversation import group_round_service as rounds, group_operation_service as operations
-from services.conversation.group_query_service import get_group_candidate
+from services.conversation.group import round_service as rounds, operation_service as operations
+from services.conversation.group.query_service import get_group_candidate
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_background as fixtures
 
@@ -64,7 +64,7 @@ class DirectorEndingTests(unittest.TestCase):
             asyncio.run(scenario(owner))
 
     def test_finish_commit_failure_resumes_saved_director_end_with_zero_model_calls(self):
-        from services.conversation import group_checkpoint_service as checkpoints
+        from services.conversation.group import checkpoint_service as checkpoints
         sid,ids=self.group()
         async def scenario(owner):
             with patch.object(checkpoints,'finish',side_effect=RuntimeError('commit failure')):

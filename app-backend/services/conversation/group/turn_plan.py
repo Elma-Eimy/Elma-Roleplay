@@ -2,13 +2,13 @@
 import json
 
 from core.models import GroupContentItem
-from services.conversation.group_legacy_protocol import _user_plan, _planning, _pending_requests, _current_basis as _legacy_basis
-from services.conversation import group_dispatch_service as dispatches
+from .legacy_protocol import _user_plan, _planning, _pending_requests, _current_basis as _legacy_basis
+from . import dispatch_service as dispatches
 from services.conversation.session_access import SessionKindConflict
 
 
 def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
-    from services.conversation import group_history_service as history
+    from . import history_service as history
     from core.config import settings
     limit = (json.loads(candidate.call_snapshot_json)["history_limit"] if candidate.call_snapshot_json else
              min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT)))

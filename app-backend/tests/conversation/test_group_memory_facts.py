@@ -5,8 +5,8 @@ import json
 import unittest
 from sqlalchemy import func
 from core.models import GroupMemoryCapture,GroupRound,GroupRoundCandidate,GroupRecallCard,OutboxJob
-from services.conversation import group_session_service as groups,group_history_service as history
-from services.conversation.group_unit_protocol import ContentUnit,UnitPlan
+from services.conversation.group import session_service as groups,history_service as history
+from services.conversation.group.unit_protocol import ContentUnit,UnitPlan
 from services.memory.group_memory_assertions import classified_records, prepare_assertions
 from services.memory.group_memory_capture import enqueue_confirmed_group,process_one_capture,_validated_cards
 from services.memory.group_memory_index import unified_memories

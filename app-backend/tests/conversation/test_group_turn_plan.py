@@ -9,16 +9,16 @@ from application.group_runtime import group_runtime
 from core.config import settings
 from core.models import Character, GroupRound, GroupRoundCandidate, GroupContentItem, GroupDirectorStep
 from scripts.group_chat_prototype.worker import _response
-from services.conversation import group_history_service as history, group_session_service as groups
-from services.conversation import group_background_service as background
-from services.conversation.group_director_service import NextAction, parse_next_action, GroupDirectorError, DirectorContext, build_director_messages
-from services.conversation.group_context_service import build_member_context
-from services.conversation.group_round_service import run_group_round as _legacy_round
+from services.conversation.group import history_service as history, session_service as groups
+from services.conversation.group import background_service as background
+from services.conversation.group.director_service import NextAction, parse_next_action, GroupDirectorError, DirectorContext, build_director_messages
+from services.conversation.group.context_service import build_member_context
+from services.conversation.group.round_service import run_group_round as _legacy_round
 from functools import partial
 run_group_round = _legacy_round
-from services.conversation.group_turn_plan import _sources
-from services.conversation.group_unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError, UnitPlan, ContentUnit
-from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
+from services.conversation.group.turn_plan import _sources
+from services.conversation.group.unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError, UnitPlan, ContentUnit
+from services.conversation.group.call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_units as fixtures
 

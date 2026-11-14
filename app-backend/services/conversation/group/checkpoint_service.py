@@ -2,11 +2,11 @@
 import json
 from datetime import datetime, timedelta
 from core.models import GroupRoundCandidate, GroupRoundOperation, GroupContentItem
-from services.conversation import group_history_service as history, group_audit_service as audit
-from services.conversation import group_candidate_state as candidate_state
-from services.conversation import group_dispatch_service as dispatches, group_legacy_protocol as legacy_protocol
-from services.conversation.group_execution_scope import GroupTargetScope, bind_target, target, _authorize
-from services.conversation import group_unit_service as units
+from . import history_service as history, audit_service as audit
+from . import candidate_state as candidate_state
+from . import dispatch_service as dispatches, legacy_protocol as legacy_protocol
+from .execution_scope import GroupTargetScope, bind_target, target, _authorize
+from . import unit_service as units
 from services.conversation.session_access import SessionKindConflict
 
 
@@ -20,7 +20,7 @@ def saved_steps(candidate_id, db):
 
 
 def validate_prefix(round_, candidate, db):
-    from services.conversation.group_turn_plan import _validate_basis
+    from .turn_plan import _validate_basis
     if candidate.dispatch_version == 1:
         return dispatches.validate_prefix(round_, candidate, db, resolve_basis=_validate_basis)
     return legacy_protocol.validate_prefix(round_, candidate, db)
@@ -68,7 +68,7 @@ def consume(scope, revision, db):
         operation = db.get(GroupRoundOperation, scope.operation_id)
         remaining = (operation.deadline_at - datetime.utcnow()).total_seconds()
         if remaining <= 0 or operation.call_count >= operation.call_limit:
-            from services.conversation.group_director_service import GroupDirectorError
+            from .director_service import GroupDirectorError
             raise GroupDirectorError("call_budget")
         operation.call_count += 1
         operation.revision += 1

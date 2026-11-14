@@ -4,12 +4,12 @@ from contextlib import contextmanager
 from sqlalchemy import text
 from core.locking import is_session_locked
 from core.models import GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem, SessionPersona
-from services.conversation import group_history_service as history, group_operation_service as operations
-from services.conversation.group_call_snapshot import restore_group_calls, require_executable_calls
-from services.conversation.group_checkpoint_service import validate_prefix, saved_steps
-from services.conversation.group_context_service import _member_state
+from . import history_service as history, operation_service as operations
+from .call_snapshot import restore_group_calls, require_executable_calls
+from .checkpoint_service import validate_prefix, saved_steps
+from .context_service import _member_state
 from services.memory.group_member_insights import member_insights
-from services.conversation.group_session_service import GroupSessionNotFound
+from .session_service import GroupSessionNotFound
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 
 
@@ -101,7 +101,7 @@ def get_group_state(session_id, db):
 @group_session_operation
 def compile_member_prompt(session_id, persona_id, db):
     """复用生成装配入口预览当前所选候选，不派发生成或改变检查点。"""
-    from services.conversation.group_context_service import build_member_context
+    from .context_service import build_member_context
     from services.conversation.prompting.token_estimator import estimate_prompt_tokens
     with _read(session_id, db) as group:
         latest = operations._latest(session_id, db)

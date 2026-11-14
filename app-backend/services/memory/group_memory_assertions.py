@@ -2,7 +2,7 @@
 import json
 
 from core.config import settings
-from services.conversation.group_unit_protocol import load_object
+from services.conversation.group.unit_protocol import load_object
 from services.infrastructure.llm_provider import get_llm_provider
 from services.infrastructure.model_capabilities import auxiliary_controls
 from services.memory.group_member_insights import allowed_targets

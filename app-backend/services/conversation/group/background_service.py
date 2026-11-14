@@ -4,11 +4,11 @@ import logging
 from sqlalchemy.orm import Session
 from core.locking import group_execution, require_group_runtime
 from core.models import GroupRoundCandidate
-from services.conversation import group_operation_service as operations, group_history_service as history
-from services.conversation import group_generation_service as generation, group_checkpoint_service as checkpoints
-from services.conversation.group_call_snapshot import capture_group_calls, restore_group_calls
-from services.conversation.group_round_service import _execute_round, GroupRoundBudget
-from services.conversation.group_execution_scope import bind_target
+from . import operation_service as operations, history_service as history
+from . import generation_service as generation, checkpoint_service as checkpoints
+from .call_snapshot import capture_group_calls, restore_group_calls
+from .round_service import _execute_round, GroupRoundBudget
+from .execution_scope import bind_target
 from services.conversation.session_access import group_session_operation, SessionKindConflict
 from services.infrastructure.llm_provider import group_model_session
 

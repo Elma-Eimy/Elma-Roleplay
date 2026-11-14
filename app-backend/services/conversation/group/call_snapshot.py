@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.models import SessionPersona
-from services.conversation import group_history_service as history
+from . import history_service as history
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.model_capabilities import resolve_selection, generation_controls, model_capability
 from services.infrastructure.llm_provider import GroupModelConnection

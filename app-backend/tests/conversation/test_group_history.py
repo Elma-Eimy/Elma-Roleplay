@@ -10,8 +10,8 @@ from sqlalchemy import text
 from core.locking import get_session_lock, is_session_locked
 from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility,
                          ChatMessage, MessageRole, MemoryExtractionJob, Character)
-from services.conversation import group_history_service as history
-from services.conversation import group_session_service as groups
+from services.conversation.group import history_service as history
+from services.conversation.group import session_service as groups
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_session_service as fixtures
 

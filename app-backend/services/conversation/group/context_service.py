@@ -10,13 +10,13 @@ from services.memory.group_memory_index import SemanticQuery, unified_memories
 from services.memory.group_memory_recall import recall_inherited_memories
 from core.config import settings
 from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
-from services.conversation.group_unit_service import _complete_author_visibility
-from services.conversation import group_history_service as history
+from .unit_service import _complete_author_visibility
+from . import history_service as history
 from services.conversation.chat_engine import _prepare_generation_kwargs
 from services.conversation.prompting.compiler import build_group_messages
 from services.conversation.role_state_schema import decode_state, merge_state
 from services.conversation.session_access import group_session_operation
-from services.conversation.group_session_service import GroupSessionValidationError
+from .session_service import GroupSessionValidationError
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,7 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
             limit = max(limit, before)
         rows = history._member_history(session_id, persona_id, round_, candidate, before,
             limit, db)
-        from services.conversation.group_turn_plan import _pending_requests, _current_basis
+        from .turn_plan import _pending_requests, _current_basis
         requests = _pending_requests(round_, candidate, persona_id, before, db)
         basis = _current_basis(session_id, persona_id, round_, candidate, before, db, preview=preview)
         if basis is not None and json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
@@ -143,7 +143,7 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         memories = _member_memories(persona.id, round_, candidate, rows, requests, basis, db, distances)
         if isinstance(memories, SemanticQuery):
             return memories
-        from services.conversation.group_session_service import public_greetings
+        from .session_service import public_greetings
         greetings = public_greetings(group)
         messages = build_group_messages(persona.character, state_persona, rows, names,
             persona_id=persona_id, user_nickname=group.user_nickname,

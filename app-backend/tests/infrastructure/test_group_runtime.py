@@ -8,8 +8,8 @@ from unittest.mock import patch, AsyncMock
 from application.group_runtime import group_runtime, fail_interrupted_group_candidates
 from core.locking import GroupRuntimeOwner
 from core.models import GroupRoundCandidate, GroupContentItem
-from services.conversation import group_history_service as history
-from services.conversation import group_session_service as groups
+from services.conversation.group import history_service as history
+from services.conversation.group import session_service as groups
 from tests.conversation import test_group_session_service as fixtures
 
 

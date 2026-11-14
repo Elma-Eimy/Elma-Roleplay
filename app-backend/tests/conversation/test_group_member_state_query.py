@@ -5,8 +5,8 @@ import unittest
 
 from core.models import (GroupContentItem, GroupMemberInsight, GroupMemoryCapture,
                          GroupRound, GroupRoundCandidate)
-from services.conversation import group_query_service as queries, group_history_service as history
-from services.conversation import group_session_service as groups
+from services.conversation.group import query_service as queries, history_service as history
+from services.conversation.group import session_service as groups
 from tests.conversation import test_group_history as fixtures
 
 

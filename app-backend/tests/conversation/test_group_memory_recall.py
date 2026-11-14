@@ -5,9 +5,9 @@ import unittest
 
 from application.group_runtime import group_runtime
 from core.models import MemoryChunk, GroupRoundCandidate
-from services.conversation import group_session_service as groups, group_history_service as history
-from services.conversation.group_context_service import build_member_context
-from services.conversation.group_unit_protocol import ContentUnit, UnitPlan
+from services.conversation.group import session_service as groups, history_service as history
+from services.conversation.group.context_service import build_member_context
+from services.conversation.group.unit_protocol import ContentUnit, UnitPlan
 from tests.conversation import test_group_background as background
 
 
@@ -106,7 +106,7 @@ class GroupMemoryRecallTests(unittest.TestCase):
                     self.assertTrue(process_one_capture(db, extract=extract))
             local = self.db.query(GroupRecallCard).filter(GroupRecallCard.capture_id.isnot(None)).one()
             self.assertGreater(local.id, ceiling)
-            from services.conversation.group_query_service import get_member_memories
+            from services.conversation.group.query_service import get_member_memories
             browsing = get_member_memories(sid, ids[0], self.db)
             self.assertIn(updated, str(browsing['items']))
             self.assertNotIn('Q17', str(browsing['items']))

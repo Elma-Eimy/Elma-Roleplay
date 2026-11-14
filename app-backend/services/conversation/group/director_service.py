@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility,
                          GroupContentUnit, GroupUnitVisibility, SessionPersona)
-from services.conversation import group_history_service as history
+from . import history_service as history
 from services.conversation.session_access import group_session_operation
 
 
@@ -197,7 +197,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
         payload = {"shared_setting": group.shared_setting, "user_nickname": group.user_nickname,
                    "members": [{"persona_id": member.id, "name": member.character.name} for member in members],
                    "history": [], "eligible_persona_ids": [], "history_incomplete": False}
-        from services.conversation.group_session_service import public_greetings
+        from .session_service import public_greetings
         greetings = public_greetings(group)
         if greetings:
             payload["greetings"] = greetings
@@ -221,7 +221,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
             eligible = (() if scope is not None and candidate.checkpoint == "user_visibility" else
                         tuple(pid for pid in ids if history._member_history(session_id, pid, round_, candidate, 2**63-1, 1, db)))
             if (turn_policy or reply_target) and candidate.checkpoint != "user_visibility":
-                from services.conversation.group_turn_plan import _sources
+                from .turn_plan import _sources
                 sources = {str(pid): _sources(session_id, pid, round_, candidate, 2**63-1, db) for pid in ids}
                 eligible = tuple(pid for pid in ids if sources[str(pid)])
                 response_sources = {pid: {reference: {key: value for key, value in source.items() if key not in ("content", "units")}
@@ -235,7 +235,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
             if db.get(GroupRoundCandidate, item.candidate_id).protocol_version == 2:
                 unit_rows = db.query(GroupContentUnit).filter_by(item_id=item.id).order_by(GroupContentUnit.unit_index).all()
                 parts = []
-                from services.conversation.group_turn_plan import _user_plan
+                from .turn_plan import _user_plan
                 user_plan = _user_plan(item, owner, db) if turn_policy and item.kind == "user" else None
                 for unit in unit_rows:
                     visibility = dict(db.query(GroupUnitVisibility.recipient_persona_id, GroupUnitVisibility.decision)

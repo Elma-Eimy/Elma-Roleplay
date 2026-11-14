@@ -5,9 +5,9 @@ import unittest
 from uuid import uuid4
 from core.models import GroupContentItem, GroupDirectorStep
 from application.group_runtime import group_runtime
-from services.conversation import group_background_service as background
-from services.conversation.group_query_service import get_group_candidate, compile_member_prompt
-from services.conversation.group_history_service import list_group_rounds
+from services.conversation.group import background_service as background
+from services.conversation.group.query_service import get_group_candidate, compile_member_prompt
+from services.conversation.group.history_service import list_group_rounds
 from scripts.group_chat_prototype.worker import _response
 from tests.conversation import test_group_background as fixtures
 
@@ -130,7 +130,7 @@ class SharedChatTests(unittest.TestCase):
 
     def test_older_shared_snapshot_does_not_require_a_new_target(self):
         from types import SimpleNamespace
-        from services.conversation.group_call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
+        from services.conversation.group.call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
         sid, ids = self.group()
         snapshot = capture_group_calls(sid, self.db, model='fixture')
         encoded, fingerprint = persist_group_calls(snapshot, 4, set(ids))

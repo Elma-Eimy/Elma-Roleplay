@@ -9,10 +9,10 @@ from unittest.mock import patch
 from application.group_runtime import group_runtime
 from core.config import settings
 from core.models import GroupContentItem
-from services.conversation import group_background_service as background
-from services.conversation.group_call_snapshot import capture_group_calls, restore_group_calls, require_executable_calls
-from services.conversation.group_round_service import run_group_round
-from services.conversation.group_session_service import GroupSessionValidationError
+from services.conversation.group import background_service as background
+from services.conversation.group.call_snapshot import capture_group_calls, restore_group_calls, require_executable_calls
+from services.conversation.group.round_service import run_group_round
+from services.conversation.group.session_service import GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import _response
 from tests.conversation import test_group_background as fixtures
@@ -47,8 +47,8 @@ class GenerationCleanupTests(unittest.TestCase):
         role = next(p for s, p in model.calls if s == 'role_generation')
         self.assertNotIn('response_format', role)
         self.assertIn('<reply>', role['messages'][-1]['content'])
-        self.assertIsNone(importlib.util.find_spec('services.conversation.group_experience_guard'))
-        self.assertIsNone(importlib.util.find_spec('services.conversation.group_output_retry'))
+        self.assertIsNone(importlib.util.find_spec('services.conversation.group.experience_guard'))
+        self.assertIsNone(importlib.util.find_spec('services.conversation.group.output_retry'))
 
     def test_retired_role_json_and_empty_reply_fail_once_without_conversion_or_rewrite(self):
         for raw in ('', '{"units":[{"kind":"speech","text":"old"}],"status":{"emotion":"平静","affection_change":0}}'):

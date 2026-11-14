@@ -9,11 +9,11 @@ from core.database import get_db
 from schemas import (GroupSessionCreate, GroupRoundSend, GroupRoundRegenerate, GroupRoundMutation, GroupCandidateCommand,
                      GroupPortraitChange, SQLITE_INT_MAX)
 from core.locking import GroupRuntimeOwner
-from services.conversation import group_session_service as service
-from services.conversation.group_history_service import list_group_rounds
-from services.conversation.group_background_service import submit_group_operation
-from services.conversation.group_operation_service import accept_group_operation
-from services.conversation import group_query_service as queries
+from services.conversation.group import session_service as service
+from services.conversation.group.history_service import list_group_rounds
+from services.conversation.group.background_service import submit_group_operation
+from services.conversation.group.operation_service import accept_group_operation
+from services.conversation.group import query_service as queries
 from services.media.group_portraits import update_group_portrait
 
 router = GroupSessionAPIRouter()

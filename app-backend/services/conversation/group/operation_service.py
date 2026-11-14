@@ -7,12 +7,12 @@ from uuid import UUID
 from sqlalchemy import func, text
 
 from core.models import GroupMemberInsight, GroupRecallCard, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem
-from services.conversation import group_history_service as history
-from services.conversation import group_candidate_state as candidate_state
-from services.conversation.group_execution_scope import has_active_operation as _active
-from services.conversation.group_session_service import _begin_write, _locked_write, GroupSessionValidationError
+from . import history_service as history
+from . import candidate_state as candidate_state
+from .execution_scope import has_active_operation as _active
+from .session_service import _begin_write, _locked_write, GroupSessionValidationError
 from services.conversation.session_access import group_session_operation, SessionKindConflict
-from services.conversation.group_call_snapshot import persist_group_calls, validate_group_call_selection, DIRECTOR_CALL_LIMIT
+from .call_snapshot import persist_group_calls, validate_group_call_selection, DIRECTOR_CALL_LIMIT
 
 
 def _latest(session_id, db):
@@ -191,17 +191,17 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             if not latest or latest.confirmed_at is not None or not selected:
                 raise SessionKindConflict("只能操作最新未确认轮次")
             if kind == "resume":
-                from services.conversation.group_checkpoint_service import validate_prefix
-                from services.conversation.group_call_snapshot import restore_group_calls
+                from .checkpoint_service import validate_prefix
+                from .call_snapshot import restore_group_calls
                 target = db.get(GroupRoundCandidate, request["target_candidate_id"])
                 if (not target or target.session_id != session_id or target.round_id != latest.id
                         or target.status != "failed" or target.revision != request["target_candidate_revision"]):
                     raise SessionKindConflict("续接目标或版本无效")
                 snapshot, max_steps = restore_group_calls(target, history._members(session_id, db))
-                from services.conversation.group_call_snapshot import require_executable_calls
+                from .call_snapshot import require_executable_calls
                 require_executable_calls(snapshot)
                 validate_prefix(latest, target, db)
-                from services.conversation.group_checkpoint_service import saved_steps
+                from .checkpoint_service import saved_steps
                 remaining = max_steps - saved_steps(target.id, db)
                 if not snapshot.director_ending and (remaining < 0 or (target.checkpoint == "finish") != (remaining == 0)):
                     raise SessionKindConflict("候选成功步数超限")
@@ -241,7 +241,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
 
 def _resources(session_id, request, db):
     """HTTP 路径与嵌套资源在接受事务内核对；重放回执优先于当前资源状态。"""
-    from services.conversation.group_session_service import GroupSessionNotFound
+    from .session_service import GroupSessionNotFound
     if not request.get("_http_resources") and "round_id" not in request:
         return
     seen_round, seen_candidate = request["expected"][1:3]

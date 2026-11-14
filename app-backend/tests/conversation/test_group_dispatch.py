@@ -6,8 +6,8 @@ from unittest.mock import patch
 from sqlalchemy import event
 from core.models import GroupDispatch, GroupDirectorStep, GroupContentItem
 from application.group_runtime import group_runtime
-from services.conversation import group_audit_service as audit, group_checkpoint_service as checkpoints
-from services.conversation.group_query_service import get_group_candidate, compile_member_prompt
+from services.conversation.group import audit_service as audit, checkpoint_service as checkpoints
+from services.conversation.group.query_service import get_group_candidate, compile_member_prompt
 from services.conversation.session_access import SessionKindConflict
 from tests.conversation import test_group_background as fixtures
 

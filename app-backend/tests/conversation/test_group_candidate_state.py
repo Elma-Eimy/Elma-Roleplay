@@ -3,7 +3,7 @@ import json
 import unittest
 
 from core.models import GroupRoundCandidate
-from services.conversation import group_candidate_state as state
+from services.conversation.group import candidate_state as state
 from services.conversation.session_access import SessionKindConflict
 
 
