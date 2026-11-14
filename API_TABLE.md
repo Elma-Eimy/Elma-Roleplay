@@ -124,6 +124,7 @@
 | **PUT** | `/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}` | Review or edit one suggestion group |
 | **POST** | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | Undo an applied batch within the visible story boundary |
 | **GET** | `/sessions/{session_id}/compile_prompt` | Preview the assembled prompt and its heuristic Token range/section breakdown |
+| **GET** | `/sessions/{session_id}/context-compression` | Read the valid rolling summary and its message coverage without calling a model |
 
 ### 世界书 API
 

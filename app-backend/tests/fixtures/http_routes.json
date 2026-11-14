@@ -18,6 +18,7 @@
   ["POST", "/characters/{character_id}/portraits/{portrait_id}/delete"],
   ["GET", "/sessions/{session_id}/portrait"],
   ["PUT", "/sessions/{session_id}/portrait"],
+  ["GET", "/sessions/{session_id}/context-compression"],
   [
     "DELETE",
     "/characters/{character_id}"

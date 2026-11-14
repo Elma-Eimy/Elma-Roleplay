@@ -498,6 +498,8 @@ def create_session_service(
 
         if start_message:
             session.fork_message_id = start_message.id
+            from services.conversation.context_compression import _branch_base, _encode
+            persona.context_base = _encode(_branch_base(parent_session, start_message, db))
             from services.conversation.role_state_service import state_before_message
             from services.conversation.role_state_schema import encode_state
             persona.role_state_base = encode_state(state_before_message(start_message, db))

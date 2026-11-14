@@ -183,6 +183,28 @@ class Session(Base):
         backref="parent_session",
         remote_side=[id]
     )
+    context_checkpoints = relationship(
+        "ContextCheckpoint", cascade="all, delete-orphan", back_populates="session",
+    )
+
+
+class ContextCheckpoint(Base):
+    """会话前缀的压缩版本；来源摘要用于拒绝已修改或删除的历史。"""
+    __tablename__ = "context_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("session_id", "source_count", "source_hash", name="uq_context_checkpoint_source"),
+        CheckConstraint("source_count > 0", name="ck_context_checkpoint_count"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_count = Column(Integer, nullable=False)
+    source_hash = Column(String(64), nullable=False)
+    source_message_id = Column(Integer, nullable=True)
+    summary = Column(Text, nullable=False)
+    model = Column(String(200), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    session = relationship("Session", back_populates="context_checkpoints")
 
 
 # ──────────────────────────────────────────────
@@ -247,6 +269,8 @@ class SessionPersona(Base):
 
     # 分支创建时的独立状态快照；之后沿本地有效消息增量重放。
     role_state_base = Column(Text, nullable=True)
+    # 分支冻结继承摘要与未压缩原文，不再依赖祖先后续修改。
+    context_base = Column(Text, nullable=True)
     # 0 表示沿用头像；消息上的 NULL 表示该节点没有修改选择。
     portrait_base = Column(Integer, nullable=False, default=0, server_default="0")
 

@@ -13,7 +13,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, AsyncMock, MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -187,19 +187,8 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
                 return_value=[],
             ) as memory_mock,
             patch.object(
-                context_assembler,
-                "_handoff_history_limit",
-                return_value=15,
-            ),
-            patch.object(
-                context_assembler.session_service,
-                "_history_for_session",
-                return_value=[],
-            ),
-            patch.object(
-                context_assembler,
-                "get_parent_history_examples",
-                return_value=[],
+                context_assembler, "_prepare_context", new_callable=AsyncMock,
+                return_value=SimpleNamespace(summary="", remaining=[]),
             ),
             patch.object(
                 context_assembler,

@@ -116,4 +116,6 @@ python -m tests.manual.manual_lorebook
 
 `conversation/test_prompt_compilation_snapshot.py` 对照编译器拆分前保存的 `fixtures/prompt_compilation_snapshots.json`，逐字检查 10 组完整消息的内容、角色和顺序，涵盖角色卡宏、混合示例、分支、动态背景、世界书位置和两种群聊协议。快照来自固定虚构输入，不依赖真实模型；有意调整 Prompt 行为时需审查相应快照差异，不自动覆盖基线。
 
+`conversation/test_context_compression.py` 检查滚动摘要与原文连续覆盖、重启、失败重试、来源修改及删除、取消、外部调用期间无事务、分支冻结和只读状态接口。`infrastructure/test_context_compression_migration.py` 检查旧库升级及降级保留，使用临时库；普通回归不调用真实 LLM。上下文装配现在按摘要覆盖范围保留原文，记忆交接测试继续检查长期提纯资格和原有兼容计算函数。
+
 需要保留现场或使用 IDE 单步调试时，可在准备好独立配置的数据环境中直接运行标准入口，例如 `python -m unittest tests.memory.test_memory_versioning -v`。直接运行 `unittest` 会跳过上述临时工作区隔离。

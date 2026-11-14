@@ -9,7 +9,13 @@ import type {
   UpdateTitleResponse,
   DeleteSessionResponse,
   TriggerCognitionResponse,
+  ContextCompressionStatus,
 } from "../types/sessions";
+
+export async function getContextCompression(sessionId: number): Promise<ContextCompressionStatus> {
+  if (USE_MOCK) return mock.getContextCompression(sessionId);
+  return request<ContextCompressionStatus>(`/sessions/${sessionId}/context-compression`);
+}
 
 /**
  * 创建新会话（全新会话或继承自父会话的分支会话）。

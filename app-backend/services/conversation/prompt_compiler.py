@@ -13,7 +13,7 @@ from services.conversation.prompt_examples import (
     compile_dialogue_examples, EXAMPLE_MACRO_RE, EXAMPLE_BLOCK_RE,
     EXAMPLE_CONTEXT_NOTE, EXAMPLE_END_NOTE,
 )
-from services.conversation.prompt_context import build_system_prompt, compile_dynamic_context
+from services.conversation.prompt_context import build_system_prompt, compile_dynamic_context, compile_context_summary
 from services.conversation.prompt_lorebook import _compile_character_depth_prompt, LOREBOOK_CONTEXT_NOTE
 from services.conversation.prompt_layout import (
     compile_message_prefix, compile_history_messages, assemble_conversation,
@@ -33,6 +33,7 @@ def build_chat_messages(
     ongoing_events: Optional[list[dict]] = None,
     pending_memories: Optional[list[dict]] = None,
     *,
+    context_summary: Optional[str] = None,
     _group_messages: Optional[list[dict]] = None,
     _group_context: Optional[str] = None,
     _group_current_segments: list[str] | None = None,
@@ -52,6 +53,8 @@ def build_chat_messages(
     )
     lorebook_res = prompt_result.get("lorebook_result") or empty_lorebook_result()
     messages = compile_message_prefix(character, persona, prompt_result, lorebook_res, user_nickname)
+    if context_summary:
+        messages.append({"role": "system", "content": compile_context_summary(context_summary)})
     if _group_messages is None:
         conversation_messages = compile_history_messages(
             list(parent_history or []) + list(recent_history), char_name, user_name,

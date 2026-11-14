@@ -172,6 +172,15 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{session_id}/context-compression")
+def get_context_compression(session_id: int, db: Session = Depends(get_db)):
+    from services.conversation.context_compression import context_status
+    try:
+        return context_status(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{session_id}/history")
 def get_session_history(
     session_id: int,

@@ -8,8 +8,32 @@ import type {
   UpdateTitleResponse,
   DeleteSessionResponse,
   TriggerCognitionResponse,
+  ContextCompressionStatus,
 } from "../../types/sessions";
 import { getMockDB, setMockDB } from "../config";
+
+export async function getContextCompression(sessionId: number): Promise<ContextCompressionStatus> {
+  const db = getMockDB();
+  if (db.groupSessions?.some(group => group.session_id === sessionId)) {
+    throw new Error("此操作仅支持单聊");
+  }
+  const session = db.sessions.find(item => item.id === sessionId);
+  if (!session) throw new Error("故事不存在");
+  // Mock 不运行模型压缩，不虚构摘要或覆盖进度。
+  const active = (db.messages[sessionId] || []).filter(item => item.is_active !== false);
+  let latestUser = -1;
+  for (let index = 0; index < active.length; index++) {
+    if (active[index].role === "user") latestUser = index;
+  }
+  const retained = latestUser < 0 ? 0 : active.slice(0, latestUser).filter(
+    item => item.role === "user" || item.role === "assistant"
+  ).length;
+  return {
+    summary: null, checkpoint_id: null, covered_message_count: 0,
+    retained_message_count: retained, pending_message_count: 0,
+    source_message_id: null, model: null, updated_at: null,
+  };
+}
 
 export async function createSession(
   params: CreateSessionParams

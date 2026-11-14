@@ -60,6 +60,7 @@ async def _prepare_turn_and_messages(request: ChatRequest, db: Session):
             old_reply=turn.old_reply,
             db=db,
             user_nickname=request.user_nickname,
+            compress_context=True,
         )
         await run_in_threadpool(chat_turn_service.release_prompt_read_transaction, db)
         return turn, messages

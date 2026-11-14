@@ -20,6 +20,7 @@
 | [角色卡导入](features/CHARACTER_CARDS.md) | 格式兼容、中文阅读版本、CHARX 导入与资源生命周期 |
 | [模型与思考设置](features/MODEL_SELECTION.md) | 默认模型、故事覆盖、辅助任务模型与兼容 |
 | [当前角色状态](features/ROLE_STATE.md) | 增量状态、人工校正、候选与分支恢复 |
+| [会话上下文压缩](features/CONTEXT_COMPRESSION.md) | 单聊滚动摘要、原文覆盖、失败回退与分支隔离 |
 | [图谱与记忆一致性](features/GRAPH_MEMORY_CONSISTENCY.md) | 共同事实、联合检索、证据、时间与分叉边界 |
 | [进行中事件](features/MEMORY_EVENTS.md) | 跨批事件缓冲、阶段保存、长期准入与重试 |
 | [群聊功能与业务规则](features/GROUP_CHAT.md) | 成员起点、知情、整轮候选、恢复、成员记忆与当前能力边界 |
