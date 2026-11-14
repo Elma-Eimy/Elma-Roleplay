@@ -61,6 +61,9 @@ python -m tests
 # 只运行一个领域
 python -m tests --group memory
 
+# 只运行 Prompt 子分组
+python -m tests --group conversation/prompting
+
 # 只运行一个测试模块
 python -m tests --group conversation --pattern test_branch_context_boundary.py
 ```
@@ -81,6 +84,7 @@ CHARX 专项：`python -m tests --group parsing --pattern test_charx_import.py` 
 | --- | --- |
 | `api/` | 应用装配与生命周期、路由契约、记忆导航、最近会话、鉴权以及路由与服务边界 |
 | `conversation/` | 分叉边界、Prompt、模型参数、对话回合和上下文交接 |
+| `conversation/prompting/` | 角色卡 Prompt DSL 与示例兼容、完整消息快照、Token 范围估算 |
 | `memory/` | 记忆提纯、版本替代、整理的原子性/撤销/分支快照、离线检索和图谱质量 |
 | `infrastructure/` | Alembic、头像清理、音频缓存恢复、Embedding 失败和 Outbox 一致性 |
 | `core/` | 配置加载与持久化 |
@@ -104,6 +108,10 @@ python -m tests.manual.manual_lorebook
 
 ## 新增与调试
 
+Prompt 回归集中在 `conversation/prompting/`，保留原有文件名和用例。`python -m tests --group conversation` 和全量入口会递归发现这些测试，单文件仍可配合 `--pattern` 运行。子包需要保留 `__init__.py`，否则标准库发现流程可能漏掉其中的用例。
+
+固定快照继续存放在 `fixtures/`，通过 `tests.FIXTURES_DIR` 定位，避免测试目录深度变化影响文件读取。测试包入口只提供路径，不加载测试类或业务服务。Prompt 测试统一从隔离入口运行，不再修改 `sys.path` 支持直接执行文件。
+
 `memory/test_memory_quality_tool.py` 覆盖质量验收工具的隔离启动、固定回放、指标边界、HTML 转义和在线凭据替身，不调用真实模型；样本为 `tests/fixtures/memory_quality_cases.json`。人工审阅用法见 [记忆整理质量验收](../../docs/testing/MEMORY_QUALITY.md)。
 
 `memory/test_event_retention.py` 使用 `tests/fixtures/event_retention_cases.json` 回放八批赠书和四批修表，检查十二项已提取事实线索、三批/容量快照后的事件身份、重启及关闭边界。每批只提供新增片段，最后一批省略旧事实，以“只留最后摘要”为失败对照；输出的保留率不代表真实模型首次提取质量。`infrastructure/test_event_checkpoint_migration.py` 检查阶段外键、旧库升级、回退保留正文和身份删除行为。
@@ -114,7 +122,7 @@ python -m tests.manual.manual_lorebook
 
 自动测试使用 `test_*.py` 命名，放到对应领域目录。测试包的 `__init__.py` 保持轻量，公共夹具按实际复用需求提取，避免在包导入时修改应用配置或启动服务。
 
-`conversation/test_prompt_compilation_snapshot.py` 对照编译器拆分前保存的 `fixtures/prompt_compilation_snapshots.json`，逐字检查 10 组完整消息的内容、角色和顺序，涵盖角色卡宏、混合示例、分支、动态背景、世界书位置和两种群聊协议。快照来自固定虚构输入，不依赖真实模型；有意调整 Prompt 行为时需审查相应快照差异，不自动覆盖基线。
+`conversation/prompting/test_prompt_compilation_snapshot.py` 对照编译器拆分前保存的 `fixtures/prompt_compilation_snapshots.json`，逐字检查 10 组完整消息的内容、角色和顺序，涵盖角色卡宏、混合示例、分支、动态背景、世界书位置和两种群聊协议。快照来自固定虚构输入，不依赖真实模型；有意调整 Prompt 行为时需审查相应快照差异，不自动覆盖基线。
 
 `conversation/test_context_compression.py` 检查滚动摘要与原文连续覆盖、重启、失败重试、来源修改及删除、取消、外部调用期间无事务、分支冻结和只读状态接口。`infrastructure/test_context_compression_migration.py` 检查旧库升级及降级保留，使用临时库；普通回归不调用真实 LLM。上下文装配现在按摘要覆盖范围保留原文，记忆交接测试继续检查长期提纯资格和原有兼容计算函数。
 

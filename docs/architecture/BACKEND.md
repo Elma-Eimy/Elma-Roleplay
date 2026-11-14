@@ -61,7 +61,7 @@ Prompt 模块集中在 `services/conversation/prompting/`。调用方从对应�
 
 `context_compression.py` 负责单聊摘要版本、来源校验、原文覆盖及分支冻结。聊天路由允许装配层按需调用压缩模型，预览只读；模型调用期间提交并结束读取事务，返回后用短写事务复核来源及版本。摘要由 `prompting/context.py` 编译，经入口固定放在最近原文之前，不改变深度插入算法或长期记忆查询。持久化、失败保留及旧分支升级边界见[会话上下文压缩](../features/CONTEXT_COMPRESSION.md)。
 
-`conversation/test_prompt_compilation_snapshot.py` 使用拆分前保存的完整消息快照，逐项比较角色、内容和顺序，覆盖单聊、分支示例、动态状态、世界书及两种群聊协议。固定虚构输入不调用真实模型；测试临时副本按现有规则复制整个 `services/` 和 `tests/`，包含所有新增模块与快照。
+`conversation/prompting/test_prompt_compilation_snapshot.py` 使用拆分前保存的完整消息快照，逐项比较角色、内容和顺序，覆盖单聊、分支示例、动态状态、世界书及两种群聊协议。固定虚构输入不调用真实模型；测试临时副本按现有规则复制整个 `services/` 和 `tests/`，包含所有新增模块与快照。
 
 `application/charx_upload.py` 在读取 CHARX 请求体前完成鉴权，限制流式请求总字节与并发上传，再交给仅允许一个文件的 multipart 解析。`services/media/charx_plan.py` 明确 CCv3 字段映射与兼容性报告；`charx_import.py` 负责有界 ZIP 读取、短期预览、素材去重与确认保存。解压和像素解码在生命周期锁外运行，同一 ZIP 条目的失败也缓存；临时目录不公开。`application.lifecycle` 管理每 60 秒回收过期预览的任务。状态接口从 SQLite 幂等回执恢复已提交结果，不依赖临时文件；取消/过期仅保留短期状态标记。`character_portraits.content_sha256` 支持跨上传去重，旧资源按需填充，资源共享仍沿用 Outbox 引用检查。保持单进程部署，不引入额外任务队列。
 

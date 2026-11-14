@@ -2,12 +2,12 @@
 
 import copy
 import json
-from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
 from services.conversation.prompting.compiler import build_chat_messages, build_group_messages
 from services.conversation.prompting.layout import assemble_conversation
+from tests import FIXTURES_DIR
 
 
 def compilation_cases():
@@ -79,7 +79,7 @@ def compile_group_case(protocol_version):
 
 class PromptCompilationSnapshotTests(unittest.TestCase):
     def test_complete_messages_match_before_refactor(self):
-        expected_path = Path(__file__).parents[1] / "fixtures" / "prompt_compilation_snapshots.json"
+        expected_path = FIXTURES_DIR / "prompt_compilation_snapshots.json"
         actual = {name: compile_case(case) for name, case in compilation_cases().items()}
         actual.update({f"group_v{version}": compile_group_case(version) for version in (1, 2)})
         expected = json.loads(expected_path.read_text(encoding="utf-8"))

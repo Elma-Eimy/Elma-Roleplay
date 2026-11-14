@@ -10,12 +10,12 @@ import sys
 import tempfile
 
 
-GROUPS = ("api", "conversation", "core", "infrastructure", "lorebook", "memory", "parsing", "tts")
+GROUPS = ("api", "conversation", "conversation/prompting", "core", "infrastructure", "lorebook", "memory", "parsing", "tts")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--group", choices=GROUPS, help="Run one test domain")
+    parser.add_argument("--group", choices=GROUPS, help="Run one test domain or subgroup")
     parser.add_argument("--pattern", default="test_*.py", help="unittest filename pattern")
     args = parser.parse_args()
     backend = Path(__file__).resolve().parents[1]
