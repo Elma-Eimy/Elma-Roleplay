@@ -14,7 +14,7 @@
 
 `group-round-flow.test.cjs` 执行 M4-D 实际 composable，使用可控计时器、本机存储和延迟响应，覆盖一次 POST、UUID 预存、未知提交与 404 只查询、终态补刷、页面重建/现有任务恢复、离页与切服隔离、候选分页/预览及版本冻结。该测试不使用真实模型；隔离 H5 和真机边界见[群聊 M4 交接](../../docs/testing/group-chat/M4_ROUNDS_AND_RECOVERY.md)。
 
-该专项也覆盖 M6-B 当前采用状态的独立读取：三端的预览隔离、采用与确认后清空、失败重试、返回版本不符、迟到响应及换故事/服务器 A→B→A 隔离。没有用 Mock 数据推断后端成长上界或状态重放，后端边界由 `conversation/test_group_member_state_query.py` 验证。
+该专项也覆盖 M6-B 当前采用状态的独立读取：三端的预览隔离、采用与确认后清空、失败重试、返回版本不符、迟到响应及换故事/服务器 A→B→A 隔离。没有用 Mock 数据推断后端成长上界或状态重放，后端边界由 `conversation/group/test_group_member_state_query.py` 验证。
 
 `group-portraits.test.cjs` 执行成员立绘 composable，检查冻结版本、一次 PUT、未知提交不重发、刷新失败后的阻止选择、候选切换、离页/切服和旧写不能解锁新上下文，以及素材分页失败重试和跨成员隔离。领域 API 回归核对新路由和 Mock 无副作用拒绝；数据库快照、资源归属、候选恢复和迁移由后端专项验证。
 

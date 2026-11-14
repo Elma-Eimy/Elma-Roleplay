@@ -19,9 +19,9 @@ M4-A/B 阶段保留 `can_generate=false`；M4-C 已接通 HTTP，能力字段按
 | 当前证据 | 已有行为 | M4 调整 |
 | --- | --- | --- |
 | [ORM](../../../app-backend/core/models.py)、[轮次迁移回归](../../../app-backend/tests/infrastructure/test_group_round_migration.py) | Round/Candidate 身份、同轮版本、组合外键、单个未确认轮次的部分唯一索引 | 复用现有身份；增加会话版本、撤回标记、候选检查点与请求回执 |
-| [历史服务](../../../app-backend/services/conversation/group/history_service.py)、[历史回归](../../../app-backend/tests/conversation/test_group_history.py) | `_prepare` 拒绝第二个未确认轮次；`_target` 要求所选且未确认；既有 `revision` 属于 Candidate | 增加受版本保护的确认与接受事务；执行中的新候选不必是所选候选，但必须绑定任务作用域 |
+| [历史服务](../../../app-backend/services/conversation/group/history_service.py)、[历史回归](../../../app-backend/tests/conversation/group/test_group_history.py) | `_prepare` 拒绝第二个未确认轮次；`_target` 要求所选且未确认；既有 `revision` 属于 Candidate | 增加受版本保护的确认与接受事务；执行中的新候选不必是所选候选，但必须绑定任务作用域 |
 | [整轮服务](../../../app-backend/services/conversation/group/round_service.py)、[生成服务](../../../app-backend/services/conversation/group/generation_service.py) | 初判成功后才创建 Round；接受调度先落库；后判、正文和状态原子保存；失败保留前缀 | 接受回执先落库，执行器按持久检查点推进；终态同时结束请求并决定是否切换选择 |
-| [个人状态](../../../app-backend/services/conversation/group/context_service.py)、[单元回归](../../../app-backend/tests/conversation/test_group_units.py) | 起点＋更早已确认所选候选＋本次候选的自身增量；过滤单元后装配输入 | 重生成排除同轮旧候选；预览与所选状态分开，撤回内容不参与重放 |
+| [个人状态](../../../app-backend/services/conversation/group/context_service.py)、[单元回归](../../../app-backend/tests/conversation/group/test_group_units.py) | 起点＋更早已确认所选候选＋本次候选的自身增量；过滤单元后装配输入 | 重生成排除同轮旧候选；预览与所选状态分开，撤回内容不参与重放 |
 | [参数快照](../../../app-backend/services/conversation/group/call_snapshot.py) | 模型、采样和预算冻结在内存；连接对象含进程内凭据 | 持久化白名单参数用于显式续接，连接凭据仍只在进程中持有 |
 | [锁](../../../app-backend/core/locking.py)、[生命周期](../../../app-backend/application/lifecycle.py)、[运行权](../../../app-backend/application/group_runtime.py) | 执行令牌绑定任务和会话；关闭等待清理；启动标记中断候选，不自动重发 | 后台任务持有自己的锁、令牌和数据库会话；请求断连不取消已接受任务；启动同时收敛请求回执 |
 | [路由](../../../app-backend/routers/group_sessions.py)、[当前契约](../../api/GROUP_SESSIONS.md)、[前端类型](../../../app-frontend/src/types/groupSessions.ts) | 仅管理和只读轮次；`revision` 是所选候选版本，成员 state 展示起点 | 新增请求查询、候选和写操作；保留既有字段含义，不把起点字段改成运行时预览 |

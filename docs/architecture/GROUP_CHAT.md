@@ -35,6 +35,8 @@
 
 单聊与群聊共享的访问校验、角色状态和 Prompt 编译仍在 `conversation/` 及其 `prompting/` 子包；成员记忆在 `services/memory/`，立绘在 `services/media/`，进程运行权和生命周期在 `application/`。测试入口递归复制整个 `services/`，自动发现资源入口的边界回归也递归扫描服务子包。
 
+群聊业务测试集中在 `tests/conversation/group/`，可用 `python -m tests --group conversation/group` 在隔离副本运行。共用建库、造数、操作准备和模型替身在 `tests/support/group/`，由普通夹具类提供，不从其他测试类借用；HTTP 契约、迁移及运行权回归仍按职责留在 `tests/api/` 和 `tests/infrastructure/`。
+
 ## 身份与来源快照
 
 群聊使用 `Session.kind` 与 `Session.personas` 数据基础。单聊使用 slot 0，群聊使用 slot 1–3；`Session.persona` 只读兼容单聊，对群聊返回空。`services/conversation/session_access.py` 在旧入口读取或修改前检查类型，应用工厂统一将类型冲突转换为 HTTP 409。旧单聊列表在计数和分页前排除群聊；角色被群聊引用时拒绝删除。群聊服务提供群聊创建、来源快照和删除服务及 HTTP 接口，已接入最小页面以及后台生成、候选操作与详情页交互。

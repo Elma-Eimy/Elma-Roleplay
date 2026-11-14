@@ -539,7 +539,9 @@ app-backend/
 │   ├── README.md            # 测试指南与新增约定
 │   ├── api/                 # 接口、鉴权与路由服务边界
 │   ├── conversation/        # Prompt、分叉、对话回合和上下文
+│   │   ├── group/           # 群聊业务与成员记忆链路回归
 │   │   └── prompting/       # 角色卡兼容、完整消息快照与 Token 估算
+│   ├── support/group/       # 群聊共用建库、造数与模型替身
 │   ├── memory/              # 提纯、版本、检索与图谱
 │   ├── infrastructure/      # 迁移、资源清理、Embedding 与 Outbox
 │   ├── core/                # 配置系统
@@ -564,6 +566,7 @@ app-backend/
 python -m tests
 python -m tests --group memory
 python -m tests --group conversation/prompting
+python -m tests --group conversation/group
 python -m tests --group conversation --pattern test_branch_context_boundary.py
 ```
 
