@@ -9,16 +9,16 @@ from application.group_runtime import group_runtime
 from services.conversation.group import audit_service as audit, checkpoint_service as checkpoints
 from services.conversation.group.query_service import get_group_candidate, compile_member_prompt
 from services.conversation.session_access import SessionKindConflict
-from tests.conversation import test_group_background as fixtures
+from tests.support.group import background as fixtures
 
 
 class GroupDispatchTests(unittest.TestCase):
-    setUp = fixtures.GroupBackgroundTests.setUp
-    group = fixtures.GroupBackgroundTests.group
-    observed = fixtures.GroupBackgroundTests.observed
-    submit = fixtures.GroupBackgroundTests.submit
-    drain = fixtures.GroupBackgroundTests.drain
-    candidate = fixtures.GroupBackgroundTests.candidate
+    setUp = fixtures.GroupBackgroundFixture.setUp
+    group = fixtures.GroupBackgroundFixture.group
+    observed = fixtures.GroupBackgroundFixture.observed
+    submit = fixtures.GroupBackgroundFixture.submit
+    drain = fixtures.GroupBackgroundFixture.drain
+    candidate = fixtures.GroupBackgroundFixture.candidate
 
     def test_prompt_and_resume_use_saved_target_even_when_all_audit_records_are_removed(self):
         sid, ids = self.group()

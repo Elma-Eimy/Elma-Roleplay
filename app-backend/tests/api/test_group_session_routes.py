@@ -13,12 +13,12 @@ from core.config import settings
 from core.database import get_db
 from core.locking import get_session_lock
 from core.models import Session, ChatMessage, MessageRole
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 
 class GroupSessionRoutesTests(unittest.TestCase):
     def setUp(self):
-        fixtures.GroupSessionServiceTests.setUp(self)
+        fixtures.GroupSessionFixture.setUp(self)
         self.app = create_app()
         self.app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(self.app)

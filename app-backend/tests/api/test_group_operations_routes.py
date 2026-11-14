@@ -15,12 +15,13 @@ from core.locking import stop_group_executions
 from core.models import GroupRoundOperation, GroupRound, GroupRoundCandidate, Session
 from schemas import SQLITE_INT_MAX
 from services.conversation.group import background_service as background
-from tests.conversation import test_group_session_service as fixtures, test_group_background as models
+from tests.support.group import session_service as fixtures
+from tests.support.group import background as models
 
 
 class GroupOperationRoutesTests(unittest.TestCase):
     def setUp(self):
-        fixtures.GroupSessionServiceTests.setUp(self)
+        fixtures.GroupSessionFixture.setUp(self)
         self.app = create_app()
         self.app.dependency_overrides[get_db] = lambda: self.db
         self.fail_stage = None

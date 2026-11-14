@@ -12,17 +12,17 @@ from services.media.character_portraits import delete_portrait
 from services.conversation.group import query_service as queries
 from services.conversation.group.session_service import GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
-from tests.conversation import test_group_operations as fixtures
+from tests.support.group import operations as fixtures
 
 
 class GroupPortraitTests(unittest.TestCase):
-    group = fixtures.GroupOperationTests.group
-    command = fixtures.GroupOperationTests.command
-    calls = fixtures.GroupOperationTests.calls
-    settle = fixtures.GroupOperationTests.settle
+    group = fixtures.GroupOperationFixture.group
+    command = fixtures.GroupOperationFixture.command
+    calls = fixtures.GroupOperationFixture.calls
+    settle = fixtures.GroupOperationFixture.settle
 
     def setUp(self):
-        fixtures.GroupOperationTests.setUp(self)
+        fixtures.GroupOperationFixture.setUp(self)
         self.db.add_all([CharacterPortrait(id=1001, character_id=1, name='A1', image_path='a1.png'),
                          CharacterPortrait(id=1002, character_id=1, name='A2', image_path='a2.png'),
                          CharacterPortrait(id=2001, character_id=2, name='B', image_path='b.png')])

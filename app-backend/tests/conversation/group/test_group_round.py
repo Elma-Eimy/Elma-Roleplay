@@ -1,10 +1,9 @@
 """轮次执行权、冻结参数、预算和关闭边界；仅临时数据与本地模型替身。"""
+from tests import FIXTURES_DIR
 import asyncio
 from contextlib import contextmanager
 import json
-from pathlib import Path
 import threading
-from functools import partial
 import unittest
 from unittest.mock import patch
 
@@ -18,14 +17,14 @@ from services.conversation.group.round_service import run_group_round as _run_gr
 from services.conversation.group.session_service import create_group_session
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import ReplayModel, _response
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 # 既有执行权测试保留 v1 替身，v2 端到端覆盖在 test_group_units。
 run_group_round = _run_group_round
 
 
 class GroupRoundTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def test_deepseek_thinking_snapshot_reserves_room_for_reasoning_and_json(self):
         sid, ids = self.group()
@@ -54,7 +53,7 @@ class GroupRoundTests(unittest.TestCase):
         return group["session_id"], tuple(member["persona_id"] for member in group["members"])
 
     def case(self):
-        return json.loads((Path(__file__).resolve().parents[1] / "fixtures/group_shared_director_cases.json").read_text(encoding="utf-8"))["cases"][0]
+        return json.loads((FIXTURES_DIR / "group_shared_director_cases.json").read_text(encoding="utf-8"))["cases"][0]
 
     def test_execution_rejects_forged_cross_task_cross_session_and_expired_tokens(self):
         sid, _ = self.group()

@@ -1,4 +1,5 @@
 """导演协议、真实个人输入与隔离原型；不调用网络模型。"""
+from tests import BACKEND_DIR, FIXTURES_DIR
 import asyncio
 from datetime import datetime
 import json
@@ -17,8 +18,8 @@ from core.models import GroupRound, GroupRoundCandidate, GroupContentItem, Chara
 from services.conversation.group import director_service as director, history_service as history
 from services.conversation.group.session_service import create_group_session, GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
-from scripts.group_chat_prototype.worker import _run_round, ReplayModel, _response, _require_workspace
-from tests.conversation import test_group_session_service as fixtures
+from scripts.group_chat_prototype.worker import _run_round, ReplayModel, _require_workspace
+from tests.support.group import session_service as fixtures
 
 
 class DirectorProtocolTests(unittest.TestCase):
@@ -52,8 +53,8 @@ class DirectorProtocolTests(unittest.TestCase):
 
 
 class DirectorContextTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
-    snapshot = fixtures.GroupSessionServiceTests.snapshot
+    setUp = fixtures.GroupSessionFixture.setUp
+    snapshot = fixtures.GroupSessionFixture.snapshot
 
     def group(self):
         group = asyncio.run(create_group_session(self.imported, self.db))
@@ -139,10 +140,10 @@ class DirectorContextTests(unittest.TestCase):
 
 
 class DirectorPrototypeTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def case(self):
-        path = Path(__file__).resolve().parents[1] / "fixtures/group_shared_director_cases.json"
+        path = FIXTURES_DIR / "group_shared_director_cases.json"
         return json.loads(path.read_text(encoding="utf-8"))["cases"][0]
 
     def run_case(self, case=None, intercept=None, **kwargs):
@@ -175,8 +176,6 @@ class DirectorPrototypeTests(unittest.TestCase):
         role_calls = [c for c in result["calls"] if c["stage"] == "role_generation"]
         self.assertNotIn("SECRET_VAULT_731", json.dumps(role_calls[1], ensure_ascii=False))
         self.assertNotIn("eligible_persona_ids", json.dumps(role_calls, ensure_ascii=False))
-
-
 
 
     def test_reply_count_does_not_skip_final_director_decision(self):
@@ -318,7 +317,7 @@ class DirectorPrototypeTests(unittest.TestCase):
                 _require_workspace()
 
     def test_cli_runs_all_virtual_cases_to_readonly_http_report(self):
-        backend = Path(__file__).resolve().parents[2]
+        backend = BACKEND_DIR
         with tempfile.TemporaryDirectory() as output:
             completed = subprocess.run([sys.executable, "-m", "scripts.group_chat_prototype", "--output", output],
                 cwd=backend, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)

@@ -3,21 +3,21 @@ import asyncio
 import json
 import unittest
 from unittest.mock import patch
-from core.models import GroupContentItem, GroupRoundCandidate, GroupRoundOperation, GroupRound
+from core.models import GroupContentItem, GroupRoundOperation, GroupRound
 from application.group_runtime import group_runtime
 from services.conversation.group import round_service as rounds, operation_service as operations
 from services.conversation.group.query_service import get_group_candidate
 from services.conversation.session_access import SessionKindConflict
-from tests.conversation import test_group_background as fixtures
+from tests.support.group import background as fixtures
 
 
 class DirectorEndingTests(unittest.TestCase):
-    setUp = fixtures.GroupBackgroundTests.setUp
-    group = fixtures.GroupBackgroundTests.group
-    observed = fixtures.GroupBackgroundTests.observed
-    submit = fixtures.GroupBackgroundTests.submit
-    drain = fixtures.GroupBackgroundTests.drain
-    candidate = fixtures.GroupBackgroundTests.candidate
+    setUp = fixtures.GroupBackgroundFixture.setUp
+    group = fixtures.GroupBackgroundFixture.group
+    observed = fixtures.GroupBackgroundFixture.observed
+    submit = fixtures.GroupBackgroundFixture.submit
+    drain = fixtures.GroupBackgroundFixture.drain
+    candidate = fixtures.GroupBackgroundFixture.candidate
 
     def test_seven_replies_finish_only_after_director_end_despite_old_request_limit_one(self):
         sid, ids = self.group()

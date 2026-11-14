@@ -10,7 +10,10 @@ import sys
 import tempfile
 
 
-GROUPS = ("api", "conversation", "conversation/prompting", "core", "infrastructure", "lorebook", "memory", "parsing", "tts")
+GROUPS = (
+    "api", "conversation", "conversation/group", "conversation/prompting",
+    "core", "infrastructure", "lorebook", "memory", "parsing", "tts",
+)
 
 
 def main():

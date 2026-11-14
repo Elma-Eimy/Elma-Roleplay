@@ -15,15 +15,15 @@ from services.conversation.group.round_service import run_group_round
 from services.conversation.group.session_service import GroupSessionValidationError
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import _response
-from tests.conversation import test_group_background as fixtures
+from tests.support.group import background as fixtures
 
 
 class GenerationCleanupTests(unittest.TestCase):
-    setUp = fixtures.GroupBackgroundTests.setUp
-    group = fixtures.GroupBackgroundTests.group
-    observed = fixtures.GroupBackgroundTests.observed
-    drain = fixtures.GroupBackgroundTests.drain
-    candidate = fixtures.GroupBackgroundTests.candidate
+    setUp = fixtures.GroupBackgroundFixture.setUp
+    group = fixtures.GroupBackgroundFixture.group
+    observed = fixtures.GroupBackgroundFixture.observed
+    drain = fixtures.GroupBackgroundFixture.drain
+    candidate = fixtures.GroupBackgroundFixture.candidate
 
     async def submit(self, sid, owner, model, **options):
         seen, revision = self.observed(sid)

@@ -5,12 +5,12 @@ from fastapi.testclient import TestClient
 from application.factory import create_app
 from core.database import get_db
 from services.conversation.group import query_service as query, session_service as groups
-from tests.conversation import test_group_session_service as fixtures
-from tests.conversation import test_group_memory_capture as capture
+from tests.support.group import session_service as fixtures
+from tests.support.group import memory_capture as capture
 
 
 class GroupMemoryViewTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def test_inherited_snapshot_is_scoped_and_searchable_through_http(self):
         group = asyncio.run(groups.create_group_session(self.imported, self.db))
@@ -37,12 +37,12 @@ class GroupMemoryViewTests(unittest.TestCase):
 
 
 class ConfirmedGroupMemoryViewTests(unittest.TestCase):
-    setUp = capture.GroupCaptureTests.setUp
-    observed = capture.GroupCaptureTests.observed
-    submit = capture.GroupCaptureTests.submit
-    drain = capture.GroupCaptureTests.drain
-    confirm = capture.GroupCaptureTests.confirm
-    process = capture.GroupCaptureTests.process
+    setUp = capture.GroupCaptureFixture.setUp
+    observed = capture.GroupCaptureFixture.observed
+    submit = capture.GroupCaptureFixture.submit
+    drain = capture.GroupCaptureFixture.drain
+    confirm = capture.GroupCaptureFixture.confirm
+    process = capture.GroupCaptureFixture.process
 
     def test_only_confirmed_member_evidence_enters_browser_and_pagination(self):
         self.confirm()

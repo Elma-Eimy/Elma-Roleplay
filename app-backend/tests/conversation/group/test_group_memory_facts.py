@@ -4,17 +4,17 @@ from datetime import datetime
 import json
 import unittest
 from sqlalchemy import func
-from core.models import GroupMemoryCapture,GroupRound,GroupRoundCandidate,GroupRecallCard,OutboxJob
+from core.models import GroupMemoryCapture, GroupRound, GroupRoundCandidate, GroupRecallCard
 from services.conversation.group import session_service as groups,history_service as history
 from services.conversation.group.unit_protocol import ContentUnit,UnitPlan
 from services.memory.group_memory_assertions import classified_records, prepare_assertions
 from services.memory.group_memory_capture import enqueue_confirmed_group,process_one_capture,_validated_cards
 from services.memory.group_memory_index import unified_memories
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 
 class GroupMemoryFactsTests(unittest.TestCase):
-    setUp=fixtures.GroupSessionServiceTests.setUp
+    setUp=fixtures.GroupSessionFixture.setUp
 
     def prepare(self,text,*,speaker=None,reply=None):
         if not hasattr(self,'sid'):

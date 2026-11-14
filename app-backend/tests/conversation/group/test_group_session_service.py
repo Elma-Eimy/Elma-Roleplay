@@ -1,22 +1,18 @@
 """群聊快照独立、原子失败和资源归属；只使用虚构临时数据。"""
+from tests.support.group.session_service import GroupSessionFixture
 import asyncio
 import json
-import tempfile
 import threading
 import time
 import unittest
 from dataclasses import replace
-from pathlib import Path
 from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import create_engine, event, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import event, text
 
 from core.locking import get_session_lock, is_session_locked
-from core.models import (Base, Character, Session, SessionPersona, ChatMessage, MessageRole, MemoryChunk,
-    MemoryType, GroupPersonaOrigin, GroupInheritedMemorySnapshot, OutboxJob, MemoryExtractionJob,
-    MemoryEventBuffer, GraphEntity, MemoryConsolidation, MemoryConsolidationSource, MemoryConsolidationScope)
+from core.models import Character, Session, SessionPersona, ChatMessage, MessageRole, MemoryChunk, MemoryType, GroupPersonaOrigin, GroupInheritedMemorySnapshot, OutboxJob, MemoryExtractionJob, MemoryEventBuffer, GraphEntity, MemoryConsolidation, MemoryConsolidationSource, MemoryConsolidationScope
 from services.conversation.group import session_service as service
 from services.conversation.group.session_service import GroupSessionDraft, GroupMember
 from services.conversation.session_access import SessionKindConflict
@@ -24,51 +20,7 @@ from services.conversation.session_service import safe_delete_session, create_se
 from services.character_service import delete_character_service
 
 
-class GroupSessionServiceTests(unittest.TestCase):
-    def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.engine = create_engine("sqlite:///" + (Path(self.directory.name) / "test.db").as_posix(),
-                                    connect_args={"check_same_thread": False})
-        self.addCleanup(self.engine.dispose)
-
-        @event.listens_for(self.engine, "connect")
-        def foreign_keys(connection, _):
-            connection.execute("PRAGMA foreign_keys=ON")
-
-        Base.metadata.create_all(self.engine)
-        self.sessions = sessionmaker(bind=self.engine, autoflush=False)
-        self.db = self.sessions()
-        self.addCleanup(self.db.close)
-        self.db.add_all([Character(id=i, name=f"actor{i}", description="fixture", scenario="town", first_mes="hello") for i in (1, 2, 3)])
-        self.db.add(Session(id=10, title="source"))
-        self.db.flush()
-        self.db.add(SessionPersona(id=100, session_id=10, character_id=1, affection_score=37,
-                     current_mood="开心", cognition_state="knows user", current_scenario_override="library"))
-        self.db.add_all([ChatMessage(id=1, session_id=10, role=MessageRole.user, content="first"),
-                        ChatMessage(id=2, session_id=10, role=MessageRole.assistant, content="confirmed"),
-                        ChatMessage(id=3, session_id=10, role=MessageRole.user, content="next"),
-                        ChatMessage(id=4, session_id=10, role=MessageRole.assistant, content="latest",
-                                    role_state_patch='{"scene":"current room"}')])
-        self.db.flush()
-        self.db.add_all([
-            MemoryChunk(id=1, persona_id=100, content="confirmed fact", memory_type=MemoryType.fact,
-                        origin_session_id=10, source_message_id=2, importance_score=0.9),
-            MemoryChunk(id=2, persona_id=100, content="unconfirmed fact", memory_type=MemoryType.fact,
-                        origin_session_id=10, source_message_id=4),
-            MemoryChunk(id=3, persona_id=100, content="manual fact", memory_type=MemoryType.fact),
-        ])
-        self.db.commit()
-        self.cards = GroupSessionDraft((GroupMember(1), GroupMember(2)))
-        self.imported = replace(self.cards, members=(GroupMember(1, "single_snapshot", 10), GroupMember(2)))
-
-    def create(self, draft=None):
-        return asyncio.run(service.create_group_session(draft or self.imported, self.db))
-
-    def snapshot(self):
-        return {table: self.db.execute(text('SELECT * FROM "' + table + '" ORDER BY 1')).all()
-                for table in Base.metadata.tables}
-
+class GroupSessionServiceTests(GroupSessionFixture, unittest.TestCase):
     def test_card_members_are_independent_without_generated_messages_or_progress(self):
         for size in (2, 3):
             result = self.create(GroupSessionDraft(tuple(GroupMember(i) for i in range(1, size + 1)), shared_setting="  "))

@@ -8,11 +8,11 @@ from core.models import GroupMemoryCapture, GroupRound, GroupRoundCandidate
 from services.conversation.group import history_service as history, session_service as groups
 from services.conversation.group.unit_protocol import ContentUnit, UnitPlan
 from services.memory.group_memory_capture import _evidence, _capture_results, enqueue_confirmed_group
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 
 class GroupMemoryEvidenceTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def test_fact_survives_without_role_repetition_and_relationship_refs_exclude_other_sources(self):
         group = asyncio.run(groups.create_group_session(self.cards, self.db))

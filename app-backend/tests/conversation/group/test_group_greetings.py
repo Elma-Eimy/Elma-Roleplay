@@ -7,13 +7,13 @@ from core.models import Character, Session, GroupRound, GroupRoundOperation
 from schemas import GroupSessionCreate
 from services.conversation.group import session_service as service
 from services.conversation.group import director_service as director
-from tests.conversation import test_group_session_service as fixtures
-from tests.conversation import test_group_generation as generation_fixtures
+from tests.support.group import session_service as fixtures
+from tests.support.group import generation as generation_fixtures
 
 
 class GroupGreetingTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
-    create = fixtures.GroupSessionServiceTests.create
+    setUp = fixtures.GroupSessionFixture.setUp
+    create = fixtures.GroupSessionFixture.create
 
     def test_mixed_origins_freeze_only_card_openings_and_do_not_start_rounds(self):
         card = self.db.get(Character, 2)
@@ -49,9 +49,9 @@ class GroupGreetingTests(unittest.TestCase):
 
 
 class GreetingContextTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
-    group = generation_fixtures.GroupGenerationTests.group
-    context = generation_fixtures.GroupGenerationTests.context
+    setUp = fixtures.GroupSessionFixture.setUp
+    group = generation_fixtures.GroupGenerationFixture.group
+    context = generation_fixtures.GroupGenerationFixture.context
 
     def test_both_members_and_director_read_frozen_public_greeting_without_card_leak(self):
         self.db.get(Character, 2).first_mes = 'PUBLIC_OPENING {{char}}'

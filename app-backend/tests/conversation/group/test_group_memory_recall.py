@@ -8,14 +8,14 @@ from core.models import MemoryChunk, GroupRoundCandidate
 from services.conversation.group import session_service as groups, history_service as history
 from services.conversation.group.context_service import build_member_context
 from services.conversation.group.unit_protocol import ContentUnit, UnitPlan
-from tests.conversation import test_group_background as background
+from tests.support.group import background as background
 
 
 class GroupMemoryRecallTests(unittest.TestCase):
-    setUp = background.GroupBackgroundTests.setUp
-    observed = background.GroupBackgroundTests.observed
-    submit = background.GroupBackgroundTests.submit
-    drain = background.GroupBackgroundTests.drain
+    setUp = background.GroupBackgroundFixture.setUp
+    observed = background.GroupBackgroundFixture.observed
+    submit = background.GroupBackgroundFixture.submit
+    drain = background.GroupBackgroundFixture.drain
 
     def group(self, content="铜铃原定交给青鹭，暗记 Q17。"):
         card = self.db.get(MemoryChunk, 1)

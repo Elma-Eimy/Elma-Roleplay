@@ -1,4 +1,5 @@
 """只读预览与真实 CLI 的限时本机 HTTP 联通；只使用临时库。"""
+from tests import BACKEND_DIR
 import asyncio
 import json
 from pathlib import Path
@@ -20,11 +21,11 @@ from core.database import get_db
 from services.conversation.group.session_service import create_group_session
 from services.conversation.group import history_service as history
 from scripts.group_chat_prototype.preview import preview_app
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 
 class GroupPreviewTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def sample(self):
         group = asyncio.run(create_group_session(self.cards, self.db))
@@ -75,7 +76,7 @@ class GroupPreviewTests(unittest.TestCase):
                 self.assertEqual(200, client.get(f"/group-sessions/{sid}/rounds").status_code)
 
     def test_cli_serves_failed_prefix_then_exits_and_releases_port(self):
-        backend = Path(__file__).resolve().parents[2]
+        backend = BACKEND_DIR
         with socket.socket() as free:
             free.bind(("127.0.0.1", 0))
             port = free.getsockname()[1]

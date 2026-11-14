@@ -1,4 +1,5 @@
 """单元隔离、一次状态重放和导演审计的临时库回归。"""
+from tests.support.group.units import GroupUnitFixture, grounding
 import asyncio
 from datetime import datetime
 import json
@@ -6,11 +7,10 @@ import unittest
 from unittest.mock import patch
 
 
-from application.group_runtime import group_runtime
 from core.models import (Character, GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility,
                          GroupContentUnit, GroupUnitVisibility, GroupDirectorStep)
 from core.models import ChatMessage, MessageRole
-from services.conversation.group import history_service as history, generation_service as generation
+from services.conversation.group import history_service as history
 from services.conversation.group import audit_service as audit
 from services.conversation.group import session_service as groups
 from services.conversation.session_access import SessionKindConflict
@@ -21,38 +21,7 @@ from services.conversation.group.unit_protocol import (ContentUnit, UnitPlan, Gr
     parse_unit_visibility, load_object)
 
 
-def grounding(messages):
-    marker = '【本次发言依据】\n'
-    return next(json.loads(row['content'].split(marker, 1)[1].split('\n', 1)[0])
-                for row in messages if marker in row['content'])
-from tests.conversation import test_group_session_service as fixtures
-
-
-class GroupUnitTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
-
-    def group(self, user="😀公开。秘密{{char}}<raw>"):
-        result = asyncio.run(create_group_session(self.imported, self.db))
-        self.sid = result["session_id"]
-        self.a, self.b = [row["persona_id"] for row in result["members"]]
-        self.user = user
-        self.plan = UnitPlan((ContentUnit("user", start=0, end=4), ContentUnit("user", start=4, end=len(user))),
-                             ((self.a, self.b), (self.a,)))
-        self.target = history._prepare(self.sid, user, (self.a,), self.db, unit_plan=self.plan, model="fixture")
-
-    def append(self, speaker=None, *, patch_value=None, affection=2):
-        speaker = speaker or self.a
-        plan = UnitPlan((ContentUnit("speech", "桥坏了。"), ContentUnit("thought", "PRIVATE_THOUGHT")),
-                        ((self.a, self.b), (speaker,)))
-        result = history._append(self.sid, self.target["candidate_id"], speaker,
-            "桥坏了。PRIVATE_THOUGHT", (speaker,), self.target["revision"], self.db,
-            emotion_tag="紧张", affection_change=affection, role_state_patch=patch_value, unit_plan=plan, model="fixture")
-        self.target["revision"] = result["revision"]
-        return result
-
-    def personal(self, pid, **kwargs):
-        return history.get_member_history(self.sid, pid, self.target["candidate_id"], 100, self.db, **kwargs)
-
+class GroupUnitTests(GroupUnitFixture, unittest.TestCase):
     def test_mixed_user_is_original_codepoint_slices_and_hidden_text_never_enters_prompt(self):
         self.group()
         self.assertEqual(self.user, self.personal(self.a)[0].content)
@@ -238,15 +207,6 @@ class GroupUnitTests(unittest.TestCase):
         self.assertIn("桥坏了。", text)
         self.assertNotIn("PRIVATE_THOUGHT", text)
         self.assertNotIn("SIBLING_SECRET", text)
-
-
-
-
-
-
-
-
-
 
 
     def test_stale_utterance_or_action_cannot_append_audit_or_units(self):

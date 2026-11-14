@@ -10,11 +10,11 @@ from core.locking import GroupRuntimeOwner
 from core.models import GroupRoundCandidate, GroupContentItem
 from services.conversation.group import history_service as history
 from services.conversation.group import session_service as groups
-from tests.conversation import test_group_session_service as fixtures
+from tests.support.group import session_service as fixtures
 
 
 class GroupRuntimeTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
+    setUp = fixtures.GroupSessionFixture.setUp
 
     def test_exclusive_owner_is_released_after_failure_and_rejects_expired_owner(self):
         with self.assertRaisesRegex(RuntimeError, "startup failed"):

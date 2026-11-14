@@ -9,15 +9,15 @@ from services.conversation.group import background_service as background
 from services.conversation.group.query_service import get_group_candidate, compile_member_prompt
 from services.conversation.group.history_service import list_group_rounds
 from scripts.group_chat_prototype.worker import _response
-from tests.conversation import test_group_background as fixtures
+from tests.support.group import background as fixtures
 
 
 class SharedChatTests(unittest.TestCase):
-    setUp = fixtures.GroupBackgroundTests.setUp
-    group = fixtures.GroupBackgroundTests.group
-    observed = fixtures.GroupBackgroundTests.observed
-    drain = fixtures.GroupBackgroundTests.drain
-    candidate = fixtures.GroupBackgroundTests.candidate
+    setUp = fixtures.GroupBackgroundFixture.setUp
+    group = fixtures.GroupBackgroundFixture.group
+    observed = fixtures.GroupBackgroundFixture.observed
+    drain = fixtures.GroupBackgroundFixture.drain
+    candidate = fixtures.GroupBackgroundFixture.candidate
 
     def action(self, parameters, speaker):
         sources = json.loads(parameters['messages'][1]['content'])['response_sources'][str(speaker)]

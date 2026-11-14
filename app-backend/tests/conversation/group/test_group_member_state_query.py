@@ -7,15 +7,15 @@ from core.models import (GroupContentItem, GroupMemberInsight, GroupMemoryCaptur
                          GroupRound, GroupRoundCandidate)
 from services.conversation.group import query_service as queries, history_service as history
 from services.conversation.group import session_service as groups
-from tests.conversation import test_group_history as fixtures
+from tests.support.group import history as fixtures
 
 
 class GroupMemberStateQueryTests(unittest.TestCase):
-    setUp = fixtures.GroupHistoryTests.setUp
-    group = fixtures.GroupHistoryTests.group
-    prepare = fixtures.GroupHistoryTests.prepare
-    append = fixtures.GroupHistoryTests.append
-    snapshot = fixtures.GroupHistoryTests.snapshot
+    setUp = fixtures.GroupHistoryFixture.setUp
+    group = fixtures.GroupHistoryFixture.group
+    prepare = fixtures.GroupHistoryFixture.prepare
+    append = fixtures.GroupHistoryFixture.append
+    snapshot = fixtures.GroupHistoryFixture.snapshot
 
     def test_candidate_state_replays_only_its_own_members_and_preserves_origin(self):
         group = asyncio.run(groups.create_group_session(self.imported, self.db))

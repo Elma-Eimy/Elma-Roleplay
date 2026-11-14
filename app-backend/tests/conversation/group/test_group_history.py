@@ -1,4 +1,5 @@
 """群聊个人历史、候选隔离和内容原子写入；仅使用临时库。"""
+from tests.support.group.history import GroupHistoryFixture
 import asyncio
 from dataclasses import FrozenInstanceError
 from datetime import datetime
@@ -13,29 +14,9 @@ from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem, Grou
 from services.conversation.group import history_service as history
 from services.conversation.group import session_service as groups
 from services.conversation.session_access import SessionKindConflict
-from tests.conversation import test_group_session_service as fixtures
 
 
-class GroupHistoryTests(unittest.TestCase):
-    setUp = fixtures.GroupSessionServiceTests.setUp
-    snapshot = fixtures.GroupSessionServiceTests.snapshot
-
-    def group(self):
-        result = asyncio.run(groups.create_group_session(self.cards, self.db))
-        return result["session_id"], tuple(member["persona_id"] for member in result["members"])
-
-    def prepare(self, sid, visible, content="  用户原话 {{char}} <tag>  "):
-        return asyncio.run(history.prepare_group_round(sid, content, visible, self.db))
-
-    def append(self, sid, target, speaker, content, visible=()):
-        result = asyncio.run(history.append_group_utterance(sid, target["candidate_id"], speaker,
-            content, visible, target["revision"], self.db))
-        target["revision"] = result["revision"]
-        return result
-
-    def read(self, sid, pid, target, before=100, **kwargs):
-        return history.get_member_history(sid, pid, target["candidate_id"], before, self.db, **kwargs)
-
+class GroupHistoryTests(GroupHistoryFixture, unittest.TestCase):
     def test_round_keeps_original_user_once_and_one_pending_round(self):
         sid, (a, b) = self.group()
         target = self.prepare(sid, (a,))

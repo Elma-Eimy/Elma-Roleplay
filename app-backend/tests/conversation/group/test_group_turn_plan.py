@@ -3,28 +3,23 @@ import asyncio
 import json
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
 
-from application.group_runtime import group_runtime
 from core.config import settings
-from core.models import Character, GroupRound, GroupRoundCandidate, GroupContentItem, GroupDirectorStep
-from scripts.group_chat_prototype.worker import _response
+from core.models import Character, GroupRound, GroupRoundCandidate, GroupDirectorStep
 from services.conversation.group import history_service as history, session_service as groups
-from services.conversation.group import background_service as background
 from services.conversation.group.director_service import NextAction, parse_next_action, GroupDirectorError, DirectorContext, build_director_messages
 from services.conversation.group.context_service import build_member_context
 from services.conversation.group.round_service import run_group_round as _legacy_round
-from functools import partial
 run_group_round = _legacy_round
 from services.conversation.group.turn_plan import _sources
 from services.conversation.group.unit_protocol import parse_user_units, parse_unit_visibility, GroupUnitError, UnitPlan, ContentUnit
 from services.conversation.group.call_snapshot import capture_group_calls, persist_group_calls, restore_group_calls
 from services.conversation.session_access import SessionKindConflict
-from tests.conversation import test_group_units as fixtures
+from tests.support.group import units as fixtures
 
 
 class GroupTurnPlanTests(unittest.TestCase):
-    setUp = fixtures.GroupUnitTests.setUp
+    setUp = fixtures.GroupUnitFixture.setUp
 
     def create(self):
         group = asyncio.run(groups.create_group_session(self.cards, self.db))
