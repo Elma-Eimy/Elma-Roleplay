@@ -208,7 +208,7 @@ M1-A 交付时的下一批为 M1-B，现已完成，见下文记录。M1-C 已�
 
 ### M1-B：来源快照与群聊聚合服务
 
-`services/conversation/group_session_service.py` 提供内部创建、列表、详情和删除；输入采用不可变的 GroupSessionDraft/GroupMember，不接受任意状态 JSON。成员数为 2–3，角色卡不重复；标题与昵称为 1–50 字，共同设定最多 20000 字，空白归一为空。服务响应返回 can_generate=false，列表不含记忆正文。HTTP 请求模型与前端领域接入随后由 M1-C 完成，见下文记录。
+`services/conversation/group/session_service.py` 提供内部创建、列表、详情和删除；输入采用不可变的 GroupSessionDraft/GroupMember，不接受任意状态 JSON。成员数为 2–3，角色卡不重复；标题与昵称为 1–50 字，共同设定最多 20000 字，空白归一为空。服务响应返回 can_generate=false，列表不含记忆正文。HTTP 请求模型与前端领域接入随后由 M1-C 完成，见下文记录。
 
 创建先按来源故事 ID 升序加锁，在同一 BEGIN IMMEDIATE 写事务中重读来源，冻结当前 active 状态、认知、立绘及已保存的有效记忆。记忆沿用 memory_view，保留祖先分叉边界、无来源手工卡与有效整理摘要，排除当前未确认的本地消息来源。失效立绘回退头像；不复制原消息、任务、事件缓冲、进度或 parent_persona_id，不调用模型或 Embedding。
 

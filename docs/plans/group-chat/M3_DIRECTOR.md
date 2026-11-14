@@ -18,9 +18,9 @@ M3 仍只执行一个未确认轮次，保留 version=1 和 can_generate=false�
 
 | 已阅读入口 | 当前行为 | M3 接法 |
 | --- | --- | --- |
-| [个人历史](../../../app-backend/services/conversation/group_history_service.py)、[回归](../../../app-backend/tests/conversation/test_group_history.py) | 原子写入全文知情，个人历史先过滤后限量；一个未确认轮次 | 保留 ID、归属和读取规则，增加整轮锁内可复用的执行步骤 |
-| [单步生成](../../../app-backend/services/conversation/group_generation_service.py)、[回归](../../../app-backend/tests/conversation/test_group_generation.py) | 自行取得会话锁；回调判定暂存正文接收者，随后原子落库 | 抽出显式持有执行权的内部步骤，独立调用兼容保留，避免重复加锁 |
-| [个人上下文](../../../app-backend/services/conversation/group_context_service.py)、[编译器](../../../app-backend/services/conversation/prompting/compiler.py) | 只读个人历史和自身状态，无可见依据则拒绝调用 | 导演理由和全局快照不传入该入口；支持轮内固定模型选择 |
+| [个人历史](../../../app-backend/services/conversation/group/history_service.py)、[回归](../../../app-backend/tests/conversation/test_group_history.py) | 原子写入全文知情，个人历史先过滤后限量；一个未确认轮次 | 保留 ID、归属和读取规则，增加整轮锁内可复用的执行步骤 |
+| [单步生成](../../../app-backend/services/conversation/group/generation_service.py)、[回归](../../../app-backend/tests/conversation/test_group_generation.py) | 自行取得会话锁；回调判定暂存正文接收者，随后原子落库 | 抽出显式持有执行权的内部步骤，独立调用兼容保留，避免重复加锁 |
+| [个人上下文](../../../app-backend/services/conversation/group/context_service.py)、[编译器](../../../app-backend/services/conversation/prompting/compiler.py) | 只读个人历史和自身状态，无可见依据则拒绝调用 | 导演理由和全局快照不传入该入口；支持轮内固定模型选择 |
 | [模型参数](../../../app-backend/services/conversation/chat_engine.py)、[能力解析](../../../app-backend/services/infrastructure/model_capabilities.py) | 每次准备参数，可读取当时全局设置及角色采样配置 | 在整轮开始解析并冻结模型、思考模式与调用参数 |
 | [模型适配层](../../../app-backend/services/infrastructure/llm_provider.py) | 共用延迟初始化客户端；未显式设置 SDK 重试策略 | 群聊调用显式禁用自动重试并用本地协议替身核对请求次数，不改变单聊默认行为 |
 | [运行权](../../../app-backend/application/group_runtime.py)、[生命周期](../../../app-backend/application/lifecycle.py) | 启动持有文件锁；遗留 generating 标失败；关闭等待后台清理 | 生命周期管理整轮任务，等待导演、角色和持久化结束后释放运行权 |
@@ -166,7 +166,7 @@ M3-B/C 共享基础设施与表结构改变后，先跑相关 conversation/infra
 
 ### M3-A：离线协议与隔离原型
 
-2026-11-05 新增 [导演服务](../../../app-backend/services/conversation/group_director_service.py)、[原型启动器](../../../app-backend/scripts/group_chat_prototype/cli.py)与[虚构场景](../../../app-backend/tests/fixtures/group_director_cases.json)。协议拒绝未知/重复字段、缺失/重复/跨群成员、布尔身份、非法动作和截断结果；只能选有个人可见依据的成员。导演在独立 SQLite 读快照中读取此前已确认所选成功候选及当前前缀，排除兄弟/失败/未来候选与私人基线。载荷默认最多 24000 字符，不含固定系统协议；旧历史按完整项省略并注明不完整，当前前缀或待判正文超限则失败。
+2026-11-05 新增 [导演服务](../../../app-backend/services/conversation/group/director_service.py)、[原型启动器](../../../app-backend/scripts/group_chat_prototype/cli.py)与[虚构场景](../../../app-backend/tests/fixtures/group_director_cases.json)。协议拒绝未知/重复字段、缺失/重复/跨群成员、布尔身份、非法动作和截断结果；只能选有个人可见依据的成员。导演在独立 SQLite 读快照中读取此前已确认所选成功候选及当前前缀，排除兄弟/失败/未来候选与私人基线。载荷默认最多 24000 字符，不含固定系统协议；旧历史按完整项省略并注明不完整，当前前缀或待判正文超限则失败。
 
 原型启动器先复制源码并生成临时配置，再导入应用；数据库仅含固定虚构角色与场景，不复制开发数据或连接设置。临时 Worker 持有数据库运行权和整轮会话锁，复用 M2 的个人上下文、输出解析、原子落库及失败收敛步骤，执行知情初判、选人、个人生成、暂存正文后判及明确终态。该闭环是隔离 Worker 内部能力，不是正式应用生命周期中的轮次服务；M3-B 的执行令牌、完整参数冻结和在线任务清理、M3-C 的持久审计与终止原因迁移尚未实现。
 
@@ -206,9 +206,9 @@ M3-B/C 共享基础设施与表结构改变后，先跑相关 conversation/infra
 
 ### M3-C：可见单元、原文映射与导演审计
 
-内部 `run_group_round` 默认使用 v2，M2 单步及显式 protocol_version=1 保留全文兼容。新增 [单元协议](../../../app-backend/services/conversation/group_unit_protocol.py)和[单元持久化](../../../app-backend/services/conversation/group_unit_service.py)：用户初判返回连续完整码点范围，正文只从 Round.user_content 切片；一次角色调用返回 1–8 个 speech/action/thought 单元，导演一次后判覆盖所有单元。原始角色文本按顺序拼接为父项正文，服务端固定作者，thought 由程序限制为作者知情。个人历史先过滤单元再应用历史窗口，不回补全文，不向模型传隐藏单元数量、索引或位置间隙；世界书扫描同一份获准正文。v2 最终 JSON 输出契约替换 XML 格式指令，角色卡 DSL、示例和 PHI 后置继续复用。
+内部 `run_group_round` 默认使用 v2，M2 单步及显式 protocol_version=1 保留全文兼容。新增 [单元协议](../../../app-backend/services/conversation/group/unit_protocol.py)和[单元持久化](../../../app-backend/services/conversation/group/unit_service.py)：用户初判返回连续完整码点范围，正文只从 Round.user_content 切片；一次角色调用返回 1–8 个 speech/action/thought 单元，导演一次后判覆盖所有单元。原始角色文本按顺序拼接为父项正文，服务端固定作者，thought 由程序限制为作者知情。个人历史先过滤单元再应用历史窗口，不回补全文，不向模型传隐藏单元数量、索引或位置间隙；世界书扫描同一份获准正文。v2 最终 JSON 输出契约替换 XML 格式指令，角色卡 DSL、示例和 PHI 后置继续复用。
 
-父项保留一次心情、好感和状态增量，读取不会因多个单元而重复累计；缺少完整自身权限时不重放该父项状态。新增 [导演审计](../../../app-backend/services/conversation/group_audit_service.py)，仅序列化已接受的成员判定、范围/索引、动作、原因码、模型与版本。初判/用户项、后判/发言项及其状态、结束决定/终态分别原子提交；选人决定先保存并推进 revision，再调用角色。wait_user、no_visible_basis 和 step_limit 写入独立 finish_reason，失败仍使用 error_code。审计不进入个人输入、世界书或普通 rounds 响应；隔离报告 schema_version=2 保存规范化审计链和实际候选终态，供临时数据库清理后复核。
+父项保留一次心情、好感和状态增量，读取不会因多个单元而重复累计；缺少完整自身权限时不重放该父项状态。新增 [导演审计](../../../app-backend/services/conversation/group/audit_service.py)，仅序列化已接受的成员判定、范围/索引、动作、原因码、模型与版本。初判/用户项、后判/发言项及其状态、结束决定/终态分别原子提交；选人决定先保存并推进 revision，再调用角色。wait_user、no_visible_basis 和 step_limit 写入独立 finish_reason，失败仍使用 error_code。审计不进入个人输入、世界书或普通 rounds 响应；隔离报告 schema_version=2 保存规范化审计链和实际候选终态，供临时数据库清理后复核。
 
 迁移 [b0d1e2f3a4b5](../../../app-backend/alembic/versions/b0d1e2f3a4b5_group_visible_units.py) 追加在实际 head 后，不修改旧迁移。旧用户项映射一个完整原文单元，旧角色项映射一个 legacy 单元，逐行照抄已有权限，缺失权限不补公开；Python len 保留 emoji 和 NUL 原文码点长度。候选/会话组合外键拒绝跨群和跨候选引用，级联删除与 Outbox 同事务回滚；存在 v2 候选、持久终止原因或审计时拒绝有损降级。
 

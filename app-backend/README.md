@@ -4,7 +4,7 @@
 
 后端职责边界见 [架构说明](../docs/architecture/BACKEND.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
 
-群聊候选生命周期集中在 `services/conversation/group_candidate_state.py`，执行权与持久目标校验在 `group_execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。
+群聊候选生命周期集中在 `services/conversation/group/candidate_state.py`，执行权与持久目标校验在 `group/execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。
 
 群聊成员立绘使用独立的选择服务和候选快照，资源继续复用角色立绘；启动迁移追加快照列，旧候选不回填，非空快照拒绝有损降级。归属、版本与恢复规则见 [群聊架构](../docs/architecture/GROUP_CHAT.md#成员立绘快照) 和 [群聊接口](../docs/api/GROUP_SESSIONS.md#成员立绘)。
 
@@ -72,7 +72,7 @@ HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资�
 
 M4-A 已加入会话版本、撤回、候选检查点/冻结参数与持久操作回执。内部接受新消息原子确认上一成功轮次；选择/撤回受会话版本与候选版本保护，撤回保留回执并排除后续剧情。A 批仅建立事务原语，M4-B 现已通过独立后台入口接通持久执行与恢复。当前进度及调用边界见 [M4-A 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-a-接续记录)。
 
-M4-B 内部入口为 `group_background_service.submit_group_operation`：Worker 创建即登记，自行持锁并使用独立 Session 接受和执行；调用方断连不取消任务。重生成成功前保留旧选择，失败按持久检查点显式续接，已保存发言与状态不会重复累计；派发前持久消费调用预算，finish 续接零模型调用。公开 HTTP 已由 M4-C 接入，M4-D 页面通过 GET 恢复请求，详见 [M4-B 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-b-接续记录)。
+M4-B 内部入口为 `group.background_service.submit_group_operation`：Worker 创建即登记，自行持锁并使用独立 Session 接受和执行；调用方断连不取消任务。重生成成功前保留旧选择，失败按持久检查点显式续接，已保存发言与状态不会重复累计；派发前持久消费调用预算，finish 续接零模型调用。公开 HTTP 已由 M4-C 接入，M4-D 页面通过 GET 恢复请求，详见 [M4-B 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-b-接续记录)。
 
 M3-D 的限时本机只读预览已联通现有 H5 群聊详情；正常停止、同名成员和失败前缀有独立展示与候选版本交接。预览保持只读；正常后端已提供 M4-C 操作接口，M4-D 详情页已接入相应交互。复现命令与待验收项见[群聊 M3 联通验收](../docs/testing/group-chat/M3_DIRECTOR.md)与[群聊 M4 交接](../docs/testing/group-chat/M4_ROUNDS_AND_RECOVERY.md)。
 
@@ -479,6 +479,26 @@ app-backend/
 │   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
 │   │   ├── context_compression.py # 单聊滚动摘要、来源校验与分支基线
 │   │   ├── message_service.py # 消息生命周期管理服务
+│   │   ├── group/           # 群聊业务，职责入口见群聊架构文档
+│   │   │   ├── session_service.py # 群聊创建、来源快照与删除
+│   │   │   ├── query_service.py # 群聊详情、候选与成员预览查询
+│   │   │   ├── operation_service.py # 接受请求、候选选择与撤回
+│   │   │   ├── background_service.py # 后台任务派发与恢复
+│   │   │   ├── round_service.py # 整轮导演调度与角色生成编排
+│   │   │   ├── director_service.py # 导演上下文、协议与决策校验
+│   │   │   ├── context_service.py # 成员个人上下文与角色状态装配
+│   │   │   ├── call_snapshot.py # 模型调用快照、预算与恢复参数
+│   │   │   ├── generation_service.py # 角色模型调用、解析与清理
+│   │   │   ├── history_service.py # 轮次、候选历史与个人可见记录
+│   │   │   ├── candidate_state.py # 候选生命周期转换
+│   │   │   ├── execution_scope.py # 执行权与持久目标校验
+│   │   │   ├── checkpoint_service.py # 检查点、预算与请求终态
+│   │   │   ├── dispatch_service.py # 业务调度与完成标记
+│   │   │   ├── turn_plan.py # 回应依据与调度兼容入口
+│   │   │   ├── legacy_protocol.py # 旧候选协议与审计兼容
+│   │   │   ├── unit_protocol.py # 可见内容单元协议
+│   │   │   ├── unit_service.py # 单元保存与个人可见投影
+│   │   │   └── audit_service.py # 调度审计记录
 │   │   ├── prompting/       # 单聊与群聊共用的 Prompt 编译与估算
 │   │   │   ├── compiler.py # Prompt 编译入口与群聊输入适配
 │   │   │   ├── templates.py # 角色卡模板、占位符和输出协议

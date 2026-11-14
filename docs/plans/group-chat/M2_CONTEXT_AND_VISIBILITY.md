@@ -18,7 +18,7 @@ M2 默认只允许一个未完成或待确认轮次；普通用户发送继续�
 
 | 入口与回归 | 当前行为 | M2 处理 |
 | --- | --- | --- |
-| [模型](../../../app-backend/core/models.py)、[M1 服务](../../../app-backend/services/conversation/group_session_service.py) | Persona 是成员身份，来源快照独立；ChatMessage 没有群聊发言归属 | 保留 M1 聚合，新增群聊轮次与内容表 |
+| [模型](../../../app-backend/core/models.py)、[M1 服务](../../../app-backend/services/conversation/group/session_service.py) | Persona 是成员身份，来源快照独立；ChatMessage 没有群聊发言归属 | 保留 M1 聚合，新增群聊轮次与内容表 |
 | [回合生命周期](../../../app-backend/services/conversation/chat_turn_service.py)、[对应测试](../../../app-backend/tests/conversation/test_chat_turn_service.py) | 单聊先提交用户消息，失败可删除用户消息，完成后触发单聊维护 | 群聊单独编排，不复用单聊失败删除与记忆入队 |
 | [上下文装配](../../../app-backend/services/conversation/context_assembler.py)、[分支回归](../../../app-backend/tests/conversation/test_branch_context_boundary.py) | 强制 single，历史与当前用户分开，祖先示例按分叉边界读取 | 群聊按成员和候选读取，不解除旧入口限制 |
 | [Prompt 编译](../../../app-backend/services/conversation/prompting/compiler.py)、[兼容回归](../../../app-backend/tests/conversation/test_character_prompt_compatibility.py) | assistant 历史按同一角色包装；世界书可扫描历史与本轮用户输入；PHI 和输出契约后置 | 增加群聊编译入口，共享角色卡编译能力，不能直接传全群历史 |
