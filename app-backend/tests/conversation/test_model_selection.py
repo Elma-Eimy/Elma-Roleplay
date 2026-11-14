@@ -15,7 +15,7 @@ class ModelSelectionTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         for name, value in {'LLM_DEFAULT_CHAT_MODEL': 'deepseek-flash', 'CHAT_MODEL_REASONING': 'deepseek-v4-pro',
-                            'CHAT_MODEL_NON_REASONING': 'deepseek-v4-flash', 'LLM_REASONING_MODE': False,
+                            'CHAT_MODEL_NON_REASONING': 'deepseek-v4-flash', 'LLM_CHAT_THINKING_MODE': 'disabled',
                             'LLM_REASONING_EFFORT': 'high', 'LLM_MODEL_PROFILES': []}.items():
             self.stack.enter_context(patch.object(settings, name, value))
         self.stack.enter_context(patch.multiple(
@@ -141,7 +141,7 @@ class ModelSelectionTests(unittest.TestCase):
                         self.assertEqual(kwargs.get('top_p'), 0.95 if mode == 'enabled' else None)
 
     def test_modern_inherit_uses_default_model_without_legacy_slot_switching(self):
-        settings.LLM_REASONING_MODE = True
+        settings.LLM_CHAT_THINKING_MODE = "enabled"
         selection = resolve_selection(thinking_mode='inherit')
         self.assertEqual(selection.model, 'deepseek-flash')
         self.assertTrue(selection.thinking)
@@ -162,6 +162,43 @@ class ModelSelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_selection('o3-mini', 'disabled')
         self.assertTrue(resolve_selection('o3-mini', 'inherit').thinking)
+
+    def test_custom_capability_overrides_do_not_depend_on_model_name(self):
+        settings.LLM_MODEL_PROFILES = [{"id": "proxy-model", "adapter": "compatible",
+            "thinking": "toggle", "efforts": ["low", "high"]}]
+        enabled = resolve_selection("proxy-model", "enabled", effort="low")
+        disabled = resolve_selection("proxy-model", "disabled")
+        self.assertEqual(generation_controls(enabled)["reasoning_effort"], "low")
+        self.assertEqual(generation_controls(disabled)["reasoning_effort"], "none")
+        self.assertEqual(enabled.model, disabled.model)
+        self.assertEqual(resolve_selection("proxy-model", "enabled", effort=None).effort, "high")
+
+    def test_declared_deepseek_efforts_are_not_overridden_by_legacy_aliases(self):
+        settings.LLM_MODEL_PROFILES = [{"id": "custom", "adapter": "deepseek",
+            "thinking": "toggle", "efforts": ["medium"]}]
+        self.assertEqual(resolve_selection("custom", "enabled", effort="medium").effort, "medium")
+
+    def test_model_without_effort_levels_omits_global_and_request_effort(self):
+        settings.LLM_MODEL_PROFILES = [{"id": "custom", "adapter": "deepseek",
+            "thinking": "toggle", "efforts": []}]
+        for effort in (None, "inherit", "high"):
+            with self.subTest(effort=effort):
+                selected = resolve_selection("custom", "enabled", effort=effort)
+                self.assertIsNone(selected.effort)
+                kwargs = self._generate_with_both_transports(
+                    None, model="custom", thinking_mode="enabled", reasoning_effort=effort)
+                self.assertNotIn("reasoning_effort", kwargs)
+                self.assertEqual(kwargs["extra_body"]["thinking"]["type"], "enabled")
+
+    def test_auxiliary_tasks_keep_their_own_modes_and_efforts(self):
+        with patch.multiple(settings, LLM_MEMORY_MODEL="deepseek-flash", LLM_MEMORY_THINKING_MODE="enabled",
+                LLM_MEMORY_REASONING_EFFORT="low", LLM_TTS_PREPROCESS_MODEL="deepseek-flash",
+                LLM_TTS_THINKING_MODE="disabled", LLM_TRANSLATION_MODEL="deepseek-flash",
+                LLM_TRANSLATION_THINKING_MODE="enabled", LLM_TRANSLATION_REASONING_EFFORT=None):
+            self.assertEqual(auxiliary_controls("memory", 0.3)["reasoning_effort"], "low")
+            self.assertNotIn("reasoning_effort", auxiliary_controls("tts", 0.3))
+            self.assertNotIn("reasoning_effort", auxiliary_controls("translation", 0.3))
+            self.assertEqual(auxiliary_controls("translation", 0.3)["extra_body"]["thinking"]["type"], "enabled")
 
     def test_auxiliary_tasks_keep_their_own_thinking_strategy(self):
         with patch.multiple(settings, LLM_MEMORY_MODEL='deepseek-flash',

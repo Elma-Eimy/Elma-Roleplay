@@ -23,7 +23,7 @@
             v-model:effort="store.reasoningEffort"
             :catalog="store.catalog"
             :default-model="store.defaults.default_chat_model"
-            :default-thinking="store.defaults.reasoning_mode"
+            :default-thinking="store.defaults.chat_thinking_mode === 'enabled'"
             :default-effort="store.defaults.reasoning_effort"
           /><text class="scope-hint"
             >新故事采用默认配置，之后独立保存。</text

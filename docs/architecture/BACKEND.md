@@ -24,6 +24,8 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 ## 模块边界
 
+`core/config.py` 负责旧配置迁移、类型绑定、配置快照及串行原子保存。`core/model_settings.py` 是不读取全局配置的模型能力、选择与参数规则；基础设施层保留既有调用入口并向规则传入快照。模型和思考模式独立，各辅助任务分别解析；旧双模型槽位只在迁移和旧请求兼容时使用。保存失败不发布新状态，非法 YAML 不静默回退。详见[模型设置](../features/MODEL_SELECTION.md)。
+
 群聊的数据、个人上下文、导演、后台恢复与成员记忆机制见 [群聊架构](GROUP_CHAT.md)。功能范围查 [群聊说明](../features/GROUP_CHAT.md)，HTTP 契约查 [群聊接口](../api/GROUP_SESSIONS.md)。
 
 | 位置 | 负责 | 不应放入 |

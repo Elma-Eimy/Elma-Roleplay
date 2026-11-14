@@ -262,6 +262,8 @@ class ModelProfile(BaseModel):
     id: str = Field(min_length=1, max_length=200)
     label: str = Field(default="", max_length=200)
     adapter: Literal["compatible", "deepseek", "reasoning"] = "compatible"
+    thinking: Optional[Literal["unsupported", "toggle", "always"]] = None
+    efforts: Optional[list[Literal["minimal", "low", "medium", "high", "xhigh", "max"]]] = Field(None, max_length=6)
 
     @field_validator("id")
     @classmethod
@@ -272,6 +274,9 @@ class ModelProfile(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
+    chat_thinking_mode: Optional[Literal["enabled", "disabled"]] = None
+    translation_thinking_mode: Optional[Literal["enabled", "disabled"]] = None
+    translation_reasoning_effort: Optional[str] = None
     translation_model: Optional[str] = Field(None, min_length=1, max_length=200)
     default_chat_model: Optional[str] = Field(None, min_length=1, max_length=200)
     model_profiles: Optional[list[ModelProfile]] = Field(None, max_length=100)

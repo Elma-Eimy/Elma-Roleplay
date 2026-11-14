@@ -6,12 +6,12 @@
     >
     <GenerationPicker
       :model="settings.default_chat_model"
-      :thinking-mode="settings.reasoning_mode ? 'enabled' : 'disabled'"
+      :thinking-mode="settings.chat_thinking_mode"
       :effort="settings.reasoning_effort || 'inherit'"
       :catalog="catalog"
       @update:model="emit('change', { default_chat_model: $event })"
       @update:thinkingMode="
-        emit('change', { reasoning_mode: $event === 'enabled' })
+        emit('change', { chat_thinking_mode: $event === 'enabled' ? 'enabled' : 'disabled' })
       "
       @update:effort="
         emit('change', {
@@ -53,7 +53,15 @@
               }}
               ⌄</view
             ></picker
-          ><button
+          ><picker
+            :range="thinkingLabels"
+            :value="thinkingValues.indexOf(settings.model_profiles.find(item => item.id === profile.id)?.thinking ?? null)"
+            @change="setProfile(profile.id, { thinking: thinkingValues[Number($event.detail.value)] })"
+          ><view class="adapter-value">思考能力：{{ profile.thinking === 'toggle' ? '可开关' : profile.thinking === 'always' ? '始终开启' : '不支持' }} ⌄</view></picker>
+          <input class="model-input" :value="profile.efforts.join(', ')"
+            placeholder="支持的档位，逗号分隔；留空恢复默认"
+            @input="(event: any) => setEfforts(profile.id, event.detail.value)" />
+          <button
             v-if="
               settings.model_profiles.some((item) => item.id === profile.id)
             "
@@ -85,16 +93,23 @@
           >角色卡翻译、记忆与认知、语音文本整理使用独立设置，不随聊天中的模型切换。</text
         >
         <text class="configuration-intro">角色卡中文阅读模型</text>
-        <picker :range="catalog" range-key="label" :value="translationModelIndex" @change="selectTranslationModel">
-          <view class="translation-model">{{ settings.translation_model }} · 点击切换</view>
-        </picker>
+        <GenerationPicker
+          model-label="角色卡中文阅读模型"
+          :model="settings.translation_model"
+          :thinking-mode="settings.translation_thinking_mode"
+          :effort="settings.translation_reasoning_effort || 'inherit'"
+          :catalog="catalog"
+          @update:model="emit('change', { translation_model: $event })"
+          @update:thinkingMode="emit('change', { translation_thinking_mode: $event === 'enabled' ? 'enabled' : 'disabled' })"
+          @update:effort="emit('change', { translation_reasoning_effort: $event === 'inherit' ? null : $event })"
+        />
         <text class="configuration-intro">译文独立保存，不改变聊天设定。</text>
         <view class="auxiliary-divider"></view>
         <GenerationPicker
           model-label="记忆与认知模型"
           :model="settings.memory_model"
           :thinking-mode="settings.memory_thinking_mode"
-          :effort="settings.memory_reasoning_effort"
+          :effort="settings.memory_reasoning_effort || 'inherit'"
           :catalog="catalog"
           @update:model="emit('change', { memory_model: $event })"
           @update:thinkingMode="
@@ -103,14 +118,14 @@
                 $event === 'enabled' ? 'enabled' : 'disabled',
             })
           "
-          @update:effort="emit('change', { memory_reasoning_effort: $event })"
+          @update:effort="emit('change', { memory_reasoning_effort: $event === 'inherit' ? null : $event })"
         />
         <view class="auxiliary-divider"></view
         ><GenerationPicker
           model-label="语音文本整理模型"
           :model="settings.tts_preprocess_model"
           :thinking-mode="settings.tts_thinking_mode"
-          :effort="settings.tts_reasoning_effort"
+          :effort="settings.tts_reasoning_effort || 'inherit'"
           :catalog="catalog"
           @update:model="emit('change', { tts_preprocess_model: $event })"
           @update:thinkingMode="
@@ -118,7 +133,7 @@
               tts_thinking_mode: $event === 'enabled' ? 'enabled' : 'disabled',
             })
           "
-          @update:effort="emit('change', { tts_reasoning_effort: $event })"
+          @update:effort="emit('change', { tts_reasoning_effort: $event === 'inherit' ? null : $event })"
         /> </view
     ></view>
   </view>
@@ -135,17 +150,18 @@ const emit = defineEmits<{
   (event: "change", value: Partial<AppSettings>): void;
 }>();
 const catalog = computed(() => configuredCatalog(props.settings));
-const translationModelIndex = computed(() => Math.max(0, catalog.value.findIndex(item => item.id === props.settings.translation_model)));
-function selectTranslationModel(event: { detail: { value: string | number } }) {
-  const model = catalog.value[Number(event.detail.value)];
-  if (model) emit('change', { translation_model: model.id });
-}
 const showProfiles = ref(false);
 const showAuxiliary = ref(false);
 const newId = ref("");
 const profileError = ref("");
 const adapterValues: ModelAdapter[] = ["compatible", "deepseek", "reasoning"];
-const adapterLabels = ["普通兼容模型", "DeepSeek 思考兼容", "固定思考推理模型"];
+const adapterLabels = ["通用兼容参数", "DeepSeek thinking 参数", "reasoning_effort 参数"];
+const thinkingValues: (ModelProfile["thinking"] | null)[] = [null, "unsupported", "toggle", "always"];
+const thinkingLabels = ["按适配方式默认", "不支持思考", "可开关思考", "始终开启思考"];
+function setEfforts(id: string, text: string) {
+  const efforts = text.split(/[,，\s]+/).filter(Boolean);
+  setProfile(id, { efforts: efforts.length ? efforts : null });
+}
 function setProfile(id: string, patch: Partial<ModelProfile>) {
   const rows = props.settings.model_profiles.map((item) => ({ ...item }));
   const existing = rows.find((item) => item.id === id);

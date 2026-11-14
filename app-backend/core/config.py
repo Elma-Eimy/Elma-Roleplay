@@ -1,6 +1,13 @@
 import os
 import yaml
 import copy
+import math
+import tempfile
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+
+from core.model_settings import validate_model_settings
 from dotenv import load_dotenv
 
 # 加载 .env 文件中的环境变量
@@ -16,16 +23,19 @@ CONFIG_SCHEMA = {
         # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
         "default_chat_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_DEFAULT_CHAT_MODEL"},
         "model_profiles": {"type": list, "default": [], "dynamic": True, "attr": "LLM_MODEL_PROFILES"},
+        "chat_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_CHAT_THINKING_MODE"},
+        "translation_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_TRANSLATION_THINKING_MODE"},
+        "translation_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_TRANSLATION_REASONING_EFFORT", "allow_none": True},
         "translation_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TRANSLATION_MODEL"},
         "memory_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_MEMORY_THINKING_MODE"},
-        "memory_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_MEMORY_REASONING_EFFORT"},
+        "memory_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_MEMORY_REASONING_EFFORT", "allow_none": True},
         "tts_preprocess_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_TTS_PREPROCESS_MODEL"},
         "tts_thinking_mode": {"type": str, "default": "disabled", "dynamic": True, "attr": "LLM_TTS_THINKING_MODE"},
-        "tts_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_TTS_REASONING_EFFORT"},
+        "tts_reasoning_effort": {"type": str, "default": "high", "dynamic": True, "attr": "LLM_TTS_REASONING_EFFORT", "allow_none": True},
         # 旧客户端 use_reasoning=True 使用的模型槽
-        "chat_model": {"type": str, "default": "gpt-3.5-turbo", "dynamic": False, "attr": "CHAT_MODEL_REASONING"},
+        "chat_model": {"type": str, "default": "gpt-3.5-turbo", "dynamic": False, "attr": "CHAT_MODEL_REASONING", "legacy_model": True},
         # 旧客户端 use_reasoning=False 使用的模型槽，同时作为旧配置 TTS 初始值
-        "non_reasoning_chat_model": {"type": str, "default": "", "dynamic": False, "attr": "CHAT_MODEL_NON_REASONING"},
+        "non_reasoning_chat_model": {"type": str, "default": "", "dynamic": False, "attr": "CHAT_MODEL_NON_REASONING", "legacy_model": True},
         # 专门用于记忆提取、归纳与归并的大模型模型标识
         "memory_model": {"type": str, "default": "", "dynamic": True, "attr": "LLM_MEMORY_MODEL"},
         # 向量嵌入大模型模型标识，用于生成记忆与世界书的向量特征值
@@ -41,7 +51,7 @@ CONFIG_SCHEMA = {
         # 聊天模型单词响应生成的最大 Token 限制
         "max_tokens": {"type": int, "default": 4096, "dynamic": True, "attr": "LLM_MAX_TOKENS"},
         # 是否默认开启聊天模型的深度推理思考模式 (Reasoning Mode)
-        "reasoning_mode": {"type": bool, "default": False, "dynamic": True, "attr": "LLM_REASONING_MODE"},
+        "reasoning_mode": {"type": bool, "default": False, "dynamic": True, "attr": "LLM_REASONING_MODE", "legacy": True},
         # 大模型网络请求超时时长 (秒)
         "timeout": {"type": float, "default": 60.0, "dynamic": False, "attr": "LLM_TIMEOUT"},
         # 聊天生成采样时的 Top-P (核采样) 阀值
@@ -143,58 +153,75 @@ CONFIG_SCHEMA = {
 }
 
 class Settings:
-    def __init__(self):
-        # 敏感信息从环境变量获取，彻底分离 Chat 和 Embedding
+    def __init__(self, config_path=None):
+        self._config_path = Path(config_path) if config_path is not None else Path(parent_dir) / "config.yaml"
+        self._update_lock = threading.RLock()
         self.CHAT_API_KEY = os.getenv("CHAT_API_KEY", "your-chat-api-key")
         self.EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "your-embedding-api-key")
         self.ACCESS_API_KEY = os.getenv("ACCESS_API_KEY", "")
         self.MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
-        
-        # 非敏感配置从 config.yaml 获取
         self.config = self._load_yaml_config()
-        
-        # 进行配置升级合并与类属性绑定
         self.migrate_and_bind_config()
 
-    def migrate_and_bind_config(self):
-        """对比 Schema，自动合并缺失配置项，并动态绑定为类属性"""
-        has_updates = False
-        llm = self.config.setdefault("llm", {})
-        if not llm.get("default_chat_model"):
-            raw_mode = llm.get("reasoning_mode", False)
-            reasoning = raw_mode.lower() in ("true", "1", "yes") if isinstance(raw_mode, str) else bool(raw_mode)
-            llm["default_chat_model"] = (llm.get("chat_model") if reasoning else llm.get("non_reasoning_chat_model")) or llm.get("chat_model") or "gpt-3.5-turbo"
-            has_updates = True
-        
-        # 翻译初始值复用已有非思考模型，避免凭空加入另一种供应商模型 ID。
-        # 只初始化一次；显式选择的独立翻译模型保持不变。
-        if not llm.get("translation_model"):
-            llm["translation_model"] = llm.get("non_reasoning_chat_model") or llm.get("chat_model") or llm["default_chat_model"]
-            has_updates = True
+    @property
+    def LLM_REASONING_MODE(self):
+        return self.LLM_CHAT_THINKING_MODE == "enabled"
 
+    @LLM_REASONING_MODE.setter
+    def LLM_REASONING_MODE(self, value):
+        self.LLM_CHAT_THINKING_MODE = "enabled" if value else "disabled"
+
+    def _bind(self):
         for namespace, items in CONFIG_SCHEMA.items():
-            ns_dict = self.config.setdefault(namespace, {})
-            
+            section = self.config.setdefault(namespace, {})
+            if not isinstance(section, dict):
+                raise ValueError(f"配置段 {namespace} 必须是对象。")
             for key, meta in items.items():
-                # 1. 自动补全缺失字段
-                if key not in ns_dict:
-                    ns_dict[key] = copy.deepcopy(meta["default"])
-                    has_updates = True
-                
-                # 2. 获取值并强制转换类型
-                val = ns_dict[key]
-                converted_val = self._convert_value(val, meta)
-                
-                # 3. 动态属性名绑定
-                attr_name = meta.get("attr") or f"{namespace.upper()}_{key.upper()}"
-                setattr(self, attr_name, converted_val)
-
-        # 4. 后置动态推导处理（fallback 机制）
+                if meta.get("legacy"):
+                    continue
+                if meta.get("legacy_model"):
+                    # 新配置不再生成双槽位；仅为旧请求提供原槽位或当前默认模型。
+                    value = section.get(key) or section.get("chat_model") or self.LLM_DEFAULT_CHAT_MODEL
+                    setattr(self, meta["attr"], value)
+                    continue
+                value = self._convert_value(section.setdefault(key, copy.deepcopy(meta["default"])), meta)
+                setattr(self, meta["attr"], value)
         self._post_process_config()
 
-        # 5. 如果发生变更，自动回写升级配置文件
-        if has_updates:
-            self._save_yaml_config()
+    def migrate_and_bind_config(self):
+        with self._update_lock:
+            candidate = copy.copy(self)
+            candidate.config = copy.deepcopy(self.config)
+            llm = candidate.config.setdefault("llm", {})
+            if not isinstance(llm, dict):
+                raise ValueError("配置段 llm 必须是对象。")
+            legacy_chat = "chat_thinking_mode" not in llm
+            legacy_mode = candidate._convert_value(llm.get("reasoning_mode", False), {"type": bool, "default": False})
+            legacy_pro = llm.get("chat_model") or "gpt-3.5-turbo"
+            legacy_flash = llm.get("non_reasoning_chat_model") or legacy_pro
+            has_legacy_slots = "chat_model" in llm or "non_reasoning_chat_model" in llm
+            if has_legacy_slots:
+                llm["chat_model"] = legacy_pro
+                llm["non_reasoning_chat_model"] = legacy_flash
+            if not llm.get("default_chat_model"):
+                llm["default_chat_model"] = legacy_pro if legacy_mode else legacy_flash
+            llm.setdefault("chat_thinking_mode", "enabled" if legacy_mode else "disabled")
+            # 只在读取旧配置时冻结辅助任务原来的模型；运行时不再依赖双槽位。
+            for key, initial in (("memory_model", legacy_pro if has_legacy_slots else llm["default_chat_model"]),
+                                 ("tts_preprocess_model", legacy_flash if has_legacy_slots else llm["default_chat_model"]),
+                                 ("translation_model", legacy_flash if has_legacy_slots else llm["default_chat_model"])):
+                if not llm.get(key):
+                    llm[key] = initial
+            candidate._bind()
+            candidate._normalize_model_modes(legacy_chat=legacy_chat)
+            if candidate.config != self.config:
+                candidate._save_yaml_config()
+            self.__dict__ = candidate.__dict__.copy()
+
+    def _normalize_model_modes(self, **kwargs):
+        modes = validate_model_settings(self, **kwargs)
+        self.config["llm"].update(modes)
+        self._bind()
 
     def _convert_value(self, val, meta):
         """根据 Schema 元数据转换值类型"""
@@ -229,74 +256,87 @@ class Settings:
         try:
             if target_type == bool:
                 if isinstance(val, str):
+                    if val.lower() not in ("true", "1", "yes", "false", "0", "no"):
+                        raise ValueError("布尔配置必须是 true 或 false。")
                     return val.lower() in ("true", "1", "yes")
                 return bool(val)
-            return target_type(val)
-        except (ValueError, TypeError):
-            return copy.deepcopy(meta["default"])
+            converted = target_type(val)
+            if isinstance(converted, float) and not math.isfinite(converted):
+                raise ValueError("配置数值必须是有限值。")
+            return converted
+        except (ValueError, TypeError) as exc:
+            raise ValueError("配置值类型无效。") from exc
 
     def _post_process_config(self):
-        """处理后置参数的默认回退和激活状态"""
-        # 模型别名与回退默认值设定
-        if not getattr(self, "CHAT_MODEL_NON_REASONING", ""):
-            self.CHAT_MODEL_NON_REASONING = getattr(self, "CHAT_MODEL_REASONING", "")
-        if not getattr(self, "LLM_MEMORY_MODEL", ""):
-            self.LLM_MEMORY_MODEL = getattr(self, "CHAT_MODEL_REASONING", "")
-
-        if not self.LLM_TTS_PREPROCESS_MODEL:
-            self.LLM_TTS_PREPROCESS_MODEL = self.CHAT_MODEL_NON_REASONING
         self.ACTIVE_CHAT_MODEL = self.LLM_DEFAULT_CHAT_MODEL
+        self.config["llm"]["reasoning_mode"] = self.LLM_REASONING_MODE
 
-    def update_and_persist(self, updates: dict):
-        """动态更新运行时配置，并回写持久化到 config.yaml (零 Hardcode)"""
-        updated = False
-        
+    def snapshot(self):
+        with self._update_lock:
+            values = {key: copy.deepcopy(value) for key, value in vars(self).items() if key.isupper()}
+            values["LLM_REASONING_MODE"] = self.LLM_REASONING_MODE
+            return SimpleNamespace(**values)
+
+    def prepare_update(self, updates):
+        candidate = copy.copy(self)
+        candidate.config = copy.deepcopy(self.config)
+        updates = dict(updates)
+        if "reasoning_mode" in updates and updates["reasoning_mode"] is not None:
+            alias = "enabled" if self._convert_value(updates["reasoning_mode"], {"type": bool, "default": False}) else "disabled"
+            if updates.get("chat_thinking_mode", alias) != alias:
+                raise ValueError("chat_thinking_mode 与兼容字段 reasoning_mode 冲突。")
+            updates["chat_thinking_mode"] = alias
+        changed = False
         for field, value in updates.items():
-            if value is None and field != "reasoning_effort":
+            if value is None and field not in ("reasoning_effort", "memory_reasoning_effort", "tts_reasoning_effort", "translation_reasoning_effort"):
                 continue
-            
-            # 在 Schema 中动态检索字段定义
-            found = False
-            for namespace, items in CONFIG_SCHEMA.items():
-                if field in items:
-                    meta = items[field]
-                    if meta.get("dynamic", False):
-                        converted_val = self._convert_value(value, meta)
-                        
-                        # 1. 动态更新类内存属性
-                        attr_name = meta.get("attr") or f"{namespace.upper()}_{field.upper()}"
-                        setattr(self, attr_name, converted_val)
-                        
-                        # 2. 动态更新树状配置字典结构
-                        self.config.setdefault(namespace, {})[field] = converted_val
-                        updated = True
-                        found = True
+            for namespace, fields in CONFIG_SCHEMA.items():
+                meta = fields.get(field)
+                if meta is not None:
+                    if meta.get("dynamic") and not meta.get("legacy"):
+                        converted = candidate._convert_value(value, meta)
+                        candidate.config[namespace][field] = converted
+                        changed = True
                     break
-            
-            if not found:
-                print(f"[WARN] Settings: 字段 {field} 未定义或不允许运行时修改，跳过更新。")
+        candidate._bind()
+        candidate._normalize_model_modes(updates=updates)
+        return candidate, changed
 
-        if updated:
-            # 回写前更新联动后置属性 (如从 reasoning_mode 更新 ACTIVE_CHAT_MODEL)
-            self._post_process_config()
-            self._save_yaml_config()
+    def update_and_persist(self, updates):
+        """先验证并原子保存候选配置，成功后一次发布运行状态。"""
+        with self._update_lock:
+            candidate, changed = self.prepare_update(updates)
+            if changed:
+                candidate._save_yaml_config()
+                self.__dict__ = candidate.__dict__.copy()
 
-    def _load_yaml_config(self, filepath="config.yaml"):
-        full_path = os.path.join(parent_dir, filepath)
+    def _load_yaml_config(self, filepath=None):
+        path = Path(filepath) if filepath is not None else self._config_path
         try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-        except Exception as e:
-            print(f"Failed to load config.yaml at {full_path}: {e}")
+            with path.open("r", encoding="utf-8") as handle:
+                value = yaml.safe_load(handle)
+        except FileNotFoundError:
             return {}
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("配置文件根节点必须是对象。")
+        return value
 
-    def _save_yaml_config(self, filepath="config.yaml"):
-        full_path = os.path.join(parent_dir, filepath)
+    def _save_yaml_config(self, filepath=None):
+        path = Path(filepath) if filepath is not None else self._config_path
+        temporary = None
         try:
-            with open(full_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(self.config, f, allow_unicode=True, sort_keys=False)
-            print(f"[INFO] Settings: 成功持久化保存了更新后的设置到 {full_path}")
-        except Exception as e:
-            print(f"[ERROR] Settings: 持久化保存设置失败: {e}")
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=path.name + ".", suffix=".tmp", delete=False) as handle:
+                temporary = Path(handle.name)
+                yaml.safe_dump(self.config, handle, allow_unicode=True, sort_keys=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
 
 settings = Settings()

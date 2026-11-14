@@ -4,6 +4,9 @@ import type { ModelProfile, ModelCapability } from "@/types/generation";
 // ===================== 类型定义 =====================
 
 export interface AppSettings {
+  chat_thinking_mode: "enabled" | "disabled";
+  translation_thinking_mode: "enabled" | "disabled";
+  translation_reasoning_effort: string | null;
   translation_model: string;
   default_chat_model: string;
   model_profiles: ModelProfile[];
@@ -11,10 +14,10 @@ export interface AppSettings {
   reasoning_effort: string | null;
   memory_model: string;
   memory_thinking_mode: "enabled" | "disabled";
-  memory_reasoning_effort: string;
+  memory_reasoning_effort: string | null;
   tts_preprocess_model: string;
   tts_thinking_mode: "enabled" | "disabled";
-  tts_reasoning_effort: string;
+  tts_reasoning_effort: string | null;
   temperature: number;
   reasoning_mode: boolean;
   context_history_limit: number;
@@ -44,6 +47,9 @@ export interface UpdateSettingsResponse {
 // ===================== 默认设定值 =====================
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  chat_thinking_mode: "disabled",
+  translation_thinking_mode: "disabled",
+  translation_reasoning_effort: "high",
   translation_model: "",
   default_chat_model: "",
   model_profiles: [],
@@ -82,7 +88,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
  */
 export async function getSettings(): Promise<AppSettings> {
   const settings = await request<AppSettings>("/utils/settings");
-  return { ...DEFAULT_SETTINGS, ...settings };
+  return { ...DEFAULT_SETTINGS, ...settings,
+    chat_thinking_mode: settings.chat_thinking_mode ?? (settings.reasoning_mode ? "enabled" : "disabled") };
 }
 
 /**
@@ -93,8 +100,10 @@ export async function getSettings(): Promise<AppSettings> {
 export async function updateSettings(
   data: SettingsUpdate
 ): Promise<UpdateSettingsResponse> {
+  const payload = { ...data };
+  if (payload.chat_thinking_mode !== undefined) delete payload.reasoning_mode;
   return request<UpdateSettingsResponse>("/utils/settings", {
     method: "PUT",
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 }

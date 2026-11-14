@@ -16,17 +16,17 @@ export function configuredCatalog(
       ...model,
       label: model.label || model.id,
       thinking:
-        model.adapter === "deepseek"
+        model.thinking ?? (model.adapter === "deepseek"
           ? "toggle"
           : model.adapter === "reasoning"
             ? "always"
-            : "unsupported",
+            : "unsupported"),
       efforts:
-        model.adapter === "deepseek"
+        model.efforts ?? (model.adapter === "deepseek"
           ? ["low", "high", "max"]
           : model.adapter === "reasoning"
             ? ["low", "medium", "high"]
-            : [],
+            : []),
     });
   }
   return [...values.values()];
@@ -42,7 +42,7 @@ export function effectiveGeneration(
     capability?.thinking === "always" ||
     (capability?.thinking === "toggle" &&
       (override.thinking_mode === "inherit"
-        ? settings.reasoning_mode
+        ? (settings.chat_thinking_mode ? settings.chat_thinking_mode === "enabled" : settings.reasoning_mode)
         : override.thinking_mode === "enabled"));
   return {
     id,
@@ -79,8 +79,10 @@ export function snapshotGeneration(settings: AppSettings, value: unknown): Gener
   const override = normalizeOverride(value);
   const effective = effectiveGeneration(settings, override);
   const capability = effective.capability;
+  if (capability && !capability.efforts.length)
+    return { model: effective.id, thinking_mode: effective.thinking ? "enabled" : "disabled", reasoning_effort: "inherit" };
   let effort = effective.effort || "high";
-  if (capability?.adapter === "deepseek") {
+  if (capability?.adapter === "deepseek" && !capability.efforts.includes(effort)) {
     effort = ({ minimal: "low", medium: "high", xhigh: "high", ultra: "max" } as Record<string, string>)[effort] || effort;
   }
   if (capability?.efforts.length && !capability.efforts.includes(effort))

@@ -24,8 +24,8 @@
   ```
 
 ## GET `/utils/settings`
-* Also returns `translation_model`, independently selectable for character reading translations. When absent, it initializes once from the existing non-reasoning chat model (falling back to the legacy chat model or default chat model). It uses the existing chat connection; thinking is disabled when supported and enabled for fixed-reasoning models. Changing it does not discard existing translations; use `force: true` to refresh them.
-* Also returns `default_chat_model`, `model_profiles` (editable `{id,label,adapter}` entries), `model_catalog` (read-only `{id,label,adapter,thinking,efforts}` capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`.
+* Also returns `translation_model`, `translation_thinking_mode` and `translation_reasoning_effort`, independently selectable for character reading translations. Existing translations remain unchanged; use `force: true` to refresh them. Missing task models initialize once during configuration migration, retaining the previous effective model.
+* Also returns `default_chat_model`, `chat_thinking_mode`, `model_profiles` (editable `{id,label,adapter,thinking?,efforts?}` entries), `model_catalog` (read-only capabilities), `memory_model`, `memory_thinking_mode`, `memory_reasoning_effort`, `tts_preprocess_model`, `tts_thinking_mode`, and `tts_reasoning_effort`. Null or omitted profile capability fields use adapter defaults; explicit effort lists override them. Supported effort names: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; duplicates are rejected.
 * `thinking` is `toggle`, `always`, or `unsupported`. Adapters: `compatible`, `deepseek`, `reasoning`. The catalog is configured locally; it does not query providers.
 * **Response (200 OK)**:
   ```json
@@ -56,7 +56,9 @@
 ## PUT `/utils/settings`
 * `translation_model` accepts a nonblank model ID (up to 200 characters), independently of chat, memory and TTS settings.
 * Accepts the additional GET fields above except read-only `model_catalog`. Auxiliary thinking modes are `enabled`/`disabled`; effort is a supported string. `reasoning_effort: null` resets the global effort to the provider default. Model IDs must be nonblank and profile IDs unique.
-* `reasoning_mode` controls thinking independently of `default_chat_model`. Invalid model/thinking/effort combinations return `400` before persistence; malformed fields return `422`.
+* `chat_thinking_mode` controls thinking independently of `default_chat_model`; `reasoning_mode` remains a boolean compatibility alias. Conflicting aliases return `400`. All task modes use `enabled`/`disabled`; nullable task efforts do not inherit chat effort. Fixed-thinking models cannot be explicitly disabled. Invalid model combinations return `400`, malformed fields return `422`.
+* Updates are serialized, fully validated and atomically saved before runtime publication. Save failures return `500` and retain the old file and runtime state. The new frontend omits `reasoning_mode` when sending `chat_thinking_mode`.
+* Implicit defaults for fixed-thinking models are normalized to `enabled`, so a complete GET response can be saved unchanged. Explicitly disabling such a model still returns `400`. An empty model capability `efforts` list suppresses the effort parameter, including inherited or explicitly supplied effort values.
 * **Supported fields**: Only fields declared by `app-backend/schemas.py::SettingsUpdate` are accepted. Retrieval scoring weights, ancestor weight, deduplication threshold, and graph thresholds are not exposed by this HTTP API; edit YAML and restart for those settings. `memory_handoff_margin` is accepted by PUT but is not currently included in the GET response.
 * **Request (JSON)**: *(All fields optional)*
 <!-- request-example: PUT /utils/settings -->

@@ -153,10 +153,11 @@ def validate_group_call_selection(encoded, *, model, thinking_mode, reasoning_ef
     director = value["director"]
     capability = model_capability(director["model"])
     thinking = director.get("extra_body", {}).get("thinking", {}).get("type")
-    frozen_thinking = thinking == "enabled" if thinking is not None else capability["thinking"] == "always"
+    frozen_thinking = (thinking == "enabled" if thinking is not None else
+                       director.get("reasoning_effort") not in (None, "none") or capability["thinking"] == "always")
     config = SimpleNamespace(LLM_DEFAULT_CHAT_MODEL=director["model"],
         LLM_MODEL_PROFILES=copy.deepcopy(settings.LLM_MODEL_PROFILES),
-        LLM_REASONING_MODE=frozen_thinking, LLM_REASONING_EFFORT=director.get("reasoning_effort"))
+        LLM_CHAT_THINKING_MODE="enabled" if frozen_thinking else "disabled", LLM_REASONING_EFFORT=director.get("reasoning_effort"))
     try:
         selection = resolve_selection(model, thinking_mode, effort=reasoning_effort, config=config)
     except ValueError as exc:
@@ -206,10 +207,10 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
     history._require_group(session_id, db)
     history._require_clean_transaction(db)
     # 只复制模型参数，不复制或序列化连接凭据。
-    names = ("LLM_DEFAULT_CHAT_MODEL", "CHAT_MODEL_REASONING", "CHAT_MODEL_NON_REASONING", "LLM_MODEL_PROFILES",
-             "LLM_REASONING_MODE", "LLM_REASONING_EFFORT", "LLM_TEMPERATURE", "LLM_TOP_P", "LLM_PRESENCE_PENALTY",
+    names = ("LLM_DEFAULT_CHAT_MODEL", "LLM_MODEL_PROFILES",
+             "LLM_CHAT_THINKING_MODE", "LLM_REASONING_EFFORT", "LLM_TEMPERATURE", "LLM_TOP_P", "LLM_PRESENCE_PENALTY",
              "LLM_FREQUENCY_PENALTY", "LLM_REPETITION_PENALTY", "LLM_MAX_TOKENS", "LLM_TIMEOUT", "APP_CONTEXT_HISTORY_LIMIT")
-    state = vars(settings).copy()
+    state = vars(settings.snapshot())
     config = SimpleNamespace(**{name: copy.deepcopy(state[name]) for name in names})
     connection = GroupModelConnection(state["CHAT_BASE_URL"], state["CHAT_API_KEY"])
     selection = resolve_selection(model, thinking_mode, effort=reasoning_effort, config=config)
