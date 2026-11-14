@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from routers.sessions import compile_session_prompt
-from services.conversation.prompt_token_estimator import (
+from services.conversation.prompting.token_estimator import (
     SECTION_ORDER,
     estimate_prompt_tokens,
     estimate_text_tokens,
@@ -106,11 +106,11 @@ class PromptTokenEstimatorTests(unittest.TestCase):
     def test_opening_prompt_without_user_message_is_still_reported(self):
         character = SimpleNamespace()
         persona = SimpleNamespace(character=character)
-        session = SimpleNamespace(persona=persona)
+        session = SimpleNamespace(kind="single", persona=persona)
         db = _PreviewDB(session)
 
         with patch(
-            "services.conversation.prompt_compiler.compile_system_prompt",
+            "services.conversation.prompting.compiler.compile_system_prompt",
             return_value="固定角色提示词",
         ):
             response = asyncio.run(

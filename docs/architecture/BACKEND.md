@@ -7,8 +7,8 @@ main.py
   └─ application.factory.create_app()
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
-            ├─ 启动：Alembic 升级 → 创建 Outbox、记忆重试与 CHARX 清理任务 → 启动提示
-            └─ 关闭：等待记忆处理线程 → 取消 Outbox 与 CHARX 清理任务 → 清理后台对话 Worker
+            ├─ 启动：取得数据库运行权 → Alembic 升级 → 收敛中断群聊 → 启动 Outbox、单聊/群聊记忆与 CHARX 清理任务
+            └─ 关闭：停止接受群聊 → 等待执行与后台任务清理 → 清理聊天流 → 释放数据库运行权
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 维护命令 → scripts/ → core/ 与基础设施客户端
@@ -24,12 +24,15 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 ## 模块边界
 
+群聊的数据、个人上下文、导演、后台恢复与成员记忆机制见 [群聊架构](GROUP_CHAT.md)。功能范围查 [群聊说明](../features/GROUP_CHAT.md)，HTTP 契约查 [群聊接口](../api/GROUP_SESSIONS.md)。
+
 | 位置 | 负责 | 不应放入 |
 | --- | --- | --- |
 | `main.py` | 暴露 ASGI 的 `app` | 接口处理、数据查询、后台任务管理 |
 | `application/` | 应用工厂、生命周期、启动提示 | 领域业务规则 |
 | `routers/` | 路径、输入校验、鉴权依赖、HTTP 响应与异常转换 | 复杂查询、文件恢复和对话编排 |
 | `services/conversation/` | 会话、消息、Prompt、模型执行和对话回合 | FastAPI 应用创建 |
+| `services/conversation/group/` | 群聊会话、候选、导演、个人上下文与后台执行 | 成员记忆实现、媒体存储和应用生命周期 |
 | `services/memory/` | 记忆提纯、版本、继承、检索、图谱和管理查询 | HTTP 路由装配 |
 | `services/lorebook/` | 世界书解析、触发和注入 | 服务器启动逻辑 |
 | `services/media/` | 角色卡图片导入、立绘资源与选择、音频缓存文件查找与恢复 | HTTP 状态码与 `FileResponse` |
@@ -40,6 +43,25 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 | `tests/` | 自动回归和独立手动场景 | 生产业务实现 |
 
 `character_service.py`、`parse.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色、角色卡解析和 TTS 功能。后续可按领域继续组织，迁移时应同时更新调用方，避免保留多份实现。
+
+`services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
+
+Prompt 模块集中在 `services/conversation/prompting/`。调用方从对应模块导入，包内使用相对导入；`__init__.py` 不统一加载编译器或业务服务。`compiler.py` 保留编译入口、已有导出和群聊适配，`build_chat_messages()` 只编排编译步骤。内部依赖按职责拆分：
+
+| 模块 | 职责 |
+| --- | --- |
+| `prompting/templates.py` | 角色卡宏、占位符、静态指令与后置输出协议 |
+| `prompting/examples.py` | 示例分块、发言者解析与无法结构化时的回退 |
+| `prompting/lorebook.py` | 世界书内容编译、角色深度提示词和深度插入算法 |
+| `prompting/context.py` | 世界书触发输入、记忆时间标签与当前回合动态背景 |
+| `prompting/layout.py` | 静态及示例前缀、历史格式转换、动态背景定位 |
+| `prompting/token_estimator.py` | 最终消息的启发式 Token 范围估算与分区统计 |
+
+模板和示例不依赖装配入口；消息排列不计算角色状态或调用记忆检索。动态背景先编译成有序文本块，再交给排列模块插入；业务数据库查询仍由上下文装配层及其领域服务完成。静态消息合并、示例边界、当前输入定位及最终输出协议保持原规则。单聊和群聊入口仍共用编译流程，群聊输入适配保留在原入口。
+
+`context_compression.py` 负责单聊摘要版本、来源校验、原文覆盖及分支冻结。聊天路由允许装配层按需调用压缩模型，预览只读；模型调用期间提交并结束读取事务，返回后用短写事务复核来源及版本。摘要由 `prompting/context.py` 编译，经入口固定放在最近原文之前，不改变深度插入算法或长期记忆查询。持久化、失败保留及旧分支升级边界见[会话上下文压缩](../features/CONTEXT_COMPRESSION.md)。
+
+`conversation/prompting/test_prompt_compilation_snapshot.py` 使用拆分前保存的完整消息快照，逐项比较角色、内容和顺序，覆盖单聊、分支示例、动态状态、世界书及两种群聊协议。固定虚构输入不调用真实模型；测试临时副本按现有规则复制整个 `services/` 和 `tests/`，包含所有新增模块与快照。
 
 `application/charx_upload.py` 在读取 CHARX 请求体前完成鉴权，限制流式请求总字节与并发上传，再交给仅允许一个文件的 multipart 解析。`services/media/charx_plan.py` 明确 CCv3 字段映射与兼容性报告；`charx_import.py` 负责有界 ZIP 读取、短期预览、素材去重与确认保存。解压和像素解码在生命周期锁外运行，同一 ZIP 条目的失败也缓存；临时目录不公开。`application.lifecycle` 管理每 60 秒回收过期预览的任务。状态接口从 SQLite 幂等回执恢复已提交结果，不依赖临时文件；取消/过期仅保留短期状态标记。`character_portraits.content_sha256` 支持跨上传去重，旧资源按需填充，资源共享仍沿用 Outbox 引用检查。保持单进程部署，不引入额外任务队列。
 
@@ -61,7 +83,23 @@ CHARX 确认区分新建、追加素材和更新已有角色；设定合并、�
 
 `joint_retrieval.py` 编排向量种子、图谱扩展、SQLite 支持卡回查、整理摘要映射和共同预算；`memory_facts.py` 提供共用载荷、故事时间语义及自动卡来源校验。Prompt 接收统一事实卡，图谱不单独注入重复正文；ChromaDB 继续只作可重建索引。
 
+群聊候选转换由 `services/conversation/group/candidate_state.py` 集中维护；任务与持久目标的执行校验在 `group/execution_scope.py`，事务仍由历史、检查点和操作接受服务持有。状态规则与数据库提交分开，具体边界见[群聊架构](GROUP_CHAT.md#候选生命周期与执行校验)。
+
+## 会话类型隔离与迁移
+
+新共同群聊的已接受调度在 `group_dispatches` 独立保存，审计只提供镜像记录；`group/dispatch_service.py` 管理业务调度，`group/legacy_protocol.py` 处理旧候选的审计兼容。版本标记、迁移和恢复边界见[群聊业务调度](GROUP_CHAT.md#业务调度与旧协议兼容)。
+
+HTTP 接口通过 `application/session_routes.py` 声明访问策略：现有接口使用默认单聊的 `SessionAPIRouter`，群聊管理使用 `GroupSessionAPIRouter`。路由在 FastAPI 完成参数校验后、调用业务函数前，检查路径/查询参数和 Pydantic 请求模型中的 `session_id`、`parent_session_id`、`persona_id`、`message_id`；嵌套模型与模型列表同样检查，自由格式元数据不作为资源引用。新增同类接口自动获得所属策略的类型限制，漏用路由类型会在应用装配时失败；资源入口缺少 `db` 依赖时拒绝执行。鉴权、422 参数错误及原接口的资源不存在语义继续保留。
+
+直接服务调用和后台重试仍通过 `get_single_session`、`get_single_message` 或 `get_single_persona` 加载资源；内部步骤复用已加载对象，跨事务重新加载。`api/test_session_access_architecture.py` 自动发现全部服务中同时声明 `db` 和上述资源参数的公开函数、类方法，使用群聊夹具验证拒绝访问且不改动数据，不维护入口名单。按显式人格隔离的共享算法使用 `@session_kind_agnostic("原因")` 声明例外；该标记不豁免 HTTP 校验，新增例外需要审查其成员选择与分支语义。自建数据库会话的回合维护、按任务 ID 调度的 Worker 继续由后台专项测试覆盖。群聊专用服务使用 `@group_session_operation` 声明类型，自动发现测试对其传入单聊资源验证反向隔离。新增资源标识命名或新的任务调度机制时，需要扩展发现规则和专项测试。
+
+列表筛选与角色删除保护仍是各自的业务规则。群聊路由仅允许 group 目标；创建请求中的 `origin.session_id` 映射为内部 `source_session_id`，始终按 single 来源检查。来源与目标不会共用一个模糊的类型豁免。不同策略不能重复包装同一业务入口；后续群聊子资源也沿用明确的策略及归属校验。
+
+Alembic 在线迁移在事务外暂停当前连接的外键执行，随后用 `BEGIN IMMEDIATE` 将表重建与版本号更新纳入同一事务，提交前执行 `foreign_key_check`，失败整体回滚，退出时恢复原外键设置。这样重建 Persona 或 Session 表时不会触发引用表的级联删除和置空。普通业务连接仍启用外键；含群聊数据时拒绝降级到 M1-A 之前的结构。
+
 ## 后台任务
+
+群聊运行权、提纯 Worker 与关闭顺序见 [群聊生命周期](GROUP_CHAT.md#进程生命周期与隔离预览)。应用关闭等待清理完成后才释放数据库运行权。
 
 进行中事件由 `memory_event_buffer.py` 纯内存规划并持久化到 `memory_event_buffers`。`memory_extraction_jobs.py` 先将候选与接收进度原子保存，再按依赖组件处理；所有外部调用位于写事务之外，提交时核对来源、旧卡、缓冲版本和租约。单独的 `memory_retry_worker.py` 退避重试，生命周期关闭会等待其线程结束。聊天装配向纯 Prompt 编译器传入有效事件和待处理候选；事件与图谱辅助来源分别失效。迁移和测试副本沿用现有复制范围，详见[进行中事件](../features/MEMORY_EVENTS.md)。
 

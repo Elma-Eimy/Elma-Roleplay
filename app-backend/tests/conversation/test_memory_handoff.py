@@ -221,60 +221,27 @@ class MemoryHandoffTests(unittest.TestCase):
             ),
         )
 
-    def test_context_assembler_uses_handoff_limit_and_regenerate_compensation(self):
+    def test_context_assembler_uses_compressed_prefix_and_uncovered_originals(self):
         db = MagicMock()
+        db.get.return_value = SimpleNamespace(id=1, kind="single", persona=SimpleNamespace(id=3))
         character = SimpleNamespace(id=2)
         persona = SimpleNamespace(id=3)
         user_msg = SimpleNamespace(id=10, content="她之前说了什么？")
-
+        context = SimpleNamespace(summary="较早剧情的摘要", remaining=[{"role": "assistant", "content": "最近原文"}])
         with (
-            patch.object(
-                context_assembler,
-                "get_memory_handoff_history_limit",
-                return_value=18,
-            ),
-            patch.object(
-                context_assembler,
-                "retrieve_joint_memories",
-                return_value=[],
-            ),
-            patch.object(
-                context_assembler.session_service,
-                "get_session_history_with_inheritance",
-                return_value=[],
-            ) as history_mock,
-            patch.object(
-                context_assembler,
-                "get_parent_history_examples",
-                return_value=[],
-            ),
-            patch.object(
-                context_assembler,
-                "build_chat_messages",
-                return_value=[],
-            ),
-            patch.object(context_assembler, "resolve_state", return_value=({"state": {}}, [])),
+            patch.object(context_assembler, "_prepare_context", new_callable=AsyncMock, return_value=context) as prepare,
+            patch.object(context_assembler, "retrieve_joint_memories", return_value=[]),
+            patch.object(context_assembler, "build_chat_messages", return_value=[]) as build,
+            patch.object(context_assembler, "_resolve_state", return_value=({"state": {}}, [])),
         ):
-            asyncio.run(context_assembler.assemble_prompt_context(
-                session_id=1,
-                character=character,
-                persona=persona,
-                user_msg=user_msg,
-                old_reply=None,
-                db=db,
-            ))
-            history_mock.assert_called_once_with(1, db, 18)
-
-            history_mock.reset_mock()
-            asyncio.run(context_assembler.assemble_prompt_context(
-                session_id=1,
-                character=character,
-                persona=persona,
-                user_msg=user_msg,
-                old_reply=SimpleNamespace(id=11),
-                db=db,
-            ))
-            history_mock.assert_called_once_with(1, db, 19)
+            for old_reply in (None, SimpleNamespace(id=11)):
+                asyncio.run(context_assembler.assemble_prompt_context(
+                    1, character, persona, user_msg, old_reply, db, compress_context=True,
+                ))
+                prepare.assert_awaited_with(db.get.return_value, 10, db, compress=True)
+                self.assertEqual(context.summary, build.call_args.kwargs["context_summary"])
+                self.assertEqual(context.remaining, build.call_args.kwargs["recent_history"])
+                self.assertIsNone(build.call_args.kwargs["parent_history"])
 
     def test_auto_trigger_uses_effective_handoff_threshold(self):
         db = MagicMock()

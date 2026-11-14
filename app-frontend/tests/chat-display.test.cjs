@@ -62,6 +62,33 @@ test("scroll follows new content only while pinned and flags unread otherwise", 
   scope.stop();
 });
 
+test("pagination scroll timers respect page invalidation and cannot clear a newer anchor", async () => {
+  const timers = new Map();
+  let sequence = 0, valid = true;
+  const vue = { ...require("vue"), onMounted() {}, onUnmounted() {} };
+  const scroll = createLoader({ mocks: { vue }, globals: {
+    setTimeout: (callback, delay) => { const id = ++sequence; timers.set(id, { callback, delay }); return id; },
+    clearTimeout: id => timers.delete(id),
+  } })("composables/useChatScroll.ts").useChatScroll();
+  const fireNext = delay => {
+    const [id, timer] = [...timers].find(([, value]) => value.delay === delay);
+    timers.delete(id); timer.callback();
+  };
+  await scroll.maintainScrollPosition("stale", () => valid);
+  valid = false; fireNext(50);
+  assert.equal(scroll.scrollIntoViewId.value, "");
+  valid = true;
+  await scroll.maintainScrollPosition("old", () => valid);
+  fireNext(50);
+  assert.equal(scroll.scrollIntoViewId.value, "old");
+  valid = false;
+  await scroll.maintainScrollPosition("new");
+  fireNext(50); fireNext(100);
+  assert.equal(scroll.scrollIntoViewId.value, "new");
+  fireNext(100);
+  assert.equal(scroll.scrollIntoViewId.value, "");
+});
+
 function storeFixture() {
   setActivePinia(createPinia());
   const persona = { userNickname: "user", loadSessionDetail: async () => {}, applyAffectionChange() {} };

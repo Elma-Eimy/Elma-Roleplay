@@ -1,5 +1,6 @@
 """有界、可审阅、可撤销的记忆整理；模型仅生成建议，SQLite 决定可应用范围。"""
 
+from services.conversation.session_access import session_kind_agnostic
 import json
 import logging
 import time
@@ -80,6 +81,7 @@ def list_batches(session_id, db, limit=10, offset=0):
             "has_more": offset + len(items) < total, "scan_status": scan_status(persona.id, db)}
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def eligible_query(persona_id, db):
     visible_filter, hidden_ids = memory_view(persona_id, db)
     return db.query(MemoryChunk).filter(
@@ -90,10 +92,12 @@ def eligible_query(persona_id, db):
     )
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def scan_status(persona_id, db):
     return scan.collect(eligible_query(persona_id, db))[2]
 
 
+@session_kind_agnostic('按显式资源归属执行共享读取，不选择单聊人格')
 def group_conflicts(persona_id, payload, db):
     expected = {row["id"]: row for row in payload["sources"]}
     ids = {i for group in payload["groups"] for i in group["source_ids"]}

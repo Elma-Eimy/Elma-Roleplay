@@ -46,6 +46,25 @@ function fixture(getSettings = async () => ({})) {
   };
 }
 
+test("an explicit request snapshot survives settings loading without replacing newer choices", async () => {
+  const pending = deferred();
+  const f = fixture(() => pending.promise);
+  f.store.activateSession(1);
+  f.store.modelId = "deepseek-flash";
+  f.store.thinkingMode = "disabled";
+  f.store.reasoningEffort = "high";
+  const snapshot = { ...f.store.selection };
+  const request = f.store.requestGeneration(1, snapshot);
+  f.store.modelId = "deepseek-v4-pro";
+  pending.resolve({});
+  const result = await request;
+  assert.equal(result.model, "deepseek-flash");
+  assert.equal(f.store.modelId, "deepseek-v4-pro");
+  const stored = JSON.parse(f.storage.get("story_generation_v1:https://one.test"));
+  assert.equal(stored['1'].model, "deepseek-v4-pro");
+  f.store.$dispose();
+});
+
 test("story choices are concrete and persist independently without legacy switching", async () => {
   const { store } = fixture();
   store.activateSession(1);
@@ -112,18 +131,21 @@ test("late global settings from the previous server cannot replace current defau
   assert.equal(store.defaults.default_chat_model, "deepseek-flash");
 });
 
-test("new sends and regenerations carry identical independent model and thinking choices", async () => {
+for (const platform of ["H5", "MP-WEIXIN", "APP-PLUS"]) {
+test(`${platform} sends and regenerations share settings while preserving their message boundaries`, async () => {
   const { store: settings } = fixture();
   const requests = [];
   const load = createLoader({
+    platform,
     mocks: {
-      "@/api/config": { getBaseUrl: () => "https://one.test" },
+      "@/api/config": { getBaseUrl: () => "https://one.test", getSavedApiKey: () => "" },
       "@/api/sessions": {},
       "@/api/chat": {
         sendMessageStream: async (request, chunk, done) => {
           requests.push(request);
           done({
             assistant_message_id: 9,
+            user_message_id: 8,
             affection_score: 0,
             model_used: request.model,
           });
@@ -132,7 +154,7 @@ test("new sends and regenerations carry identical independent model and thinking
       "./chatSettingsStore": { useChatSettingsStore: () => settings },
       "./personaStore": {
         usePersonaStore: () => ({
-          userNickname: "用户",
+          userNickname: "玩家",
           applyAffectionChange() {},
         }),
       },
@@ -146,16 +168,61 @@ test("new sends and regenerations carry identical independent model and thinking
   settings.modelId = "deepseek-flash";
   settings.thinkingMode = "enabled";
   settings.reasoningEffort = "max";
+  settings.temperature = 0;
+  settings.top_p = null;
+  settings.presence_penalty = 0;
+  settings.frequency_penalty = 0.25;
+  settings.repetition_penalty = 1.1;
+  function finishAppRequest(isRegenerate) {
+    if (platform !== "APP-PLUS") return;
+    const request = chat.activeStreamRequest;
+    assert.ok(request);
+    assert.equal(Boolean(request.userMessageTempId), !isRegenerate);
+    requests.push(request.params);
+    chat.completeStream(request.placeholderId, {
+      assistant_message_id: 9,
+      user_message_id: 8,
+      affection_score: 0,
+      model_used: request.params.model,
+    }, request.userMessageTempId);
+  }
   await chat.sendChatMessage(4, "Hello");
+  finishAppRequest(false);
   await chat.regenerateChatMessage(4);
+  finishAppRequest(true);
   assert.equal(requests.length, 2);
   for (const request of requests) {
+    assert.equal(request.session_id, 4);
+    assert.equal(request.user_message, "Hello");
+    assert.equal(request.user_nickname, "玩家");
     assert.equal(request.model, "deepseek-flash");
     assert.equal(request.thinking_mode, "enabled");
     assert.equal(request.reasoning_effort, "max");
     assert.equal(request.use_reasoning, undefined);
+    assert.equal(request.temperature, 0);
+    assert.equal(request.top_p, undefined);
+    assert.equal(request.presence_penalty, 0);
+    assert.equal(request.frequency_penalty, 0.25);
+    assert.equal(request.repetition_penalty, 1.1);
+    assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(request)), "top_p"), false);
   }
+  assert.equal(Object.hasOwn(requests[0], "is_regenerate"), false);
+  assert.equal(requests[1].is_regenerate, true);
+  assert.equal(chat.messages.filter(message => message.role === "user").length, 1);
+  assert.equal(chat.messages.filter(message => message.role === "assistant").length, 1);
+
+  settings.temperature = 0.8;
+  settings.top_p = 0.6;
+  await chat.sendChatMessage(4, "Next");
+  finishAppRequest(false);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].temperature, 0.8);
+  assert.equal(requests[2].top_p, 0.6);
+  assert.equal(requests[0].temperature, 0);
+  assert.equal(requests[1].top_p, undefined);
+  chat.$reset();
 });
+}
 
 
 test("default updates affect new stories while existing stories keep their snapshot", async () => {

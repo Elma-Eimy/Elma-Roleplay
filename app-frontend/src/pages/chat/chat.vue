@@ -10,27 +10,7 @@
       { 'is-android': isAndroid, 'is-immersive': isImmersive, 'is-portrait-only': isImmersive && isPortraitOnly },
     ]"
   >
-    <view
-      class="chat-bg"
-      :class="`mode-${backgroundMode}`"
-    >
-      <image
-        v-if="isImmersive && isWideScreen"
-        class="chat-scene-wash"
-        :src="characterBackgroundUrl"
-        mode="aspectFill"
-        aria-hidden="true"
-      />
-      <image
-        v-if="isImmersive"
-        class="chat-scene-image"
-        :src="characterBackgroundUrl"
-        :mode="isWideScreen ? 'aspectFit' : 'aspectFill'"
-        :key="characterBackgroundUrl"
-        :data-source="characterBackgroundUrl"
-        @error="onPortraitUnavailable"
-      />
-    </view>
+    <ChatSceneBackground :src="characterBackgroundUrl" :immersive="isImmersive" :wide="isWideScreen" @unavailable="onPortraitUnavailable" />
 
     <!-- App 端流式传输通信桥梁 (仅 APP-PLUS 环境下有效) -->
     <!-- #ifdef APP-PLUS -->
@@ -201,6 +181,7 @@ import {
   updateSessionTitle, 
   getCompiledPrompt
 } from "@/api/sessions";
+import ChatSceneBackground from "@/components/chat/ChatSceneBackground.vue";
 import ChatHeader from "@/components/chat/ChatHeader.vue";
 import ChatMessageList from "@/components/chat/ChatMessageList.vue";
 import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";

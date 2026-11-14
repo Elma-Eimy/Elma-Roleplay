@@ -1,5 +1,6 @@
 """写入查重候选：语义距离召回与 SQLite 近期卡补偿。"""
 
+from services.conversation.session_access import session_kind_agnostic
 import logging
 import math
 from sqlalchemy import or_
@@ -14,6 +15,7 @@ from services.memory.memory_visibility import memory_view
 logger = logging.getLogger("uvicorn.error.memory_extraction")
 
 
+@session_kind_agnostic('按显式人格查找写入候选，不选择会话成员')
 def retrieve_write_candidates(persona_id, character_id, query, db, *, memory_type,
                               temporal_status, temporal_note, batch_ids=(), release_read=None):
     """返回同类型、兼容时间状态的可见卡，不使用聊天召回的重要性与衰减排名。"""

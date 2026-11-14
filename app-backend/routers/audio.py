@@ -1,11 +1,13 @@
 """Authenticated audio downloads; recovery belongs to the media service."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from services.media.audio_service import resolve_audio_file
 
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 
 @router.get("/audio/{filename}")

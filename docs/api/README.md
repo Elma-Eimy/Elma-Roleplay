@@ -7,11 +7,14 @@
 | 通用、配置与音频 | [GENERAL.md](GENERAL.md) |
 | 角色、翻译、CHARX 与立绘 | [CHARACTERS.md](CHARACTERS.md) |
 | 会话、分支、消息、状态与记忆 | [SESSIONS.md](SESSIONS.md) |
+| 群聊管理、整轮生成、候选与恢复 | [GROUP_SESSIONS.md](GROUP_SESSIONS.md) |
 | 世界书、词条与角色绑定 | [LOREBOOKS.md](LOREBOOKS.md) |
 | 聊天、SSE 与候选切换 | [CHAT.md](CHAT.md) |
 | 记忆筛选、继承与整理的补充规则 | [MEMORY_API.md](MEMORY_API.md) |
 
 接入功能时先从总表选择领域，再对照后端路由、`schemas.py` 与前端领域 API 和类型。运行中的 `/docs`、`/openapi.json` 提供框架声明的信息；未声明响应模型的接口、SSE、分叉与事务规则需查领域契约及测试，不能只靠 OpenAPI 推断。
+
+当前会话、消息、聊天、Prompt、记忆、认知、角色状态、立绘选择与消息绑定 TTS 接口只支持单聊。传入 group 会话或其消息 ID 返回 409，拒绝发生在写入、后台入队与模型调用之前。群聊创建、列表、详情、删除、整轮生成、候选操作和恢复查询使用独立的 [群聊接口](GROUP_SESSIONS.md)，拒绝单聊 ID。生成操作由后台接受，断连后通过原请求 ID 查询，不自动重发 POST。单聊列表的计数和分页均排除 group；删除被 group 引用的角色也返回 409，须先处理相关群聊。
 
 ## 自动校验范围
 

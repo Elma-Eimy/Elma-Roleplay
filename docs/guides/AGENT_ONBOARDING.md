@@ -4,6 +4,8 @@
 
 ## 阅读顺序与资料用途
 
+群聊任务先读 [当前架构](../architecture/GROUP_CHAT.md)，再查 [最新实施进度](../plans/group-chat/README.md) 与 [验收索引](../testing/group-chat/README.md)。模块设计和交接历史中的状态按记录当时理解，不作为当前待办。
+
 1. 阅读 [项目概览](../../README.md)，确认涉及的产品功能与平台。
 2. 查 [后端架构](../architecture/BACKEND.md) 或 [前端架构](../architecture/FRONTEND.md)，定位模块边界。
 3. 从下表找到代码与测试，沿调用方阅读实现；涉及接口时对照 [API 总表](../../API_TABLE.md)。
@@ -18,7 +20,8 @@
 | 任务 | 代码入口 | 测试起点 | 补充阅读 |
 | --- | --- | --- | --- |
 | 启动、鉴权、生命周期 | `app-backend/application/factory.py`、`lifecycle.py`、`core/` | 后端 `api/test_application.py`、`core/test_migration_logging.py` | [后端架构](../architecture/BACKEND.md) |
-| 聊天、Prompt、失败清理 | `app-backend/routers/chat.py`、`services/conversation/chat_turn_service.py`、`chat_engine.py`、`context_assembler.py`、`prompt_compiler.py` | 后端 `conversation/test_chat_turn_service.py`、`test_character_prompt_compatibility.py`、`test_stream_background_persistence.py` | [后端说明](../../app-backend/README.md) 中的 Prompt 规则 |
+| 聊天、Prompt、失败清理 | `app-backend/routers/chat.py`、`services/conversation/chat_turn_service.py`、`chat_engine.py`、`context_assembler.py`、`prompting/compiler.py` | 后端 `conversation/test_chat_turn_service.py`、`conversation/prompting/test_character_prompt_compatibility.py`、`test_stream_background_persistence.py` | [后端说明](../../app-backend/README.md) 中的 Prompt 规则 |
+| 群聊创建、导演、候选与后台恢复 | `app-backend/routers/group_sessions.py`、`services/conversation/group/session_service.py`、`operation_service.py`、`background_service.py`、`round_service.py` | 后端 `conversation/group/test_group_session_service.py`、`test_group_background.py`、`test_group_candidate_state.py` | [群聊架构与维护入口](../architecture/GROUP_CHAT.md#代码组织与维护入口) |
 | 分支、消息、候选切换 | `app-backend/services/conversation/session_service.py`、`message_service.py`；`app-frontend/src/store/chatStore.ts`、`api/messages.ts` | 后端 `conversation/test_branch_context_boundary.py`；前端 `session-api.test.cjs`、`session-lifecycle.test.cjs` | [API 总表](../../API_TABLE.md) |
 | SSE、取消与 App 桥接 | `app-frontend/src/api/chat.ts`、`chatStream.ts`、`transports/appStream.ts`、`utils/chatStreamProtocol.ts`、`components/chat/ChatStreamBridge.vue` | 前端 `stream.test.cjs`、`app-stream.test.cjs`、`session-lifecycle.test.cjs` | [前端架构](../architecture/FRONTEND.md) |
 | 记忆提取、事件与重试 | `app-backend/services/memory/memory_extraction_service.py`、`memory_extraction_jobs.py`、`memory_event_buffer.py`、`memory_retry_worker.py` | 后端 `memory/test_memory_extraction_jobs.py`、`test_memory_event_buffer.py`、`test_event_retention.py` | [进行中事件](../features/MEMORY_EVENTS.md) |

@@ -1,5 +1,9 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal
+from uuid import UUID
+
+# sqlite3 不能绑定超过有符号 64 位范围的 Python 整数。
+SQLITE_INT_MAX = (1 << 63) - 1
 
 class RoleStateUpdate(BaseModel):
     model_config = {"extra": "forbid"}
@@ -87,6 +91,136 @@ class SessionCreate(BaseModel):
     title: str = "New Story"
     greeting_index: Optional[int] = None
     start_message_id: Optional[int] = None
+
+
+class GroupMemberOrigin(BaseModel):
+    model_config = {"extra": "forbid"}
+    mode: Literal["card", "single_snapshot"]
+    # 对外保持 origin.session_id；内部名称表明它始终是单聊来源。
+    source_session_id: Optional[int] = Field(None, alias="session_id", gt=0, le=SQLITE_INT_MAX, strict=True)
+
+    @model_validator(mode="after")
+    def valid_source(self):
+        if self.mode == "card" and self.source_session_id is not None:
+            raise ValueError("原卡起步不能指定来源故事")
+        if self.mode == "single_snapshot" and self.source_session_id is None:
+            raise ValueError("导入快照需要来源单聊 ID")
+        return self
+
+
+class GroupMemberCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    character_id: int = Field(gt=0, le=SQLITE_INT_MAX, strict=True)
+    origin: GroupMemberOrigin
+    greeting_index: Optional[int] = Field(default=None, ge=0, le=SQLITE_INT_MAX, strict=True)
+    greeting_content: Optional[str] = Field(default=None, max_length=20000)
+
+    @model_validator(mode="after")
+    def greeting_source(self):
+        if self.origin.mode != "card" and (self.greeting_index is not None or self.greeting_content is not None):
+            raise ValueError("导入人格不能指定开场白")
+        return self
+
+
+class GroupSessionCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    title: str = Field(default="新的群聊", min_length=1, max_length=50)
+    user_nickname: str = Field(default="用户", min_length=1, max_length=50)
+    shared_setting: Optional[str] = Field(default=None, max_length=20000)
+    members: list[GroupMemberCreate] = Field(min_length=2, max_length=3)
+
+    @field_validator("title", "user_nickname", mode="before")
+    @classmethod
+    def nonblank_text(cls, value):
+        if not isinstance(value, str):
+            return value
+        if not value.strip():
+            raise ValueError("标题和昵称不能为空白")
+        return value.strip()
+
+    @field_validator("shared_setting")
+    @classmethod
+    def normalize_setting(cls, value):
+        return value.strip() or None if value is not None else None
+
+    @model_validator(mode="after")
+    def unique_members(self):
+        if len({member.character_id for member in self.members}) != len(self.members):
+            raise ValueError("同一角色卡不能重复加入群聊")
+        return self
+
+
+class GroupCommandBase(BaseModel):
+    model_config = {"extra": "forbid"}
+    client_request_id: UUID
+    expected_group_revision: int = Field(ge=0, le=SQLITE_INT_MAX, strict=True)
+    observed_round_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_revision: Optional[int] = Field(None, ge=0, le=SQLITE_INT_MAX, strict=True)
+
+    @model_validator(mode="after")
+    def complete_observation(self):
+        values = (self.observed_round_id, self.observed_candidate_id, self.observed_candidate_revision)
+        if any(value is None for value in values) and any(value is not None for value in values):
+            raise ValueError("所见轮次、候选及版本需要同时提供或同时为空")
+        return self
+
+
+class GroupPortraitChange(BaseModel):
+    model_config = {"extra": "forbid"}
+    portrait_id: Optional[int] = Field(..., gt=0, le=SQLITE_INT_MAX, strict=True)
+    expected_group_revision: int = Field(ge=0, le=SQLITE_INT_MAX, strict=True)
+    observed_round_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_id: Optional[int] = Field(None, gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_revision: Optional[int] = Field(None, ge=0, le=SQLITE_INT_MAX, strict=True)
+
+    @model_validator(mode="after")
+    def complete_observation(self):
+        values = (self.observed_round_id, self.observed_candidate_id, self.observed_candidate_revision)
+        if any(value is None for value in values) and any(value is not None for value in values):
+            raise ValueError("所见轮次、候选及版本需要同时提供或同时为空")
+        return self
+
+
+class GroupGenerationOptions(BaseModel):
+    model_config = {"extra": "forbid"}
+    model: Optional[str] = Field(None, min_length=1, max_length=200)
+    thinking_mode: Optional[Literal["inherit", "enabled", "disabled"]] = None
+    reasoning_effort: Optional[str] = Field(None, min_length=1, max_length=30)
+    max_steps: int = Field(4, ge=1, le=6, strict=True)
+
+    @field_validator("model")
+    @classmethod
+    def nonblank_model(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("模型 ID 不能为空白")
+        return value.strip() if value is not None else None
+
+
+class GroupRoundSend(GroupCommandBase, GroupGenerationOptions):
+    user_content: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("user_content")
+    @classmethod
+    def nonblank_content(cls, value):
+        if not value.strip():
+            raise ValueError("用户输入不能为空白")
+        return value
+
+
+class GroupRoundMutation(GroupCommandBase):
+    observed_round_id: int = Field(gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_id: int = Field(gt=0, le=SQLITE_INT_MAX, strict=True)
+    observed_candidate_revision: int = Field(ge=0, le=SQLITE_INT_MAX, strict=True)
+
+
+class GroupRoundRegenerate(GroupRoundMutation, GroupGenerationOptions):
+    pass
+
+
+class GroupCandidateCommand(GroupRoundMutation):
+    target_candidate_id: int = Field(gt=0, le=SQLITE_INT_MAX, strict=True)
+    target_candidate_revision: int = Field(ge=0, le=SQLITE_INT_MAX, strict=True)
 
 
 class CharacterTranslationRequest(BaseModel):

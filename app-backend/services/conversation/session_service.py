@@ -13,6 +13,7 @@ import os
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession, aliased
 from sqlalchemy.sql import func
+from services.conversation.session_access import get_single_session
 from core.models import (
     Session as SessionModel, 
     SessionPersona, 
@@ -35,6 +36,7 @@ def get_recent_sessions(limit: int, offset: int, db: DBSession) -> dict:
     total = (
         db.query(func.count(SessionModel.id))
         .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+        .filter(SessionModel.kind == "single")
         .join(Character, Character.id == SessionPersona.character_id)
         .scalar()
         or 0
@@ -56,6 +58,7 @@ def get_recent_sessions(limit: int, offset: int, db: DBSession) -> dict:
     rows = (
         db.query(SessionModel, SessionPersona, Character, latest_message)
         .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+        .filter(SessionModel.kind == "single")
         .join(Character, Character.id == SessionPersona.character_id)
         .outerjoin(latest_message, latest_message.id == latest_message_id)
         .order_by(SessionModel.updated_at.desc(), SessionModel.id.desc())
@@ -119,6 +122,7 @@ def get_character_sessions(
     total = (
         db.query(func.count(SessionModel.id))
         .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+        .filter(SessionModel.kind == "single")
         .filter(SessionPersona.character_id == character_id)
         .scalar()
         or 0
@@ -140,6 +144,7 @@ def get_character_sessions(
         rows = (
             db.query(SessionModel, SessionPersona, latest_message)
             .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+            .filter(SessionModel.kind == "single")
             .outerjoin(latest_message, latest_message.id == latest_message_id)
             .filter(SessionPersona.character_id == character_id)
             .order_by(SessionModel.updated_at.desc(), SessionModel.id.desc())
@@ -153,6 +158,7 @@ def get_character_sessions(
             for session, persona in (
                 db.query(SessionModel, SessionPersona)
                 .join(SessionPersona, SessionPersona.session_id == SessionModel.id)
+                .filter(SessionModel.kind == "single")
                 .filter(SessionPersona.character_id == character_id)
                 .order_by(SessionModel.updated_at.desc(), SessionModel.id.desc())
                 .offset(offset)
@@ -215,7 +221,7 @@ def safe_delete_session(session_id: int, db: DBSession) -> dict:
       4. 约束验证通过后，将异步清理任务写入发件箱表
       5. db.commit() 最终提交
     """
-    session = db.get(SessionModel, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise ValueError(f"Session {session_id} 不存在")
 
@@ -353,6 +359,8 @@ def create_session_service(
     if not character:
         raise ValueError("Character not found")
 
+    parent_session = get_single_session(parent_session_id, db) if parent_session_id is not None else None
+
     # 创建 SessionModel 实体
     session = SessionModel(
         parent_session_id=parent_session_id,
@@ -364,7 +372,6 @@ def create_session_service(
     # 创建并绑定 SessionPersona 实体（管理好感度与心情等动态运行状态）
     if parent_session_id:
         # ── 继承/分支模式 ──
-        parent_session = db.get(SessionModel, parent_session_id)
         if not parent_session or not parent_session.persona:
             db.rollback()
             raise ValueError("Parent session or its persona not found")
@@ -491,6 +498,8 @@ def create_session_service(
 
         if start_message:
             session.fork_message_id = start_message.id
+            from services.conversation.context_compression import _branch_base, _encode
+            persona.context_base = _encode(_branch_base(parent_session, start_message, db))
             from services.conversation.role_state_service import state_before_message
             from services.conversation.role_state_schema import encode_state
             persona.role_state_base = encode_state(state_before_message(start_message, db))
@@ -537,7 +546,7 @@ def create_session_service(
 
 
 def update_session_title(session_id: int, title: str, db: DBSession) -> dict:
-    session = db.get(SessionModel, session_id)
+    session = get_single_session(session_id, db)
     if session is None:
         raise ValueError("Session not found")
 
@@ -556,6 +565,17 @@ def update_session_title(session_id: int, title: str, db: DBSession) -> dict:
     }
 
 
+def get_session_history_page(session_id, db, limit, before_id=None):
+    """历史与候选共用一次单聊加载。"""
+    session = get_single_session(session_id, db)
+    if session is None:
+        return None
+    messages = _history_for_session(session, db, limit, before_id)
+    parent_ids = [message.parent_id for message in messages
+                  if message.role == MessageRole.assistant and message.parent_id is not None]
+    return messages, _candidates_for_session(session, parent_ids, db)
+
+
 def get_session_history_with_inheritance(
     session_id: int, 
     db: DBSession, 
@@ -568,8 +588,15 @@ def get_session_history_with_inheritance(
     注：根据对齐后的颗粒度要求，开启子会话时不再合并父会话的原始消息记录，
     以便子会话独立于父会话重新起步，因此此处仅拉取当前会话的消息，不再递归向上追溯。
     """
+    session = get_single_session(session_id, db)
+    if session is None:
+        return []
+    return _history_for_session(session, db, limit, before_id)
+
+
+def _history_for_session(session, db, limit, before_id=None):
     query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
+        ChatMessage.session_id == session.id,
         ChatMessage.is_active == True
     )
     if before_id is not None:
@@ -590,13 +617,20 @@ def get_candidates_by_parent(
     db: DBSession,
 ) -> dict[int, list[ChatMessage]]:
     """在单次查询中获取历史页面中所有滑动候选（swipe candidates）。"""
+    session = get_single_session(session_id, db)
+    if session is None:
+        return {}
+    return _candidates_for_session(session, parent_ids, db)
+
+
+def _candidates_for_session(session, parent_ids, db):
     if not parent_ids:
         return {}
 
     candidates = (
         db.query(ChatMessage)
         .filter(
-            ChatMessage.session_id == session_id,
+            ChatMessage.session_id == session.id,
             ChatMessage.role == MessageRole.assistant,
             ChatMessage.parent_id.in_(set(parent_ids)),
         )
@@ -640,12 +674,13 @@ def save_chat_response(
     Returns:
         元组 (ai_message_id, final_affection_score, candidates_list)
     """
-    p = db.get(SessionPersona, persona_id)
-    if not p:
-        raise ValueError("SessionPersona not found")
+    session = get_single_session(session_id, db)
+    p = session.persona if session is not None else None
+    if p is None or p.id != persona_id:
+        raise ValueError("SessionPersona does not belong to this session")
 
-    from services.conversation.role_state_service import validated_model_patch
-    encoded_state_patch = validated_model_patch(session_id, user_msg_id, role_state_patch, db)
+    from services.conversation.role_state_service import _validated_model_patch
+    encoded_state_patch = _validated_model_patch(session, user_msg_id, role_state_patch, db)
 
     # Swipe 候选支持：此时才真正使旧回复失效，并扣减好感度评分以保持事务原子性
     if is_regenerate and old_reply_id:
@@ -675,9 +710,7 @@ def save_chat_response(
     p.current_mood = emotion_tag
 
     # Touch Session 更新时间戳
-    session_obj = db.get(SessionModel, session_id)
-    if session_obj:
-        session_obj.updated_at = func.now()
+    session.updated_at = func.now()
 
     try:
         # 在提交前完成 ID 分配、候选查询和响应构建，避免 commit 成功后再发生

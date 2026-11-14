@@ -12,6 +12,10 @@
 """
 
 import abc
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Optional, Any, AsyncIterator
 from openai import OpenAI, AsyncOpenAI
 from core.config import settings
@@ -116,7 +120,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         """
         调用异步客户端的 chat.completions.create 接口获取回复
         """
-        return await self.async_client.chat.completions.create(
+        client = self.async_client
+        if kwargs.pop("_group_no_retry", False):
+            client = client.with_options(max_retries=0)
+        return await client.chat.completions.create(
             model=model,
             messages=messages,
             **kwargs
@@ -136,6 +143,38 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
 # 全局提供商单例对象
 _global_provider = None
+
+
+@asynccontextmanager
+async def group_model_session(connection, *, timeout):
+    """轮次专属客户端，冻结连接并关闭 SDK 重试，不改变单聊客户端。"""
+    client = AsyncOpenAI(api_key=connection.api_key, base_url=connection.base_url, max_retries=0, timeout=timeout)
+    completed = False
+    try:
+        yield client
+        completed = True
+    finally:
+        closing = asyncio.create_task(client.close())
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(closing)
+                break
+            except asyncio.CancelledError:
+                if closing.cancelled():
+                    raise
+                cancelled = True
+            except Exception as exc:
+                logging.getLogger(__name__).warning("群聊客户端清理失败 error_type=%s", type(exc).__name__)
+                break
+        if cancelled and not completed:
+            raise asyncio.CancelledError
+
+
+@dataclass(frozen=True)
+class GroupModelConnection:
+    base_url: str
+    api_key: str = field(repr=False)
 
 
 def get_llm_provider() -> BaseLLMProvider:

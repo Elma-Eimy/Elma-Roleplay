@@ -13,7 +13,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, AsyncMock, MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -170,6 +170,7 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
 
     def test_context_assembler_passes_query_and_cutoff_to_joint_retrieval(self):
         db = MagicMock()
+        db.get.return_value = SimpleNamespace(id=1, kind="single", persona=SimpleNamespace(id=3))
         character = SimpleNamespace(id=2)
         persona = SimpleNamespace(id=3)
         user_msg = SimpleNamespace(id=10, content="What about him?")
@@ -186,26 +187,15 @@ class ContextualRetrievalQueryTests(unittest.TestCase):
                 return_value=[],
             ) as memory_mock,
             patch.object(
-                context_assembler,
-                "get_memory_handoff_history_limit",
-                return_value=15,
-            ),
-            patch.object(
-                context_assembler.session_service,
-                "get_session_history_with_inheritance",
-                return_value=[],
-            ),
-            patch.object(
-                context_assembler,
-                "get_parent_history_examples",
-                return_value=[],
+                context_assembler, "_prepare_context", new_callable=AsyncMock,
+                return_value=SimpleNamespace(summary="", remaining=[]),
             ),
             patch.object(
                 context_assembler,
                 "build_chat_messages",
                 return_value=[],
             ),
-            patch.object(context_assembler, "resolve_state", return_value=({"state": {}}, [])),
+            patch.object(context_assembler, "_resolve_state", return_value=({"state": {}}, [])),
         ):
             asyncio.run(
                 context_assembler.assemble_prompt_context(

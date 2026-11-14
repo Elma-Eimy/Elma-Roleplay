@@ -1,5 +1,6 @@
 """手动整理的版本扫描记录；不召回旧卡，不执行语义聚类。"""
 
+from services.conversation.session_access import session_kind_agnostic
 import hashlib
 import json
 from sqlalchemy import and_, func
@@ -39,6 +40,7 @@ def collect(query, mode="incremental", after_id=0):
                              "pending_count": eligible - checked}
 
 
+@session_kind_agnostic('仅更新指定人格的扫描指纹，不选择会话成员')
 def record_unchanged(persona_id, expected, query, db, groups=()):
     """短写事务内复核；过期建议的整组来源不推进，保留重试所需的同组卡。"""
     current = {chunk.id: fingerprint(chunk)

@@ -1,4 +1,12 @@
 [
+  ["POST", "/group-sessions"],
+  ["GET", "/group-sessions"],
+  ["GET", "/group-sessions/{session_id}"],
+  ["GET", "/group-sessions/{session_id}/portraits"],
+  ["GET", "/group-sessions/{session_id}/members/{persona_id}/compile_prompt"],
+  ["GET", "/group-sessions/{session_id}/members/{persona_id}/memories"],
+  ["PUT", "/group-sessions/{session_id}/members/{persona_id}/portrait"],
+  ["POST", "/group-sessions/{session_id}/delete"],
   ["POST", "/characters/charx/preview"],
   ["GET", "/characters/charx/previews/{token}/images"],
   ["GET", "/characters/charx/previews/{token}/status"],
@@ -10,6 +18,7 @@
   ["POST", "/characters/{character_id}/portraits/{portrait_id}/delete"],
   ["GET", "/sessions/{session_id}/portrait"],
   ["PUT", "/sessions/{session_id}/portrait"],
+  ["GET", "/sessions/{session_id}/context-compression"],
   [
     "DELETE",
     "/characters/{character_id}"
@@ -218,5 +227,14 @@
     "PUT",
     "/utils/settings"
   ],
-  ["GET", "/sessions/{session_id}/memory-processing"]
+  ["GET", "/sessions/{session_id}/memory-processing"],
+  ["GET", "/group-sessions/{session_id}/rounds"],
+  ["POST", "/group-sessions/{session_id}/rounds"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/regenerate"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/resume"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/select-candidate"],
+  ["POST", "/group-sessions/{session_id}/rounds/{round_id}/discard"],
+  ["GET", "/group-sessions/{session_id}/requests/{client_request_id}"],
+  ["GET", "/group-sessions/{session_id}/rounds/{round_id}/candidates"],
+  ["GET", "/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}"]
 ]

@@ -1,5 +1,6 @@
 """SQLite 权威记忆视图：分叉边界、整理快照和多来源屏蔽。"""
 
+from services.conversation.session_access import session_kind_agnostic
 from collections import defaultdict
 from sqlalchemy import and_, or_, select, func
 from core.models import MemoryChunk, MemoryConsolidationScope, MemoryConsolidationSource
@@ -10,6 +11,7 @@ def memory_source_bound(chunk):
     return chunk.source_message_id_bound if chunk.source_message_id_bound is not None else chunk.source_message_id
 
 
+@session_kind_agnostic('只计算显式人格的记忆可见性，不选择会话成员')
 def branch_memory_filter(persona_id, db, before_message_id=None):
     segments = build_branch_turn_segments(persona_id, db)
     conditions = []
@@ -28,6 +30,7 @@ def branch_memory_filter(persona_id, db, before_message_id=None):
     return or_(*conditions) if conditions else MemoryChunk.persona_id == persona_id
 
 
+@session_kind_agnostic('只计算显式人格的记忆可见性，不选择会话成员')
 def consolidation_state(persona_id, db, branch_filter=None):
     """只认可本故事保存的整理快照；父故事后续的应用/撤销不改变它。"""
     if branch_filter is None:
@@ -57,6 +60,7 @@ def consolidation_state(persona_id, db, branch_filter=None):
     return active_summaries, masked_sources
 
 
+@session_kind_agnostic('只计算显式人格的记忆可见性，不选择会话成员')
 def memory_view(persona_id, db, before_message_id=None):
     """每次操作只解析一次整理和分支状态，返回可见 SQL 条件与收起的原卡 ID。"""
     branch_filter = branch_memory_filter(persona_id, db, before_message_id)

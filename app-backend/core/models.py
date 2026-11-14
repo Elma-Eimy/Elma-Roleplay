@@ -9,11 +9,13 @@ SQLite (SQLAlchemy ORM) + ChromaDB (向量存储)
 
 from sqlalchemy import (
     Table, Column, Integer, String, Text, Float, Boolean,
-    ForeignKey, DateTime, Enum as SAEnum, Index, text
+    ForeignKey, ForeignKeyConstraint, DateTime, Enum as SAEnum, Index, text, CheckConstraint, UniqueConstraint, event
 )
 from sqlalchemy.orm import declarative_base, relationship, backref
 from sqlalchemy.sql import func
 import enum
+from core.group_recall_schema_v1 import install_triggers
+from core.group_recall_schema_v2 import install_parts_trigger
 
 Base = declarative_base()
 
@@ -117,8 +119,16 @@ class CharacterPackageImport(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (CheckConstraint("kind IN ('single', 'group')", name="ck_sessions_kind"),
+                      Index("uq_sessions_id_kind", "id", "kind", unique=True),
+                      {"sqlite_autoincrement": True})
 
     id                = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(10), nullable=False, default="single", server_default="single")
+    group_revision = Column(Integer, CheckConstraint("group_revision >= 0", name="ck_group_revision"),
+                            nullable=False, default=0, server_default="0")
+    shared_setting = Column(Text, nullable=True)
+    user_nickname = Column(String(50), nullable=True)
     parent_session_id = Column(
         Integer,
         ForeignKey("sessions.id", ondelete="SET NULL"),
@@ -147,12 +157,20 @@ class Session(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # 关联
-    persona = relationship(
+    personas = relationship(
         "SessionPersona",
         back_populates="session",
-        uselist=False,
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+        order_by="SessionPersona.member_slot",
     )
+
+    @property
+    def persona(self):
+        """兼容单聊读取；群聊必须显式选择成员。"""
+        if self.kind not in (None, "single"):
+            return None
+        return next((item for item in self.personas if item.member_slot in (None, 0)), None)
+
     messages = relationship(
         "ChatMessage",
         back_populates="session",
@@ -165,11 +183,33 @@ class Session(Base):
         backref="parent_session",
         remote_side=[id]
     )
+    context_checkpoints = relationship(
+        "ContextCheckpoint", cascade="all, delete-orphan", back_populates="session",
+    )
+
+
+class ContextCheckpoint(Base):
+    """会话前缀的压缩版本；来源摘要用于拒绝已修改或删除的历史。"""
+    __tablename__ = "context_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("session_id", "source_count", "source_hash", name="uq_context_checkpoint_source"),
+        CheckConstraint("source_count > 0", name="ck_context_checkpoint_count"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_count = Column(Integer, nullable=False)
+    source_hash = Column(String(64), nullable=False)
+    source_message_id = Column(Integer, nullable=True)
+    summary = Column(Text, nullable=False)
+    model = Column(String(200), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    session = relationship("Session", back_populates="context_checkpoints")
 
 
 # ──────────────────────────────────────────────
 # 3. 子人格/动态状态表 (SessionPersona)
-#    一个 Session 拥有唯一一个 Persona。
+#    单聊拥有 slot 0；群聊成员使用 slot 1–3。
 #
 #    parent_persona_id 构成继承链：
 #      session1.persona(id=1)
@@ -182,12 +222,18 @@ class Session(Base):
 
 class SessionPersona(Base):
     __tablename__ = "session_personas"
+    __table_args__ = (
+        UniqueConstraint("session_id", "member_slot", name="uq_personas_session_slot"),
+        UniqueConstraint("session_id", "character_id", name="uq_personas_session_character"),
+        CheckConstraint("member_slot BETWEEN 0 AND 3", name="ck_personas_member_slot"),
+        Index("uq_personas_session_id_id", "session_id", "id", unique=True),
+    )
 
     id           = Column(Integer, primary_key=True, index=True)
+    member_slot = Column(Integer, nullable=False, default=0, server_default="0")
     session_id   = Column(
         Integer,
         ForeignKey("sessions.id", ondelete="CASCADE"),
-        unique=True,
         nullable=False
     )
     character_id = Column(
@@ -223,6 +269,8 @@ class SessionPersona(Base):
 
     # 分支创建时的独立状态快照；之后沿本地有效消息增量重放。
     role_state_base = Column(Text, nullable=True)
+    # 分支冻结继承摘要与未压缩原文，不再依赖祖先后续修改。
+    context_base = Column(Text, nullable=True)
     # 0 表示沿用头像；消息上的 NULL 表示该节点没有修改选择。
     portrait_base = Column(Integer, nullable=False, default=0, server_default="0")
 
@@ -247,7 +295,7 @@ class SessionPersona(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # 关联
-    session   = relationship("Session",   back_populates="persona")
+    session   = relationship("Session",   back_populates="personas")
     character = relationship("Character", back_populates="personas")
     memories  = relationship(
         "MemoryChunk",
@@ -255,6 +303,10 @@ class SessionPersona(Base):
         cascade="all, delete-orphan",
         order_by="MemoryChunk.created_at"
     )
+    group_origin = relationship("GroupPersonaOrigin", back_populates="persona", uselist=False,
+                                cascade="all, delete-orphan")
+    inherited_memory_snapshots = relationship("GroupInheritedMemorySnapshot", back_populates="persona",
+                                              cascade="all, delete-orphan")
     children_personas = relationship(
         "SessionPersona",
         backref="parent_persona",
@@ -275,6 +327,355 @@ class SessionPersona(Base):
 #      collection_name = f"persona_{persona_id}"
 #      document_id     = f"mem_{id}"（同步存入 chroma_doc_id 字段）
 # ──────────────────────────────────────────────
+
+class GroupPersonaOrigin(Base):
+    __tablename__ = "group_persona_origins"
+    __table_args__ = (
+        CheckConstraint("mode IN ('card', 'single_snapshot')", name="ck_group_origin_mode"),
+        CheckConstraint("snapshot_version >= 1", name="ck_group_origin_version"),
+    )
+
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), primary_key=True)
+    mode = Column(String(20), nullable=False)
+    snapshot_version = Column(Integer, nullable=False, default=1, server_default="1")
+    captured_at = Column(DateTime, nullable=False, default=func.now())
+    initial_state_json = Column(Text, nullable=False)
+    # 来源是审计标识，删除来源不能改变已经冻结的群聊起点。
+    source_session_id = Column(Integer, nullable=True)
+    source_persona_id = Column(Integer, nullable=True)
+    source_last_active_message_id = Column(Integer, nullable=True)
+    source_confirmed_before_id = Column(Integer, nullable=True)
+    content_fingerprint = Column(String(64), nullable=False)
+    greeting_content = Column(Text, nullable=True)
+    persona = relationship("SessionPersona", back_populates="group_origin")
+
+
+class GroupInheritedMemorySnapshot(Base):
+    __tablename__ = "group_inherited_memory_snapshots"
+    __table_args__ = (
+        UniqueConstraint("persona_id", "source_memory_id", name="uq_group_snapshot_source"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    memory_type = Column(String(20), nullable=False)
+    importance_score = Column(Float, nullable=True)
+    temporal_status = Column(String(20), nullable=False)
+    temporal_note = Column(String(120), nullable=True)
+    source_evidence_json = Column(Text, nullable=True)
+    source_memory_id = Column(Integer, nullable=False)
+    source_persona_id = Column(Integer, nullable=False)
+    source_session_id = Column(Integer, nullable=True)
+    source_start_message_id = Column(Integer, nullable=True)
+    source_message_id = Column(Integer, nullable=True)
+    source_message_id_bound = Column(Integer, nullable=True)
+    source_created_at = Column(DateTime, nullable=True)
+    captured_at = Column(DateTime, nullable=False, default=func.now())
+    content_fingerprint = Column(String(64), nullable=False)
+    persona = relationship("SessionPersona", back_populates="inherited_memory_snapshots")
+
+
+class GroupRound(Base):
+    __tablename__ = "group_rounds"
+    __table_args__ = (
+        ForeignKeyConstraint(["session_id", "session_kind"], ["sessions.id", "sessions.kind"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["selected_candidate_id", "id", "session_id"],
+            ["group_round_candidates.id", "group_round_candidates.round_id", "group_round_candidates.session_id"],
+            name="fk_group_round_selected", deferrable=True, initially="DEFERRED", use_alter=True),
+        UniqueConstraint("id", "session_id", name="uq_group_round_identity"),
+        UniqueConstraint("session_id", "round_index", name="uq_group_round_index"),
+        CheckConstraint("session_kind = 'group' AND round_index >= 1", name="ck_group_round_scope"),
+        Index("uq_group_round_pending", "session_id", unique=True,
+              sqlite_where=text("confirmed_at IS NULL AND discarded_at IS NULL")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True, autoincrement="ignore_fk")
+    session_id = Column(Integer, nullable=False)
+    session_kind = Column(String(10), nullable=False, default="group", server_default="group")
+    round_index = Column(Integer, nullable=False)
+    user_content = Column(Text, nullable=False)
+    selected_candidate_id = Column(Integer, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    discarded_at = Column(DateTime, CheckConstraint("discarded_at IS NULL OR confirmed_at IS NULL",
+                                                  name="ck_group_round_discard"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+
+class GroupMemoryCapture(Base):
+    """一轮一名成员的提纯任务，成功结果与终态一次提交。"""
+    __tablename__ = "group_memory_captures"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "round_id", "session_id"],
+            ["group_round_candidates.id", "group_round_candidates.round_id", "group_round_candidates.session_id"],
+            ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             ondelete="CASCADE"),
+        UniqueConstraint("round_id", "persona_id", name="uq_group_capture_recipient"),
+        Index("ix_group_capture_due", "run_after", sqlite_where=text("cards_json IS NULL")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    round_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    persona_id = Column(Integer, nullable=False)
+    attempts = Column(Integer, nullable=False, server_default="0")
+    run_after = Column(DateTime, nullable=False, server_default=func.now())
+    error_code = Column(String(40))
+    cards_json = Column(Text)
+
+
+class GroupRecallCard(Base):
+    """稳定的群聊索引编号，正文仍由快照或提纯结果提供。"""
+    __tablename__ = "group_recall_cards"
+    __table_args__ = (
+        CheckConstraint("(snapshot_id IS NOT NULL AND capture_id IS NULL AND slot IS NULL) OR "
+                        "(snapshot_id IS NULL AND capture_id IS NOT NULL AND slot IS NOT NULL AND slot >= 0)",
+                        name="ck_group_recall_origin"),
+        UniqueConstraint("capture_id", "slot", name="uq_group_recall_capture_slot"),
+        Index("ix_group_recall_owner", "persona_id", "id"),
+        Index("ix_group_recall_replaces", "replaces_id", sqlite_where=text("replaces_id IS NOT NULL")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id = Column(Integer, ForeignKey("group_inherited_memory_snapshots.id", ondelete="CASCADE"), unique=True)
+    capture_id = Column(Integer, ForeignKey("group_memory_captures.id", ondelete="CASCADE"))
+    slot = Column(Integer)
+    replaces_id = Column(Integer)
+    indexed = Column(Boolean, nullable=False, server_default="0")
+    parts_json = Column(Text)
+
+
+class GroupMemberInsight(Base):
+    """一次确认产生的个人认识；归属与轮次由提纯任务确定。"""
+    __tablename__ = "group_member_insights"
+    __table_args__ = (
+        CheckConstraint("kind IN ('cognition','user','member')", name="ck_group_insight_kind"),
+        CheckConstraint("(kind = 'member') = (target_persona_id IS NOT NULL)", name="ck_group_insight_target"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    capture_id = Column(Integer, ForeignKey("group_memory_captures.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(12), nullable=False)
+    target_persona_id = Column(Integer, ForeignKey("session_personas.id", ondelete="CASCADE"))
+    content = Column(Text, nullable=False)
+    ref = Column(String(64), nullable=False)
+    quote = Column(Text, nullable=False)
+
+
+class GroupRoundCandidate(Base):
+    __tablename__ = "group_round_candidates"
+    __table_args__ = (
+        ForeignKeyConstraint(["round_id", "session_id"], ["group_rounds.id", "group_rounds.session_id"], ondelete="CASCADE"),
+        UniqueConstraint("id", "round_id", "session_id", name="uq_group_candidate_round"),
+        UniqueConstraint("id", "session_id", name="uq_group_candidate_scope"),
+        UniqueConstraint("round_id", "version", name="uq_group_candidate_version"),
+        CheckConstraint("version >= 1 AND revision >= 0", name="ck_group_candidate_version"),
+        CheckConstraint("status IN ('generating', 'awaiting_confirmation', 'failed')", name="ck_group_candidate_status"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    round_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(30), nullable=False, default="generating", server_default="generating")
+    revision = Column(Integer, nullable=False, default=0, server_default="0")
+    error_code = Column(String(80), nullable=True)
+    checkpoint = Column(String(30), CheckConstraint(
+        "checkpoint IN ('user_visibility', 'next_action', 'role_generation', 'finish', 'done')",
+        name="ck_group_checkpoint"))
+    insight_watermark = Column(Integer)
+    portrait_selections_json = Column(Text)
+    call_snapshot_json = Column(Text)
+    provider_fingerprint = Column(String(64))
+    dispatch_version = Column(Integer, CheckConstraint("dispatch_version IN (0, 1)", name="ck_group_dispatch_version"),
+                              nullable=False, default=0, server_default="0")
+    protocol_version = Column(Integer, CheckConstraint("protocol_version IN (1, 2)", name="ck_group_protocol_version"),
+                              nullable=False, default=1, server_default="1")
+    finish_reason = Column(String(30), CheckConstraint("finish_reason IN ('wait_user', 'step_limit', 'no_visible_basis')",
+                                                     name="ck_group_finish_reason"))
+
+
+class GroupDispatch(Base):
+    __tablename__ = "group_dispatches"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "session_id"],
+                             ["group_round_candidates.id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "speaker_persona_id"],
+                             ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        UniqueConstraint("candidate_id", "sequence", name="uq_group_dispatch_sequence"),
+        CheckConstraint("sequence >= 1 AND expected_revision >= 0 AND result_revision = expected_revision + 1 "
+                        "AND (completed_revision IS NULL OR completed_revision > result_revision)",
+                        name="ck_group_dispatch_revision"),
+        CheckConstraint("reason_code IN ('direct_response', 'follow_up')", name="ck_group_dispatch_reason"),
+        CheckConstraint("response_reference IS NULL OR length(response_reference) BETWEEN 1 AND 80",
+                        name="ck_group_dispatch_reference"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    speaker_persona_id = Column(Integer, nullable=False)
+    response_reference = Column(String(80))
+    reason_code = Column(String(30), nullable=False)
+    expected_revision = Column(Integer, nullable=False)
+    result_revision = Column(Integer, nullable=False)
+    completed_revision = Column(Integer)
+
+
+class GroupRoundOperation(Base):
+    __tablename__ = "group_round_operations"
+    __table_args__ = (
+        ForeignKeyConstraint(["round_id", "session_id"], ["group_rounds.id", "group_rounds.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["candidate_id", "round_id", "session_id"],
+            ["group_round_candidates.id", "group_round_candidates.round_id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        UniqueConstraint("session_id", "client_request_id", name="uq_group_operation_request"),
+        CheckConstraint("kind IN ('send', 'regenerate', 'resume', 'select', 'discard')", name="ck_group_operation_kind"),
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name="ck_group_operation_status"),
+        CheckConstraint("revision >= 0 AND call_count >= 0 AND call_limit >= 0", name="ck_group_operation_counters"),
+        Index("uq_group_operation_active", "session_id", unique=True,
+              sqlite_where=text("status IN ('queued', 'running')")),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    round_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    client_request_id = Column(String(36), nullable=False)
+    kind = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False)
+    revision = Column(Integer, nullable=False, default=0, server_default="0")
+    request_fingerprint = Column(String(64), nullable=False)
+    accepted_result_json = Column(Text, nullable=False)
+    call_count = Column(Integer, nullable=False, default=0, server_default="0")
+    call_limit = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    started_at = Column(DateTime)
+    deadline_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    error_code = Column(String(80))
+
+
+class GroupContentItem(Base):
+    __tablename__ = "group_content_items"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "session_id"], ["group_round_candidates.id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "speaker_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        UniqueConstraint("id", "session_id", name="uq_group_content_scope"),
+        UniqueConstraint("candidate_id", "sequence", name="uq_group_content_sequence"),
+        Index("uq_group_content_candidate", "id", "candidate_id", "session_id", unique=True),
+        CheckConstraint("(kind = 'user' AND sequence = 0 AND speaker_persona_id IS NULL AND content IS NULL "
+                        "AND emotion_tag IS NULL AND affection_change IS NULL AND role_state_patch IS NULL) OR "
+                        "(kind = 'utterance' AND sequence > 0 AND speaker_persona_id IS NOT NULL "
+                        "AND content IS NOT NULL AND length(trim(content)) > 0)", name="ck_group_content_shape"),
+        CheckConstraint("affection_change IS NULL OR affection_change BETWEEN -5 AND 5", name="ck_group_content_affection"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    kind = Column(String(20), nullable=False)
+    speaker_persona_id = Column(Integer, nullable=True)
+    content = Column(Text, nullable=True)
+    emotion_tag = Column(String(50), nullable=True)
+    affection_change = Column(Integer, nullable=True)
+    role_state_patch = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+
+class GroupContentVisibility(Base):
+    __tablename__ = "group_content_visibility"
+    __table_args__ = (
+        ForeignKeyConstraint(["item_id", "session_id"], ["group_content_items.id", "group_content_items.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "recipient_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        CheckConstraint("decision IN ('visible', 'hidden') AND policy_version >= 1", name="ck_group_visibility_decision"),
+        Index("ix_group_visibility_recipient", "recipient_persona_id", "decision", "item_id"),
+    )
+    item_id = Column(Integer, primary_key=True)
+    recipient_persona_id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    decision = Column(String(10), nullable=False)
+    policy_version = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class GroupContentUnit(Base):
+    __tablename__ = "group_content_units"
+    __table_args__ = (
+        ForeignKeyConstraint(["item_id", "candidate_id", "session_id"],
+            ["group_content_items.id", "group_content_items.candidate_id", "group_content_items.session_id"], ondelete="CASCADE"),
+        UniqueConstraint("id", "session_id", name="uq_group_unit_scope"),
+        UniqueConstraint("item_id", "unit_index", name="uq_group_unit_index"),
+        CheckConstraint("unit_index >= 0 AND ((kind = 'user' AND source_start >= 0 AND source_end >= source_start "
+            "AND source_start IS NOT NULL AND source_end IS NOT NULL AND text IS NULL) OR "
+            "(kind IN ('speech', 'action', 'thought', 'legacy') AND source_start IS NULL AND source_end IS NULL "
+            "AND text IS NOT NULL AND length(text) > 0))", name="ck_group_unit_shape"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    item_id = Column(Integer, nullable=False)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    unit_index = Column(Integer, nullable=False)
+    kind = Column(String(20), nullable=False)
+    source_start = Column(Integer)
+    source_end = Column(Integer)
+    text = Column(Text)
+
+
+class GroupUnitVisibility(Base):
+    __tablename__ = "group_unit_visibility"
+    __table_args__ = (
+        ForeignKeyConstraint(["unit_id", "session_id"], ["group_content_units.id", "group_content_units.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "recipient_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        CheckConstraint("decision IN ('visible', 'hidden')", name="ck_group_unit_decision"),
+        Index("ix_group_unit_recipient", "recipient_persona_id", "decision", "unit_id"),
+    )
+    unit_id = Column(Integer, primary_key=True)
+    recipient_persona_id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, nullable=False)
+    decision = Column(String(10), nullable=False)
+
+
+class GroupDirectorStep(Base):
+    __tablename__ = "group_director_steps"
+    __table_args__ = (
+        ForeignKeyConstraint(["candidate_id", "session_id"], ["group_round_candidates.id", "group_round_candidates.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["item_id", "candidate_id", "session_id"],
+            ["group_content_items.id", "group_content_items.candidate_id", "group_content_items.session_id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["session_id", "speaker_persona_id"], ["session_personas.session_id", "session_personas.id"],
+                             deferrable=True, initially="DEFERRED"),
+        UniqueConstraint("candidate_id", "step_index", name="uq_group_director_index"),
+        CheckConstraint("step_index >= 1 AND expected_revision >= 0 AND result_revision = expected_revision + 1 "
+            "AND policy_version IN (1, 2)", name="ck_group_director_revision"),
+        CheckConstraint("(stage = 'user_visibility' AND item_id IS NOT NULL AND speaker_persona_id IS NULL) OR "
+            "(stage = 'utterance_visibility' AND item_id IS NOT NULL AND speaker_persona_id IS NOT NULL) OR "
+            "(stage = 'next_action' AND item_id IS NULL AND speaker_persona_id IS NOT NULL) OR "
+            "(stage = 'finish' AND item_id IS NULL AND speaker_persona_id IS NULL)", name="ck_group_director_shape"),
+        {"sqlite_autoincrement": True},
+    )
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, nullable=False)
+    session_id = Column(Integer, nullable=False)
+    stage = Column(String(30), nullable=False)
+    step_index = Column(Integer, nullable=False)
+    expected_revision = Column(Integer, nullable=False)
+    result_revision = Column(Integer, nullable=False)
+    speaker_persona_id = Column(Integer)
+    item_id = Column(Integer)
+    decision_json = Column(Text, nullable=False)
+    reason_code = Column(String(30))
+    model = Column(String(200), nullable=False)
+    policy_version = Column(Integer, nullable=False)
+
 
 class MemoryExtractionJob(Base):
     """已提取候选及其重试状态，与长期记忆分开持久化。"""
@@ -632,3 +1033,11 @@ class OutboxJob(Base):
     last_error   = Column(Text, nullable=True)
     created_at   = Column(DateTime, default=func.now())
     run_after    = Column(DateTime, default=func.now(), index=True, nullable=False) # 用于指数退避调度
+
+
+# create_all 用于隔离库；部署由 Alembic 安装同版触发器。
+@event.listens_for(Base.metadata, "after_create")
+def _install_group_recall_triggers(metadata, connection, **kwargs):
+    if GroupRecallCard.__table__ in kwargs["tables"]:
+        install_triggers(connection)
+        install_parts_trigger(connection)

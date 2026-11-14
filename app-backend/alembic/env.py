@@ -40,14 +40,32 @@ def run_migrations_online() -> None:
     connectable = engine
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,  # SQLite 列修改需要使用 batch 模式
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+        # SQLite batch 重建被引用的表时，DROP TABLE 会触发 CASCADE/SET NULL。
+        # 在事务外暂停外键执行，在同一写事务中校验完整性后才提交。
+        foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
+        connection.commit()
+        try:
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=True,
+                transactional_ddl=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError("迁移后外键校验失败，已回滚")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.exec_driver_sql(f"PRAGMA foreign_keys={int(foreign_keys)}")
+            connection.commit()
 
 if context.is_offline_mode():
     run_migrations_offline()

@@ -7,6 +7,7 @@
 | 连接、鉴权、配置与语音 | [通用接口](docs/api/GENERAL.md) |
 | 角色卡、翻译、CHARX 与立绘 | [角色接口](docs/api/CHARACTERS.md) |
 | 故事分支、消息、状态与长期记忆 | [会话接口](docs/api/SESSIONS.md)、[记忆规则补充](docs/api/MEMORY_API.md) |
+| 固定成员群聊、来源快照与整群删除 | [群聊接口](docs/api/GROUP_SESSIONS.md) |
 | 独立世界书、词条与绑定 | [世界书接口](docs/api/LOREBOOKS.md) |
 | 模型对话、SSE 与候选切换 | [聊天接口](docs/api/CHAT.md) |
 | 修改接口或排查文档漂移 | [维护与校验说明](docs/api/README.md) |
@@ -67,6 +68,30 @@
 | **DELETE** | `/characters/{character_id}` | Delete character and cascade wipe all sessions/memories |
 | **POST** | `/characters/{character_id}/delete` | Alternative POST method for deletion (to avoid HTTP/HTTPS redirect downgrades) |
 
+### 群聊管理 API
+
+[请求与响应详情](docs/api/GROUP_SESSIONS.md)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **POST** | `/group-sessions` | 原子创建固定成员群聊与来源快照 |
+| **GET** | `/group-sessions` | 群聊摘要稳定分页 |
+| **GET** | `/group-sessions/{session_id}/members/{persona_id}/compile_prompt` | [成员提示词组装预览](docs/api/GROUP_SESSIONS.md) |
+| **GET** | `/group-sessions/{session_id}/members/{persona_id}/memories` | [按成员浏览群聊记忆](docs/api/GROUP_SESSIONS.md) |
+| **GET** | `/group-sessions/{session_id}` | 读取成员状态与导入信息 |
+| **GET** | `/group-sessions/{session_id}/portraits` | 读取当前采用候选的成员立绘与选择权限 |
+| **PUT** | `/group-sessions/{session_id}/members/{persona_id}/portrait` | 按所见群与候选版本修改单个成员立绘 |
+| **GET** | `/group-sessions/{session_id}/rounds` | 按整轮分页读取所选候选正文、版本与终止状态 |
+| **POST** | `/group-sessions/{session_id}/rounds` | 原子接受用户消息与确认上一成功轮次，返回后台回执 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/regenerate` | 保留旧选择并生成新的整轮候选 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/resume` | 显式续接指定失败候选的可靠检查点 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/select-candidate` | 选择最新未确认轮次的成功候选 |
+| **POST** | `/group-sessions/{session_id}/rounds/{round_id}/discard` | 撤回最新未确认轮次并保留请求回执 |
+| **GET** | `/group-sessions/{session_id}/requests/{client_request_id}` | 查询接受结果、执行终态与当前选择，不派发模型 |
+| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates` | 分页读取同轮候选元数据与可用操作 |
+| **GET** | `/group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}` | 读取指定候选前缀、成员状态及冻结范围内的个人认识 |
+| **POST** | `/group-sessions/{session_id}/delete` | 删除整个群聊并登记资源清理 |
+
 ### 会话、消息与记忆 API
 
 [请求与响应详情](docs/api/SESSIONS.md)
@@ -99,6 +124,7 @@
 | **PUT** | `/sessions/{session_id}/memory-consolidations/{batch_id}/groups/{group_id}` | Review or edit one suggestion group |
 | **POST** | `/sessions/{session_id}/memory-consolidations/{batch_id}/undo` | Undo an applied batch within the visible story boundary |
 | **GET** | `/sessions/{session_id}/compile_prompt` | Preview the assembled prompt and its heuristic Token range/section breakdown |
+| **GET** | `/sessions/{session_id}/context-compression` | Read the valid rolling summary and its message coverage without calling a model |
 
 ### 世界书 API
 

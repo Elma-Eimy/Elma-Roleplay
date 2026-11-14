@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi import Depends, HTTPException, UploadFile, File, Query, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 from typing import Optional
@@ -17,7 +17,9 @@ import json
 import os
 import zipfile
 
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 from core.config import settings
 

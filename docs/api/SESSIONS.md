@@ -29,6 +29,27 @@
 
 立绘管理和会话选图见 [角色与立绘接口](CHARACTERS.md#manual-character-portraits)。
 
+## GET `/sessions/{session_id}/context-compression`
+
+只读返回当前单聊中可用的滚动摘要及覆盖情况，不调用模型、不修改数据库。会话不存在返回 `404`，群聊资源返回 `409`。真实聊天自动触发压缩，规则与边界见 [上下文压缩](../features/CONTEXT_COMPRESSION.md)。
+
+```json
+{
+  "summary": "怀表后盖已经打开，但尚未修复。",
+  "checkpoint_id": 3,
+  "covered_message_count": 12,
+  "retained_message_count": 9,
+  "pending_message_count": 0,
+  "source_message_id": 24,
+  "model": "configured-memory-model",
+  "updated_at": "2026-11-14T00:00:00"
+}
+```
+
+`covered_message_count` 是当前故事有效版本覆盖的原文条数，包含冻结继承的未压缩原文；父线已压缩部分不重复计数。`retained_message_count` 是摘要覆盖之后、当前最新用户消息之前的原文数；`pending_message_count` 是其中已超出最近窗口但尚未压缩的数量，未满批次时也可能大于零。`source_message_id` 是该版本覆盖的最后一条本地消息 ID，仅覆盖继承原文时为空。
+
+没有本地有效版本时，`checkpoint_id`、`source_message_id`、`model`、`updated_at` 为 `null`，`covered_message_count` 为零；存在冻结的父线摘要时仍可返回该摘要，否则 `summary` 也为 `null`。来源改变后只返回仍有效的版本，不把失效摘要继续提供给调用方。Mock 不调用模型、不虚构摘要，返回当前已确认原文数量，待压缩数为零表示 Mock 不维护压缩调度。
+
 ## POST `/sessions/create`
 
 `parent_session_id` 为整数时从父故事分叉，省略或 `null` 时新建故事；可选的 `greeting_index` 选择开场，`start_message_id` 指定分叉消息节点。

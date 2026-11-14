@@ -3,6 +3,7 @@
 from sqlalchemy.orm import Session as DBSession
 from sqlalchemy import text
 
+from services.conversation.session_access import get_single_session
 from core.models import MemoryChunk, MemoryType, Session
 import services.memory.memory_manager as memory_manager
 
@@ -26,7 +27,7 @@ def _check_consolidation_protection(memory_id, db):
 
 
 def _get_persona(session_id: int, db: DBSession):
-    session = db.get(Session, session_id)
+    session = get_single_session(session_id, db)
     if session is None or session.persona is None:
         raise SessionMemoryNotFoundError("Session or Persona not found")
     return session.persona

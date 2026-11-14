@@ -4,6 +4,7 @@ import hashlib
 from sqlalchemy import text
 from sqlalchemy.orm import load_only
 
+from services.conversation.session_access import get_single_session
 from core.models import Session, ChatMessage
 from services.conversation.role_state_schema import decode_state, encode_state, merge_state, validate_patch
 
@@ -13,9 +14,14 @@ class StateConflict(ValueError):
 
 
 def resolve_state(session_id, db, before_id=None):
-    session = db.get(Session, session_id)
+    session = get_single_session(session_id, db)
     if session is None or session.persona is None:
         raise LookupError("故事不存在")
+    return _resolve_state(session, db, before_id)
+
+
+def _resolve_state(session, db, before_id=None):
+    session_id = session.id
     base = session.persona.role_state_base
     state = decode_state(base)
     query = db.query(ChatMessage).options(load_only(ChatMessage.id, ChatMessage.role_state_patch, ChatMessage.role_state_manual)).filter(ChatMessage.session_id == session_id, ChatMessage.is_active.is_(True))
@@ -67,7 +73,10 @@ def update_state(session_id, patch, expected_revision, db):
 
 
 def _update_state(session_id, patch, expected_revision, db):
-    current, messages = resolve_state(session_id, db)
+    session = get_single_session(session_id, db)
+    if session is None or session.persona is None:
+        raise LookupError("故事不存在")
+    current, messages = _resolve_state(session, db)
     if current["revision"] != expected_revision:
         raise StateConflict("剧情或状态已变化，请重新加载后再修改")
     patch = validate_patch(patch, manual=True)
@@ -83,10 +92,10 @@ def _update_state(session_id, patch, expected_revision, db):
             actors.setdefault(name, {}).update(fields)
         anchor.role_state_manual = encode_state(manual)
     else:
-        db.get(Session, session_id).persona.role_state_base = encode_state(merged)
+        session.persona.role_state_base = encode_state(merged)
     try:
         db.flush()
-        result = get_state(session_id, db)
+        result = _resolve_state(session, db)[0]
         db.commit()
         return result
     except Exception:
@@ -97,9 +106,18 @@ def _update_state(session_id, patch, expected_revision, db):
 def validated_model_patch(session_id, user_msg_id, patch, db):
     if patch is None:
         return None
+    session = get_single_session(session_id, db)
+    if session is None or session.persona is None:
+        raise LookupError("故事不存在")
+    return _validated_model_patch(session, user_msg_id, patch, db)
+
+
+def _validated_model_patch(session, user_msg_id, patch, db):
+    if patch is None:
+        return None
     try:
         patch = validate_patch(patch)
-        state = resolve_state(session_id, db, before_id=user_msg_id + 1)[0]["state"]
+        state = _resolve_state(session, db, before_id=user_msg_id + 1)[0]["state"]
         merge_state(state, patch)
         return encode_state(patch)
     except (ValueError, TypeError):

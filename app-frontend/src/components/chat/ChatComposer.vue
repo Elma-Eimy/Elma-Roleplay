@@ -4,7 +4,7 @@
     :class="{ 'is-android': isAndroid }"
     :style="wrapperStyle"
   >
-    <view class="reasoning-toggle-row">
+    <view v-if="showModelSettings" class="reasoning-toggle-row">
       <view
         class="reasoning-toggle-btn"
         :class="{ 'is-reasoning': useReasoning }"
@@ -31,13 +31,14 @@
         :value="modelValue"
         :placeholder="placeholderText"
         :auto-height="true"
-        :maxlength="-1"
+        :maxlength="maxlength"
+        :disabled="disabled"
         :adjust-position="false"
         :cursor-spacing="0"
         :confirm-hold="true"
         confirm-type="send"
         @input="handleInput"
-        @confirm="emit('send')"
+        @confirm="!disabled && !isGenerating && emit('send')"
         @focus="emit('focus-change', true)"
         @blur="emit('focus-change', false)"
         @linechange="emit('line-change')"
@@ -45,11 +46,11 @@
       <view
         class="send-btn"
         :class="{
-          'is-active': !isGenerating && modelValue.trim().length > 0,
+          'is-active': !disabled && !isGenerating && modelValue.trim().length > 0,
           'is-generating': isGenerating,
         }"
-        :aria-disabled="isGenerating"
-        @tap="!isGenerating && emit('send')"
+        :aria-disabled="disabled || isGenerating"
+        @tap="!disabled && !isGenerating && emit('send')"
       >
         <view v-if="isGenerating" class="send-busy-dots">
           <view class="busy-dot"></view>
@@ -85,9 +86,15 @@ const props = withDefaults(defineProps<{
   keyboardHeight: number;
   wrapperStyle: CSSProperties;
   isGenerating?: boolean;
+  disabled?: boolean;
+  maxlength?: number;
+  showModelSettings?: boolean;
   characterName?: string;
 }>(), {
   isGenerating: false,
+  disabled: false,
+  maxlength: -1,
+  showModelSettings: true,
   characterName: "",
 });
 

@@ -13,6 +13,7 @@ from typing import Any, Iterable
 ESTIMATION_METHOD = "heuristic_v1"
 SECTION_ORDER = (
     "character",
+    "context_summary",
     "recent_history",
     "scenario",
     "cognition",
@@ -25,6 +26,7 @@ SECTION_ORDER = (
 )
 
 TAG_TO_SECTION = {
+    "context_summary": "context_summary",
     "current_scenario": "scenario",
     "cognition_state": "cognition",
     "current_status": "status",
@@ -34,7 +36,7 @@ TAG_TO_SECTION = {
     "factual_relationships": "graph",
 }
 TAG_BLOCK_RE = re.compile(
-    r"<(current_scenario|cognition_state|current_status|current_role_state|lorebook_knowledge|"
+    r"<(context_summary|current_scenario|cognition_state|current_status|current_role_state|lorebook_knowledge|"
     r"recalled_memories|factual_relationships)(?:\s[^>]*)?>.*?</\1>",
     re.DOTALL,
 )

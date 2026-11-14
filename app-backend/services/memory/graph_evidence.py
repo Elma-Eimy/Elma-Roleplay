@@ -1,6 +1,7 @@
 """Validate graph evidence against the branch's authoritative SQLite history."""
 from __future__ import annotations
 
+from services.conversation.session_access import session_kind_agnostic
 import hashlib
 import json
 from sqlalchemy import and_, or_, func
@@ -22,6 +23,7 @@ def snapshot_sources(messages) -> list[dict]:
     return [{"id": message.id, "hash": message_fingerprint(message)} for message in messages]
 
 
+@session_kind_agnostic('按人格及来源消息归属检查证据，不使用单聊人格快捷属性')
 def sources_are_current(persona_id, sources, db):
     expected = {item["id"]: item for item in sources or []}
     persona = db.get(SessionPersona, persona_id)
@@ -65,6 +67,7 @@ def _supporting_memories(persona_id, ids, db, before_message_id=None):
         visible, MemoryChunk.id.in_(ids), MemoryChunk.id.not_in(replaced)).all()}
 
 
+@session_kind_agnostic('按人格及来源消息归属检查证据，不使用单聊人格快捷属性')
 def memory_evidence_is_current(persona_id, memory_id, fingerprint, db):
     from services.memory.memory_facts import fact_sources_current
 
@@ -73,6 +76,7 @@ def memory_evidence_is_current(persona_id, memory_id, fingerprint, db):
             and fact_sources_current(memory, db))
 
 
+@session_kind_agnostic('按人格及来源消息归属检查证据，不使用单聊人格快捷属性')
 def load_graph_view(persona_id, db, before_message_id=None):
     segments = build_branch_turn_segments(persona_id, db)
     sessions = {segment["persona_id"]: segment["session_id"] for segment in segments}

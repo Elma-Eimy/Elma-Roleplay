@@ -1,7 +1,7 @@
 <template>
-  <view 
+  <view
     v-if="message"
-    class="chat-bubble-wrapper" 
+    class="chat-bubble-wrapper"
     :class="{
       'is-user': isUser,
       'is-ai-continuation': !isUser && !showAvatar,
@@ -10,7 +10,7 @@
   >
     <AvatarImage
       v-if="!isUser && showAvatar"
-      class="avatar" 
+      class="avatar"
       :src="avatarUrl"
     />
     <view v-else-if="!isUser" class="avatar-spacer"></view>
@@ -20,8 +20,8 @@
       <text v-if="!isUser && showName" class="name-tag">{{ characterName }}</text>
 
       <!-- 消息气泡 -->
-      <view 
-        class="bubble" 
+      <view
+        class="bubble"
         :class="[isUser ? 'user-bubble' : 'ai-bubble']"
         @touchstart="handleTouchStart"
         @touchend="handleTouchEnd"
@@ -29,7 +29,7 @@
         @longpress.stop="handleLongPress"
         @contextmenu.prevent.stop="handleLongPress"
       >
-        
+
         <!-- AI 的深度思考过程容器 -->
         <view v-if="!isUser && hasThought" class="thought-container" :class="{ 'is-expanded': isThoughtExpanded }">
           <view class="thought-header" @tap.stop="isThoughtExpanded = !isThoughtExpanded">
@@ -46,9 +46,9 @@
         </view>
 
         <!-- 渲染为 Markdown 的 AI 回复内容 -->
-        <rich-text 
-          v-if="!isUser" 
-          class="markdown-content" 
+        <rich-text
+          v-if="!isUser"
+          class="markdown-content"
           :nodes="renderedMarkdown"
         />
 
@@ -80,8 +80,8 @@
       </view>
 
       <!-- AI 候选版本切换器 (Swipe Multi-Replies) -->
-      <view 
-        v-if="!isUser && message.candidates && message.candidates.length > 1" 
+      <view
+        v-if="!readOnly && !isUser && message.candidates && message.candidates.length > 1"
         class="candidate-pager"
         :class="{ 'is-disabled': isCandidateSwitchLocked }"
         @longpress.stop=""
@@ -98,7 +98,7 @@
 
       <!-- 最新回复常驻操作条 -->
       <view
-        v-if="!isUser && isLatestAssistant && message.status === 'done'"
+        v-if="!readOnly && !isUser && isLatestAssistant && message.status === 'done'"
         class="latest-action-bar"
         @longpress.stop=""
         @contextmenu.prevent.stop=""
@@ -137,9 +137,9 @@
       <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
       <view v-if="!isUser && isMetaVisible" class="meta-area">
         <!-- 语音播报按钮（最新回复已由操作条承载） -->
-        <view 
-          v-if="message.status === 'done' && !isLatestAssistant"
-          class="meta-tag tts-btn" 
+        <view
+          v-if="!readOnly && message.status === 'done' && !isLatestAssistant"
+          class="meta-tag tts-btn"
           :class="{ 'is-playing': activeAudioMessageId === message.id }"
           @tap="playTTS"
         >
@@ -177,25 +177,13 @@ import type { ChatMessage } from "@/store/chatStore";
 import { useChatStore } from "@/store/chatStore";
 import { usePersonaStore } from "@/store/personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
-import { renderRoleplayStateBlock } from "@/utils/markdown";
+import { renderChatMarkdown as renderMarkdown } from "@/utils/markdown";
 import {
   createBoundedCache,
   formatThoughtTitle,
   lastNonEmptyLine,
 } from "@/utils/chatDisplay";
-import MarkdownIt from "markdown-it";
 import AvatarImage from "@/components/common/AvatarImage.vue";
-
-// 所有消息共享一个解析器。关闭原始 HTML，模型输出只按 Markdown 文本解析。
-const md = new MarkdownIt({
-  html: false,
-  breaks: true,
-  linkify: true,
-});
-
-// 角色卡会使用任意 fence 标签承载人物状态；统一忽略标签并渲染为状态卡。
-md.renderer.rules.fence = (tokens, index) =>
-  renderRoleplayStateBlock(tokens[index].content);
 
 const STREAM_MARKDOWN_RENDER_DELAY = 48;
 // 已完成消息的 Markdown 渲染结果按内容键缓存，避免翻页或重排时重复解析。
@@ -214,6 +202,8 @@ const props = withDefaults(
     showAvatar?: boolean;
     isLatestAssistant?: boolean;
     animateEntry?: boolean;
+    readOnly?: boolean;
+    userNickname?: string;
   }>(),
   {
     avatarUrl: "",
@@ -222,6 +212,8 @@ const props = withDefaults(
     showAvatar: true,
     isLatestAssistant: false,
     animateEntry: false,
+    readOnly: false,
+    userNickname: "",
   }
 );
 
@@ -263,6 +255,7 @@ const LONG_PRESS_DEDUPE_WINDOW = 1000;
 let lastLongPressAt = 0;
 
 const handleLongPress = (e?: Event) => {
+  if (props.readOnly) return;
   // 阻止 H5 平台上浏览器原生的右键菜单
   if (e) e.preventDefault?.();
   // 仅允许在发送完成或发送失败的消息上执行操作
@@ -288,16 +281,16 @@ const touchStartX = ref(0);
 const touchStartY = ref(0);
 
 const handleTouchStart = (e: TouchEvent) => {
-  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
+  if (props.readOnly || isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   touchStartX.value = e.touches[0].clientX;
   touchStartY.value = e.touches[0].clientY;
 };
 
 const handleTouchEnd = (e: TouchEvent) => {
-  if (isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
+  if (props.readOnly || isUser.value || !props.message?.candidates || props.message.candidates.length <= 1) return;
   const deltaX = e.changedTouches[0].clientX - touchStartX.value;
   const deltaY = e.changedTouches[0].clientY - touchStartY.value;
-  
+
   if (Math.abs(deltaX) > 60 && Math.abs(deltaY) < 40) {
     if (deltaX > 0) {
       switchCandidateVersion(-1);
@@ -312,17 +305,17 @@ const isCandidateSwitchLocked = computed(() =>
 );
 
 const switchCandidateVersion = async (direction: number) => {
-  if (isCandidateSwitchLocked.value || !props.message?.candidates) return;
+  if (props.readOnly || isCandidateSwitchLocked.value || !props.message?.candidates) return;
   const len = props.message.candidates.length;
   const currentIdx = props.message.active_index ?? 0;
   let targetIdx = currentIdx + direction;
-  
+
   if (targetIdx < 0) {
     targetIdx = len - 1;
   } else if (targetIdx >= len) {
     targetIdx = 0;
   }
-  
+
   const targetCandidate = props.message.candidates[targetIdx];
   if (targetCandidate) {
     try {
@@ -334,7 +327,7 @@ const switchCandidateVersion = async (direction: number) => {
 };
 
 const playTTS = () => {
-  if (props.message?.id) {
+  if (!props.readOnly && props.message?.id) {
     playMessageTTS(props.message);
   }
 };
@@ -367,7 +360,7 @@ const replacePlaceholders = (text: string) => {
     if (!text) return "";
     const str = String(text);
     const charName = props.characterName || "角色";
-    const userName = personaStore.userNickname || "用户";
+    const userName = props.userNickname || (props.readOnly ? "用户" : personaStore.userNickname) || "用户";
     return str
       .replace(/\{\{char\}\}/gi, charName)
       .replace(/\{\{user\}\}/gi, userName);
@@ -385,20 +378,20 @@ const parsedContent = computed(() => {
     } else {
       content = String(content);
     }
-    
+
     // 1. 过滤掉 <status ...> 自定义标签，防止 rich-text 渲染自定义 XML 标签导致原生端崩溃
     content = content.replace(/<status[^>]*\/?>/gi, "");
-    
+
     content = replacePlaceholders(content);
-    
+
     if (isUser.value) {
       return { thought: "", reply: content };
     }
-    
+
     // 优先采用独立的 reasoning_content 字段（API 标准格式）
     let thought = props.message?.reasoning_content ? String(props.message.reasoning_content) : "";
     let reply = content;
-    
+
     // 如果独立的 reasoning_content 为空，再尝试 fallback 从 content 中解析 <thought> 标签
     if (!thought) {
       const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
@@ -411,13 +404,13 @@ const parsedContent = computed(() => {
       // 如果是用独立的 reasoning_content，仍要清理 content 中残留的 <thought> 标签
       reply = reply.replace(/<\/?thought[^>]*>/gi, "");
     }
-    
+
     thought = replacePlaceholders(thought);
-    
+
     // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
     thought = thought.replace(/<\/?thought[^>]*>/gi, "");
     reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-    
+
     return { thought, reply };
   } catch (err) {
     console.error("[ChatBubble] parsedContent error:", err, "message:", props.message);
@@ -436,19 +429,6 @@ const hasThought = computed(() => {
     return false;
   }
 });
-
-const renderMarkdown = (content: string) => {
-  let html = md.render(content);
-  html = html.replace(/<p>/g, '<p class="md-p">');
-  html = html.replace(/<em>/g, '<em class="md-em">');
-  html = html.replace(/<strong>/g, '<strong class="md-strong">');
-  html = html.replace(/<pre>/g, '<pre class="md-pre">');
-  html = html.replace(/<code>/g, '<code class="md-code">');
-  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
-  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
-  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
-  return html;
-};
 
 const renderedMarkdown = ref("");
 const renderedThought = ref("");
@@ -576,223 +556,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.chat-bubble-wrapper {
-  display: flex;
-  width: 100%;
-  padding: 14rpx 32rpx;
-  margin-bottom: 2rpx;
-  gap: 18rpx;
-  align-items: flex-start;
-}
-
-/* 仅本地新消息播放入场动画，历史与分页加载直接显示。 */
-.chat-bubble-wrapper.is-entering {
-  animation: bubble-fade-in var(--app-motion-slow, 360ms) cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.chat-bubble-wrapper.is-ai-continuation {
-  padding-top: 4rpx;
-}
-
-@keyframes bubble-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(20rpx);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.chat-bubble-wrapper.is-user {
-  flex-direction: row-reverse;
-}
-
-/* ===== 头像样式 ===== */
-.avatar {
-  width: 72rpx;
-  height: 72rpx;
-  border-radius: 28rpx;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 8rpx 22rpx rgba(45, 72, 62, 0.1);
-  flex-shrink: 0;
-}
-
-.avatar-spacer {
-  width: 72rpx;
-  height: 1px;
-  flex-shrink: 0;
-}
-
-/* ===== 内容区域 ===== */
-.bubble-content-area {
-  display: flex;
-  flex-direction: column;
-  max-width: calc(100% - 90rpx);
-  min-width: 0;
-}
-
-.is-user .bubble-content-area {
-  max-width: 78%;
-  align-items: flex-end;
-}
-
-/* ===== 名字标签 ===== */
-.name-tag {
-  margin-bottom: 8rpx;
-  margin-left: 10rpx;
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-caption, 22rpx);
-  font-weight: 650;
-}
-
-/* ===== 气泡基础样式 ===== */
-.bubble {
-  padding: 20rpx 26rpx;
-  border-radius: 26rpx;
-  position: relative;
-  word-break: break-word;
-  touch-action: pan-y; /* 限制垂直滚动，防止与手机端侧滑手势或返回冲突 */
-}
-
-/* ===== AI 轻纸片 ===== */
-.ai-bubble {
-  background-color: var(--app-color-bubble-ai, rgba(255, 255, 255, 0.62));
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: var(--app-color-text-primary, #26332e);
-  border: 1px solid var(--app-color-bubble-ai-border, rgba(255, 255, 255, 0.56));
-  border-top-left-radius: 10rpx;
-  box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.04);
-}
-
-/* ===== 用户浅薄荷气泡 ===== */
-.user-bubble {
-  padding: 18rpx 24rpx;
-  background-color: var(--app-color-bubble-user, rgba(215, 236, 228, 0.9));
-  color: var(--app-color-text-primary, #26332e);
-  border: 1px solid var(--app-color-bubble-user-border, rgba(112, 174, 155, 0.16));
-  border-top-right-radius: 10rpx;
-  box-shadow: 0 8rpx 24rpx rgba(79, 142, 124, 0.08);
-}
-
-/* ===== 文本渲染样式（可由页面阅读偏好覆盖） ===== */
-.plain-text {
-  font-size: var(--chat-font-size, 28rpx);
-  line-height: var(--chat-user-line-height, 1.58);
-}
-
-.markdown-content {
-  font-size: var(--chat-font-size, 28rpx);
-  line-height: var(--chat-line-height, 1.72);
-}
-
-.markdown-content :deep(.md-p) {
-  margin: 12rpx 0;
-  line-height: var(--chat-line-height, 1.72);
-}
-
-.markdown-content :deep(.md-strong) {
-  font-weight: 680;
-  color: var(--app-color-text-primary, #26332e);
-  padding: 0 4rpx;
-}
-
-.markdown-content :deep(.md-em) {
-  font-style: italic;
-  color: var(--app-color-text-secondary, #7c8983);
-  padding: 0 4rpx;
-  font-weight: normal;
-}
-
-.markdown-content :deep(.md-dialogue) {
-  color: var(--app-color-text-primary, #26332e);
-  font-weight: 650;
-}
-
-.markdown-content :deep(.md-status-card),
-.thought-markdown-content :deep(.md-status-card) {
-  max-width: 100%;
-  margin: 16rpx 0;
-  overflow: hidden;
-  border: 1px solid rgba(112, 174, 155, 0.2);
-  border-left: 5rpx solid var(--app-color-primary, #70ae9b);
-  border-radius: 16rpx;
-  background-color: rgba(228, 241, 235, 0.58);
-  word-break: break-word;
-}
-
-.markdown-content :deep(.md-status-header),
-.thought-markdown-content :deep(.md-status-header) {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-  padding: 12rpx 18rpx;
-  border-bottom: 1px solid rgba(112, 174, 155, 0.13);
-  background-color: rgba(255, 255, 255, 0.32);
-}
-
-.markdown-content :deep(.md-status-dot),
-.thought-markdown-content :deep(.md-status-dot) {
-  width: 10rpx;
-  height: 10rpx;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background-color: var(--app-color-primary, #70ae9b);
-  box-shadow: 0 0 0 6rpx rgba(112, 174, 155, 0.12);
-}
-
-.markdown-content :deep(.md-status-title),
-.thought-markdown-content :deep(.md-status-title) {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: 21rpx;
-  font-weight: 650;
-  letter-spacing: 1rpx;
-}
-
-.markdown-content :deep(.md-status-body),
-.thought-markdown-content :deep(.md-status-body) {
-  padding: 14rpx 18rpx 16rpx;
-}
-
-.markdown-content :deep(.md-status-row),
-.thought-markdown-content :deep(.md-status-row) {
-  display: flex;
-  align-items: flex-start;
-  gap: 14rpx;
-  padding: 4rpx 0;
-  line-height: 1.55;
-}
-
-.markdown-content :deep(.md-status-key),
-.thought-markdown-content :deep(.md-status-key) {
-  min-width: 112rpx;
-  flex-shrink: 0;
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: 23rpx;
-  font-weight: 600;
-}
-
-.markdown-content :deep(.md-status-value),
-.thought-markdown-content :deep(.md-status-value),
-.markdown-content :deep(.md-status-line),
-.thought-markdown-content :deep(.md-status-line) {
-  color: var(--app-color-text-primary, #26332e);
-  font-size: 24rpx;
-  line-height: 1.55;
-}
-
-.markdown-content :deep(.md-status-line),
-.thought-markdown-content :deep(.md-status-line) {
-  padding: 4rpx 0;
-}
-
-.markdown-content :deep(.md-status-spacer),
-.thought-markdown-content :deep(.md-status-spacer) {
-  height: 8rpx;
-}
+@import "./chatMessage.css";
 
 /* ===== 最新回复操作条 ===== */
 .latest-action-bar {

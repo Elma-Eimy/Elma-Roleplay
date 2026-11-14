@@ -18,7 +18,7 @@
         />
       </view>
       <button
-        v-if="!editing"
+        v-if="!editing && !readonlyState"
         class="state-btn state-btn-soft"
         :disabled="busy || generating || !snapshot"
         @tap.stop="beginEdit()"
@@ -31,7 +31,7 @@
         场景：{{ snapshot.state.scene || '未描述' }} · {{ Object.keys(snapshot.state.characters || {}).length }} 人 · 点击展开
       </template>
       <template v-else>
-        {{ generating ? '回复生成中，完成后更新状态。' : '未变化的状态会沿用；你可以手动校正。' }}
+        {{ generating ? '回复生成中，完成后更新状态。' : readonlyState ? '当前采用剧情中的角色状态。' : '未变化的状态会沿用；你可以手动校正。' }}
       </template>
     </text>
     <view v-if="error" class="state-error">
@@ -70,7 +70,7 @@
         <text class="state-line"><text class="state-line-key">衣着：</text>{{ actor.clothing || '未描述' }}</text>
         <text class="state-line"><text class="state-line-key">位置：</text>{{ actor.location || '未描述' }}</text>
       </view>
-      <text v-if="!Object.keys(snapshot.state.characters || {}).length" class="state-hint">暂无人物状态。可手动填写，或由后续剧情逐步补充。</text>
+      <text v-if="!Object.keys(snapshot.state.characters || {}).length" class="state-hint">{{ readonlyState ? '暂无人物状态，将随剧情逐步补充。' : '暂无人物状态。可手动填写，或由后续剧情逐步补充。' }}</text>
     </template>
   </view>
 </template>
@@ -79,11 +79,13 @@
 import { computed, ref, watch } from "vue";
 import { useChatStore } from "@/store/chatStore";
 import { useRoleState } from "@/composables/useRoleState";
-const props = defineProps<{ sessionId: number | null }>();
+import type { RoleState } from "@/types/roleState";
+const props = defineProps<{ sessionId: number | null; readonlyState?: RoleState; processing?: boolean }>();
 const collapsed = ref(false);
 const chatStore = useChatStore();
-const generating = computed(() => chatStore.isLoading);
-const { snapshot, busy, error, editing, scene, actors, newName, load, beginEdit, addActor, cancel, save } = useRoleState(() => props.sessionId, () => generating.value);
+const generating = computed(() => props.readonlyState ? !!props.processing : chatStore.isLoading);
+const { snapshot: editableSnapshot, busy, error, editing, scene, actors, newName, load, beginEdit, addActor, cancel, save } = useRoleState(() => props.readonlyState ? null : props.sessionId, () => generating.value);
+const snapshot = computed(() => props.readonlyState ? { state: props.readonlyState } : editableSnapshot.value);
 watch(() => [chatStore.isLoading, chatStore.messages.map(message => `${message.id}:${message.content}`).join('\u0000')], () => {
   if (!generating.value && !editing.value) void load();
 });

@@ -8,20 +8,50 @@ import type {
   UpdateTitleResponse,
   DeleteSessionResponse,
   TriggerCognitionResponse,
+  ContextCompressionStatus,
 } from "../../types/sessions";
 import { getMockDB, setMockDB } from "../config";
+
+export async function getContextCompression(sessionId: number): Promise<ContextCompressionStatus> {
+  const db = getMockDB();
+  if (db.groupSessions?.some(group => group.session_id === sessionId)) {
+    throw new Error("此操作仅支持单聊");
+  }
+  const session = db.sessions.find(item => item.id === sessionId);
+  if (!session) throw new Error("故事不存在");
+  // Mock 不运行模型压缩，不虚构摘要或覆盖进度。
+  const active = (db.messages[sessionId] || []).filter(item => item.is_active !== false);
+  let latestUser = -1;
+  for (let index = 0; index < active.length; index++) {
+    if (active[index].role === "user") latestUser = index;
+  }
+  const retained = latestUser < 0 ? 0 : active.slice(0, latestUser).filter(
+    item => item.role === "user" || item.role === "assistant"
+  ).length;
+  return {
+    summary: null, checkpoint_id: null, covered_message_count: 0,
+    retained_message_count: retained, pending_message_count: 0,
+    source_message_id: null, model: null, updated_at: null,
+  };
+}
 
 export async function createSession(
   params: CreateSessionParams
 ): Promise<CreateSessionResponse> {
   const db = getMockDB();
+  if (db.groupSessions?.some(group => group.session_id === params.parent_session_id)) {
+    throw new Error("此操作仅支持单聊");
+  }
   const parentSession = params.parent_session_id
     ? db.sessions.find((s) => s.id === params.parent_session_id)
     : null;
 
   const char = db.characters.find((c) => c.id === params.character_id);
-  const newSessionId = Date.now();
-  const personaId = Date.now() + 1;
+  const groups = db.groupSessions ?? [];
+  const newSessionId = Math.max(Date.now(), ...db.sessions.map(session => session.id),
+    ...groups.map(group => group.session_id)) + 1;
+  const personaId = Math.max(Date.now(), ...db.sessions.map(session => session.persona?.id ?? 0),
+    ...groups.flatMap(group => group.members.map(member => member.persona_id))) + 1;
 
   const mockPersona: PersonaDetail = {
     id: personaId,

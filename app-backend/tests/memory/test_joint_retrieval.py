@@ -65,7 +65,7 @@ class JointRetrievalTests(unittest.TestCase):
         self.assertEqual(card.content, result[0]["content"])
 
     def test_semantic_age_survives_joint_recall_and_prompt_rendering(self):
-        from services.conversation.prompt_compiler import build_chat_messages
+        from services.conversation.prompting.compiler import build_chat_messages
 
         card = self.fact("小红去了旧城。")
         result = self.recall(semantic=[{"id": card.id, "turns_passed": 100}])
@@ -139,7 +139,7 @@ class JointRetrievalTests(unittest.TestCase):
         self.assertEqual({"planned", "historical"}, {row["temporal_status"] for row in result})
 
     def test_prompt_renders_plan_once_with_its_story_time(self):
-        from services.conversation.prompt_compiler import build_chat_messages
+        from services.conversation.prompting.compiler import build_chat_messages
         planned = self.fact("小红计划去旧城。", status="planned", note="下个月")
         memories = self.recall(semantic=[{"id": planned.id}])
         messages = build_chat_messages(self.character, self.parent_persona, [], "她去过了吗？",

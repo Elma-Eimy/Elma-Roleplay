@@ -10,12 +10,13 @@
    [session_service.py](file:///app-backend/services/session_service.py) 业务层执行。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from typing import Literal, Optional
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core import models
+from services.conversation.session_access import get_single_session
 from core.models import MessageRole
 from schemas import SessionCreate, SessionTitleUpdate, MessageUpdate, MemoryCreateRequest, MemoryUpdateRequest
 from schemas import MemoryConsolidationPreviewRequest, MemoryConsolidationApplyRequest, MemoryConsolidationReviewRequest
@@ -29,7 +30,9 @@ import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
 import services.memory.memory_consolidation_service as memory_consolidation_service
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 
 @router.get("/{session_id}/portrait")
@@ -139,7 +142,7 @@ def list_recent_sessions(
 @router.get("/{session_id}")
 def get_session_detail(session_id: int, db: Session = Depends(get_db)):
     """获取会话详情（含 Persona 完整状态 + Character 基本信息）"""
-    session = db.get(models.Session, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -169,6 +172,15 @@ def get_session_detail(session_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{session_id}/context-compression")
+def get_context_compression(session_id: int, db: Session = Depends(get_db)):
+    from services.conversation.context_compression import context_status
+    try:
+        return context_status(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{session_id}/history")
 def get_session_history(
     session_id: int,
@@ -180,25 +192,15 @@ def get_session_history(
     # 状态先于历史读取；生成在查询期间结束时，保守要求客户端再读取一次，
     # 避免把旧历史与刚释放的锁组合成“已完成”的响应。
     was_generating = is_session_locked(session_id)
-    session = db.get(models.Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
     # 动态应用配置文件的默认拉取值与上限控制
     fetch_limit = limit if (isinstance(limit, int) and limit is not None) else settings.APP_HISTORY_FETCH_DEFAULT
     fetch_limit = min(fetch_limit, settings.APP_HISTORY_FETCH_MAX)
 
     fetch_before_id = before_id if isinstance(before_id, int) else None
-    messages = session_service.get_session_history_with_inheritance(session_id, db, fetch_limit, fetch_before_id)
-    candidate_groups = session_service.get_candidates_by_parent(
-        session_id,
-        [
-            message.parent_id
-            for message in messages
-            if message.role == MessageRole.assistant and message.parent_id is not None
-        ],
-        db,
-    )
+    page = session_service.get_session_history_page(session_id, db, fetch_limit, fetch_before_id)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    messages, candidate_groups = page
 
     session_history = []
     for m in messages:
@@ -280,7 +282,7 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
 @router.get("/{session_id}/memory-processing")
 def get_memory_processing_status(session_id: int, db: Session = Depends(get_db)):
     """只读本故事的提纯任务状态，不入队或调用模型。"""
-    session = db.get(models.Session, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.persona is None:
@@ -292,7 +294,7 @@ def get_memory_processing_status(session_id: int, db: Session = Depends(get_db))
 @router.post("/{session_id}/trigger_summary")
 def trigger_memory_summary(session_id: int, db: Session = Depends(get_db)):
     """手动触发指定会话的记忆提纯流程"""
-    session = db.get(models.Session, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -315,7 +317,7 @@ def trigger_memory_summary(session_id: int, db: Session = Depends(get_db)):
 @router.post("/{session_id}/trigger_cognition")
 def trigger_cognition_update(session_id: int, db: Session = Depends(get_db)):
     """手动触发指定会话的认知状态更新"""
-    session = db.get(models.Session, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if not session.persona:
@@ -499,10 +501,10 @@ async def compile_session_prompt(
     预览/编译当前会话的最近一次大模型 Prompt 组装。
     """
     import services.conversation.context_assembler as context_assembler
-    from services.conversation.prompt_compiler import compile_system_prompt
-    from services.conversation.prompt_token_estimator import estimate_prompt_tokens
+    from services.conversation.prompting.compiler import compile_system_prompt
+    from services.conversation.prompting.token_estimator import estimate_prompt_tokens
 
-    session = db.get(models.Session, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     

@@ -4,6 +4,14 @@
 
 后端职责边界见 [架构说明](../docs/architecture/BACKEND.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
 
+群聊候选生命周期集中在 `services/conversation/group/candidate_state.py`，执行权与持久目标校验在 `group/execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。
+
+群聊成员立绘使用独立的选择服务和候选快照，资源继续复用角色立绘；启动迁移追加快照列，旧候选不回填，非空快照拒绝有损降级。归属、版本与恢复规则见 [群聊架构](../docs/architecture/GROUP_CHAT.md#成员立绘快照) 和 [群聊接口](../docs/api/GROUP_SESSIONS.md#成员立绘)。
+
+新共同群聊使用独立的业务调度记录保存发言成员和回应目标；旧候选保留原审计读取，升级不重裁权限。新增迁移、兼容边界及回滚保护见[群聊业务调度](../docs/architecture/GROUP_CHAT.md#业务调度与旧协议兼容)。
+
+聊天引擎的流式与非流式入口共用生成参数准备逻辑，统一处理请求、角色卡与全局设置的优先级及模型能力适配；Prompt 装配和消息持久化仍由各自服务负责。
+
 ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁并在进程内复用；构造失败后可重试。导入服务不会创建这两项资源，其配置与首次使用时的错误处理见 [初始化边界](../docs/architecture/BACKEND.md#启动与请求链路)。
 
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  
@@ -39,6 +47,40 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 ---
 
 ## 核心特性
+
+角色 Prompt 编译器已删除群聊 JSON 输出分支及输出契约覆盖入口；旧候选的提示词预览也复用单聊 XML。角色卡示例和自身 assistant 历史沿用同一 XML 格式，数据版本不再切换输出协议。旧记录的单元与权限继续用于读取过滤，不要求模型输出这些字段。
+
+共同群聊导演逐次选择发言成员、主要回应的消息和结束时机，复用现有 `basis` 引用与审计；角色动态背景包含对应原文和本人本轮发言序号，输出仍是单聊 XML。新候选冻结 `reply_target=true`，旧快照缺字段保持原续接规则，不增加裁决或发言审查。行为与兼容边界见[群聊架构](../docs/architecture/GROUP_CHAT.md)。
+
+2026-11-11 起，新发送与重新生成使用普通共同群聊：角色复用单聊 XML、示例与容错解析，导演只决定下一位成员或结束，冻结知情裁决、格式转换和亲历审查。新候选冻结 `shared_chat=true`，旧快照与权限不回填；旧裁决候选的 HTTP 续接明确拒绝，保留内容并允许重新生成新候选。旧角色 JSON 生成、格式转换重试与发言审查实现已删除；旧分段与权限仅保留历史读取兼容，旧策略候选在 HTTP 与内部服务均拒绝续接。当前提示词预览与增量读取见[群聊接口](../docs/api/GROUP_SESSIONS.md)。
+
+新角色回复只调用一次模型，复用单聊 XML 解析与状态更新。导演仅调度成员、回应目标和结束，新候选由导演逐条决定结束，单次执行最多 64 次模型调用、300 秒；耗尽时暂停并保留原候选供继续，不按固定发言条数完成。旧候选沿用冻结策略。配置的输出额度和思考强度保持原值；确认后的记忆提纯复核由独立后台任务执行，不参与角色发言链路。
+
+群聊目前完成 M1-A–D 代码实现：会话区分 single/group，Persona 按成员位置归属会话；服务与 HTTP 接口支持创建、冻结来源快照、列表详情和整群删除。M4 已接通后台生成、候选操作与详情页交互。群聊契约见[群聊管理 API](../docs/api/GROUP_SESSIONS.md)。现有单聊入口对 group 返回 409，单聊列表排除群聊，被群聊使用的角色不能删除。迁移沿用原 Alembic 链，事务内重建并检查外键，含群聊数据时拒绝降级；实现与边界见[后端架构](../docs/architecture/BACKEND.md)。
+
+M5-A 在群聊个人 Prompt 中按可见话题召回该成员的入群快照，M5-B 在发送确认时登记成员提纯任务，由独立后台循环使用记忆模型处理。M5-C 同时保存个人认识与定向关系印象，按候选创建时的进度进入本人后续发言。M5-D 按候选创建时的卡片范围合并群内新卡和快照，以 SQLite 取正文、独立 Chroma 集合匹配语义。范围与验证见[群聊记忆实施计划](../docs/plans/group-chat/M5_MEMORY_AND_GROWTH.md)。
+
+群聊确认后的提纯先独立检查本人可见原文，重新分开断言、更正、计划与请求，不依赖导演的用途分类。新卡标记叙事、可见动作、说法、计划或主观认识；角色台词只证明其说过，不能自动变为亲历事实。复合旧卡可按完整原文冻结分段，更正、本人撤回和他人异议只作用于目标片段；原文与其他片段保留。新候选冻结 `fact_recall` 策略及卡片上界，旧候选保持原读法。明确更正须有目标关系或记录 `correction_unmatched`，校验失败最多三次后交后台重试。
+
+M2 已建立群聊轮次、候选、内容与知情记录，以及内部单步生成、个人 Prompt 和候选状态重放。用户原文只保存一次；个人历史仅含此前已确认的所选成功候选与当前候选边界内的可见内容，先过滤再限量。`GET /group-sessions/{session_id}/rounds` 为故事操作者提供整轮分页的只读正文；M4-C 已接通后台生成、候选操作与请求恢复查询；不提供手动选角色或独立确认接口，确认随下一条用户消息接受完成。
+
+单步生成要求对应数据库的进程运行权和会话锁，模型与接收者判定期间不持有数据库事务；完成后复核候选 revision，原子保存正文、知情行及自己的状态增量。失败/取消保留前缀并停止，不保存错误兜底台词或 reasoning，不改写成员起点、不触发记忆提纯。隔离原型入口为 `python -m tests --group conversation --pattern test_group_generation.py`，只使用临时数据和假模型，包含 A → B → A 到只读 HTTP 展示的联通检查。
+
+后端对同一 SQLite 文件强制单进程运行：lifespan 在迁移前取得数据库旁的 `.runtime.lock` 文件锁，另一个 Worker 启动会明确失败；关闭后操作系统释放锁，无需删除锁文件。迁移完成后，将遗留 generating 群聊候选和 queued/running 请求回执一起标为 process_interrupted 失败、推进对应会话版本并保留已保存内容，不自动续接或重发。使用 `uvicorn main:app --reload` 开发或单 Worker 部署，不使用多 Worker 连接同一库。
+
+HTTP 路由统一使用 `SessionAPIRouter`，在进入业务函数前校验资源所属会话；应用装配拒绝未接入边界的路由。直接服务入口由自动发现回归检查，新增共享操作须声明不限制类型的原因。检查范围见[后端测试](tests/README.md)。
+
+M4-A 已加入会话版本、撤回、候选检查点/冻结参数与持久操作回执。内部接受新消息原子确认上一成功轮次；选择/撤回受会话版本与候选版本保护，撤回保留回执并排除后续剧情。A 批仅建立事务原语，M4-B 现已通过独立后台入口接通持久执行与恢复。当前进度及调用边界见 [M4-A 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-a-接续记录)。
+
+M4-B 内部入口为 `group.background_service.submit_group_operation`：Worker 创建即登记，自行持锁并使用独立 Session 接受和执行；调用方断连不取消任务。重生成成功前保留旧选择，失败按持久检查点显式续接，已保存发言与状态不会重复累计；派发前持久消费调用预算，finish 续接零模型调用。公开 HTTP 已由 M4-C 接入，M4-D 页面通过 GET 恢复请求，详见 [M4-B 接续记录](../docs/plans/group-chat/M4_ROUNDS_AND_RECOVERY.md#m4-b-接续记录)。
+
+M3-D 的限时本机只读预览已联通现有 H5 群聊详情；正常停止、同名成员和失败前缀有独立展示与候选版本交接。预览保持只读；正常后端已提供 M4-C 操作接口，M4-D 详情页已接入相应交互。复现命令与待验收项见[群聊 M3 联通验收](../docs/testing/group-chat/M3_DIRECTOR.md)与[群聊 M4 交接](../docs/testing/group-chat/M4_ROUNDS_AND_RECOVERY.md)。
+
+导演调用按阶段提供独立输出契约；v2 用户初判同时提供服务端计算的原文长度和最多 256 项码点参照，所有范围仍严格校验完整覆盖。个人投影保留获准单元的类型；用户原话独立，其他成员的 v2 发言作为带作者的历史资料，不再占用用户消息身份，自己的历史保留 assistant 身份。个人可见顺序、本轮已见发言者及当前身份参与生成约束，不暴露隐藏内容的全局编号。记录中的请求、意图、承诺不等于已执行的动作，用户叙事也不能一律当成已经发生。真实模型仍有归属、时序与输出格式残留，证据见[群聊 M4 交接](../docs/testing/group-chat/M4_ROUNDS_AND_RECOVERY.md)；有限样本不代表整体自然度或真机验收通过。
+
+新候选默认启用 `app.group_turn_planning: true`：用户片段区分事实、台词、推进请求、心理与不确定内容，请求对象和感知权限分别记录；导演为下一发言选择可验证的承接依据，发言后判同时检查明确的主体控制或历史冲突，未通过不提交。策略、依据和已接受结果沿用现有候选快照与审计保存，旧快照没有策略字段时仍按旧规则恢复，不需要迁移数据表。`llm.group_json_mode` 默认 false，仅在实际服务支持时设为 true，冻结 `json_object` 格式参数；不保证业务字段齐全，仍严格解析。两个选项都是服务器启动配置，已有候选沿用冻结值；普通单聊不受影响，显式 v1 内部执行仍使用 XML 角色输出。
+
+M3-A 提供导演 JSON 协议、有效场景快照和 `python -m scripts.group_chat_prototype` 隔离原型；M3-B 将其推进收敛到内部整轮服务，加入任务执行权、冻结参数、调用预算、零重试与应用关闭清理。启动器只复制源码，在临时配置与虚构库中默认固定响应回放，完整 messages 仅用于隔离报告；普通结果不带全文输入，没有新增生成 API。M3-C 接入 v2 单元协议，混合用户原文按 Unicode 码点范围映射，角色发言按台词/动作/心理拆分知情，状态增量仍只作用一次；导演审计与正常终止原因持久化。显式 v1 兼容保留，模型自然度和实际单元划分尚未验收。命令与在线模式边界见[工具说明](scripts/README.md)。
 
 角色卡中文阅读副本由 `services/character_translation_service.py` 负责，独立缓存在 SQLite `character_translations` 表，通过 Alembic 升级已有数据库；不改写角色原文，也不参与 Prompt。独立的 `llm.translation_model` 未配置时从现有非思考聊天模型初始化一次。使用流程和范围见 [角色卡双版本阅读](../docs/features/CHARACTER_CARDS.md#原文与中文阅读版本)，HTTP 契约见根目录 API 总表。
 
@@ -189,7 +231,7 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 
 - `sessions.fork_message_id` 持久化记录真实分叉点，不再根据父会话的“当前最新消息”猜测边界。
 - 创建分支时会验证显式 `start_message_id` 确实属于父会话；非法分叉点直接拒绝并回滚。
-- 父分支只允许向子分支提供分叉点之前的少量示例，分叉点本身不会重复注入，分叉后的未来消息不会泄漏。
+- 新分支冻结分叉点之前的有效上下文摘要与未覆盖原文，分叉点本身仍只复制一次，父线未来和同轮其他候选不会进入子线，详见[上下文压缩](../docs/features/CONTEXT_COMPRESSION.md)。
 - 旧数据中无法可靠推断分叉点的会话保持 `NULL`，不会冒险回退到父会话最新消息。
 - 删除中间分支节点时，子节点会重连到祖父节点，并继承被删除节点原本可信的父级分叉边界。
 - 对应迁移：`c6d1e2f3a4b5_add_session_fork_message_id.py`。
@@ -208,10 +250,10 @@ ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁
 - 默认 `context_history_limit=15`、`memory_handoff_margin=2` 时，即使配置的提纯阈值为 20，也会在 13 条未总结消息时提前触发。
 - 自动触发计数与实际提纯批次都只包含“严格早于最新 active 用户消息”的内容。当前用户消息及其所有候选不会进入长期记忆；用户发送下一条消息后，上一轮最终 active 候选才获得提纯资格。
 - 这种确认机制有意让长期记忆落后一轮。当前轮仍完整存在于短期上下文中，因此不会形成可见的上下文空档，同时避免用户已经拒绝的候选污染长期记忆。
-- 后台提纯尚未完成或向量服务暂时失败时，短期历史会临时扩展，继续保留尚未提纯的 active 消息。
-- 临时扩展存在批次上限，避免外部服务长期不可用时 Prompt 无限增长；提纯指针推进后自动恢复正常窗口。
+- 单聊上下文独立维护滚动摘要，不等待长期记忆提纯。即将离开最近窗口的已确认对话按批压缩，摘要固定注入，覆盖之后的原文继续保留。
+- 未满压缩批次或压缩失败时暂时保留额外原文，不推进摘要覆盖范围；持续失败可能使输入超过配置窗口。旧的记忆交接窗口计算函数保留兼容，聊天装配改用摘要覆盖范围，不再按提纯指针裁掉原文。
 - 当前故事的后台进度通过只读 `GET /sessions/{session_id}/memory-processing` 查询，不触发模型。任务成功提交时记录完成时间，升级前历史值保留为空；待处理数量包含运行和重试任务，完成不保证新增记忆或向量同步结束。契约见[会话接口](../docs/api/SESSIONS.md#get-sessionssession_idmemory-processing)。
-- 重新生成回复时会补偿旧 active 回复占用的查询名额，避免边界少取一条消息。
+- 重新生成按当前用户消息 ID 排除其后的旧候选，不将旧回复写入摘要；只读 Prompt 预览不会执行压缩。
 
 ### 3. 上下文化检索查询
 
@@ -404,6 +446,7 @@ app-backend/
 ├── application/
 │   ├── factory.py           # 应用、CORS、静态资源与路由装配
 │   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   ├── group_runtime.py     # 数据库运行权与群聊中断候选处理
 │   └── banner.py            # 启动地址提示
 ├── scripts/
 │   ├── README.md            # 显式维护命令说明
@@ -434,9 +477,36 @@ app-backend/
 │   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
 │   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）
 │   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
+│   │   ├── context_compression.py # 单聊滚动摘要、来源校验与分支基线
 │   │   ├── message_service.py # 消息生命周期管理服务
-│   │   ├── prompt_compiler.py # Prompt 拼装与格式规整编译器
-│   │   ├── prompt_token_estimator.py # 启发式 Prompt Token 范围估算服务
+│   │   ├── group/           # 群聊业务，职责入口见群聊架构文档
+│   │   │   ├── session_service.py # 群聊创建、来源快照与删除
+│   │   │   ├── query_service.py # 群聊详情、候选与成员预览查询
+│   │   │   ├── operation_service.py # 接受请求、候选选择与撤回
+│   │   │   ├── background_service.py # 后台任务派发与恢复
+│   │   │   ├── round_service.py # 整轮导演调度与角色生成编排
+│   │   │   ├── director_service.py # 导演上下文、协议与决策校验
+│   │   │   ├── context_service.py # 成员个人上下文与角色状态装配
+│   │   │   ├── call_snapshot.py # 模型调用快照、预算与恢复参数
+│   │   │   ├── generation_service.py # 角色模型调用、解析与清理
+│   │   │   ├── history_service.py # 轮次、候选历史与个人可见记录
+│   │   │   ├── candidate_state.py # 候选生命周期转换
+│   │   │   ├── execution_scope.py # 执行权与持久目标校验
+│   │   │   ├── checkpoint_service.py # 检查点、预算与请求终态
+│   │   │   ├── dispatch_service.py # 业务调度与完成标记
+│   │   │   ├── turn_plan.py # 回应依据与调度兼容入口
+│   │   │   ├── legacy_protocol.py # 旧候选协议与审计兼容
+│   │   │   ├── unit_protocol.py # 可见内容单元协议
+│   │   │   ├── unit_service.py # 单元保存与个人可见投影
+│   │   │   └── audit_service.py # 调度审计记录
+│   │   ├── prompting/       # 单聊与群聊共用的 Prompt 编译与估算
+│   │   │   ├── compiler.py # Prompt 编译入口与群聊输入适配
+│   │   │   ├── templates.py # 角色卡模板、占位符和输出协议
+│   │   │   ├── examples.py # 对话示例解析与兼容回退
+│   │   │   ├── lorebook.py # 世界书内容编译与深度插入
+│   │   │   ├── context.py # 世界书匹配、记忆展示和动态背景
+│   │   │   ├── layout.py # 消息前缀、历史转换与背景定位
+│   │   │   └── token_estimator.py # 启发式 Prompt Token 范围估算服务
 │   │   ├── retrieval_query_service.py # 上下文化检索查询生成器
 │   │   └── session_service.py # 会话生命周期与分支状态拷贝/回滚服务
 │   ├── infrastructure/      # 底层基础设施与服务客户端
@@ -469,6 +539,9 @@ app-backend/
 │   ├── README.md            # 测试指南与新增约定
 │   ├── api/                 # 接口、鉴权与路由服务边界
 │   ├── conversation/        # Prompt、分叉、对话回合和上下文
+│   │   ├── group/           # 群聊业务与成员记忆链路回归
+│   │   └── prompting/       # 角色卡兼容、完整消息快照与 Token 估算
+│   ├── support/group/       # 群聊共用建库、造数与模型替身
 │   ├── memory/              # 提纯、版本、检索与图谱
 │   ├── infrastructure/      # 迁移、资源清理、Embedding 与 Outbox
 │   ├── core/                # 配置系统
@@ -492,6 +565,8 @@ app-backend/
 ```bash
 python -m tests
 python -m tests --group memory
+python -m tests --group conversation/prompting
+python -m tests --group conversation/group
 python -m tests --group conversation --pattern test_branch_context_boundary.py
 ```
 

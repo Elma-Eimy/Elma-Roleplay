@@ -91,20 +91,41 @@ export function useChatScroll() {
     schedule(scrollToBottom, 260);
   };
 
-  // #ifdef APP-PLUS
-  const onKeyboardChange = (res: any) => {
+  // #ifdef APP-PLUS || MP-WEIXIN
+  const onKeyboardChange = (res: { height: number }) => {
     // Android 配置 adjustResize，WebView 会自动调整大小，无需占位
     // iOS WebView 高度固定，必须通过占位来推起输入区
-    keyboardHeight.value = isAndroid ? 0 : res.keyboardHeight;
-    if (res.keyboardHeight > 0) {
+    const height = Math.max(0, Number(res.height) || 0);
+    keyboardHeight.value = isAndroid ? 0 : height;
+    if (height > 0) {
       triggerPhasedScroll();
     }
   };
   // #endif
 
+  // #ifdef H5
+  let visualViewport: VisualViewport | null = null;
+  const onVisualViewportChange = () => {
+    const tag = document.activeElement?.tagName;
+    const focused = tag === 'TEXTAREA' || tag === 'INPUT';
+    const height = focused && visualViewport && visualViewport.scale === 1
+      ? Math.max(0, document.documentElement.clientHeight - visualViewport.height - visualViewport.offsetTop) : 0;
+    if (keyboardHeight.value === height) return;
+    keyboardHeight.value = height;
+    if (height > 0) triggerPhasedScroll();
+  };
+  // #endif
+
   onMounted(() => {
-    // #ifdef APP-PLUS
+    // #ifdef APP-PLUS || MP-WEIXIN
     uni.onKeyboardHeightChange(onKeyboardChange);
+    // #endif
+    // #ifdef H5
+    visualViewport = window.visualViewport;
+    visualViewport?.addEventListener('resize', onVisualViewportChange);
+    visualViewport?.addEventListener('scroll', onVisualViewportChange);
+    document.addEventListener('focusin', onVisualViewportChange);
+    document.addEventListener('focusout', onVisualViewportChange);
     // #endif
   });
 
@@ -114,20 +135,29 @@ export function useChatScroll() {
     timers.clear();
     bottomTimer = null;
     throttleTimer = null;
-    // #ifdef APP-PLUS
+    // #ifdef APP-PLUS || MP-WEIXIN
     uni.offKeyboardHeightChange(onKeyboardChange);
+    // #endif
+    // #ifdef H5
+    visualViewport?.removeEventListener('resize', onVisualViewportChange);
+    visualViewport?.removeEventListener('scroll', onVisualViewportChange);
+    document.removeEventListener('focusin', onVisualViewportChange);
+    document.removeEventListener('focusout', onVisualViewportChange);
+    visualViewport = null;
     // #endif
   });
 
   // 处理分页历史记录加载后的位置维持，避免视窗乱闪
-  const maintainScrollPosition = async (oldestClientId: string) => {
+  const maintainScrollPosition = async (oldestClientId: string, isCurrent = () => true) => {
+    if (!isCurrent()) return;
     scrollWithAnimation.value = false;
     await nextTick();
-    if (isUnmounted) return;
+    if (isUnmounted || !isCurrent()) return;
     schedule(() => {
+      if (!isCurrent()) return;
       scrollIntoViewId.value = oldestClientId;
       schedule(() => {
-        scrollIntoViewId.value = "";
+        if (isCurrent() && scrollIntoViewId.value === oldestClientId) scrollIntoViewId.value = "";
       }, 100);
     }, 50);
   };

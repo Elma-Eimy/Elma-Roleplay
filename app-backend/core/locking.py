@@ -20,9 +20,87 @@
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Dict
 
 _session_locks: Dict[int, asyncio.Lock] = {}
+
+
+class GroupRuntimeOwner:
+    """由应用生命周期持有的数据库进程运行权。"""
+    def __init__(self, db_engine):
+        self.engine = db_engine
+        self.active = True
+        self.accepting = True
+        self.tasks = set()
+        self.executions = {}
+
+
+class _GroupExecution:
+    def __init__(self, owner, session_id, lock, task):
+        self.owner, self.session_id, self.lock, self.task = owner, session_id, lock, task
+        self.active = True
+
+
+def require_group_execution(execution, session_id, db_engine):
+    if not isinstance(execution, _GroupExecution) or not execution.active:
+        raise RuntimeError("群聊步骤缺少有效执行权")
+    require_group_runtime(execution.owner, db_engine)
+    if (execution.session_id != session_id or execution.task is not asyncio.current_task()
+            or execution.owner.executions.get(execution.task) is not execution or not execution.lock.locked()
+            or get_session_lock(session_id) is not execution.lock):
+        raise RuntimeError("群聊步骤不能借用其他任务或会话的执行权")
+
+
+@asynccontextmanager
+async def group_execution(session_id, db_engine, owner):
+    from services.conversation.session_access import SessionKindConflict
+    require_group_runtime(owner, db_engine)
+    if not owner.accepting:
+        raise SessionKindConflict("应用正在关闭，不能启动群聊")
+    task = asyncio.current_task()
+    if task in owner.executions:
+        raise SessionKindConflict("当前任务已持有群聊执行权")
+    lock = get_session_lock(session_id)
+    if lock.locked():
+        raise SessionKindConflict("群聊正在处理")
+    await lock.acquire()
+    execution = _GroupExecution(owner, session_id, lock, task)
+    owner.tasks.add(task)
+    owner.executions[task] = execution
+    try:
+        yield execution
+    finally:
+        execution.active = False
+        owner.tasks.discard(task)
+        owner.executions.pop(task, None)
+        lock.release()
+
+
+async def stop_group_executions(owner):
+    """停止接收并等待已登记任务；调用方须在此后才释放文件运行权。"""
+    owner.accepting = False
+    tasks = tuple(task for task in owner.tasks if task is not asyncio.current_task())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        pending = asyncio.gather(*tasks, return_exceptions=True)
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(pending)
+                break
+            except asyncio.CancelledError:
+                if pending.cancelled():
+                    raise
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+
+def require_group_runtime(owner, db_engine):
+    if not isinstance(owner, GroupRuntimeOwner) or not owner.active or owner.engine is not db_engine:
+        raise RuntimeError("群聊生成必须持有对应数据库的运行权")
 
 
 def get_session_lock(session_id: int) -> asyncio.Lock:

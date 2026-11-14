@@ -2,6 +2,7 @@ import type { ActiveStreamRequest } from "@/types/chatStream";
 import { defineStore } from "pinia";
 import { ref, computed, onScopeDispose } from "vue";
 import type { MessageActionResult } from "@/types/chat";
+import type { GenerationOverride } from "@/types/generation";
 import { onServerChange } from "@/utils/connectionEvents";
 import { getSessionHistory, updateMessage as apiUpdateMessage, deleteMessage as apiDeleteMessage, switchCandidate as apiSwitchCandidate } from "@/api/sessions";
 import type { Message } from "@/api/sessions";
@@ -12,6 +13,7 @@ import { usePersonaStore } from "./personaStore";
 import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatSettingsStore } from "./chatSettingsStore";
 import { createCancellation } from "@/utils/cancellation";
+import { createChatStreamBuffer } from "@/utils/chatStreamBuffer";
 import type { Cancellation } from "@/utils/cancellation";
 
 export type MessageStatus = "sending" | "streaming" | "done" | "error";
@@ -36,7 +38,7 @@ export const useChatStore = defineStore("chat", () => {
     streamCancellation?.cancel();
     streamCancellation = null;
     activeStreamRequest.value = null;
-    clearPendingStreamChunks();
+    streamBuffer.clear();
     streamingText.value = "";
   }
 
@@ -60,51 +62,21 @@ export const useChatStore = defineStore("chat", () => {
   /** 当前流式输出传输中的临时回复文本 */
   const streamingText = ref("");
 
-  const STREAM_UPDATE_INTERVAL = 48;
-  const pendingStreamText = new Map<string, string>();
-  const pendingReasoningText = new Map<string, string>();
-  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const flushPendingStreamChunks = () => {
-    if (streamFlushTimer !== null) {
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
-    }
-
-    pendingStreamText.forEach((text, tempId) => {
+  const streamBuffer = createChatStreamBuffer(
+    (tempId, text) => {
       const message = messages.value.find((item) => item.tempId === tempId);
       if (message) {
         message.content += text;
         streamingText.value += text;
       }
-    });
-    pendingReasoningText.forEach((text, tempId) => {
+    },
+    (tempId, text) => {
       const message = messages.value.find((item) => item.tempId === tempId);
       if (message) {
         message.reasoning_content = `${message.reasoning_content || ""}${text}`;
       }
-    });
-
-    pendingStreamText.clear();
-    pendingReasoningText.clear();
-  };
-
-  const scheduleStreamFlush = () => {
-    if (streamFlushTimer !== null) return;
-    streamFlushTimer = setTimeout(
-      flushPendingStreamChunks,
-      STREAM_UPDATE_INTERVAL
-    );
-  };
-
-  const clearPendingStreamChunks = () => {
-    if (streamFlushTimer !== null) {
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
     }
-    pendingStreamText.clear();
-    pendingReasoningText.clear();
-  };
+  );
 
   /** 从服务端接收到的最新对话元数据 */
   const lastMeta = ref<Omit<ChatResponse, "reply"> | null>(null);
@@ -171,7 +143,7 @@ export const useChatStore = defineStore("chat", () => {
         const lastMessage = result.messages[result.messages.length - 1];
         const completed = lastMessage?.role === "assistant" &&
           (options.afterMessageId === undefined || lastMessage.id > options.afterMessageId);
-        clearPendingStreamChunks();
+        streamBuffer.clear();
         streamingText.value = "";
         activeStreamRequest.value = null;
         if (completed) {
@@ -418,6 +390,26 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  function buildChatRequest(
+    sessionId: number,
+    text: string,
+    generation: GenerationOverride,
+    userNickname: string
+  ): ChatRequest {
+    const settingsStore = useChatSettingsStore();
+    return {
+      session_id: sessionId,
+      user_message: text,
+      ...generation,
+      user_nickname: userNickname,
+      temperature: settingsStore.temperature ?? undefined,
+      top_p: settingsStore.top_p ?? undefined,
+      presence_penalty: settingsStore.presence_penalty ?? undefined,
+      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
+      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
+    };
+  }
+
   /** 重新生成最后一次 AI 回复（支持无感重发，避免出现双重用户气泡的 Bug） */
   async function regenerateChatMessage(sessionId: number) {
     if (isLoading.value || activeSessionId.value !== sessionId) return;
@@ -457,18 +449,9 @@ export const useChatStore = defineStore("chat", () => {
     const streamPlaceholderId = addStreamingPlaceholder();
     streamBaselines.set(streamPlaceholderId, afterMessageId);
 
-    const settingsStore = useChatSettingsStore();
-    const requestParams: ChatRequest = { 
-      session_id: sessionId, 
-      user_message: lastUserMsg.content,
-      ...generation,
+    const requestParams: ChatRequest = {
+      ...buildChatRequest(sessionId, lastUserMsg.content, generation, personaStore.userNickname),
       is_regenerate: true,
-      user_nickname: personaStore.userNickname,
-      temperature: settingsStore.temperature ?? undefined,
-      top_p: settingsStore.top_p ?? undefined,
-      presence_penalty: settingsStore.presence_penalty ?? undefined,
-      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
-      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
     };
 
     // #ifdef APP-PLUS
@@ -513,18 +496,7 @@ export const useChatStore = defineStore("chat", () => {
     const tempId = addOptimisticUserMessage(text);
     const streamPlaceholderId = addStreamingPlaceholder();
 
-    const settingsStore = useChatSettingsStore();
-    const requestParams: ChatRequest = { 
-      session_id: sessionId, 
-      user_message: text,
-      ...generation,
-      user_nickname: personaStore.userNickname,
-      temperature: settingsStore.temperature ?? undefined,
-      top_p: settingsStore.top_p ?? undefined,
-      presence_penalty: settingsStore.presence_penalty ?? undefined,
-      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
-      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
-    };
+    const requestParams = buildChatRequest(sessionId, text, generation, personaStore.userNickname);
 
     // #ifdef APP-PLUS
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -564,7 +536,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 乐观更新：向列表追加一条流式传输专用的 AI 占位消息 */
   function addStreamingPlaceholder(): string {
-    clearPendingStreamChunks();
+    streamBuffer.clear();
     const afterMessageId = latestPersistedMessageId();
     const tempId = `stream-${Date.now()}`;
     streamBaselines.set(tempId, afterMessageId);
@@ -588,23 +560,13 @@ export const useChatStore = defineStore("chat", () => {
   /** 向流式传输中的占位消息追加文本分块 */
   function appendStreamChunk(tempId: string, chunk: string) {
     if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
-    if (!chunk) return;
-    pendingStreamText.set(
-      tempId,
-      `${pendingStreamText.get(tempId) || ""}${chunk}`
-    );
-    scheduleStreamFlush();
+    streamBuffer.appendText(tempId, chunk);
   }
 
   /** 向流式传输中的占位消息追加思考过程文本分块 */
   function appendStreamReasoningChunk(tempId: string, chunk: string) {
     if (!messages.value.some((item) => item.tempId === tempId && item.status === "streaming")) return;
-    if (!chunk) return;
-    pendingReasoningText.set(
-      tempId,
-      `${pendingReasoningText.get(tempId) || ""}${chunk}`
-    );
-    scheduleStreamFlush();
+    streamBuffer.appendReasoning(tempId, chunk);
   }
 
   /** 使用服务器最终确认的数据归档流式传输消息 */
@@ -612,7 +574,7 @@ export const useChatStore = defineStore("chat", () => {
     tempId: string,
     serverMessage: Partial<ChatMessage>
   ) {
-    flushPendingStreamChunks();
+    streamBuffer.flush();
     const idx = messages.value.findIndex((m) => m.tempId === tempId);
     if (idx !== -1) {
       messages.value[idx] = {
@@ -702,7 +664,7 @@ export const useChatStore = defineStore("chat", () => {
 
   /** 设置错误状态信息 */
   function setError(msg: string) {
-    clearPendingStreamChunks();
+    streamBuffer.clear();
     errorMessage.value = msg;
     isLoading.value = false;
   }
@@ -808,7 +770,7 @@ export const useChatStore = defineStore("chat", () => {
   /** 重置整个 Store 的状态变量 */
   function $reset() {
     invalidateRequests();
-    clearPendingStreamChunks();
+    streamBuffer.clear();
     const { stopMessageTTS } = useAudioPlayer();
     stopMessageTTS();
     activeSessionId.value = null;

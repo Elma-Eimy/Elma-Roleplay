@@ -1,3 +1,5 @@
+import MarkdownIt from "markdown-it";
+
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, "&amp;")
@@ -40,4 +42,20 @@ export const renderRoleplayStateBlock = (content: string): string => {
     `<div class="md-status-body">${renderedLines}</div>`,
     "</div>",
   ].join("");
+};
+
+const md = new MarkdownIt({ html: false, breaks: true, linkify: true });
+md.renderer.rules.fence = (tokens, index) => renderRoleplayStateBlock(tokens[index].content);
+
+export const renderChatMarkdown = (content: string) => {
+  let html = md.render(content);
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  html = html.replace(/<em>/g, '<em class="md-em">');
+  html = html.replace(/<strong>/g, '<strong class="md-strong">');
+  html = html.replace(/<pre>/g, '<pre class="md-pre">');
+  html = html.replace(/<code>/g, '<code class="md-code">');
+  // 识别中文引号和直角引号并包裹，用于做对话单独排版渲染
+  html = html.replace(/“([^”]+)”/g, '<span class="md-dialogue">“$1”</span>');
+  html = html.replace(/「([^」]+)」/g, '<span class="md-dialogue">「$1」</span>');
+  return html;
 };

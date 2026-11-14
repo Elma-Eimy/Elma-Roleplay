@@ -97,6 +97,7 @@ const close = () => {
 const getSectionName = (key: string): string => {
   const SECTION_NAMES: Record<string, string> = {
     character: "角色设定 (System)",
+    context_summary: "上下文摘要",
     recent_history: "历史消息 (History)",
     scenario: "当前场景 (Scenario)",
     cognition: "认知状态 (Cognition)",

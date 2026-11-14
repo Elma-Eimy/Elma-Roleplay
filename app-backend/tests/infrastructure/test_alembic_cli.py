@@ -10,12 +10,19 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class AlembicCliTests(unittest.TestCase):
+    def _expected_head(self):
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "alembic"))
+        return ScriptDirectory.from_config(config).get_current_head()
+
     def _run_alembic(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, "-m", "alembic", *args],
@@ -31,12 +38,12 @@ class AlembicCliTests(unittest.TestCase):
     def test_heads_runs_without_recursive_environment_import(self):
         result = self._run_alembic("heads")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("a5b6c7d8e9f0", result.stdout)
+        self.assertIn(self._expected_head(), result.stdout)
 
     def test_current_runs_without_recursive_environment_import(self):
         result = self._run_alembic("current")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("a5b6c7d8e9f0", result.stdout)
+        self.assertIn(self._expected_head(), result.stdout)
 
 
 if __name__ == "__main__":

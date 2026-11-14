@@ -1,6 +1,7 @@
 import type { Message } from "./messages";
 
 export interface MemoryChunk {
+  indexed?: boolean;
   id: number;
   content: string;
   memory_type: string;

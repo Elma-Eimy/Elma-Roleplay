@@ -36,6 +36,10 @@
 
     <scroll-view scroll-y class="home-scroll">
       <view class="home-content" :class="{ 'has-recent-stories': recentSessions.length > 0 }">
+        <view class="group-entry" role="button" aria-label="查看与创建群聊故事" @tap="goToGroups">
+          <view><text class="group-entry-title">群聊故事</text><text class="group-entry-copy">邀请几位角色，在同一场景相遇</text></view>
+          <text class="group-entry-link">查看与创建 ›</text>
+        </view>
         <view v-if="isHomeLoading && !hasHomeContent" class="home-skeleton">
           <view class="skeleton-feature"></view>
           <view class="skeleton-heading"></view>
@@ -367,6 +371,8 @@ const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value;
 };
 
+const goToGroups = () => uni.navigateTo({ url: "/pages/group/index" });
+
 const handleMenuAction = (action: string) => {
   isMenuOpen.value = false;
   
@@ -493,6 +499,10 @@ const formatDate = (dateString: string) => {
 </script>
 
 <style scoped>
+.group-entry { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 24rpx 28rpx; margin-bottom: 28rpx; border: 1px solid var(--app-color-border); border-radius: var(--app-radius-md); background: var(--app-color-surface); }
+.group-entry-title { display: block; font-size: var(--app-font-size-body); font-weight: 650; color: var(--app-color-text-primary); }
+.group-entry-copy { display: block; margin-top: 6rpx; font-size: var(--app-font-size-caption); color: var(--app-color-text-secondary); }
+.group-entry-link { flex-shrink: 0; font-size: var(--app-font-size-caption); color: var(--app-color-primary-strong); }
 .page-container {
   display: flex;
   flex-direction: column;

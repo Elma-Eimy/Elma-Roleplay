@@ -85,6 +85,65 @@ def read_png_card_payloads(file_path: str) -> list[dict]:
     return payloads
 
 
+def write_png_card_payloads(
+    source_path: str,
+    payloads: list[dict],
+    output_path: str | None = None,
+) -> None:
+    """将 chara 元数据无损写回 PNG 文件，保留原始图像块并重新计算 CRC。"""
+    if not payloads:
+        raise ValueError("至少需要一个角色卡 payload。")
+    for payload in payloads:
+        _validate_card_object(payload)
+
+    chunks = []
+    with open(source_path, "rb") as f:
+        signature = f.read(8)
+        if signature != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("不是有效的 PNG 文件。")
+        while True:
+            header = f.read(8)
+            if not header:
+                break
+            if len(header) != 8:
+                raise ValueError("PNG 数据块头不完整。")
+            length, kind = struct.unpack(">I4s", header)
+            if length > os.fstat(f.fileno()).st_size - f.tell() - 4:
+                raise ValueError("PNG 数据块不完整。")
+            content = f.read(length)
+            crc = f.read(4)
+            if len(crc) != 4:
+                raise ValueError("PNG 校验字段不完整。")
+            if kind in (b"tEXt", b"zTXt", b"iTXt"):
+                keyword, separator, _ = content.partition(b"\0")
+                if keyword == b"chara" and separator:
+                    continue
+            chunks.append((kind, content, crc))
+            if kind == b"IEND":
+                break
+
+    if not chunks or chunks[-1][0] != b"IEND":
+        raise ValueError("PNG 缺少 IEND 结束块。")
+
+    chara_chunks = []
+    for payload in payloads:
+        encoded_json = base64.b64encode(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        )
+        content = b"chara\0" + encoded_json
+        crc = struct.pack(">I", zlib.crc32(b"tEXt" + content) & 0xFFFFFFFF)
+        chara_chunks.append((b"tEXt", content, crc))
+
+    final_chunks = chunks[:-1] + chara_chunks + [chunks[-1]]
+    target_path = output_path or source_path
+    with open(target_path, "wb") as out:
+        out.write(b"\x89PNG\r\n\x1a\n")
+        for kind, content, crc in final_chunks:
+            out.write(struct.pack(">I4s", len(content), kind))
+            out.write(content)
+            out.write(crc)
+
+
 def _decompress_card_text(data: bytes) -> bytes:
     decoder = zlib.decompressobj()
     text = decoder.decompress(data, 16 * 1024 * 1024 + 1)

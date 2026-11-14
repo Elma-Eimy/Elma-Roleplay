@@ -4,9 +4,21 @@
  */
 
 import { notifyServerChange } from "../utils/connectionEvents";
+import type { GroupSessionDetail, GroupRound } from "../types/groupSessions";
+
+declare const __GROUP_PREVIEW__: boolean;
+
+function groupPreviewOrigin(): string | null {
+  // #ifdef H5
+  if (typeof __GROUP_PREVIEW__ !== "undefined" && __GROUP_PREVIEW__) return window.location.origin;
+  // #endif
+  return null;
+}
 
 // 动态获取及保存 API 基础 URL 逻辑，方便在部署时 runtime 修改端口及地址
 export function getSavedBaseUrl(): string {
+  const preview = groupPreviewOrigin();
+  if (preview) return preview;
   try {
     const saved = uni.getStorageSync("api_base_url");
     if (saved) return saved;
@@ -19,6 +31,7 @@ export function getBaseUrl(): string {
 }
 
 export function setSavedBaseUrl(newUrl: string) {
+  if (groupPreviewOrigin()) throw new Error("隔离预览固定使用当前地址");
   const previousUrl = getSavedBaseUrl().replace(/\/+$/, "");
   const trimmedUrl = newUrl.replace(/\/+$/, "");
   try {
@@ -41,6 +54,7 @@ export function setSavedApiKey(newKey: string) {
 }
 
 export function getSavedApiKey(): string {
+  if (groupPreviewOrigin()) return "";
   if (cachedApiKey === null) {
     try {
       cachedApiKey = uni.getStorageSync("api_access_key") || "";
@@ -57,6 +71,12 @@ export function getHeaders(customHeaders: Record<string, string> = {}): Record<s
   const headers: Record<string, string> = {
     ...customHeaders,
   };
+  if (groupPreviewOrigin()) {
+    for (const name of Object.keys(headers)) {
+      if (name.toLowerCase() === "x-api-key") delete headers[name];
+    }
+    return headers;
+  }
   
   if (cachedApiKey === null) {
     try {
@@ -84,6 +104,8 @@ export interface MockDatabase {
   sessions: any[];
   messages: Record<number, any[]>; // 会话ID -> 消息数组映射 (sessionId -> Message[])
   lorebooks?: any[];
+  groupSessions?: GroupSessionDetail[];
+  groupRounds?: Record<number, GroupRound[]>;
 }
 
 function getInitialMockDB(): MockDatabase {
@@ -252,6 +274,7 @@ export async function request<T>(
 ): Promise<T> {
   const url = `${getBaseUrl()}${endpoint}`;
   const method = (options.method ?? "GET") as "GET" | "POST" | "PUT" | "DELETE";
+  if (groupPreviewOrigin() && method !== "GET") throw new Error("隔离预览只允许读取");
 
   const headers = getHeaders({
     ...DEFAULT_HEADERS,

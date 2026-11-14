@@ -8,6 +8,7 @@ from typing import Literal
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session as DBSession
 
+from services.conversation.session_access import get_single_session
 from core.models import (Character, MemoryChunk, Session, SessionPersona,
                          MemoryConsolidationScope, MemoryConsolidationSource)
 from services.conversation import session_service
@@ -56,7 +57,7 @@ def query_session_memories(
     db: DBSession,
 ) -> dict:
     """Filter and count visible SQLite memories before applying pagination."""
-    session = db.get(Session, session_id)
+    session = get_single_session(session_id, db)
     if session is None or session.persona is None:
         raise MemoryQueryNotFoundError("Session or Persona not found")
 
@@ -241,7 +242,8 @@ def get_character_memory_overview(
     )
     all_personas = (
         db.query(SessionPersona)
-        .filter(SessionPersona.character_id == character_id)
+        .join(Session, Session.id == SessionPersona.session_id)
+        .filter(SessionPersona.character_id == character_id, Session.kind == "single")
         .all()
     )
     personas_by_id = {persona.id: persona for persona in all_personas}
@@ -282,6 +284,7 @@ def get_character_memory_overview(
     recent_session_id = (
         db.query(Session.id)
         .join(SessionPersona, SessionPersona.session_id == Session.id)
+        .filter(Session.kind == "single")
         .filter(SessionPersona.character_id == character_id)
         .order_by(Session.updated_at.desc(), Session.id.desc())
         .limit(1)

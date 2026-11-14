@@ -9,6 +9,7 @@ from pathlib import Path
 from PIL import Image
 from sqlalchemy import text
 from core.config import settings
+from services.conversation.session_access import get_single_session
 from core.models import Character, CharacterPortrait, ChatMessage, Session, OutboxJob
 
 
@@ -107,9 +108,14 @@ def rename_portrait(character_id, portrait_id, name, db):
 
 
 def resolve_selection(session_id, db, before_id=None):
-    session = db.get(Session, session_id)
+    session = get_single_session(session_id, db)
     if session is None or session.persona is None:
         raise LookupError("故事不存在")
+    return _resolve_selection(session, db, before_id)
+
+
+def _resolve_selection(session, db, before_id=None):
+    session_id = session.id
     selected = session.persona.portrait_base or 0
     query = db.query(ChatMessage.id, ChatMessage.portrait_selection).filter_by(session_id=session_id, is_active=True)
     if before_id is not None:
@@ -133,16 +139,26 @@ def selection_before_message(message, db):
 
 
 def get_selection(session_id, db):
-    selected, revision, _, persona = resolve_selection(session_id, db)
+    session = get_single_session(session_id, db)
+    if session is None or session.persona is None:
+        raise LookupError("故事不存在")
+    return _get_selection(session, db)
+
+
+def _get_selection(session, db):
+    selected, revision, _, persona = _resolve_selection(session, db)
     portrait = db.query(CharacterPortrait).filter_by(id=selected, character_id=persona.character_id).first() if selected else None
-    return {"session_id": session_id, "portrait_id": portrait.id if portrait else None,
+    return {"session_id": session.id, "portrait_id": portrait.id if portrait else None,
             "image_path": portrait.image_path if portrait else persona.character.avatar_path or "", "revision": revision}
 
 
 def update_selection(session_id, portrait_id, expected_revision, db):
     try:
         db.execute(text("BEGIN IMMEDIATE"))
-        _, revision, messages, persona = resolve_selection(session_id, db)
+        session = get_single_session(session_id, db)
+        if session is None or session.persona is None:
+            raise LookupError("故事不存在")
+        _, revision, messages, persona = _resolve_selection(session, db)
         if revision != expected_revision:
             raise PortraitConflict("剧情或立绘选择已变化，请重新加载后再选择")
         if portrait_id is not None and db.query(CharacterPortrait).filter_by(id=portrait_id, character_id=persona.character_id).first() is None:
@@ -152,7 +168,7 @@ def update_selection(session_id, portrait_id, expected_revision, db):
         else:
             persona.portrait_base = portrait_id or 0
         db.flush()
-        result = get_selection(session_id, db)
+        result = _get_selection(session, db)
         db.commit()
         return result
     except Exception:

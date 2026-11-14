@@ -1,5 +1,16 @@
 import type { Message } from "./messages";
 
+export interface ContextCompressionStatus {
+  summary: string | null;
+  checkpoint_id: number | null;
+  covered_message_count: number;
+  retained_message_count: number;
+  pending_message_count: number;
+  source_message_id: number | null;
+  model: string | null;
+  updated_at: string | null;
+}
+
 export interface PersonaSummary {
   id: number;
   affection_score: number;

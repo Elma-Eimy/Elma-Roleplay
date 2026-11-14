@@ -327,6 +327,9 @@ export async function deleteCharacter(
 ): Promise<DeleteCharacterResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
+    if (db.groupSessions?.some(group => group.members.some(member => member.character.id === characterId))) {
+      throw new Error("角色已被群聊使用，请先处理相关群聊");
+    }
     db.characters = db.characters.filter((c) => c.id !== characterId);
     
     const sessionsToDelete = db.sessions.filter((s) => s.character_id === characterId);

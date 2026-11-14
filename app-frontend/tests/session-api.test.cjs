@@ -60,6 +60,7 @@ test("domain APIs preserve HTTP methods, routes, query encoding and request bodi
     ["updateSessionMemory", [2, 102, "edited", 0.9], "/sessions/2/memories/102", "PUT", { content: "edited", importance_score: 0.9 }],
     ["deleteSessionMemory", [2, 102], "/sessions/2/memories/102", "DELETE", null],
     ["getCompiledPrompt", [2], "/sessions/2/compile_prompt", "GET", null],
+    ["getContextCompression", [2], "/sessions/2/context-compression", "GET", null],
   ];
   for (const [name, args, ...expected] of cases) {
     assert.deepEqual(plain(await api[name](...args)), { accepted: true }, name);
@@ -89,6 +90,18 @@ test("a transport rejection propagates unchanged and never falls back to Mock da
   const { api } = fixture({ request: async () => { throw failure; } });
   await assert.rejects(api.getSession(1), error => error === failure);
   await assert.rejects(api.getSessionMemories(1), error => error === failure);
+});
+
+test("Mock compression status stays read only and never invents a summary", async () => {
+  const f = fixture({ mock: true, db: seed() });
+  const before = JSON.stringify(f.db);
+  const status = await f.api.getContextCompression(1);
+  assert.equal(status.summary, null);
+  assert.equal(status.checkpoint_id, null);
+  assert.equal(status.covered_message_count, 0);
+  assert.equal(f.writes, 0);
+  assert.equal(JSON.stringify(f.db), before);
+  await assert.rejects(f.api.getContextCompression(999), /故事不存在/);
 });
 
 test("Mock session creation preserves alternate greetings and branch inheritance", async () => {

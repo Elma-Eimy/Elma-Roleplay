@@ -5,6 +5,7 @@ import json
 from sqlalchemy.orm import Session as DBSession
 from sqlalchemy.sql import func
 
+from services.conversation.session_access import get_single_message
 from core.models import ChatMessage, MessageRole, OutboxJob, Session, SessionPersona
 
 
@@ -18,7 +19,7 @@ class CandidateValidationError(ValueError):
 
 def update_message(message_id: int, content: str, db: DBSession) -> dict:
     """更新消息内容，并通过 Outbox 异步清理已经失效的旧音频。"""
-    message = db.get(ChatMessage, message_id)
+    message = get_single_message(message_id, db)
     if message is None:
         raise ValueError("Message not found")
 
@@ -29,7 +30,7 @@ def update_message(message_id: int, content: str, db: DBSession) -> dict:
         message.role_state_patch = None
     message.audio_path = None
 
-    session = db.get(Session, message.session_id)
+    session = message.session
     if session is not None:
         session.updated_at = func.now()
 
@@ -57,17 +58,13 @@ def update_message(message_id: int, content: str, db: DBSession) -> dict:
 
 def delete_message(message_id: int, db: DBSession) -> dict:
     """删除消息，同时回滚候选状态、角色状态和记忆处理指针。"""
-    message = db.get(ChatMessage, message_id)
+    message = get_single_message(message_id, db)
     if message is None:
         raise ValueError("Message not found")
 
     deleted_id = message.id
     session_id = message.session_id
-    persona = (
-        db.query(SessionPersona)
-        .filter(SessionPersona.session_id == session_id)
-        .first()
-    )
+    persona = message.session.persona
 
     if persona is not None:
         if message.role == MessageRole.assistant:
@@ -155,7 +152,7 @@ def delete_message(message_id: int, db: DBSession) -> dict:
             )
         )
 
-    session = db.get(Session, session_id)
+    session = message.session
     if session is not None:
         session.updated_at = func.now()
 
@@ -175,7 +172,7 @@ def delete_message(message_id: int, db: DBSession) -> dict:
 
 def switch_candidate(message_id: int, db: DBSession) -> dict:
     """切换当前激活候选，并原子更新好感度、心情和会话时间。"""
-    message = db.get(ChatMessage, message_id)
+    message = get_single_message(message_id, db)
     if message is None:
         raise CandidateNotFoundError("Message not found")
     if message.role != MessageRole.assistant:
@@ -202,11 +199,7 @@ def switch_candidate(message_id: int, db: DBSession) -> dict:
             "to change an earlier turn"
         )
 
-    persona = (
-        db.query(SessionPersona)
-        .filter(SessionPersona.session_id == session_id)
-        .first()
-    )
+    persona = message.session.persona
     old_active = (
         db.query(ChatMessage)
         .filter(
@@ -233,7 +226,7 @@ def switch_candidate(message_id: int, db: DBSession) -> dict:
         )
         persona.current_mood = message.emotion_tag or "平静"
 
-    session = db.get(Session, session_id)
+    session = message.session
     if session is not None:
         session.updated_at = func.now()
 

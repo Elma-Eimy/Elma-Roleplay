@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import UploadFile, File, HTTPException, Depends
 import os
 import uuid
 from sqlalchemy.orm import Session
@@ -6,8 +6,11 @@ from core.database import get_db
 from core.config import settings
 from schemas import SettingsUpdate, TTSRequest
 from services.tts_service import TTSService
+from services.conversation.session_access import SessionKindConflict
 
-router = APIRouter()
+from application.session_routes import SessionAPIRouter
+
+router = SessionAPIRouter()
 
 UPLOAD_DIR = "./assets/avatars"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -131,6 +134,8 @@ async def text_to_speech(request: TTSRequest, db: Session = Depends(get_db)):
         return {"audio_url": audio_url}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except SessionKindConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
 

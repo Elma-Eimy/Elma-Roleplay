@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from core.config import settings
 from core.database import SessionLocal
+from services.conversation.session_access import get_single_session
 from core.models import (
     Character,
     ChatMessage,
@@ -52,7 +53,7 @@ def prepare_chat_turn(
     is_regenerate: bool = False,
 ) -> ChatTurn:
     """校验会话并创建新用户消息，或定位待重新生成的现有回合。"""
-    session = db.get(SessionModel, session_id)
+    session = get_single_session(session_id, db)
     if not session:
         raise ChatTurnError(404, "Session not found")
 
