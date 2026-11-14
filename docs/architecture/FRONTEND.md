@@ -27,7 +27,7 @@ src/main.ts + App.vue + pages.json
 | `App.vue` 与 `uni.scss` | 全局基础样式与语义设计变量；页面专属样式留在对应页面 |
 | `api/transports/` | App 流传输适配，配合 renderjs 桥接组件使用 |
 
-群聊详情复用 `ChatHeader.vue`、`ChatComposer.vue` 和 `useChatScroll.ts`，固定输入区，按时间顺序显示轮次。`ChatTranscriptMessage.vue` 提供不访问单聊 Store 的展示组件，与 `ChatBubble.vue` 共用 `chatMessage.css` 和 `utils/markdown.ts` 的 Markdown 渲染。两种聊天共用 `ChatSceneBackground.vue`、`ChatReadingPreferences.vue`、聊天页阅读样式与 `chatDrawer.css` 抽屉样式；字号、行距、小说/气泡排版与色调沿用同一阅读设置。群聊背景使用当前采用的立绘，可跟随最后发言成员或固定成员，图片失败回退头像；候选预览不会改写背景。抽屉分成员、外观、起点和管理，候选预览使用独立面板。
+群聊详情复用 `ChatHeader.vue`、`ChatComposer.vue`、`ChatScrollShell.vue`（内置空态渲染）和 `useChatScroll.ts`，固定输入区，按时间顺序显示轮次。`ChatBubble.vue` 提供不绑定 Store/音频的纯渲染气泡（通过 `read-only` 禁用交互，通过 `ChatActionBar.vue` 统一单聊消息与群聊轮次的操作栏），共用 `chatMessage.css` 和 `utils/markdown.ts` 的 Markdown 渲染。两种聊天共用 `ChatSceneBackground.vue`、`ChatReadingPreferences.vue`、`chatTheme.css` 聊天主题与布局样式；单聊抽屉与群聊抽屉通过 `ChatDrawer.vue` 复用 `chatDrawer.css` 抽屉样式；字号、行距、小说/气泡排版与色调沿用同一阅读设置。群聊背景使用当前采用的立绘，可跟随最后发言成员或固定成员，图片失败回退头像；候选预览不会改写背景。抽屉分成员、外观、起点和管理，整轮候选预览由独立弹窗 `GroupCandidateModal.vue` 承载。
 
 群聊页面由 `pages/group/` 提供，继续由 `useGroupSessions.ts` 和 `useGroupRoundFlow.ts` 管理请求与候选生命周期。`components/chat/GroupUtterances.vue` 只展示按 Persona 匹配头像的发言正文，共用于采用内容和候选预览，不负责提交、轮询或状态重放。入群资料与候选状态仍显式区分，完整界面批次见 [M6 计划](../plans/group-chat/M6_INTERFACE_AND_ACCEPTANCE.md)。
 
@@ -81,4 +81,4 @@ M4-D 的 `composables/useGroupRoundFlow.ts` 管理整轮读取、候选预览、
 
 初评发现、已完成的边界修复和后续拆分顺序见 [生命周期评估](../plans/CHAT_LIFECYCLE_REVIEW.md)。继续拆分 Store 的工作尚未实施。
 
-群聊成员状态与消息展示复用 `ChatDrawer`、`AffectionMeter`、`RoleStatePanel`、`ChatBubble` 和 `MemoryManagerModal`。群聊通过成员上下文及只读适配接入，不能调用单聊 Store 的候选修改、TTS 或单聊记忆写接口；成员记忆由 groupSessions API 独立读取。
+群聊成员状态与消息展示复用 `ChatDrawer`（通过 `GroupChatDrawer.vue` 组合成员切换、只读 `RoleStatePanel` 与 `GroupPortraitPicker.vue`；单聊通过 `SingleChatDrawer.vue` 组合可写能力）、`AffectionMeter`、`RoleStatePanel`、`ChatBubble`、`ChatActionBar` 和 `MemoryManagerModal`。群聊通过成员上下文及只读适配接入，不能调用单聊 Store 的候选修改、TTS 或单聊记忆写接口；成员记忆由 groupSessions API 独立读取。
