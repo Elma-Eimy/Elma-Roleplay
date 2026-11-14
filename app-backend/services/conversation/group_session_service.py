@@ -186,7 +186,7 @@ def _greeting(member, character, nickname):
             raise GroupSessionValidationError("备用开场不存在，请重新选择") from None
     if member.greeting_content is not None:
         content = member.greeting_content
-    from services.conversation.prompt_compiler import replace_placeholders
+    from services.conversation.prompting.compiler import replace_placeholders
     content = replace_placeholders(content, character.name, nickname).strip()
     if len(content) > 20000:
         raise GroupSessionValidationError("开场白最多 20000 字")

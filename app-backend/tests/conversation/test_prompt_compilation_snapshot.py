@@ -6,8 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from services.conversation.prompt_compiler import build_chat_messages, build_group_messages
-from services.conversation.prompt_layout import assemble_conversation
+from services.conversation.prompting.compiler import build_chat_messages, build_group_messages
+from services.conversation.prompting.layout import assemble_conversation
 
 
 def compilation_cases():

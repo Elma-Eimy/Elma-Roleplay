@@ -15,7 +15,7 @@ from services.memory import memory_extraction_service as extraction
 from services.memory.memory_event_buffer import load_event_snapshot, event_context
 from services.memory.memory_facts import fact_sources_current
 from services.conversation import context_assembler
-from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.prompting.compiler import build_chat_messages
 from services.conversation.session_service import create_session_service, safe_delete_session
 
 

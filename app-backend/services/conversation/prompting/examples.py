@@ -1,7 +1,7 @@
 """角色卡示例解析及无法结构化时的兼容回退。"""
 
 import re
-from services.conversation.prompt_templates import replace_placeholders, _format_assistant_xml
+from .templates import replace_placeholders, _format_assistant_xml
 
 EXAMPLE_MACRO_RE = re.compile(
     r"\{\{\s*(?:mesExamplesRaw|mesExamples|mes_examples|mes_example)\s*\}\}",

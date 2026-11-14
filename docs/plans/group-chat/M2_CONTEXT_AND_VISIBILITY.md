@@ -21,7 +21,7 @@ M2 默认只允许一个未完成或待确认轮次；普通用户发送继续�
 | [模型](../../../app-backend/core/models.py)、[M1 服务](../../../app-backend/services/conversation/group_session_service.py) | Persona 是成员身份，来源快照独立；ChatMessage 没有群聊发言归属 | 保留 M1 聚合，新增群聊轮次与内容表 |
 | [回合生命周期](../../../app-backend/services/conversation/chat_turn_service.py)、[对应测试](../../../app-backend/tests/conversation/test_chat_turn_service.py) | 单聊先提交用户消息，失败可删除用户消息，完成后触发单聊维护 | 群聊单独编排，不复用单聊失败删除与记忆入队 |
 | [上下文装配](../../../app-backend/services/conversation/context_assembler.py)、[分支回归](../../../app-backend/tests/conversation/test_branch_context_boundary.py) | 强制 single，历史与当前用户分开，祖先示例按分叉边界读取 | 群聊按成员和候选读取，不解除旧入口限制 |
-| [Prompt 编译](../../../app-backend/services/conversation/prompt_compiler.py)、[兼容回归](../../../app-backend/tests/conversation/test_character_prompt_compatibility.py) | assistant 历史按同一角色包装；世界书可扫描历史与本轮用户输入；PHI 和输出契约后置 | 增加群聊编译入口，共享角色卡编译能力，不能直接传全群历史 |
+| [Prompt 编译](../../../app-backend/services/conversation/prompting/compiler.py)、[兼容回归](../../../app-backend/tests/conversation/test_character_prompt_compatibility.py) | assistant 历史按同一角色包装；世界书可扫描历史与本轮用户输入；PHI 和输出契约后置 | 增加群聊编译入口，共享角色卡编译能力，不能直接传全群历史 |
 | [生成引擎](../../../app-backend/services/conversation/chat_engine.py) | 非流式异常转换成兜底 reply；流式异常向外抛出 | 提供显式失败的群聊调用，不能把兜底错误保存成角色发言 |
 | [角色状态](../../../app-backend/services/conversation/role_state_service.py) | 从唯一 Persona 基线和 active 消息重放 | 群聊从指定 Persona 基线和所选候选的自身增量重放 |
 | [群聊前端类型](../../../app-frontend/src/types/groupSessions.ts)、[流协议](../../../app-frontend/src/utils/chatStreamProtocol.ts) | 群聊只支持管理；单聊流将 done 视为一次回复终态 | 新增只读内容类型；M2 不扩展流事件或接入单聊 Store |

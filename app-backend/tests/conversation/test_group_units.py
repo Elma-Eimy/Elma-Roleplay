@@ -330,7 +330,7 @@ class GroupUnitTests(unittest.TestCase):
         messages = json.loads(ctx.messages_json)
         self.assertTrue(any(row['role'] == 'assistant' and '<reply>' in row['content'] for row in messages))
         self.assertFalse(any('【虚构风格示例资料】' in row['content'] for row in messages))
-        from services.conversation.prompt_compiler import compile_dialogue_examples
+        from services.conversation.prompting.compiler import compile_dialogue_examples
         self.assertTrue(any(row['role'] == 'assistant' and '<reply>' in row['content']
                             for row in compile_dialogue_examples(card)))
         self.assertNotIn("LEAKED_LORE", ctx.messages_json)

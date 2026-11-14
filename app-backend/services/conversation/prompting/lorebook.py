@@ -2,8 +2,8 @@
 
 import json
 from typing import Optional
-from services.conversation.prompt_templates import replace_placeholders
-from services.conversation.prompt_examples import _split_example_blocks, _parse_example_block
+from .templates import replace_placeholders
+from .examples import _split_example_blocks, _parse_example_block
 from services.lorebook.parse_lorebook import normalize_lorebook_depth, normalize_lorebook_role
 
 LOREBOOK_CONTEXT_NOTE = (

@@ -45,19 +45,20 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 `services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
 
-Prompt 编译由 `services/conversation/prompt_compiler.py` 保留原有入口和群聊适配，`build_chat_messages()` 只编排编译步骤。内部依赖按职责拆分：
+Prompt 模块集中在 `services/conversation/prompting/`。调用方从对应模块导入，包内使用相对导入；`__init__.py` 不统一加载编译器或业务服务。`compiler.py` 保留编译入口、已有导出和群聊适配，`build_chat_messages()` 只编排编译步骤。内部依赖按职责拆分：
 
 | 模块 | 职责 |
 | --- | --- |
-| `prompt_templates.py` | 角色卡宏、占位符、静态指令与后置输出协议 |
-| `prompt_examples.py` | 示例分块、发言者解析与无法结构化时的回退 |
-| `prompt_lorebook.py` | 世界书内容编译、角色深度提示词和深度插入算法 |
-| `prompt_context.py` | 世界书触发输入、记忆时间标签与当前回合动态背景 |
-| `prompt_layout.py` | 静态及示例前缀、历史格式转换、动态背景定位 |
+| `prompting/templates.py` | 角色卡宏、占位符、静态指令与后置输出协议 |
+| `prompting/examples.py` | 示例分块、发言者解析与无法结构化时的回退 |
+| `prompting/lorebook.py` | 世界书内容编译、角色深度提示词和深度插入算法 |
+| `prompting/context.py` | 世界书触发输入、记忆时间标签与当前回合动态背景 |
+| `prompting/layout.py` | 静态及示例前缀、历史格式转换、动态背景定位 |
+| `prompting/token_estimator.py` | 最终消息的启发式 Token 范围估算与分区统计 |
 
 模板和示例不依赖装配入口；消息排列不计算角色状态或调用记忆检索。动态背景先编译成有序文本块，再交给排列模块插入；业务数据库查询仍由上下文装配层及其领域服务完成。静态消息合并、示例边界、当前输入定位及最终输出协议保持原规则。单聊和群聊入口仍共用编译流程，群聊输入适配保留在原入口。
 
-`context_compression.py` 负责单聊摘要版本、来源校验、原文覆盖及分支冻结。聊天路由允许装配层按需调用压缩模型，预览只读；模型调用期间提交并结束读取事务，返回后用短写事务复核来源及版本。摘要由 `prompt_context.py` 编译，经入口固定放在最近原文之前，不改变深度插入算法或长期记忆查询。持久化、失败保留及旧分支升级边界见[会话上下文压缩](../features/CONTEXT_COMPRESSION.md)。
+`context_compression.py` 负责单聊摘要版本、来源校验、原文覆盖及分支冻结。聊天路由允许装配层按需调用压缩模型，预览只读；模型调用期间提交并结束读取事务，返回后用短写事务复核来源及版本。摘要由 `prompting/context.py` 编译，经入口固定放在最近原文之前，不改变深度插入算法或长期记忆查询。持久化、失败保留及旧分支升级边界见[会话上下文压缩](../features/CONTEXT_COMPRESSION.md)。
 
 `conversation/test_prompt_compilation_snapshot.py` 使用拆分前保存的完整消息快照，逐项比较角色、内容和顺序，覆盖单聊、分支示例、动态状态、世界书及两种群聊协议。固定虚构输入不调用真实模型；测试临时副本按现有规则复制整个 `services/` 和 `tests/`，包含所有新增模块与快照。
 

@@ -5,8 +5,8 @@ from typing import Optional
 from core.config import settings
 from services.memory.memory_facts import TEMPORAL_LABELS
 from services.lorebook.lorebook_engine import empty_lorebook_result, process_lorebook
-from services.conversation.prompt_templates import replace_placeholders, _compile_system_prompt_sections
-from services.conversation.prompt_lorebook import _compile_lorebook_block
+from .templates import replace_placeholders, _compile_system_prompt_sections
+from .lorebook import _compile_lorebook_block
 
 
 def build_system_prompt(

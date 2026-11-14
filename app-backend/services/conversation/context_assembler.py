@@ -17,13 +17,13 @@ import core.models as models
 from core.models import SessionPersona, ChatMessage, Character, MessageRole
 from services.conversation.session_access import get_single_session
 from services.conversation.context_compression import _prepare_context
-from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.prompting.compiler import build_chat_messages
 from services.conversation.role_state_service import _resolve_state
 from services.memory.joint_retrieval import retrieve_joint_memories
 from services.memory.memory_event_buffer import load_event_snapshot, event_context
 from services.memory.memory_extraction_jobs import pending_context
 from services.conversation.retrieval_query_service import build_contextual_retrieval_query
-from services.conversation.prompt_token_estimator import (
+from services.conversation.prompting.token_estimator import (
     estimate_prompt_tokens,
     format_prompt_metrics_log,
 )

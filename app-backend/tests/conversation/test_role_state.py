@@ -13,7 +13,7 @@ from application.factory import create_app
 from services.conversation.session_service import create_session_service, save_chat_response
 from services.conversation.message_service import switch_candidate, delete_message, update_message
 from services.conversation.role_state_service import get_state, update_state, StateConflict
-from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.prompting.compiler import build_chat_messages
 
 
 class RoleStateTests(unittest.TestCase):

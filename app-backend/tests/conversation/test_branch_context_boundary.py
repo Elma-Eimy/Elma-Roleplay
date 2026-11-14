@@ -24,7 +24,7 @@ from sqlalchemy.pool import StaticPool
 
 from core.models import Base, Character, ChatMessage, MessageRole, Session
 from services.conversation.context_assembler import get_parent_history_examples
-from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.prompting.compiler import build_chat_messages
 from services.conversation.session_service import create_session_service, safe_delete_session
 
 

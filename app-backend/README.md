@@ -479,13 +479,14 @@ app-backend/
 │   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
 │   │   ├── context_compression.py # 单聊滚动摘要、来源校验与分支基线
 │   │   ├── message_service.py # 消息生命周期管理服务
-│   │   ├── prompt_compiler.py # Prompt 编译入口与群聊输入适配
-│   │   ├── prompt_templates.py # 角色卡模板、占位符和输出协议
-│   │   ├── prompt_examples.py # 对话示例解析与兼容回退
-│   │   ├── prompt_lorebook.py # 世界书内容编译与深度插入
-│   │   ├── prompt_context.py # 世界书匹配、记忆展示和动态背景
-│   │   ├── prompt_layout.py # 消息前缀、历史转换与背景定位
-│   │   ├── prompt_token_estimator.py # 启发式 Prompt Token 范围估算服务
+│   │   ├── prompting/       # 单聊与群聊共用的 Prompt 编译与估算
+│   │   │   ├── compiler.py # Prompt 编译入口与群聊输入适配
+│   │   │   ├── templates.py # 角色卡模板、占位符和输出协议
+│   │   │   ├── examples.py # 对话示例解析与兼容回退
+│   │   │   ├── lorebook.py # 世界书内容编译与深度插入
+│   │   │   ├── context.py # 世界书匹配、记忆展示和动态背景
+│   │   │   ├── layout.py # 消息前缀、历史转换与背景定位
+│   │   │   └── token_estimator.py # 启发式 Prompt Token 范围估算服务
 │   │   ├── retrieval_query_service.py # 上下文化检索查询生成器
 │   │   └── session_service.py # 会话生命周期与分支状态拷贝/回滚服务
 │   ├── infrastructure/      # 底层基础设施与服务客户端

@@ -20,7 +20,7 @@ M3 仍只执行一个未确认轮次，保留 version=1 和 can_generate=false�
 | --- | --- | --- |
 | [个人历史](../../../app-backend/services/conversation/group_history_service.py)、[回归](../../../app-backend/tests/conversation/test_group_history.py) | 原子写入全文知情，个人历史先过滤后限量；一个未确认轮次 | 保留 ID、归属和读取规则，增加整轮锁内可复用的执行步骤 |
 | [单步生成](../../../app-backend/services/conversation/group_generation_service.py)、[回归](../../../app-backend/tests/conversation/test_group_generation.py) | 自行取得会话锁；回调判定暂存正文接收者，随后原子落库 | 抽出显式持有执行权的内部步骤，独立调用兼容保留，避免重复加锁 |
-| [个人上下文](../../../app-backend/services/conversation/group_context_service.py)、[编译器](../../../app-backend/services/conversation/prompt_compiler.py) | 只读个人历史和自身状态，无可见依据则拒绝调用 | 导演理由和全局快照不传入该入口；支持轮内固定模型选择 |
+| [个人上下文](../../../app-backend/services/conversation/group_context_service.py)、[编译器](../../../app-backend/services/conversation/prompting/compiler.py) | 只读个人历史和自身状态，无可见依据则拒绝调用 | 导演理由和全局快照不传入该入口；支持轮内固定模型选择 |
 | [模型参数](../../../app-backend/services/conversation/chat_engine.py)、[能力解析](../../../app-backend/services/infrastructure/model_capabilities.py) | 每次准备参数，可读取当时全局设置及角色采样配置 | 在整轮开始解析并冻结模型、思考模式与调用参数 |
 | [模型适配层](../../../app-backend/services/infrastructure/llm_provider.py) | 共用延迟初始化客户端；未显式设置 SDK 重试策略 | 群聊调用显式禁用自动重试并用本地协议替身核对请求次数，不改变单聊默认行为 |
 | [运行权](../../../app-backend/application/group_runtime.py)、[生命周期](../../../app-backend/application/lifecycle.py) | 启动持有文件锁；遗留 generating 标失败；关闭等待后台清理 | 生命周期管理整轮任务，等待导演、角色和持久化结束后释放运行权 |

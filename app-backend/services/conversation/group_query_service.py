@@ -102,7 +102,7 @@ def get_group_state(session_id, db):
 def compile_member_prompt(session_id, persona_id, db):
     """复用生成装配入口预览当前所选候选，不派发生成或改变检查点。"""
     from services.conversation.group_context_service import build_member_context
-    from services.conversation.prompt_token_estimator import estimate_prompt_tokens
+    from services.conversation.prompting.token_estimator import estimate_prompt_tokens
     with _read(session_id, db) as group:
         latest = operations._latest(session_id, db)
         if latest is None or latest.selected_candidate_id is None:

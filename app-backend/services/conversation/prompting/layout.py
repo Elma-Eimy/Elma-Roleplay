@@ -1,13 +1,13 @@
 """消息前缀、历史转换和插入顺序；不获取会话状态。"""
 
 from typing import Optional
-from services.conversation.prompt_templates import (
+from .templates import (
     DYNAMIC_CONTEXT_HEADER, replace_placeholders, _format_assistant_xml,
 )
-from services.conversation.prompt_examples import (
+from .examples import (
     EXAMPLE_CONTEXT_NOTE, EXAMPLE_END_NOTE, _prompt_embeds_dialogue_examples, compile_dialogue_examples,
 )
-from services.conversation.prompt_lorebook import (
+from .lorebook import (
     _compile_lorebook_block, _compile_lorebook_example_messages, _inject_lorebook_at_depth,
 )
 

@@ -501,8 +501,8 @@ async def compile_session_prompt(
     预览/编译当前会话的最近一次大模型 Prompt 组装。
     """
     import services.conversation.context_assembler as context_assembler
-    from services.conversation.prompt_compiler import compile_system_prompt
-    from services.conversation.prompt_token_estimator import estimate_prompt_tokens
+    from services.conversation.prompting.compiler import compile_system_prompt
+    from services.conversation.prompting.token_estimator import estimate_prompt_tokens
 
     session = get_single_session(session_id, db)
     if not session:

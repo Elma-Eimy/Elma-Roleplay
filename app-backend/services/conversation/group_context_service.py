@@ -13,7 +13,7 @@ from core.models import GroupContentItem, GroupContentVisibility, GroupRound, Gr
 from services.conversation.group_unit_service import _complete_author_visibility
 from services.conversation import group_history_service as history
 from services.conversation.chat_engine import _prepare_generation_kwargs
-from services.conversation.prompt_compiler import build_group_messages
+from services.conversation.prompting.compiler import build_group_messages
 from services.conversation.role_state_schema import decode_state, merge_state
 from services.conversation.session_access import group_session_operation
 from services.conversation.group_session_service import GroupSessionValidationError

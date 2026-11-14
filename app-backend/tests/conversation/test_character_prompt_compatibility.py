@@ -7,7 +7,7 @@ from types import SimpleNamespace
 # 支持按照 README 使用项目虚拟环境直接运行本测试文件。
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from services.conversation.prompt_compiler import (
+from services.conversation.prompting.compiler import (
     DEFAULT_MAIN_RP_PROMPT,
     build_chat_messages,
     compile_dialogue_examples,

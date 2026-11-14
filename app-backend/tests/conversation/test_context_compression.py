@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from core.config import settings
 from core.models import Base, Character, ChatMessage, ContextCheckpoint, MessageRole, Session, SessionPersona
 from services.conversation import context_compression as compression
-from services.conversation.prompt_compiler import build_chat_messages
+from services.conversation.prompting.compiler import build_chat_messages
 from services.conversation.session_access import SessionKindConflict
 from services.conversation.session_service import create_session_service
 
@@ -306,7 +306,7 @@ class ContextCompressionTests(unittest.TestCase):
         self.assertLess(summary_index, history_index)
         self.assertEqual("用户原话", messages[-2]["content"])
         self.assertIn("【重要：输出格式要求】", messages[-1]["content"])
-        from services.conversation.prompt_token_estimator import estimate_prompt_tokens
+        from services.conversation.prompting.token_estimator import estimate_prompt_tokens
         estimate = estimate_prompt_tokens(messages)
         self.assertGreater(estimate["sections"]["context_summary"]["characters"], 0)
 

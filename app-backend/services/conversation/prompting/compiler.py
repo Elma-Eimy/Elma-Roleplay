@@ -3,19 +3,19 @@
 import json
 from typing import Optional
 from services.lorebook.lorebook_engine import empty_lorebook_result
-from services.conversation.prompt_templates import (
+from .templates import (
     DEFAULT_MAIN_RP_PROMPT, DEFAULT_POST_HISTORY_INSTRUCTIONS,
     OUTPUT_FORMAT_INSTRUCTIONS, ROLE_STATE_INSTRUCTIONS, DYNAMIC_CONTEXT_HEADER,
     replace_placeholders, compile_prompt_templates, compile_system_prompt,
     compile_post_history_prompt, _format_assistant_xml,
 )
-from services.conversation.prompt_examples import (
+from .examples import (
     compile_dialogue_examples, EXAMPLE_MACRO_RE, EXAMPLE_BLOCK_RE,
     EXAMPLE_CONTEXT_NOTE, EXAMPLE_END_NOTE,
 )
-from services.conversation.prompt_context import build_system_prompt, compile_dynamic_context, compile_context_summary
-from services.conversation.prompt_lorebook import _compile_character_depth_prompt, LOREBOOK_CONTEXT_NOTE
-from services.conversation.prompt_layout import (
+from .context import build_system_prompt, compile_dynamic_context, compile_context_summary
+from .lorebook import _compile_character_depth_prompt, LOREBOOK_CONTEXT_NOTE
+from .layout import (
     compile_message_prefix, compile_history_messages, assemble_conversation,
 )
 

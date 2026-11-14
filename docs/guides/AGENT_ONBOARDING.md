@@ -20,7 +20,7 @@
 | 任务 | 代码入口 | 测试起点 | 补充阅读 |
 | --- | --- | --- | --- |
 | 启动、鉴权、生命周期 | `app-backend/application/factory.py`、`lifecycle.py`、`core/` | 后端 `api/test_application.py`、`core/test_migration_logging.py` | [后端架构](../architecture/BACKEND.md) |
-| 聊天、Prompt、失败清理 | `app-backend/routers/chat.py`、`services/conversation/chat_turn_service.py`、`chat_engine.py`、`context_assembler.py`、`prompt_compiler.py` | 后端 `conversation/test_chat_turn_service.py`、`test_character_prompt_compatibility.py`、`test_stream_background_persistence.py` | [后端说明](../../app-backend/README.md) 中的 Prompt 规则 |
+| 聊天、Prompt、失败清理 | `app-backend/routers/chat.py`、`services/conversation/chat_turn_service.py`、`chat_engine.py`、`context_assembler.py`、`prompting/compiler.py` | 后端 `conversation/test_chat_turn_service.py`、`test_character_prompt_compatibility.py`、`test_stream_background_persistence.py` | [后端说明](../../app-backend/README.md) 中的 Prompt 规则 |
 | 分支、消息、候选切换 | `app-backend/services/conversation/session_service.py`、`message_service.py`；`app-frontend/src/store/chatStore.ts`、`api/messages.ts` | 后端 `conversation/test_branch_context_boundary.py`；前端 `session-api.test.cjs`、`session-lifecycle.test.cjs` | [API 总表](../../API_TABLE.md) |
 | SSE、取消与 App 桥接 | `app-frontend/src/api/chat.ts`、`chatStream.ts`、`transports/appStream.ts`、`utils/chatStreamProtocol.ts`、`components/chat/ChatStreamBridge.vue` | 前端 `stream.test.cjs`、`app-stream.test.cjs`、`session-lifecycle.test.cjs` | [前端架构](../architecture/FRONTEND.md) |
 | 记忆提取、事件与重试 | `app-backend/services/memory/memory_extraction_service.py`、`memory_extraction_jobs.py`、`memory_event_buffer.py`、`memory_retry_worker.py` | 后端 `memory/test_memory_extraction_jobs.py`、`test_memory_event_buffer.py`、`test_event_retention.py` | [进行中事件](../features/MEMORY_EVENTS.md) |
