@@ -50,6 +50,9 @@
           :messages="chatStore.messages"
           :avatar-url="characterAvatarUrl"
           :character-name="personaStore.characterName"
+          :user-nickname="personaStore.userNickname"
+          :is-busy="chatStore.isLoading"
+          :active-audio-message-id="activeAudioMessageId"
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
           :scroll-with-animation="scrollWithAnimation"
@@ -61,6 +64,8 @@
           @retry-failed="onRetryFailed"
           @copy-message="copyMessageContent"
           @regenerate-message="regenerateLatestReply"
+          @play-tts="playMessageTTS"
+          @switch-candidate="onSwitchCandidate"
           @scroll-metrics="onScrollMetrics"
           @jump-to-bottom="onJumpToBottom"
         />
@@ -107,7 +112,7 @@
     />
 
     <!-- 记忆与微观认知状态右侧抽屉面板 -->
-    <ChatDrawer
+    <SingleChatDrawer
       v-if="isStatusPanelOpen"
       :isOpen="isStatusPanelOpen"
       :sessionId="currentSessionId"
@@ -187,7 +192,7 @@ import ChatMessageList from "@/components/chat/ChatMessageList.vue";
 import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import ChatComposer from "@/components/chat/ChatComposer.vue";
 import EditMessageModal from "@/components/chat/EditMessageModal.vue";
-import ChatDrawer from "@/components/chat/ChatDrawer.vue";
+import SingleChatDrawer from "@/components/chat/SingleChatDrawer.vue";
 import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import BranchTreePanel from "@/components/chat/BranchTreePanel.vue";
@@ -197,6 +202,7 @@ import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
 import { shouldFadeHeaderOnScroll, type ScrollMetrics } from "@/utils/chatDisplay";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
 import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
 import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
@@ -209,6 +215,7 @@ import type { ChatMessage } from "@/store/chatStore";
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const { activeAudioMessageId, playMessageTTS } = useAudioPlayer();
 const isModelSettingsOpen = ref(false);
 onShow(() => { void chatSettingsStore.refreshModels(); });
 const {
@@ -590,6 +597,13 @@ watch(() => chatStore.isLoading, (loading) => {
 const onJumpToBottom = () => {
   scrollWithAnimation.value = true;
   pinToBottom();
+};
+
+const onSwitchCandidate = async (payload: { messageId: number; candidateId: number }) => {
+  const result = await chatStore.switchActiveCandidate(payload.messageId, payload.candidateId);
+  if (result.status === "error") {
+    uni.showToast({ title: result.message || "切换失败", icon: "none" });
+  }
 };
 
 const onSend = async () => {
