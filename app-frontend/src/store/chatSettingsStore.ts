@@ -108,7 +108,8 @@ export const useChatSettingsStore = defineStore("chatSettings", () => {
     try {
       const result = await getSettings();
       if (version === settingsVersion && endpoint === getBaseUrl()) {
-        defaults.value = { ...DEFAULT_SETTINGS, ...result };
+        defaults.value = { ...DEFAULT_SETTINGS, ...result,
+          chat_thinking_mode: result.chat_thinking_mode ?? (result.reasoning_mode ? "enabled" : "disabled") };
         readyEndpoint = endpoint;
         freezeSelection();
       }

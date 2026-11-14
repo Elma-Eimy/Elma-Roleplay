@@ -62,37 +62,41 @@ def upload_avatar(file: UploadFile = File(...)):
 def get_settings():
     """获取当前允许由前端动态修改的对话与检索参数值。"""
     from services.infrastructure.model_capabilities import model_catalog
+    config = settings.snapshot()
     return {
-        "default_chat_model": settings.LLM_DEFAULT_CHAT_MODEL,
-        "model_profiles": settings.LLM_MODEL_PROFILES,
-        "model_catalog": model_catalog(),
-        "translation_model": settings.LLM_TRANSLATION_MODEL,
-        "memory_model": settings.LLM_MEMORY_MODEL,
-        "memory_thinking_mode": settings.LLM_MEMORY_THINKING_MODE,
-        "memory_reasoning_effort": settings.LLM_MEMORY_REASONING_EFFORT,
-        "tts_preprocess_model": settings.LLM_TTS_PREPROCESS_MODEL,
-        "tts_thinking_mode": settings.LLM_TTS_THINKING_MODE,
-        "tts_reasoning_effort": settings.LLM_TTS_REASONING_EFFORT,
-        "temperature": settings.LLM_TEMPERATURE,
-        "reasoning_mode": settings.LLM_REASONING_MODE,
-        "context_history_limit": settings.APP_CONTEXT_HISTORY_LIMIT,
-        "retrieval_top_k": settings.APP_RETRIEVAL_TOP_K,
-        "retrieval_context_turns": settings.APP_RETRIEVAL_CONTEXT_TURNS,
-        "retrieval_query_max_chars": settings.APP_RETRIEVAL_QUERY_MAX_CHARS,
-        "retrieval_min_importance": settings.APP_RETRIEVAL_MIN_IMPORTANCE,
-        "retrieval_max_distance": settings.APP_RETRIEVAL_MAX_DISTANCE,
-        "lorebook_scan_depth": settings.APP_LOREBOOK_SCAN_DEPTH,
-        "lorebook_token_budget": settings.APP_LOREBOOK_TOKEN_BUDGET,
-        "lorebook_max_recursive_passes": settings.APP_LOREBOOK_MAX_RECURSIVE_PASSES,
-        "cognition_max_words": settings.APP_COGNITION_MAX_WORDS,
-        "retrieval_half_life_turns": settings.APP_RETRIEVAL_HALF_LIFE_TURNS,
-        "retrieval_candidate_multiplier": settings.APP_RETRIEVAL_CANDIDATE_MULTIPLIER,
-        "max_tokens": settings.LLM_MAX_TOKENS,
-        "top_p": settings.LLM_TOP_P,
-        "presence_penalty": settings.LLM_PRESENCE_PENALTY,
-        "frequency_penalty": settings.LLM_FREQUENCY_PENALTY,
-        "repetition_penalty": settings.LLM_REPETITION_PENALTY,
-        "reasoning_effort": settings.LLM_REASONING_EFFORT
+        "chat_thinking_mode": config.LLM_CHAT_THINKING_MODE,
+        "translation_thinking_mode": config.LLM_TRANSLATION_THINKING_MODE,
+        "translation_reasoning_effort": config.LLM_TRANSLATION_REASONING_EFFORT,
+        "default_chat_model": config.LLM_DEFAULT_CHAT_MODEL,
+        "model_profiles": config.LLM_MODEL_PROFILES,
+        "model_catalog": model_catalog(config),
+        "translation_model": config.LLM_TRANSLATION_MODEL,
+        "memory_model": config.LLM_MEMORY_MODEL,
+        "memory_thinking_mode": config.LLM_MEMORY_THINKING_MODE,
+        "memory_reasoning_effort": config.LLM_MEMORY_REASONING_EFFORT,
+        "tts_preprocess_model": config.LLM_TTS_PREPROCESS_MODEL,
+        "tts_thinking_mode": config.LLM_TTS_THINKING_MODE,
+        "tts_reasoning_effort": config.LLM_TTS_REASONING_EFFORT,
+        "temperature": config.LLM_TEMPERATURE,
+        "reasoning_mode": config.LLM_REASONING_MODE,
+        "context_history_limit": config.APP_CONTEXT_HISTORY_LIMIT,
+        "retrieval_top_k": config.APP_RETRIEVAL_TOP_K,
+        "retrieval_context_turns": config.APP_RETRIEVAL_CONTEXT_TURNS,
+        "retrieval_query_max_chars": config.APP_RETRIEVAL_QUERY_MAX_CHARS,
+        "retrieval_min_importance": config.APP_RETRIEVAL_MIN_IMPORTANCE,
+        "retrieval_max_distance": config.APP_RETRIEVAL_MAX_DISTANCE,
+        "lorebook_scan_depth": config.APP_LOREBOOK_SCAN_DEPTH,
+        "lorebook_token_budget": config.APP_LOREBOOK_TOKEN_BUDGET,
+        "lorebook_max_recursive_passes": config.APP_LOREBOOK_MAX_RECURSIVE_PASSES,
+        "cognition_max_words": config.APP_COGNITION_MAX_WORDS,
+        "retrieval_half_life_turns": config.APP_RETRIEVAL_HALF_LIFE_TURNS,
+        "retrieval_candidate_multiplier": config.APP_RETRIEVAL_CANDIDATE_MULTIPLIER,
+        "max_tokens": config.LLM_MAX_TOKENS,
+        "top_p": config.LLM_TOP_P,
+        "presence_penalty": config.LLM_PRESENCE_PENALTY,
+        "frequency_penalty": config.LLM_FREQUENCY_PENALTY,
+        "repetition_penalty": config.LLM_REPETITION_PENALTY,
+        "reasoning_effort": config.LLM_REASONING_EFFORT
     }
 
 
@@ -102,10 +106,8 @@ def update_settings(request: SettingsUpdate):
     updates = request.model_dump(exclude_unset=True)
     if not updates:
         return {"message": "No settings to update", "updated": {}}
-    
+
     try:
-        from services.infrastructure.model_capabilities import validate_settings_updates
-        validate_settings_updates(updates)
         settings.update_and_persist(updates)
         return {
             "message": "Settings updated and persisted successfully",

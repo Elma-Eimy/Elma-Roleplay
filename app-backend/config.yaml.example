@@ -19,16 +19,22 @@ llm:
   translation_model: your-chat-model
   tts_preprocess_model: your-chat-model
 
-  # 兼容旧客户端的模型槽位；新客户端以 default_chat_model 为默认模型。
-  chat_model: your-chat-model
-  non_reasoning_chat_model: your-chat-model
+  # 模型选择和思考模式独立；不会因开关思考而更换模型。
+  chat_thinking_mode: disabled
   model_profiles: []
-  reasoning_mode: false
+  # 自定义能力示例（按当前端点实际支持的参数填写）：
+  # model_profiles:
+  #   - id: your-chat-model
+  #     adapter: compatible
+  #     thinking: toggle
+  #     efforts: [low, high]
   reasoning_effort: null
   memory_thinking_mode: disabled
   memory_reasoning_effort: high
   tts_thinking_mode: disabled
   tts_reasoning_effort: high
+  translation_thinking_mode: disabled
+  translation_reasoning_effort: high
 
   temperature: 0.7
   memory_temperature: 0.3

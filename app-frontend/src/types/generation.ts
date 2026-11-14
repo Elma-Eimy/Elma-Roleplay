@@ -4,6 +4,8 @@ export interface ModelProfile {
   id: string;
   label: string;
   adapter: ModelAdapter;
+  thinking?: "toggle" | "always" | "unsupported" | null;
+  efforts?: string[] | null;
 }
 export interface ModelCapability extends ModelProfile {
   thinking: "toggle" | "always" | "unsupported";

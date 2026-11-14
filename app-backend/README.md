@@ -14,6 +14,8 @@
 
 ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁并在进程内复用；构造失败后可重试。导入服务不会创建这两项资源，其配置与首次使用时的错误处理见 [初始化边界](../docs/architecture/BACKEND.md#启动与请求链路)。
 
+模型选择、思考模式和强度独立配置，聊天使用 `default_chat_model/chat_thinking_mode/reasoning_effort`，记忆、翻译和 TTS 各有独立设置。旧双槽位只供配置迁移与旧请求兼容。配置更新先完整校验并原子写盘，成功后发布运行状态；保存失败明确报错，非法 YAML 不会被默认值覆盖。配置示例与能力覆盖见 [config.yaml.example](config.yaml.example) 和[模型设置](../docs/features/MODEL_SELECTION.md)。
+
 > 基于 FastAPI + SQLite + ChromaDB 构建的私有化部署 AI 角色扮演后端服务。  
 > 支持角色深度模拟、长期记忆 RAG 检索、树状分支会话管理、认知与好感度动态演化、多模态 TTS 音频生成以及多候选回复分支机制。
 

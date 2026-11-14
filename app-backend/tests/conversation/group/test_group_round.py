@@ -118,7 +118,7 @@ class GroupRoundTests(unittest.TestCase):
         sid, ids = self.group()
         self.db.get(Character, 1).extensions = '{"reasoning_effort":"max"}'
         self.db.commit()
-        with patch.multiple(settings, LLM_DEFAULT_CHAT_MODEL="deepseek-chat", LLM_REASONING_MODE=True,
+        with patch.multiple(settings, LLM_DEFAULT_CHAT_MODEL="deepseek-chat", LLM_CHAT_THINKING_MODE="enabled",
                 LLM_REASONING_EFFORT="low", CHAT_API_KEY="SENTINEL_PRIVATE_KEY"):
             snapshot = capture_group_calls(sid, self.db)
         for encoded in [snapshot.director_json, *(snapshot.member_parameters(pid) for pid in ids)]:

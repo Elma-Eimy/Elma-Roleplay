@@ -246,13 +246,25 @@ class GroupOperationTests(GroupOperationFixture, unittest.TestCase):
 
     def test_inherited_selection_and_replay_use_frozen_values_after_settings_change(self):
         sid, ids = self.group()
-        with patch.object(settings, "LLM_REASONING_MODE", True):
+        with patch.object(settings, "LLM_CHAT_THINKING_MODE", "enabled"):
             calls = capture_group_calls(sid, self.db, model="deepseek-v4-flash", reasoning_effort="low")
         request_id = str(uuid4())
         expected = (0, None, None, None)
-        with patch.object(settings, "LLM_REASONING_MODE", False), patch.object(settings, "LLM_REASONING_EFFORT", "max"):
+        with patch.object(settings, "LLM_CHAT_THINKING_MODE", "disabled"), patch.object(settings, "LLM_REASONING_EFFORT", "max"):
             first = self.command(sid, request_id=request_id, expected=expected, call_snapshot=calls)
         with patch("services.conversation.group.operation_service.validate_group_call_selection", side_effect=AssertionError("revalidated")):
             replay = self.command(sid, request_id=request_id, expected=expected, thinking_mode="inherit",
                                   reasoning_effort="inherit", call_snapshot=None)
         self.assertEqual(first, replay)
+
+    def test_custom_reasoning_toggle_is_frozen_without_requiring_current_profile_on_restore(self):
+        from services.conversation.group.call_snapshot import restore_group_calls
+        for mode in ("enabled", "disabled"):
+            sid, ids = self.group()
+            profile = [{"id": "proxy-model", "adapter": "compatible", "thinking": "toggle", "efforts": ["low", "high"]}]
+            with patch.object(settings, "LLM_MODEL_PROFILES", profile):
+                calls = capture_group_calls(sid, self.db, model="proxy-model", thinking_mode=mode, reasoning_effort="low")
+                receipt = self.command(sid, model="proxy-model", thinking_mode=mode, reasoning_effort="low", call_snapshot=calls)
+            candidate = self.db.get(GroupRoundCandidate, receipt["accepted"]["candidate_id"])
+            restored, _ = restore_group_calls(candidate, set(ids))
+            self.assertEqual(json.loads(restored.director_json)["reasoning_effort"], "low" if mode == "enabled" else "none")

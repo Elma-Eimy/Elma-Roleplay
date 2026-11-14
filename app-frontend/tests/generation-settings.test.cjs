@@ -3,6 +3,45 @@ const assert = require("node:assert/strict");
 const { createPinia, setActivePinia } = require("pinia");
 const { createLoader, deferred } = require("./helpers/load-ts.cjs");
 
+test("models without effort levels do not freeze a made-up high effort", () => {
+  const { snapshotGeneration } = createLoader()("utils/generation.ts");
+  const settings = { default_chat_model: "custom", chat_thinking_mode: "enabled", reasoning_effort: "high",
+    model_catalog: [], model_profiles: [{ id: "custom", label: "Custom", adapter: "deepseek", thinking: "toggle", efforts: [] }] };
+  const selected = snapshotGeneration(settings, { model: "", thinking_mode: "inherit", reasoning_effort: "high" });
+  assert.equal(selected.model, "custom");
+  assert.equal(selected.thinking_mode, "enabled");
+  assert.equal(selected.reasoning_effort, "inherit");
+  assert.equal(snapshotGeneration(settings, selected).reasoning_effort, "inherit");
+});
+
+test("explicit model capabilities and canonical mode override adapter and legacy defaults", () => {
+  const load = createLoader();
+  const { configuredCatalog, effectiveGeneration } = load("utils/generation.ts");
+  const settings = { default_chat_model: "custom", chat_thinking_mode: "enabled", reasoning_mode: false,
+    reasoning_effort: "low", model_catalog: [], model_profiles: [
+      { id: "custom", label: "Custom", adapter: "compatible", thinking: "toggle", efforts: ["low"] },
+    ] };
+  assert.equal(configuredCatalog(settings)[0].thinking, "toggle");
+  assert.deepEqual(Array.from(configuredCatalog(settings)[0].efforts), ["low"]);
+  const generation = effectiveGeneration(settings, { model: "", thinking_mode: "inherit", reasoning_effort: "inherit" });
+  assert.equal(generation.id, "custom");
+  assert.equal(generation.thinking, true);
+});
+
+test("settings API normalizes old-server thinking defaults and omits the legacy alias on new writes", async () => {
+  let sent;
+  const load = createLoader({ mocks: { "./config": { request: async (path, options) => {
+    if (!options) return { reasoning_mode: true };
+    sent = JSON.parse(options.body);
+    return { updated: sent };
+  } } } });
+  const { getSettings, updateSettings } = load("api/settings.ts");
+  assert.equal((await getSettings()).chat_thinking_mode, "enabled");
+  await updateSettings({ chat_thinking_mode: "enabled", reasoning_mode: false });
+  assert.equal(sent.chat_thinking_mode, "enabled");
+  assert.equal(Object.hasOwn(sent, "reasoning_mode"), false);
+});
+
 function fixture(getSettings = async () => ({})) {
   setActivePinia(createPinia());
   const storage = new Map();

@@ -48,8 +48,9 @@ const thinking = computed(() => capability.value?.thinking === 'always' ||
   (capability.value?.thinking === 'toggle' && (props.thinkingMode === 'inherit' ? props.defaultThinking : props.thinkingMode === 'enabled')));
 const effectiveEffort = computed(() => {
   const efforts = capability.value?.efforts || [];
+  if (!efforts.length) return 'inherit';
   let effort = props.effort === 'inherit' ? props.defaultEffort || 'high' : props.effort;
-  if (capability.value?.adapter === 'deepseek')
+  if (capability.value?.adapter === 'deepseek' && !efforts.includes(effort))
     effort = ({ minimal: 'low', medium: 'high', xhigh: 'high', ultra: 'max' } as Record<string, string>)[effort] || effort;
   return efforts.includes(effort) ? effort : efforts.includes('high') ? 'high' : efforts[0] || 'high';
 });
@@ -73,6 +74,7 @@ watch(() => [effectiveId.value, capability.value?.thinking, props.effort, props.
   if (!capability.value) return;
   if (capability.value.thinking === 'always' && props.thinkingMode !== 'enabled') emit('update:thinkingMode', 'enabled');
   if (capability.value.thinking === 'unsupported' && props.thinkingMode !== 'disabled') emit('update:thinkingMode', 'disabled');
+  if (!capability.value.efforts.length && props.effort !== 'inherit') emit('update:effort', 'inherit');
   if (capability.value.efforts.length && props.effort !== effectiveEffort.value) emit('update:effort', effectiveEffort.value);
 }, { immediate: true });
 </script>

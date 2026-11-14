@@ -55,3 +55,40 @@ class ModelSettingsApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400, response.text)
         with SessionLocal() as db:
             self.assertEqual(db.query(ChatMessage).count(), before)
+
+    def test_canonical_mode_and_translation_defaults_are_exposed(self):
+        body = {"default_chat_model": "proxy-model", "chat_thinking_mode": "enabled", "reasoning_effort": "low",
+                "model_profiles": [{"id": "proxy-model", "adapter": "compatible", "thinking": "toggle", "efforts": ["low", "high"]}],
+                "translation_model": "proxy-model", "translation_thinking_mode": "enabled", "translation_reasoning_effort": "high"}
+        result = self.client.put("/utils/settings", json=body)
+        self.assertEqual(result.status_code, 200, result.text)
+        value = self.client.get("/utils/settings").json()
+        self.assertEqual(value["chat_thinking_mode"], "enabled")
+        self.assertTrue(value["reasoning_mode"])
+        self.assertEqual(value["translation_reasoning_effort"], "high")
+        self.assertEqual(value["default_chat_model"], "proxy-model")
+
+    def test_failed_save_returns_error_without_publishing_settings(self):
+        before = deepcopy(settings.config)
+        with patch.object(settings, "_save_yaml_config", side_effect=OSError("simulated disk failure")):
+            response = self.client.put("/utils/settings", json={"temperature": 0.91})
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(settings.config, before)
+
+    def test_fixed_translation_model_can_roundtrip_complete_settings(self):
+        response = self.client.put("/utils/settings", json={"translation_model": "o3-mini"})
+        self.assertEqual(response.status_code, 200, response.text)
+        value = self.client.get("/utils/settings").json()
+        self.assertEqual(value["translation_thinking_mode"], "enabled")
+        value["temperature"] = 0.81
+        response = self.client.put("/utils/settings", json=value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(settings.LLM_TEMPERATURE, 0.81)
+        response = self.client.put("/utils/settings", json={"translation_thinking_mode": "disabled"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_conflicting_alias_and_canonical_mode_are_rejected(self):
+        before = deepcopy(settings.config)
+        response = self.client.put("/utils/settings", json={"chat_thinking_mode": "disabled", "reasoning_mode": True})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(settings.config, before)
