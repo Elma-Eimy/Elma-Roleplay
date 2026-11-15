@@ -18,6 +18,8 @@ export async function getCompiledPrompt(
       is_exact: false,
       sections: {
         character: { characters: 8200, estimated_tokens: 6100, lower_bound: 4800, upper_bound: 7600 },
+        examples: { characters: 0, estimated_tokens: 0, lower_bound: 0, upper_bound: 0 },
+        context_summary: { characters: 0, estimated_tokens: 0, lower_bound: 0, upper_bound: 0 },
         recent_history: { characters: 6000, estimated_tokens: 3900, lower_bound: 3000, upper_bound: 5000 },
         scenario: { characters: 300, estimated_tokens: 220, lower_bound: 150, upper_bound: 350 },
         cognition: { characters: 500, estimated_tokens: 350, lower_bound: 250, upper_bound: 500 },

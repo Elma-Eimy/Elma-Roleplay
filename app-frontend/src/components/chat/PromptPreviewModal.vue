@@ -50,14 +50,50 @@
         </view>
 
         <view class="prompt-preview-content">
-          <view 
-            class="prompt-msg-card" 
-            v-for="(msg, idx) in messages" 
-            :key="idx"
-            :class="'role-' + msg.role"
+          <view v-if="sections.length > 0" class="sections-toolbar">
+            <text class="toolbar-summary">共 {{ sections.length }} 个区块 · {{ messages.length }} 条消息</text>
+            <view class="toolbar-action-btn" @tap="toggleAllSections">
+              <text class="toolbar-action-text">{{ isAllExpanded ? "全部收起" : "全部展开" }}</text>
+            </view>
+          </view>
+
+          <view
+            v-for="section in sections"
+            :key="section.key"
+            class="prompt-section-card"
+            :class="{ 'is-empty-section': section.items.length === 0 }"
           >
-            <view class="prompt-msg-role-tag">{{ msg.role.toUpperCase() }}</view>
-            <text class="prompt-msg-text" :selectable="true" :user-select="true">{{ msg.content }}</text>
+            <view class="section-header" @tap="toggleSection(section.key)">
+              <view class="section-title-col">
+                <text class="section-title">{{ section.title }}</text>
+                <text class="section-subtitle">{{ section.description }}</text>
+              </view>
+              <view class="section-meta-col">
+                <text class="section-badge" :class="{ 'is-muted': section.items.length === 0 }">
+                  {{ section.items.length > 0 ? `${section.items.length} 项 · ${section.totalChars} 字` : "未注入" }}
+                </text>
+                <text class="toggle-arrow" :class="{ 'is-expanded': isSectionExpanded(section.key) }">▼</text>
+              </view>
+            </view>
+
+            <view v-if="isSectionExpanded(section.key)" class="section-body">
+              <view v-if="section.items.length === 0" class="section-empty-hint">
+                <text class="section-empty-text">{{ section.emptyHint }}</text>
+              </view>
+              <view
+                v-else
+                v-for="(item, idx) in section.items"
+                :key="idx"
+                class="prompt-msg-card"
+                :class="'role-' + item.role"
+              >
+                <view class="prompt-msg-header">
+                  <view class="prompt-msg-role-tag">{{ item.role.toUpperCase() }}</view>
+                  <text v-if="item.label" class="prompt-msg-subtag">{{ item.label }}</text>
+                </view>
+                <text class="prompt-msg-text" :selectable="true" :user-select="true">{{ item.content }}</text>
+              </view>
+            </view>
           </view>
         </view>
       </scroll-view>
@@ -66,17 +102,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineProps, defineEmits } from "vue";
-import type { TokenEstimate } from "@/api/sessions";
+import { computed, ref, watch } from "vue";
+import type { TokenEstimate } from "@/types/prompts";
+import {
+  buildPromptPreviewSections,
+  type CompiledPromptMessage,
+  type PromptSectionKey,
+} from "@/utils/promptPreview";
 
-interface CompiledMessage {
-  role: string;
-  content: string;
-}
-
-defineProps<{
+const props = defineProps<{
   isOpen: boolean;
-  messages: CompiledMessage[];
+  messages: CompiledPromptMessage[];
   tokenEstimate?: TokenEstimate | null;
 }>();
 
@@ -85,6 +121,42 @@ const emit = defineEmits<{
 }>();
 
 const isDetailsExpanded = ref(false);
+const expandedSectionKeys = ref<string[]>([]);
+
+const sections = computed(() => buildPromptPreviewSections(props.messages));
+
+watch(
+  [() => props.isOpen, () => props.messages],
+  ([open]) => {
+    if (open) {
+      expandedSectionKeys.value = [];
+    }
+  }
+);
+
+const isSectionExpanded = (key: PromptSectionKey): boolean => {
+  return expandedSectionKeys.value.includes(key);
+};
+
+const toggleSection = (key: PromptSectionKey) => {
+  if (isSectionExpanded(key)) {
+    expandedSectionKeys.value = expandedSectionKeys.value.filter((item) => item !== key);
+  } else {
+    expandedSectionKeys.value = [...expandedSectionKeys.value, key];
+  }
+};
+
+const isAllExpanded = computed(
+  () => sections.value.length > 0 && sections.value.every((sec) => isSectionExpanded(sec.key))
+);
+
+const toggleAllSections = () => {
+  if (isAllExpanded.value) {
+    expandedSectionKeys.value = [];
+  } else {
+    expandedSectionKeys.value = sections.value.map((sec) => sec.key);
+  }
+};
 
 const toggleDetails = () => {
   isDetailsExpanded.value = !isDetailsExpanded.value;
@@ -97,6 +169,7 @@ const close = () => {
 const getSectionName = (key: string): string => {
   const SECTION_NAMES: Record<string, string> = {
     character: "角色设定 (System)",
+    examples: "对话示例 (Examples)",
     context_summary: "上下文摘要",
     recent_history: "历史消息 (History)",
     scenario: "当前场景 (Scenario)",
@@ -335,36 +408,157 @@ const getSectionName = (key: string): string => {
 }
 
 .prompt-preview-content {
-  padding: 36rpx;
+  padding: 20rpx 36rpx 36rpx 36rpx;
   display: flex;
   flex-direction: column;
-  gap: 28rpx;
+  gap: 18rpx;
+}
+
+.sections-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4rpx 4rpx 8rpx 4rpx;
+}
+
+.toolbar-summary {
+  font-size: 22rpx;
+  color: #8e8e93;
+  font-weight: 500;
+}
+
+.toolbar-action-btn {
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background-color: rgba(0, 122, 255, 0.08);
+  cursor: pointer;
+}
+
+.toolbar-action-btn:active {
+  background-color: rgba(0, 122, 255, 0.16);
+}
+
+.toolbar-action-text {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #007aff;
+}
+
+.prompt-section-card {
+  background-color: #ffffff;
+  border-radius: 20rpx;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  overflow: hidden;
+}
+
+.prompt-section-card.is-empty-section {
+  background-color: rgba(255, 255, 255, 0.72);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 24rpx 28rpx;
+  cursor: pointer;
+}
+
+.section-header:active {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.section-title-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.section-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #1c1c1e;
+}
+
+.section-subtitle {
+  font-size: 20rpx;
+  color: #8e8e93;
+  line-height: 1.4;
+}
+
+.section-meta-col {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.section-badge {
+  font-size: 20rpx;
+  font-weight: 500;
+  color: #007aff;
+  background-color: rgba(0, 122, 255, 0.08);
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+}
+
+.section-badge.is-muted {
+  color: #8e8e93;
+  background-color: rgba(142, 142, 147, 0.12);
+}
+
+.section-body {
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  padding: 20rpx;
+  background-color: rgba(248, 248, 250, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.section-empty-hint {
+  padding: 16rpx 12rpx;
+}
+
+.section-empty-text {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #8e8e93;
 }
 
 .prompt-msg-card {
   background-color: #ffffff;
-  border-radius: 20rpx;
-  padding: 24rpx;
+  border-radius: 16rpx;
+  padding: 20rpx;
   display: flex;
   flex-direction: column;
-  gap: 16rpx;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
+  gap: 12rpx;
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .prompt-msg-card.role-system {
-  background-color: rgba(0, 122, 255, 0.02);
-  border-color: rgba(0, 122, 255, 0.06);
+  background-color: rgba(0, 122, 255, 0.03);
+  border-color: rgba(0, 122, 255, 0.08);
 }
 
 .prompt-msg-card.role-user {
-  background-color: rgba(0, 0, 0, 0.01);
-  border-color: rgba(0, 0, 0, 0.03);
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .prompt-msg-card.role-assistant {
-  background-color: rgba(52, 199, 89, 0.02);
-  border-color: rgba(52, 199, 89, 0.06);
+  background-color: rgba(52, 199, 89, 0.03);
+  border-color: rgba(52, 199, 89, 0.08);
+}
+
+.prompt-msg-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10rpx;
 }
 
 .prompt-msg-role-tag {
@@ -372,8 +566,13 @@ const getSectionName = (key: string): string => {
   font-weight: 700;
   padding: 4rpx 12rpx;
   border-radius: 6rpx;
-  align-self: flex-start;
   letter-spacing: 0.5px;
+}
+
+.prompt-msg-subtag {
+  font-size: 20rpx;
+  font-weight: 500;
+  color: #636366;
 }
 
 .role-system .prompt-msg-role-tag {
@@ -392,9 +591,19 @@ const getSectionName = (key: string): string => {
 }
 
 .prompt-msg-text {
-  font-size: 26rpx;
+  font-size: 25rpx;
   line-height: 1.6;
   color: #1c1c1e;
   word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .prompt-preview-modal,
+  .estimate-details-table,
+  .toggle-arrow {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 </style>
