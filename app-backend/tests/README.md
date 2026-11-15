@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`memory/test_cognition_service.py` 使用临时 SQLite 和模型替身验证无事务模型调用、消息编辑/删除/候选切换导致的过期结果丢弃、分支隔离与边界变化、并发发布、进度不回退、新消息保留及失败回滚。`conversation/test_chat_maintenance.py` 验证非流式入口登记、模型调用期间重复取消关闭仍等待数据库会话清理、线程失败收尾与生命周期登记表重建；流式断连后的维护登记由 `conversation/test_stream_background_persistence.py` 覆盖。测试不访问开发数据库或真实模型，新增模块沿用隔离入口复制整个 `application/`、`services/` 和 `tests/` 的范围。
+
 `conversation/group/test_group_dispatch.py` 验证新候选在审计清空后仍能预览、续接和进入下一轮，结束检查点零调用恢复、业务调度损坏拒绝、旧候选兼容，以及审计写入失败时调度和回复原子回滚。`infrastructure/test_group_dispatch_migration.py` 验证旧数据不回填、组合归属约束、升级失败回滚及有损降级保护；均使用临时库和模型替身。
 
 `conversation/group/test_group_candidate_state.py` 检查终态不能被迟到步骤覆盖、持久检查点不能跳步、导演结束与旧条数限制分离，以及失败续接保留已保存的结束决定。事务回滚、版本竞争和执行作用域继续由群聊后台与生成专项覆盖。
