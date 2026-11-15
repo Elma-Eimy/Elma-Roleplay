@@ -185,7 +185,7 @@ const formatMemorySource = (item: MemoryChunk) => {
 .source-text {
   font-size: 20rpx;
   font-weight: 500;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .score-text {
@@ -193,7 +193,7 @@ const formatMemorySource = (item: MemoryChunk) => {
   padding-top: 4rpx;
   font-size: 21rpx;
   font-weight: 550;
-  color: #636366;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .card-body {
@@ -202,7 +202,7 @@ const formatMemorySource = (item: MemoryChunk) => {
 
 .content-text {
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   line-height: 1.62;
   word-break: break-word;
 }
@@ -211,7 +211,7 @@ const formatMemorySource = (item: MemoryChunk) => {
   display: flex;
   justify-content: flex-end;
   gap: 8rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.03);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding-top: 12rpx;
   margin-top: 18rpx;
 }
@@ -223,13 +223,13 @@ const formatMemorySource = (item: MemoryChunk) => {
   min-height: 48rpx;
   padding: 0 12rpx;
   border-radius: 12rpx;
-  opacity: 0.65;
+  opacity: 0.72;
   transition: opacity 0.2s, background-color 0.2s;
 }
 
 .action-icon-btn:active {
   opacity: 1;
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .action-svg-icon {
@@ -239,12 +239,12 @@ const formatMemorySource = (item: MemoryChunk) => {
 
 .action-icon-text {
   font-size: 22rpx;
-  color: #3a3a3c;
+  color: var(--app-color-text-secondary, #64716b);
   font-weight: 500;
 }
 
 .action-icon-btn.danger .action-icon-text {
-  color: #ff3b30;
+  color: var(--app-color-danger, #d9655d);
 }
 
 .edit-mode-container {
@@ -256,12 +256,12 @@ const formatMemorySource = (item: MemoryChunk) => {
 .card-textarea {
   width: 100%;
   height: 140rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 12rpx;
   padding: 12rpx 16rpx;
   font-size: 26rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   line-height: 1.4;
   box-sizing: border-box;
 }
@@ -280,12 +280,12 @@ const formatMemorySource = (item: MemoryChunk) => {
 }
 
 .edit-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.05);
-  color: #8e8e93;
+  background-color: rgba(38, 51, 46, 0.05);
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .edit-btn.save {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   color: #ffffff;
 }
 </style>

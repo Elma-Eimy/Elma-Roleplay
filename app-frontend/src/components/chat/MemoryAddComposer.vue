@@ -98,13 +98,13 @@ const draft = computed({
 }
 
 .add-trigger-title {
-  color: #2c2c2e;
+  color: var(--app-color-text-primary, #26332e);
   font-size: 25rpx;
   font-weight: 650;
 }
 
 .add-trigger-description {
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   font-size: 20rpx;
 }
 
@@ -121,26 +121,26 @@ const draft = computed({
 }
 
 .add-composer-title {
-  color: #2c2c2e;
+  color: var(--app-color-text-primary, #26332e);
   font-size: 25rpx;
   font-weight: 650;
 }
 
 .add-composer-cancel {
   padding: 8rpx 0 8rpx 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   font-size: 23rpx;
 }
 
 .add-textarea {
   width: 100%;
   height: 140rpx;
-  background-color: #f8f8fa;
-  border: 1px solid rgba(60, 60, 67, 0.08);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 16rpx;
   padding: 16rpx 20rpx;
   font-size: 26rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   line-height: 1.4;
   box-sizing: border-box;
 }
@@ -148,7 +148,7 @@ const draft = computed({
 .add-submit-btn {
   width: 100%;
   height: 68rpx;
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: rgba(38, 51, 46, 0.06);
   border-radius: 16rpx;
   display: flex;
   align-items: center;
@@ -157,12 +157,12 @@ const draft = computed({
 }
 
 .add-submit-btn.is-active {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .submit-btn-text {
   font-size: 26rpx;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--app-color-text-muted, #89958f);
   font-weight: 600;
 }
 

@@ -479,8 +479,8 @@ const handleTreeNodeLongpress = (session: BranchTreeSession) => {
         uni.showModal({
           title: '删除宇宙分支',
           content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
-          confirmColor: '#ff3b30',
-          cancelColor: '#8e8e93',
+          confirmColor: '#d9655d',
+          cancelColor: '#64716b',
           success: async (modalRes) => {
             if (modalRes.confirm) {
               try {
@@ -696,8 +696,8 @@ const deleteCurrentSession = () => {
   uni.showModal({
     title: '删除会话',
     content: '确定要删除此会话吗？所有聊天记录与记忆数据将无法找回。',
-    confirmColor: '#ff3b30',
-    cancelColor: '#8e8e93',
+    confirmColor: '#d9655d',
+    cancelColor: '#64716b',
     success: async (res) => {
       if (res.confirm) {
         try {

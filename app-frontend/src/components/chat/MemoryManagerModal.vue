@@ -371,7 +371,8 @@ const deleteMemory = (id: number) => {
   uni.showModal({
     title: "确认删除",
     content: "确定要永久删除这条记忆吗？AI 在检索时将不再持有该认知。",
-    confirmColor: "#ff3b30",
+    confirmColor: "#d9655d",
+    cancelColor: "#64716b",
     success: async (res) => {
       if (res.confirm) {
         try {
@@ -416,7 +417,7 @@ const addMemory = async () => {
 .processing-container { padding: 0 24rpx 12rpx; }
 .mode-tabs { display: flex; padding: 16rpx 32rpx 0; gap: 18rpx; }
 .mode-tabs button { margin: 0; font-size: 24rpx; }
-.mode-tabs .mode-active { background: #1c1c1e; color: white; }
+.mode-tabs .mode-active { background: var(--app-color-primary-strong, #4f8e7c); color: #ffffff; }
 /* Backdrop */
 .modal-backdrop {
   position: fixed;
@@ -424,7 +425,7 @@ const addMemory = async () => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(12px);
   z-index: 110; /* Higher than ChatDrawer's 100 */
   display: flex;
@@ -443,12 +444,12 @@ const addMemory = async () => {
   width: 90vw;
   max-width: 680rpx;
   height: 75vh;
-  background-color: #f8f8fa;
-  border-radius: 32rpx;
+  background-color: var(--app-color-background, #f7f9f7);
+  border-radius: var(--app-radius-lg, 32rpx);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.14));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   overflow: hidden;
   animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -464,7 +465,8 @@ const addMemory = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-surface, #ffffff);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .header-title-row {
@@ -490,14 +492,14 @@ const addMemory = async () => {
 .modal-title {
   font-size: 32rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: -0.3px;
 }
 
 .modal-subtitle {
   font-size: 20rpx;
   line-height: 1.35;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .close-btn {
@@ -507,12 +509,12 @@ const addMemory = async () => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(112, 174, 155, 0.1);
   transition: background-color 0.2s;
 }
 
 .close-btn:active {
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: rgba(112, 174, 155, 0.18);
 }
 
 .close-icon {
@@ -524,25 +526,25 @@ const addMemory = async () => {
 /* Search Box */
 .search-container {
   padding: 18rpx 32rpx 12rpx;
-  background-color: #f8f8fa;
+  background-color: var(--app-color-background, #f7f9f7);
 }
 
 .search-input {
   width: 100%;
   height: 70rpx;
-  background-color: #ffffff;
-  border: 1px solid rgba(60, 60, 67, 0.08);
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 16rpx;
   padding: 0 24rpx;
   font-size: 26rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
 .filter-scroll {
   width: 100%;
   flex-shrink: 0;
-  background-color: #f8f8fa;
+  background-color: var(--app-color-background, #f7f9f7);
 }
 
 .filter-tabs {
@@ -560,7 +562,7 @@ const addMemory = async () => {
   height: 52rpx;
   padding: 0 22rpx;
   border-radius: 26rpx;
-  background-color: rgba(118, 118, 128, 0.08);
+  background-color: rgba(112, 174, 155, 0.1);
   transition: background-color 0.2s, transform 0.2s;
 }
 
@@ -569,11 +571,11 @@ const addMemory = async () => {
 }
 
 .filter-tab.is-active {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .filter-tab-text {
-  color: #636366;
+  color: var(--app-color-text-secondary, #64716b);
   font-size: 22rpx;
   font-weight: 600;
   white-space: nowrap;
@@ -591,16 +593,16 @@ const addMemory = async () => {
   align-items: center;
   justify-content: center;
   border-radius: 13rpx;
-  color: #8e8e93;
-  background-color: rgba(255, 255, 255, 0.72);
+  color: var(--app-color-text-secondary, #64716b);
+  background-color: rgba(255, 255, 255, 0.8);
   font-size: 17rpx;
   font-weight: 650;
   line-height: 1;
 }
 
 .filter-tab.is-active .filter-tab-count {
-  color: #1c1c1e;
-  background-color: rgba(255, 255, 255, 0.88);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: rgba(255, 255, 255, 0.92);
 }
 
 /* Memory List */
@@ -629,7 +631,7 @@ const addMemory = async () => {
 
 .empty-title {
   margin-bottom: 10rpx;
-  color: #3a3a3c;
+  color: var(--app-color-text-primary, #26332e);
   font-size: 28rpx;
   font-weight: 650;
 }
@@ -638,7 +640,7 @@ const addMemory = async () => {
   max-width: 460rpx;
   font-size: 23rpx;
   line-height: 1.5;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   text-align: center;
 }
 
@@ -654,7 +656,7 @@ const addMemory = async () => {
 .skeleton-line {
   position: relative;
   overflow: hidden;
-  background-color: rgba(118, 118, 128, 0.10);
+  background-color: rgba(112, 174, 155, 0.12);
 }
 
 .skeleton-line::after {
@@ -712,7 +714,7 @@ const addMemory = async () => {
 
 .footer-text {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   letter-spacing: 0.2px;
 }
 </style>

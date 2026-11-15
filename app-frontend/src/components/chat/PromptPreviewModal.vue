@@ -192,7 +192,7 @@ const getSectionName = (key: string): string => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(12px);
   z-index: 120;
   display: flex;
@@ -210,12 +210,12 @@ const getSectionName = (key: string): string => {
   width: 90vw;
   max-width: 680rpx;
   height: 80vh;
-  background-color: #f8f8fa;
-  border-radius: 32rpx;
+  background-color: var(--app-color-background, #f7f9f7);
+  border-radius: var(--app-radius-lg, 32rpx);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.14));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   animation: modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
 }
@@ -230,20 +230,20 @@ const getSectionName = (key: string): string => {
   justify-content: space-between;
   align-items: center;
   padding: 32rpx 36rpx;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  background-color: #ffffff;
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  background-color: var(--app-color-surface, #ffffff);
 }
 
 .modal-title {
   font-size: 32rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: -0.3px;
 }
 
 .modal-close-btn {
   font-size: 44rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   cursor: pointer;
   padding: 0 10rpx;
   line-height: 1;
@@ -251,7 +251,7 @@ const getSectionName = (key: string): string => {
 }
 
 .modal-close-btn:active {
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .prompt-preview-scroll {
@@ -263,11 +263,11 @@ const getSectionName = (key: string): string => {
 /* Token Estimate Styles */
 .token-estimate-container {
   margin: 24rpx 36rpx 12rpx 36rpx;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 20rpx;
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.04);
 }
 
 .estimate-summary-row {
@@ -276,11 +276,11 @@ const getSectionName = (key: string): string => {
   padding: 24rpx 28rpx;
   cursor: pointer;
   position: relative;
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
 }
 
 .estimate-summary-row:active {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(112, 174, 155, 0.06);
 }
 
 .summary-stat {
@@ -292,7 +292,7 @@ const getSectionName = (key: string): string => {
 
 .stat-label {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   font-weight: 500;
 }
 
@@ -305,16 +305,16 @@ const getSectionName = (key: string): string => {
 .stat-value {
   font-size: 32rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .stat-value.accent {
-  color: #007aff;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .stat-range {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .toggle-btn {
@@ -326,7 +326,7 @@ const getSectionName = (key: string): string => {
 
 .toggle-arrow {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   transition: transform 0.3s ease;
 }
 
@@ -336,9 +336,9 @@ const getSectionName = (key: string): string => {
 
 /* Details Table */
 .estimate-details-table {
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding: 20rpx 28rpx 24rpx 28rpx;
-  background-color: rgba(242, 242, 247, 0.4);
+  background-color: rgba(247, 249, 247, 0.72);
   animation: slideDown 0.25s ease-out;
 }
 
@@ -351,9 +351,9 @@ const getSectionName = (key: string): string => {
   display: flex;
   font-size: 20rpx;
   font-weight: 600;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   padding-bottom: 12rpx;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   margin-bottom: 8rpx;
 }
 
@@ -362,8 +362,8 @@ const getSectionName = (key: string): string => {
   align-items: center;
   padding: 12rpx 0;
   font-size: 22rpx;
-  color: #3a3a3c;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.03);
+  color: var(--app-color-text-primary, #26332e);
+  border-bottom: 1px dashed rgba(38, 51, 46, 0.06);
 }
 
 .table-row:last-child {
@@ -378,7 +378,7 @@ const getSectionName = (key: string): string => {
 .col-chars {
   flex: 1;
   text-align: right;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .col-tokens {
@@ -392,18 +392,18 @@ const getSectionName = (key: string): string => {
 
 .token-main {
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .token-sub {
   font-size: 16rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .method-footer {
   margin-top: 20rpx;
   font-size: 18rpx;
-  color: #aeaea2;
+  color: var(--app-color-text-muted, #89958f);
   text-align: center;
 }
 
@@ -423,32 +423,32 @@ const getSectionName = (key: string): string => {
 
 .toolbar-summary {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   font-weight: 500;
 }
 
 .toolbar-action-btn {
   padding: 8rpx 20rpx;
   border-radius: 999rpx;
-  background-color: rgba(0, 122, 255, 0.08);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   cursor: pointer;
 }
 
 .toolbar-action-btn:active {
-  background-color: rgba(0, 122, 255, 0.16);
+  background-color: rgba(112, 174, 155, 0.24);
 }
 
 .toolbar-action-text {
   font-size: 22rpx;
   font-weight: 600;
-  color: #007aff;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .prompt-section-card {
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 20rpx;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.04);
   overflow: hidden;
 }
 
@@ -466,7 +466,7 @@ const getSectionName = (key: string): string => {
 }
 
 .section-header:active {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(112, 174, 155, 0.06);
 }
 
 .section-title-col {
@@ -480,12 +480,12 @@ const getSectionName = (key: string): string => {
 .section-title {
   font-size: 27rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .section-subtitle {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.4;
 }
 
@@ -499,21 +499,21 @@ const getSectionName = (key: string): string => {
 .section-badge {
   font-size: 20rpx;
   font-weight: 500;
-  color: #007aff;
-  background-color: rgba(0, 122, 255, 0.08);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   padding: 4rpx 14rpx;
   border-radius: 999rpx;
 }
 
 .section-badge.is-muted {
-  color: #8e8e93;
-  background-color: rgba(142, 142, 147, 0.12);
+  color: var(--app-color-text-muted, #89958f);
+  background-color: rgba(38, 51, 46, 0.06);
 }
 
 .section-body {
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding: 20rpx;
-  background-color: rgba(248, 248, 250, 0.7);
+  background-color: rgba(247, 249, 247, 0.75);
   display: flex;
   flex-direction: column;
   gap: 16rpx;
@@ -526,32 +526,32 @@ const getSectionName = (key: string): string => {
 .section-empty-text {
   font-size: 22rpx;
   line-height: 1.5;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .prompt-msg-card {
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 16rpx;
   padding: 20rpx;
   display: flex;
   flex-direction: column;
   gap: 12rpx;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .prompt-msg-card.role-system {
-  background-color: rgba(0, 122, 255, 0.03);
-  border-color: rgba(0, 122, 255, 0.08);
+  background-color: rgba(139, 184, 220, 0.08);
+  border-color: rgba(139, 184, 220, 0.22);
 }
 
 .prompt-msg-card.role-user {
-  background-color: #ffffff;
-  border-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--app-color-surface, #ffffff);
+  border-color: var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .prompt-msg-card.role-assistant {
-  background-color: rgba(52, 199, 89, 0.03);
-  border-color: rgba(52, 199, 89, 0.08);
+  background-color: rgba(112, 174, 155, 0.07);
+  border-color: rgba(112, 174, 155, 0.2);
 }
 
 .prompt-msg-header {
@@ -572,28 +572,28 @@ const getSectionName = (key: string): string => {
 .prompt-msg-subtag {
   font-size: 20rpx;
   font-weight: 500;
-  color: #636366;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .role-system .prompt-msg-role-tag {
-  background-color: rgba(0, 122, 255, 0.1);
-  color: #007aff;
+  background-color: rgba(139, 184, 220, 0.18);
+  color: #3f76a3;
 }
 
 .role-user .prompt-msg-role-tag {
-  background-color: rgba(28, 28, 30, 0.1);
-  color: #1c1c1e;
+  background-color: rgba(38, 51, 46, 0.08);
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .role-assistant .prompt-msg-role-tag {
-  background-color: rgba(52, 199, 89, 0.1);
-  color: #34c759;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.16));
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .prompt-msg-text {
   font-size: 25rpx;
   line-height: 1.6;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   word-break: break-all;
 }
 
