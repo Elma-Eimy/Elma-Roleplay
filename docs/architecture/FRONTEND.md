@@ -27,9 +27,9 @@ src/main.ts + App.vue + pages.json
 | `App.vue` 与 `uni.scss` | 全局基础样式与语义设计变量；页面专属样式留在对应页面 |
 | `api/transports/` | App 流传输适配，配合 renderjs 桥接组件使用 |
 
-群聊详情复用 `ChatHeader.vue`、`ChatComposer.vue`、`ChatScrollShell.vue`（内置空态渲染）和 `useChatScroll.ts`，固定输入区，按时间顺序显示轮次。`ChatBubble.vue` 提供不绑定 Store/音频的纯渲染气泡（通过 `read-only` 禁用交互，通过 `ChatActionBar.vue` 统一单聊消息与群聊轮次的操作栏），共用 `chatMessage.css` 和 `utils/markdown.ts` 的 Markdown 渲染。两种聊天共用 `ChatSceneBackground.vue`、`ChatReadingPreferences.vue`、`chatTheme.css` 聊天主题与布局样式；单聊抽屉与群聊抽屉通过 `ChatDrawer.vue` 复用 `chatDrawer.css` 抽屉样式；字号、行距、小说/气泡排版与色调沿用同一阅读设置。群聊背景使用当前采用的立绘，可跟随最后发言成员或固定成员，图片失败回退头像；候选预览不会改写背景。抽屉分成员、外观、起点和管理，整轮候选预览由独立弹窗 `GroupCandidateModal.vue` 承载。
+群聊详情复用 `ChatHeader.vue`、`ChatComposer.vue`、`ChatScrollShell.vue`（内置空态渲染）和 `useChatScroll.ts`，固定输入区，按时间顺序显示轮次。`ChatBubble.vue` 提供不绑定 Store/音频的纯渲染气泡（通过 `read-only` 禁用交互，通过 `ChatActionBar.vue` 统一单聊消息与群聊轮次的操作栏），共用 `chatMessage.css` 和 `utils/markdown.ts` 的 Markdown 渲染。两种聊天共用 `ChatSceneBackground.vue`、`ChatReadingPreferences.vue`、`chatTheme.css` 聊天主题与布局样式；单聊抽屉与群聊抽屉通过 `ChatDrawer.vue` 复用 `chatDrawer.css` 抽屉样式；字号、行距、小说/气泡排版与色调沿用同一阅读设置。群聊背景使用当前采用的立绘，可跟随最后发言成员或固定成员，图片失败回退头像；候选预览不会改写背景。抽屉分成员、外观、起点和管理，整轮候选预览由独立弹窗 `GroupCandidateModal.vue` 承载；打开弹窗自动预览当前采用候选，整卡支持点击切换预览并在采用或继续接受后收起。
 
-群聊页面由 `pages/group/` 提供，继续由 `useGroupSessions.ts` 和 `useGroupRoundFlow.ts` 管理请求与候选生命周期。`components/chat/GroupUtterances.vue` 只展示按 Persona 匹配头像的发言正文，共用于采用内容和候选预览，不负责提交、轮询或状态重放。入群资料与候选状态仍显式区分，完整界面批次见 [M6 计划](../plans/group-chat/M6_INTERFACE_AND_ACCEPTANCE.md)。
+群聊页面由 `pages/group/` 提供，继续由 `useGroupSessions.ts` 和 `useGroupRoundFlow.ts` 管理请求与候选生命周期。详情页在重新生成期间原地隐藏原采用发言并展示 `pending_candidate` 与流内等待指示，重生成暂停或失败时提供单轮分段切换而非上下堆叠两套发言；发送时即时展示乐观轮次与流内思考/接话占位，并在真实轮次落库后允许提前输入草稿，后台轮询刷新不再反复翻转 `loadingRounds`。`components/chat/GroupUtterances.vue` 只展示按 Persona 匹配头像的发言正文，共用于采用内容和候选预览，不负责提交、轮询或状态重放。入群资料与候选状态仍显式区分，完整界面批次见 [M6 计划](../plans/group-chat/M6_INTERFACE_AND_ACCEPTANCE.md)。
 
 `GroupMemberStates.vue` 共用于当前采用状态和候选预览，按成员展示状态、继承认知与候选可用的个人认识，不发起请求。`useGroupRoundFlow.loadAdoptedState()` 独立保存当前采用状态，按群版本、最新轮次/候选及 revision 校验读取结果；选择或确认变化、处理操作、离页和切服使旧数据与在途读取失效。读取不改变采用选择、不派发模型，也不影响原有候选预览。
 
