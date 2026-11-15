@@ -35,10 +35,7 @@
             class="model-input"
             :value="profile.label"
             placeholder="显示名称"
-            @input="
-              (event: any) =>
-                setProfile(profile.id, { label: event.detail.value })
-            "
+            @input="setProfile(profile.id, { label: readInputText($event) })"
           /><picker
             :range="adapterLabels"
             :value="adapterValues.indexOf(profile.adapter)"
@@ -60,7 +57,7 @@
           ><view class="adapter-value">思考能力：{{ profile.thinking === 'toggle' ? '可开关' : profile.thinking === 'always' ? '始终开启' : '不支持' }} ⌄</view></picker>
           <input class="model-input" :value="profile.efforts.join(', ')"
             placeholder="支持的档位，逗号分隔；留空恢复默认"
-            @input="(event: any) => setEfforts(profile.id, event.detail.value)" />
+            @input="setEfforts(profile.id, readInputText($event))" />
           <button
             v-if="
               settings.model_profiles.some((item) => item.id === profile.id)
@@ -158,6 +155,11 @@ const adapterValues: ModelAdapter[] = ["compatible", "deepseek", "reasoning"];
 const adapterLabels = ["通用兼容参数", "DeepSeek thinking 参数", "reasoning_effort 参数"];
 const thinkingValues: (ModelProfile["thinking"] | null)[] = [null, "unsupported", "toggle", "always"];
 const thinkingLabels = ["按适配方式默认", "不支持思考", "可开关思考", "始终开启思考"];
+function readInputText(event: Event): string {
+  const detail = (event as Event & { detail?: { value?: string | number } }).detail;
+  const target = event.target as { value?: string | number } | null;
+  return String(detail?.value ?? target?.value ?? "");
+}
 function setEfforts(id: string, text: string) {
   const efforts = text.split(/[,，\s]+/).filter(Boolean);
   setProfile(id, { efforts: efforts.length ? efforts : null });

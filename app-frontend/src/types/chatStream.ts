@@ -1,5 +1,5 @@
-import type { ChatRequest, ChatResponse } from "../api/chat";
-import type { MessageCandidate } from "../api/sessions";
+import type { ChatRequest, ChatResponse } from "./chat";
+import type { MessageCandidate } from "./messages";
 
 export interface ActiveStreamRequest {
   requestId: string;

@@ -213,7 +213,7 @@ export async function getRecentSessions(
           current_mood: session.persona.current_mood,
         },
         character: {
-          id: character?.id ?? session.character_id,
+          id: character?.id ?? session.character_id ?? session.character.id,
           name: character?.name ?? "Unknown Character",
           avatar_path: character?.avatar_path ?? "",
         },

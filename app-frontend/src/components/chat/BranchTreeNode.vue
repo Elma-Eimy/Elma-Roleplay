@@ -83,33 +83,19 @@ defineOptions({
   name: 'BranchTreeNode'
 });
 
-interface SessionNode {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona?: {
-    id: number;
-    affection_score?: number;
-    current_mood?: string;
-  };
-  lastMessage?: string;
-  children: SessionNode[];
-  depth: number;
-}
+import type { BranchTreeSession, BranchTreeNodeData } from "@/types/chat";
 
 const props = defineProps<{
-  node: SessionNode;
+  node: BranchTreeNodeData;
   depth: number;
   isLast: boolean;
   latestSessionId: number | null;
 }>();
 
 const emit = defineEmits<{
-  (e: 'tap-node', session: any): void;
-  (e: 'longpress-node', session: any): void;
-  (e: 'branch-node', session: any): void;
+  (e: 'tap-node', session: BranchTreeSession): void;
+  (e: 'longpress-node', session: BranchTreeSession): void;
+  (e: 'branch-node', session: BranchTreeSession): void;
 }>();
 
 const formattedDate = computed(() => {
@@ -137,9 +123,9 @@ const onBranch = () => {
 };
 
 // 递归向上传递事件
-const emitTapNode = (session: any) => emit('tap-node', session);
-const emitLongpressNode = (session: any) => emit('longpress-node', session);
-const emitBranchNode = (session: any) => emit('branch-node', session);
+const emitTapNode = (session: BranchTreeSession) => emit('tap-node', session);
+const emitLongpressNode = (session: BranchTreeSession) => emit('longpress-node', session);
+const emitBranchNode = (session: BranchTreeSession) => emit('branch-node', session);
 </script>
 
 <style scoped>

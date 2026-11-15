@@ -103,7 +103,30 @@
 import { ref, computed, watch } from "vue";
 import type { CharacterDetail } from "@/api/characters";
 import { getLorebooks, getLorebook, bindLorebook, unbindLorebook } from "@/api/lorebooks";
-import type { LorebookSummary } from "@/api/lorebooks";
+import type { LorebookSummary, LorebookDetail, LorebookEntry } from "@/api/lorebooks";
+
+interface RawLorebookEntry {
+  keys?: string | string[];
+  secondary_keys?: string | string[];
+  content?: string;
+  constant?: boolean;
+  priority?: number;
+  insertion_order?: number;
+  enabled?: boolean;
+}
+
+interface CharacterLorebookEntryView {
+  keys: string[];
+  secondary_keys: string[];
+  content: string;
+  constant: boolean;
+  priority: number;
+  sourceName: string;
+}
+
+interface EmbeddedCharacterBook {
+  entries?: RawLorebookEntry[];
+}
 
 const props = defineProps<{
   character: CharacterDetail;
@@ -121,40 +144,38 @@ const emit = defineEmits<{
   (e: "entries-count", count: number): void;
 }>();
 
-const boundLorebooksDetails = ref<any[]>([]);
+const boundLorebooksDetails = ref<LorebookDetail[]>([]);
 const isBindSelectorOpen = ref(false);
 const allLibraryLorebooks = ref<LorebookSummary[]>([]);
 
 const availableLorebooks = computed(() => {
   if (!props.character || !props.character.lorebooks) return allLibraryLorebooks.value;
-  const boundIds = props.character.lorebooks.map((b: any) => b.id);
+  const boundIds = props.character.lorebooks.map((b) => b.id);
   return allLibraryLorebooks.value.filter(lb => !boundIds.includes(lb.id));
 });
 
-const normalizeEntry = (entry: any) => {
-  let keys = entry.keys;
-  if (!Array.isArray(keys)) {
-    keys = keys ? [keys] : [];
-  }
-  let secondaryKeys = entry.secondary_keys;
-  if (!Array.isArray(secondaryKeys)) {
-    secondaryKeys = secondaryKeys ? [secondaryKeys] : [];
-  }
+const normalizeEntry = (entry: RawLorebookEntry | LorebookEntry) => {
+  const keys = Array.isArray(entry.keys)
+    ? entry.keys
+    : (entry.keys ? [entry.keys] : []);
+  const secondaryKeys = Array.isArray(entry.secondary_keys)
+    ? entry.secondary_keys
+    : (entry.secondary_keys ? [entry.secondary_keys] : []);
   return {
     keys: keys.filter(Boolean),
     secondary_keys: secondaryKeys.filter(Boolean),
     content: entry.content || "",
     constant: !!entry.constant,
-    priority: entry.priority || entry.insertion_order || 100
+    priority: ("priority" in entry ? entry.priority : undefined) || entry.insertion_order || 100
   };
 };
 
-const lorebookEntries = computed(() => {
-  const entries: any[] = [];
+const lorebookEntries = computed<CharacterLorebookEntryView[]>(() => {
+  const entries: CharacterLorebookEntryView[] = [];
 
-  const charBook = props.character?.extensions?.character_book as any;
+  const charBook = props.character?.extensions?.character_book as EmbeddedCharacterBook | undefined;
   if (charBook && Array.isArray(charBook.entries)) {
-    charBook.entries.forEach((entry: any) => {
+    charBook.entries.forEach((entry) => {
       if (entry && entry.enabled !== false) {
         entries.push({
           ...normalizeEntry(entry),
@@ -164,9 +185,9 @@ const lorebookEntries = computed(() => {
     });
   }
 
-  boundLorebooksDetails.value.forEach((lorebook: any) => {
+  boundLorebooksDetails.value.forEach((lorebook) => {
     if (lorebook && Array.isArray(lorebook.entries)) {
-      lorebook.entries.forEach((entry: any) => {
+      lorebook.entries.forEach((entry) => {
         if (entry && entry.enabled !== false) {
           entries.push({
             ...normalizeEntry(entry),
@@ -183,7 +204,7 @@ const lorebookEntries = computed(() => {
 const loadBoundLorebooksDetails = async () => {
   boundLorebooksDetails.value = [];
   if (props.character && props.character.lorebooks) {
-    const promises = props.character.lorebooks.map(async (lbSummary: any) => {
+    const promises = props.character.lorebooks.map(async (lbSummary) => {
       try {
         const details = await getLorebook(lbSummary.id);
         return details;
@@ -193,7 +214,7 @@ const loadBoundLorebooksDetails = async () => {
       }
     });
     const results = await Promise.all(promises);
-    boundLorebooksDetails.value = results.filter(Boolean);
+    boundLorebooksDetails.value = results.filter((item): item is LorebookDetail => item !== null);
   }
 };
 

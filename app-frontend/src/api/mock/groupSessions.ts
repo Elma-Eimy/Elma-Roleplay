@@ -43,8 +43,11 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
     }
   }
   const db = getMockDB();
-  const characters = params.members.map(member => db.characters.find(character => character.id === member.character_id));
-  if (characters.some(character => !character)) throw new Error("成员角色不存在");
+  const characters = params.members.map(member => {
+    const character = db.characters.find(item => item.id === member.character_id);
+    if (!character) throw new Error("成员角色不存在");
+    return character;
+  });
   const groups = db.groupSessions ?? [];
   const sessionId = Math.max(Date.now(), ...db.sessions.map(session => session.id), ...groups.map(group => group.session_id)) + 1;
   const personaId = Math.max(Date.now(), ...db.sessions.map(session => session.persona?.id ?? 0),

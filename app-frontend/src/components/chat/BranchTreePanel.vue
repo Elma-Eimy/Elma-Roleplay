@@ -41,33 +41,34 @@
 import { defineProps, defineEmits } from "vue";
 import BranchTreeView from "./BranchTreeView.vue";
 import AppStatusState from "@/components/common/AppStatusState.vue";
+import type { BranchTreeSession } from "@/types/chat";
 
 defineProps<{
   isOpen: boolean;
   isLoading: boolean;
-  sessions: any[];
+  sessions: BranchTreeSession[];
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
-  (e: "tap-node", session: any): void;
-  (e: "longpress-node", session: any): void;
-  (e: "branch-node", session: any): void;
+  (e: "tap-node", session: BranchTreeSession): void;
+  (e: "longpress-node", session: BranchTreeSession): void;
+  (e: "branch-node", session: BranchTreeSession): void;
 }>();
 
 const close = () => {
   emit("close");
 };
 
-const tapNode = (session: any) => {
+const tapNode = (session: BranchTreeSession) => {
   emit("tap-node", session);
 };
 
-const longpressNode = (session: any) => {
+const longpressNode = (session: BranchTreeSession) => {
   emit("longpress-node", session);
 };
 
-const branchNode = (session: any) => {
+const branchNode = (session: BranchTreeSession) => {
   emit("branch-node", session);
 };
 </script>

@@ -1,3 +1,4 @@
+import type { TokenEstimate } from "./prompts";
 import type { RoleState } from "./roleState";
 
 export interface GroupCharacterOption {
@@ -202,7 +203,7 @@ export interface GetGroupRequestResponse extends GroupOperationSummary {
 
 export interface GroupPromptPreview {
   messages: { role: string; content: string }[];
-  token_estimate: import("@/api/sessions").TokenEstimate;
+  token_estimate: TokenEstimate;
   candidate_id: number;
   revision: number;
 }

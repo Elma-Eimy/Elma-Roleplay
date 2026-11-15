@@ -45,12 +45,10 @@ export async function getSessionMemories(
     offset = 0,
   } = params;
 
-  const db = getMockDB() as any;
-  if (!db.memories) {
-    db.memories = {};
-  }
-  const sessionById = new Map<number, any>(
-    (db.sessions || []).map((session: any) => [session.id, session])
+  const db = getMockDB();
+  const memoriesBySession = db.memories ?? (db.memories = {});
+  const sessionById = new Map(
+    (db.sessions || []).map((session) => [session.id, session])
   );
   const lineageSessionIds: number[] = [];
   const visited = new Set<number>();
@@ -62,7 +60,7 @@ export async function getSessionMemories(
   }
 
   let list: MemoryChunk[] = lineageSessionIds.flatMap((visibleSessionId) =>
-    (db.memories[visibleSessionId] || []).map((memory: MemoryChunk) => ({
+    (memoriesBySession[visibleSessionId] || []).map((memory: MemoryChunk) => ({
       ...memory,
       is_local: visibleSessionId === sessionId,
     }))
@@ -159,7 +157,7 @@ export async function createSessionMemory(
   content: string,
   importanceScore: number = 0.8
 ): Promise<MemoryCreateResponse> {
-  const db = getMockDB() as any;
+  const db = getMockDB();
   if (!db.memories) {
     db.memories = {};
   }
@@ -189,12 +187,12 @@ export async function updateSessionMemory(
   content: string,
   importanceScore: number
 ): Promise<MemoryUpdateResponse> {
-  const db = getMockDB() as any;
+  const db = getMockDB();
   if (!db.memories) {
     db.memories = {};
   }
   const list = db.memories[sessionId] || [];
-  const item = list.find((m: any) => m.id === memoryId);
+  const item = list.find((m) => m.id === memoryId);
   if (item) {
     item.content = content;
     item.importance_score = importanceScore;
@@ -214,12 +212,12 @@ export async function deleteSessionMemory(
   sessionId: number,
   memoryId: number
 ): Promise<MemoryDeleteResponse> {
-  const db = getMockDB() as any;
+  const db = getMockDB();
   if (!db.memories) {
     db.memories = {};
   }
   const list = db.memories[sessionId] || [];
-  const idx = list.findIndex((m: any) => m.id === memoryId);
+  const idx = list.findIndex((m) => m.id === memoryId);
   if (idx !== -1) {
     list.splice(idx, 1);
     setMockDB(db);

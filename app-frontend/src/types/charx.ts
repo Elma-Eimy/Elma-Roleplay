@@ -1,4 +1,4 @@
-import type { CharacterBase } from "@/api/characters";
+import type { CharacterBase } from "./characters";
 
 export interface CharxAsset {
   index: number;

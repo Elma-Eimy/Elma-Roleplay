@@ -25,7 +25,7 @@
         backgroundColor="rgba(0,0,0,0.07)"
         block-color="#ffffff"
         block-size="18"
-        @change="(e: any) => updateValue(item.key, item.scale, item.offset, Number(e.detail.value))"
+        @change="updateValue(item.key, item.scale, item.offset, Number($event.detail.value))"
       />
     </view>
   </view>

@@ -4,7 +4,12 @@
  */
 
 import { notifyServerChange } from "../utils/connectionEvents";
+import type { CharacterDetail } from "../types/characters";
 import type { GroupSessionDetail, GroupRound } from "../types/groupSessions";
+import type { MemoryChunk } from "../types/memories";
+import type { Message } from "../types/messages";
+import type { SessionDetail } from "../types/sessions";
+import type { LorebookDetail } from "./lorebooks";
 
 declare const __GROUP_PREVIEW__: boolean;
 
@@ -99,11 +104,26 @@ export const USE_MOCK = false;
 
 const MOCK_DB_KEY = "ai_roleplay_mock_db";
 
+export interface MockCharacterExtensions extends Record<string, unknown> {
+  lorebook_ids?: number[];
+  alternate_greetings?: string[];
+}
+
+export interface MockCharacterRecord extends CharacterDetail {
+  extensions?: MockCharacterExtensions;
+}
+
+export interface MockSessionRecord extends SessionDetail {
+  character_id?: number;
+  fork_message_id?: number | null;
+}
+
 export interface MockDatabase {
-  characters: any[];
-  sessions: any[];
-  messages: Record<number, any[]>; // 会话ID -> 消息数组映射 (sessionId -> Message[])
-  lorebooks?: any[];
+  characters: MockCharacterRecord[];
+  sessions: MockSessionRecord[];
+  messages: Record<number, Message[]>; // 会话ID -> 消息数组映射 (sessionId -> Message[])
+  memories?: Record<number, MemoryChunk[]>;
+  lorebooks?: LorebookDetail[];
   groupSessions?: GroupSessionDetail[];
   groupRounds?: Record<number, GroupRound[]>;
 }
@@ -183,7 +203,7 @@ function getInitialMockDB(): MockDatabase {
     }
   ];
 
-  const messages: Record<number, any[]> = {
+  const messages: Record<number, Message[]> = {
     1: [
       {
         id: 1001,
@@ -286,25 +306,25 @@ export async function request<T>(
     delete headers["Content-Type"];
   }
 
-  let data: any = undefined;
+  let data: UniApp.RequestOptions["data"] = undefined;
   if (options.body) {
     if (typeof options.body === "string") {
       try {
-        data = JSON.parse(options.body);
+        data = JSON.parse(options.body) as UniApp.RequestOptions["data"];
       } catch (e) {
         data = options.body;
       }
     } else {
-      data = options.body;
+      data = options.body as UniApp.RequestOptions["data"];
     }
   }
 
   return new Promise((resolve, reject) => {
-    const reqOptions: any = {
+    const reqOptions: UniApp.RequestOptions = {
       url,
       method,
       header: headers,
-      success: (res: any) => {
+      success: (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data as T);
         } else {
@@ -312,7 +332,7 @@ export async function request<T>(
           reject(new Error(`[API Error ${res.statusCode}] ${endpoint}: ${errMsg}`));
         }
       },
-      fail: (err: any) => {
+      fail: (err) => {
         reject(new Error(err.errMsg || "网络连接失败"));
       }
     };

@@ -208,7 +208,7 @@ import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
 import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
 import type { TokenEstimate } from "@/api/sessions";
-import type { BranchSession } from "@/types/chat";
+import type { BranchSession, BranchTreeSession } from "@/types/chat";
 import type { ChatMessage } from "@/store/chatStore";
 
 // 状态存储与 Composable 挂载
@@ -450,7 +450,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
   }
 };
 
-const handleTreeNodeLongpress = (session: BranchSession) => {
+const handleTreeNodeLongpress = (session: BranchTreeSession) => {
   uni.vibrateShort({ success: () => {} });
   uni.showActionSheet({
     itemList: ['重命名分支', '删除分支'],

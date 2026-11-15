@@ -153,9 +153,10 @@ const triggerFileInput = () => {
       const importRes = await importLorebook(file);
       uni.showToast({ title: `导入成功: ${importRes.name}`, icon: "success" });
       loadLorebooks();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to import lorebook", err);
-      uni.showToast({ title: err.message || "导入失败，请检查文件格式", icon: "none" });
+      const errMessage = err instanceof Error ? err.message : "导入失败，请检查文件格式";
+      uni.showToast({ title: errMessage || "导入失败，请检查文件格式", icon: "none" });
     } finally {
       uni.hideLoading();
     }
@@ -180,14 +181,16 @@ const handleImport = () => {
     success: async (res) => {
       uni.showLoading({ title: "正在导入世界书..." });
       try {
-        const tempFiles = res.tempFiles as any;
-        const fileObj = tempFiles?.[0]?.file || tempFiles?.[0] || res.tempFilePaths[0];
-        const importRes = await importLorebook(fileObj);
+        const tempFiles = res.tempFiles as Array<File | { file?: File; path?: string }> | undefined;
+        const firstTemp = tempFiles?.[0];
+        const fileObj = (firstTemp && "file" in firstTemp && firstTemp.file) || firstTemp || res.tempFilePaths[0];
+        const importRes = await importLorebook(fileObj as File | string);
         uni.showToast({ title: `导入成功: ${importRes.name}`, icon: "success" });
         loadLorebooks();
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Failed to import lorebook", e);
-        uni.showToast({ title: e.message || "导入失败，请检查文件格式", icon: "none" });
+        const errMessage = e instanceof Error ? e.message : "导入失败，请检查文件格式";
+        uni.showToast({ title: errMessage || "导入失败，请检查文件格式", icon: "none" });
       } finally {
         uni.hideLoading();
       }

@@ -395,6 +395,7 @@
 
 <script setup lang="ts">
 import type { CharxImportResult } from "@/types/charx";
+import type { BranchTreeSession } from "@/types/chat";
 import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
@@ -685,7 +686,7 @@ const openNewBranchModal = () => {
   isNewBranchModalOpen.value = true;
 }
 
-const handleTreeNodeBranch = (session: any) => {
+const handleTreeNodeBranch = (session: BranchTreeSession) => {
   activeParentSessionId.value = session.id;
   isNewBranchModalOpen.value = true;
 };
@@ -711,13 +712,13 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
   }
 };
 
-const resumeSession = (session: any) => {
+const resumeSession = (session: BranchTreeSession) => {
   uni.navigateTo({
     url: `/pages/chat/chat?sessionId=${session.id}`
   });
 };
 
-const onSessionLongPress = (session: any) => {
+const onSessionLongPress = (session: BranchTreeSession) => {
   uni.vibrateShort({ success: () => {} });
   uni.showActionSheet({
     itemList: ['从此分支分叉新世界', '重命名分支', '删除分支'],
@@ -742,9 +743,10 @@ const onSessionLongPress = (session: any) => {
                 useChatSettingsStore().removeSession(session.id);
                 await loadCharacterData(charId);
                 uni.showToast({ title: '删除成功', icon: 'success' });
-              } catch (e: any) {
+              } catch (e: unknown) {
                 console.error("Failed to delete branch", e);
-                uni.showToast({ title: e.message || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
+                const errMessage = e instanceof Error ? e.message : "删除失败，请检查网络与后端配置";
+                uni.showToast({ title: errMessage || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
               }
             }
           }

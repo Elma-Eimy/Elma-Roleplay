@@ -270,10 +270,13 @@ const toggleAdvancedSection = (key: AdvancedSectionKey) => {
   advancedSections.value[key] = !advancedSections.value[key];
 };
 
-const updateTags = (event: any) => {
-  form.value.tags = event.detail.value
+const updateTags = (event: Event) => {
+  const detail = (event as Event & { detail?: { value?: string } }).detail;
+  const target = event.target as { value?: string } | null;
+  const raw = String(detail?.value ?? target?.value ?? "");
+  form.value.tags = raw
     .split(",")
-    .map((tag: string) => tag.trim())
+    .map((tag) => tag.trim())
     .filter(Boolean);
 };
 

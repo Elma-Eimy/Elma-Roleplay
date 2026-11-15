@@ -2,37 +2,10 @@ import { receiveChatStream } from "./chatStream";
 import { createCancellation } from "../utils/cancellation";
 import type { Cancellation } from "../utils/cancellation";
 import { request, getBaseUrl, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
-import type { MessageCandidate } from "./sessions";
+import type { ChatRequest, ChatResponse } from "../types/chat";
+import type { MessageCandidate } from "../types/messages";
 
-// ===================== 类型定义 =====================
-
-export interface ChatRequest {
-  model?: string;
-  thinking_mode?: "inherit" | "enabled" | "disabled";
-  reasoning_effort?: string;
-  session_id: number;
-  user_message: string;
-  use_reasoning?: boolean;
-  is_regenerate?: boolean;
-  user_nickname?: string;
-  temperature?: number;
-  top_p?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  repetition_penalty?: number;
-}
-
-export interface ChatResponse {
-  reply: string;
-  emotion_tag: string;
-  affection_change: number;
-  affection_score: number;
-  model_used?: string;
-  user_message_id?: number;
-  assistant_message_id?: number;
-  candidates?: MessageCandidate[];
-  active_index?: number;
-}
+export type { ChatRequest, ChatResponse } from "../types/chat";
 
 // ===================== API 接口函数 =====================
 
