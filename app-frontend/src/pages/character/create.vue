@@ -634,7 +634,7 @@ const saveCharacter = async (story: { title: string; greeting_index: number | nu
 }
 
 .upload-icon {
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .upload-text {

@@ -1,22 +1,24 @@
 <template>
   <view class="detail-container app-motion-enter" v-if="character">
     <!-- 头部导航栏 -->
-    <view class="header">
-      <view class="back-btn" @tap="goBack">
-        <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
-      </view>
-      <text class="title">人物档案</text>
-      <view class="header-right">
-        <view role="button" aria-label="导入更新角色卡" class="header-btn sync-btn" @tap="quickUpdateFromCard">
-          <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+    <view class="header" :class="{ 'is-scrolled': isHeaderScrolled }">
+      <view class="header-inner">
+        <view class="back-btn" @tap="goBack">
+          <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
         </view>
-        <view role="button" aria-label="编辑人物档案" class="header-btn edit-btn" @tap="goToEdit">
-          <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+        <text class="title">{{ character.name || "人物档案" }}</text>
+        <view class="header-right">
+          <view role="button" aria-label="导入更新角色卡" class="header-btn sync-btn" @tap="quickUpdateFromCard">
+            <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+          </view>
+          <view role="button" aria-label="编辑人物档案" class="header-btn edit-btn" @tap="goToEdit">
+            <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+          </view>
         </view>
       </view>
     </view>
 
-    <scroll-view scroll-y class="scroll-content">
+    <scroll-view scroll-y class="scroll-content" @scroll="onDetailScroll">
       <view class="scroll-inner">
         <!-- 角色立绘面板 -->
         <view class="portrait-panel">
@@ -26,23 +28,25 @@
             :src="getAvatarUrl(character.avatar_path || '')"
             :lazy-load="false"
           />
-          <!-- 前景高清立绘卡 -->
-          <view class="portrait-card-wrapper">
-            <AvatarImage
-              class="portrait-img" 
-              :src="getAvatarUrl(character.avatar_path || '')"
-              :lazy-load="false"
-              @tap="previewPortrait"
-            />
+          <view class="portrait-stage">
+            <!-- 前景高清立绘卡 -->
+            <view class="portrait-card-wrapper">
+              <AvatarImage
+                class="portrait-img" 
+                :src="getAvatarUrl(character.avatar_path || '')"
+                :lazy-load="false"
+                @tap="previewPortrait"
+              />
+            </view>
+            <view class="change-portrait-btn" @tap="changePortrait">
+              <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
+              <text class="change-portrait-text">更换头像</text>
+            </view>
           </view>
           <view class="portrait-overlay" @tap="previewPortrait"></view>
-          
-          <view class="change-portrait-btn" @tap="changePortrait">
-            <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
-            <text class="change-portrait-text">更换头像</text>
-          </view>
         </view>
 
+        <view class="detail-main-column">
         <!-- 角色基本名称与标签区域 -->
         <view class="char-header-section">
           <text class="archive-eyebrow">CHARACTER FILE</text>
@@ -350,14 +354,17 @@
             </view>
           </view>
         </view>
+        </view>
       </view>
     </scroll-view>
 
     <!-- 底部操作按钮 -->
     <view class="footer">
-      <view class="action-btn" @tap="openNewBranchModal">
-        <image class="action-icon" src="/static/icons/header_plus.svg" mode="aspectFit" />
-        <text class="action-btn-text">开启新的故事线</text>
+      <view class="footer-inner">
+        <view class="action-btn" @tap="openNewBranchModal">
+          <image class="action-icon" src="/static/icons/header_plus.svg" mode="aspectFit" />
+          <text class="action-btn-text">开启新的故事线</text>
+        </view>
       </view>
     </view>
 
@@ -495,6 +502,11 @@ const openMemoryArchive = async () => {
 
 const lorebookEntriesCount = ref(0);
 const showAllTags = ref(false);
+const isHeaderScrolled = ref(false);
+
+const onDetailScroll = (event: { detail?: { scrollTop?: number } }) => {
+  isHeaderScrolled.value = (event.detail?.scrollTop ?? 0) > 150;
+};
 
 const onEntriesCountUpdate = (count: number) => {
   lorebookEntriesCount.value = count;
@@ -743,8 +755,8 @@ const onSessionLongPress = (session: BranchTreeSession) => {
         uni.showModal({
           title: '删除宇宙分支',
           content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
-          confirmColor: '#ff3b30',
-          cancelColor: '#8e8e93',
+          confirmColor: '#d9655d',
+          cancelColor: '#64716b',
           success: async (mRes) => {
             if (mRes.confirm && charId !== null) {
               try {
