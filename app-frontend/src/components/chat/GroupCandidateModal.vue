@@ -50,6 +50,7 @@
                   'is-selected': isSelected(candidate.candidate_id),
                   'is-previewing': preview?.candidate.candidate_id === candidate.candidate_id,
                 }"
+                @tap="!submitting && !deleting && candidateRoundId && emit('view', candidateRoundId, candidate.candidate_id)"
               >
                 <view class="candidate-card-head">
                   <text class="candidate-version">候选 {{ candidate.version }}</text>
@@ -73,8 +74,9 @@
                   <button
                     role="button"
                     class="candidate-action-btn"
+                    :class="{ 'is-previewing': preview?.candidate.candidate_id === candidate.candidate_id }"
                     :disabled="submitting || deleting"
-                    @tap="emit('view', candidateRoundId, candidate.candidate_id)"
+                    @tap.stop="emit('view', candidateRoundId, candidate.candidate_id)"
                   >
                     {{ preview?.candidate.candidate_id === candidate.candidate_id ? '正在预览' : '查看正文与状态' }}
                   </button>
@@ -83,7 +85,7 @@
                     role="button"
                     class="candidate-action-btn is-primary"
                     :disabled="locked || loadingCandidates || !!candidatesError"
-                    @tap="emit('select', candidate)"
+                    @tap.stop="emit('select', candidate)"
                   >
                     采用此候选
                   </button>
@@ -92,7 +94,7 @@
                     role="button"
                     class="candidate-action-btn is-accent"
                     :disabled="locked || !canGenerate || loadingCandidates || !!candidatesError"
-                    @tap="emit('resume', candidate)"
+                    @tap.stop="emit('resume', candidate)"
                   >
                     继续此候选
                   </button>
@@ -432,10 +434,16 @@ const previewPortraits = computed(
   padding: 22rpx 24rpx;
   border-radius: 22rpx;
   background-color: #ffffff;
-  border: 1px solid #e6ebe8;
+  border: 2rpx solid #e6ebe8;
   display: flex;
   flex-direction: column;
   gap: 16rpx;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, transform 0.14s ease;
+}
+
+.candidate-card:active {
+  transform: scale(0.99);
 }
 
 .candidate-card.is-selected {
@@ -445,7 +453,7 @@ const previewPortraits = computed(
 
 .candidate-card.is-previewing {
   border-color: #3f7e6d;
-  box-shadow: 0 6rpx 20rpx rgba(63, 126, 109, 0.08);
+  box-shadow: 0 8rpx 24rpx rgba(63, 126, 109, 0.14);
 }
 
 .candidate-card-head {
@@ -517,6 +525,13 @@ const previewPortraits = computed(
 
 .candidate-action-btn[disabled] {
   opacity: 0.45;
+}
+
+.candidate-action-btn.is-previewing {
+  border-color: #3f7e6d;
+  background-color: #eef7f3;
+  color: #2f6c5b;
+  font-weight: 620;
 }
 
 .candidate-action-btn.is-primary {

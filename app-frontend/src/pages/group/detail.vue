@@ -21,9 +21,9 @@
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
           :scroll-with-animation="scrollWithAnimation"
-          :show-jump-button="hasUnreadBelow || (!isPinnedToBottom && chronologicalRounds.length > 0)"
+          :show-jump-button="hasUnreadBelow || (!isPinnedToBottom && (chronologicalRounds.length > 0 || !!optimisticUserContent))"
           :has-unread="hasUnreadBelow"
-          :is-empty="!!group && !rounds.length && !roundsError && !hasGreetings && !loadingRounds"
+          :is-empty="!!group && !rounds.length && !optimisticUserContent && !roundsError && !hasGreetings && !loadingRounds"
           empty-title="故事从这里开始"
           empty-description="写下你的行动或台词，让角色回应你。"
           @reach-top="onReachTop"
@@ -53,20 +53,118 @@
             </template>
             <AppStatusState v-if="loadingRounds && !rounds.length" kind="loading" title="正在读取发言" />
             <view v-for="round in chronologicalRounds" :id="`group-round-${round.round_id}`" :key="round.round_id" class="saved-round">
-              <text class="round-divider">第 {{ round.round_index }} 轮 · {{ roundStatus(round) }}</text>
+              <text class="round-divider">第 {{ round.round_index }} 轮 · {{ roundHeaderStatus(round) }}</text>
               <ChatBubble
                 :message="{ id: -round.round_id * 10 - 1, role: 'user', status: 'done', content: round.user_content }"
                 :user-nickname="group.user_nickname"
                 read-only
               />
-              <GroupUtterances :utterances="round.utterances" :members="group.members" :portraits="round.portraits" :user-nickname="group.user_nickname" />
-              <template v-if="round.pending_candidate">
-                <text class="candidate-notice">{{ round.pending_candidate.error_code === 'resource_paused' ? '重新生成已暂停，已完成回复保留，可继续。' : round.pending_candidate.status === 'failed' ? '重新生成未完成，以下回复已保留，尚未采用。' : '正在重新生成，以下回复尚未采用。' }}</text>
-                <GroupUtterances :utterances="round.pending_candidate.utterances" :members="group.members" :user-nickname="group.user_nickname" />
-              </template>
-              <text v-if="groupRoundNotice(round)" :class="round.status === 'failed' && round.error_code !== 'resource_paused' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
+              <view v-if="hasPausedOrFailedPendingCandidate(round)" class="round-candidate-switcher">
+                <text class="switcher-caption">{{ round.pending_candidate?.error_code === 'resource_paused' ? '重新生成已暂停，可继续生成新候选或切回原采用回复。' : '重新生成未完成，以下为已保留草稿，尚未替换原采用回复。' }}</text>
+                <view class="switcher-pills">
+                  <view
+                    class="switcher-pill"
+                    :class="{ 'is-active': activeRoundTab(round) === 'pending' }"
+                    role="button"
+                    @tap="setRoundTab(round.round_id, 'pending')"
+                  >
+                    <text class="switcher-pill-text">新候选草稿 ({{ round.pending_candidate?.utterances.length || 0 }})</text>
+                  </view>
+                  <view
+                    class="switcher-pill"
+                    :class="{ 'is-active': activeRoundTab(round) === 'adopted' }"
+                    role="button"
+                    @tap="setRoundTab(round.round_id, 'adopted')"
+                  >
+                    <text class="switcher-pill-text">当前采用 ({{ round.utterances.length }})</text>
+                  </view>
+                </view>
+              </view>
+              <GroupUtterances
+                v-if="displayedUtterances(round).length"
+                :utterances="displayedUtterances(round)"
+                :members="group.members"
+                :portraits="round.portraits"
+                :user-nickname="group.user_nickname"
+              />
+              <view v-if="isRoundGenerating(round) && !displayedUtterances(round).length" class="group-waiting-row" role="status">
+                <view class="waiting-avatar-stack">
+                  <AvatarImage
+                    v-for="(member, mIndex) in waitingMembers"
+                    :key="'wait-' + round.round_id + '-' + member.persona_id"
+                    class="waiting-avatar"
+                    :class="{ 'is-stacked': mIndex > 0 }"
+                    :src="getAvatarUrl(member.character.avatar_path || '')"
+                  />
+                </view>
+                <view class="waiting-content-area">
+                  <text class="waiting-speaker-label">{{ waitingTitle(round) }}</text>
+                  <view class="waiting-bubble-card">
+                    <view class="waiting-pulse-row">
+                      <view class="ai-thinking">
+                        <view class="ai-dot"></view>
+                        <view class="ai-dot delay-1"></view>
+                        <view class="ai-dot delay-2"></view>
+                      </view>
+                      <text class="waiting-subtitle">{{ waitingSubtitle(round) }}</text>
+                    </view>
+                  </view>
+                </view>
+              </view>
+              <view v-else-if="isRoundGenerating(round)" class="group-continuation-bar" role="status">
+                <view class="continuation-avatars">
+                  <AvatarImage
+                    v-for="(member, mIndex) in waitingMembers"
+                    :key="'cont-' + round.round_id + '-' + member.persona_id"
+                    class="continuation-avatar"
+                    :class="{ 'is-stacked': mIndex > 0 }"
+                    :src="getAvatarUrl(member.character.avatar_path || '')"
+                  />
+                </view>
+                <view class="ai-thinking is-compact">
+                  <view class="ai-dot"></view>
+                  <view class="ai-dot delay-1"></view>
+                  <view class="ai-dot delay-2"></view>
+                </view>
+                <text class="continuation-copy">{{ continuationCopy(round) }}</text>
+              </view>
+              <text v-if="!isRoundGenerating(round) && activeRoundTab(round) === 'pending' && !displayedUtterances(round).length" class="group-copy round-notice">此新候选尚未生成任何角色发言。</text>
+              <text v-if="!isRoundGenerating(round) && activeRoundTab(round) === 'adopted' && groupRoundNotice(round)" :class="round.status === 'failed' && round.error_code !== 'resource_paused' ? 'group-error round-notice' : 'group-copy round-notice'">{{ groupRoundNotice(round) }}</text>
               <view v-if="roundActionItems(round).length" class="round-actions">
                 <ChatActionBar :items="roundActionItems(round)" @select="onRoundAction($event, round)" />
+              </view>
+            </view>
+            <view v-if="optimisticUserContent" id="group-round-optimistic" class="saved-round is-optimistic-round">
+              <text class="round-divider">第 {{ nextRoundIndex }} 轮 · 处理中</text>
+              <ChatBubble
+                :message="{ id: -999999, role: 'user', status: 'sending', content: optimisticUserContent }"
+                :user-nickname="group.user_nickname"
+                animate-entry
+                read-only
+              />
+              <view class="group-waiting-row" role="status">
+                <view class="waiting-avatar-stack">
+                  <AvatarImage
+                    v-for="(member, mIndex) in waitingMembers"
+                    :key="'opt-wait-' + member.persona_id"
+                    class="waiting-avatar"
+                    :class="{ 'is-stacked': mIndex > 0 }"
+                    :src="getAvatarUrl(member.character.avatar_path || '')"
+                  />
+                </view>
+                <view class="waiting-content-area">
+                  <text class="waiting-speaker-label">{{ waitingTitle() }}</text>
+                  <view class="waiting-bubble-card">
+                    <view class="waiting-pulse-row">
+                      <view class="ai-thinking">
+                        <view class="ai-dot"></view>
+                        <view class="ai-dot delay-1"></view>
+                        <view class="ai-dot delay-2"></view>
+                      </view>
+                      <text class="waiting-subtitle">{{ waitingSubtitle() }}</text>
+                    </view>
+                  </view>
+                </view>
               </view>
             </view>
           </view>
@@ -77,11 +175,24 @@
             <button v-if="historyStale" class="feedback-action" :disabled="loading || loadingRounds || operationBusy" @tap="refreshRounds">刷新</button>
             <button v-else-if="operationError && (pending || current?.active_operation)" class="feedback-action" :disabled="recovering || submitting || loading" @tap="state.recover">{{ recovering ? '查询中' : '查询结果' }}</button>
           </view>
-          <ChatComposer v-model="draft" :use-reasoning="chatSettingsStore.useReasoning" :model-summary="chatSettingsStore.modelSummary"
-            :is-focused="isFocused" :is-android="isAndroid" :keyboard-height="keyboardHeight" :wrapper-style="inputWrapperStyle"
-            :is-generating="operationBusy" :disabled="!canSend" :maxlength="20000"
+          <ChatComposer
+            :model-value="optimisticUserContent ? '' : draft"
+            :use-reasoning="chatSettingsStore.useReasoning"
+            :model-summary="chatSettingsStore.modelSummary"
+            :is-focused="isFocused"
+            :is-android="isAndroid"
+            :keyboard-height="keyboardHeight"
+            :wrapper-style="inputWrapperStyle"
+            :is-generating="operationBusy"
+            :disabled="composerDisabled"
+            :character-name="group.title || '群聊成员'"
+            :maxlength="20000"
+            @update:model-value="draft = $event"
             @open-model-settings="openModelSettings"
-            @focus-change="onFocusChange" @line-change="followNewContent" @send="send" />
+            @focus-change="onFocusChange"
+            @line-change="followNewContent"
+            @send="send"
+          />
         </view>
       </view>
     </view>
@@ -142,8 +253,8 @@
       @refresh="state.loadCandidates($event)"
       @load-more="state.loadCandidates($event, true)"
       @view="(roundId, candidateId) => state.viewCandidate(roundId, candidateId)"
-      @select="state.command('select', $event)"
-      @resume="state.command('resume', $event, confirmResume)"
+      @select="selectCandidate"
+      @resume="resumeCandidate"
     />
   </view>
 </template>
@@ -154,12 +265,13 @@ import { onLoad, onShow, onHide, onUnload, onResize } from "@dcloudio/uni-app";
 import ChatSceneBackground from "@/components/chat/ChatSceneBackground.vue";
 import ChatBubble from "@/components/chat/ChatBubble.vue";
 import ChatActionBar, { type ChatActionBarItem } from "@/components/chat/ChatActionBar.vue";
+import AvatarImage from "@/components/common/AvatarImage.vue";
 import GroupChatDrawer from "@/components/chat/GroupChatDrawer.vue";
 import GroupCandidateModal from "@/components/chat/GroupCandidateModal.vue";
 import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import { compileGroupMemberPrompt } from "@/api/groupSessions";
-import type { GroupPromptPreview } from "@/types/groupSessions";
+import type { GroupCandidateSummary, GroupPromptPreview } from "@/types/groupSessions";
 import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import { useChatSettingsStore } from "@/store/chatSettingsStore";
 import { getBaseUrl } from "@/api/config";
@@ -193,7 +305,7 @@ const backToList = () => uni.navigateBack({ fail: () => uni.switchTab({ url: "/p
 const chatSettingsStore = useChatSettingsStore();
 const state = useGroupSessionDetail(backToList, id => chatSettingsStore.requestGeneration(id, { ...chatSettingsStore.selection }));
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,
-  current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
+  current, canGenerate, draft, submitting, submittingKind, submittedContent, submittedBaseRoundId, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
   canSend, canRegenerate, canDiscard, candidates, candidateRoundId, loadingCandidates, candidatesError,
   hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError,
   portraitData, loadingPortraits, portraitWriting, portraitError, portraitOptions, canChoosePortrait } = state;
@@ -291,6 +403,68 @@ const onFocusChange = (focused: boolean) => {
 };
 const chronologicalRounds = computed(() => [...rounds.value].sort((a, b) => a.round_index - b.round_index));
 type GroupRoundItem = (typeof chronologicalRounds.value)[number];
+const pendingRoundTab = ref<Record<number, "pending" | "adopted">>({});
+const activeOperationKind = computed(() => submittingKind.value || pending.value?.kind || current.value?.active_operation?.kind || null);
+const hasPersistedNewSendRound = computed(() => {
+  if (submittedBaseRoundId.value === null) return chronologicalRounds.value.length > 0;
+  return chronologicalRounds.value.some(round => round.round_id > submittedBaseRoundId.value!);
+});
+const optimisticUserContent = computed(() => (
+  !operationError.value && activeOperationKind.value === "send" && operationBusy.value && !hasPersistedNewSendRound.value
+    ? (submittedContent.value || "")
+    : ""
+));
+const nextRoundIndex = computed(() => (chronologicalRounds.value[chronologicalRounds.value.length - 1]?.round_index ?? 0) + 1);
+const composerDisabled = computed(() =>
+  !canSend.value && (!operationBusy.value || !!operationError.value || !!optimisticUserContent.value)
+);
+const waitingMembers = computed(() => (group.value?.members || []).slice(0, 3));
+const isLatestRound = (round: GroupRoundItem) => {
+  const latestId = current.value?.latest?.round_id;
+  if (latestId !== undefined && latestId !== null) return round.round_id === latestId;
+  return round.round_id === chronologicalRounds.value[chronologicalRounds.value.length - 1]?.round_id;
+};
+const isRoundRegenerating = (round: GroupRoundItem) =>
+  round.pending_candidate?.status === "generating"
+  || (isLatestRound(round) && !!operationBusy.value && !operationError.value
+    && (activeOperationKind.value === "regenerate" || (activeOperationKind.value === "resume" && !!round.pending_candidate)));
+const isRoundGenerating = (round: GroupRoundItem) =>
+  round.status === "generating"
+  || isRoundRegenerating(round)
+  || (isLatestRound(round) && !!operationBusy.value && !operationError.value
+    && (activeOperationKind.value === "resume" || (activeOperationKind.value === "send" && hasPersistedNewSendRound.value)));
+const hasPausedOrFailedPendingCandidate = (round: GroupRoundItem) =>
+  !!round.pending_candidate && !isRoundRegenerating(round);
+const activeRoundTab = (round: GroupRoundItem): "pending" | "adopted" => {
+  if (isRoundRegenerating(round)) return "pending";
+  if (hasPausedOrFailedPendingCandidate(round)) return pendingRoundTab.value[round.round_id] ?? "pending";
+  return "adopted";
+};
+const setRoundTab = (roundId: number, tab: "pending" | "adopted") => {
+  pendingRoundTab.value = { ...pendingRoundTab.value, [roundId]: tab };
+};
+const displayedUtterances = (round: GroupRoundItem) =>
+  activeRoundTab(round) === "pending" ? (round.pending_candidate?.utterances ?? []) : round.utterances;
+const roundHeaderStatus = (round: GroupRoundItem) =>
+  isRoundRegenerating(round) ? "重新生成中" : isRoundGenerating(round) ? "处理中" : roundStatus(round);
+const waitingTitle = (round?: GroupRoundItem) => {
+  if (round && isRoundRegenerating(round)) return "正在重新生成整轮回应";
+  if (activeOperationKind.value === "resume") return "正在继续本轮回应";
+  return `${memberNames.value || "群聊成员"} · 正在构思回应`;
+};
+const waitingSubtitle = (round?: GroupRoundItem) => {
+  const steps = current.value?.active_operation?.call_count ?? 0;
+  if (round && isRoundRegenerating(round)) {
+    return steps > 0
+      ? `已暂隐原采用回复，正在生成新候选（已推进 ${steps} 步）…`
+      : "已暂隐原采用回复，新候选完成后将直接替换…";
+  }
+  return steps > 0
+    ? `导演正在调度角色互动（已推进 ${steps} 步）…`
+    : "导演正在安排角色登场，请稍候…";
+};
+const continuationCopy = (round: GroupRoundItem) =>
+  `已有 ${displayedUtterances(round).length} 条角色发言，下一位角色正在回应…`;
 const roundActionItems = (round: GroupRoundItem): ChatActionBarItem[] => {
   const items: ChatActionBarItem[] = [];
   if (current.value) {
@@ -329,9 +503,15 @@ const roundActionItems = (round: GroupRoundItem): ChatActionBarItem[] => {
   return items;
 };
 const onRoundAction = (key: string, round: GroupRoundItem) => {
-  if (key === "candidates") openCandidates(round.round_id);
-  else if (key === "resume") void state.resumeRound(round, confirmResume);
-  else if (key === "regenerate") void state.command("regenerate");
+  if (key === "candidates") void openCandidates(round.round_id);
+  else if (key === "resume") {
+    followNewContent();
+    void state.resumeRound(round, confirmResume);
+  }
+  else if (key === "regenerate") {
+    followNewContent();
+    void state.command("regenerate");
+  }
   else if (key === "discard") void state.command("discard", undefined, confirmDiscard);
 };
 const onJumpToBottom = () => {
@@ -345,10 +525,14 @@ const onReachTop = () => {
 };
 watch(() => {
   const latest = chronologicalRounds.value[chronologicalRounds.value.length - 1];
-  return latest ? JSON.stringify([latest.round_id, latest.utterances, latest.pending_candidate]) : "";
+  const base = latest
+    ? JSON.stringify([latest.round_id, latest.status, latest.utterances, latest.pending_candidate])
+    : "";
+  return `${base}:${optimisticUserContent.value}:${activeOperationKind.value}:${operationBusy.value}`;
 }, () => followNewContent());
 watch(() => group.value?.session_id, () => {
   drawerPersonaId.value = null; memoryPersonaId.value = null;
+  pendingRoundTab.value = {};
   promptVersion++; promptPreview.value = null; promptLoading.value = false; promptError.value = "";
   isModelSettingsOpen.value = false;
   if (group.value) chatSettingsStore.activateSession(group.value.session_id);
@@ -366,9 +550,30 @@ const send = () => {
   pinToBottom();
   void state.command('send');
 };
-const openCandidates = (roundId: number) => {
+const openCandidates = async (roundId: number) => {
+  const version = pageViewVersion, sessionId = group.value?.session_id, server = getBaseUrl();
+  const valid = () => showCandidates.value && version === pageViewVersion && sessionId === group.value?.session_id
+    && server === getBaseUrl() && candidateRoundId.value === roundId;
   showCandidates.value = true;
-  void state.loadCandidates(roundId);
+  await state.loadCandidates(roundId);
+  if (!valid() || preview.value || loadingPreview.value) return;
+  const list = candidates.value || [];
+  if (!list.length) return;
+  const preferred = list.find(item => item.selected || item.candidate_id === current.value?.latest?.candidate_id) || list[0];
+  if (preferred) void state.viewCandidate(roundId, preferred.candidate_id);
+};
+const selectCandidate = async (candidate: GroupCandidateSummary) => {
+  const targetId = candidate.candidate_id;
+  await state.command('select', candidate);
+  if (!operationError.value && (operationBusy.value || current.value?.latest?.candidate_id === targetId)) {
+    showCandidates.value = false;
+  }
+};
+const resumeCandidate = async (candidate: GroupCandidateSummary) => {
+  await state.command('resume', candidate, confirmResume);
+  if (!operationError.value && operationBusy.value) {
+    showCandidates.value = false;
+  }
 };
 const memberNames = computed(() => group.value?.members.map(member => member.character.name).join(" · ") || "");
 onLoad(options => state.setSessionId(Number(options?.sessionId)));
@@ -415,14 +620,122 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 .is-immersive .history-pill-text { color: #d9e4df; }
 .round-actions { justify-content: flex-start; padding: 0 32rpx 16rpx 116rpx; }
 .round-divider { display: block; text-align: center; font-size: var(--app-font-size-caption); color: var(--app-color-text-muted); margin: 24rpx 0 12rpx; }
-.round-notice, .candidate-notice { display: block; margin: 12rpx 28rpx; padding: 18rpx 24rpx; border-radius: 18rpx; background: var(--app-color-surface); font-size: 24rpx; line-height: 1.6; }
-.candidate-notice { color: var(--app-color-text-secondary); border: 1px dashed var(--app-color-border-strong); }
-.is-immersive .round-actions, .is-immersive .round-notice, .is-immersive .candidate-notice, .is-immersive .round-divider, .is-immersive .composer-feedback {
+.round-notice { display: block; margin: 12rpx 28rpx; padding: 18rpx 24rpx; border-radius: 18rpx; background: var(--app-color-surface); font-size: 24rpx; line-height: 1.6; }
+.round-candidate-switcher {
+  display: flex; flex-direction: column; gap: 14rpx;
+  margin: 10rpx 32rpx 14rpx; padding: 18rpx 22rpx;
+  border-radius: 20rpx; background: var(--app-color-surface-soft, rgba(255, 255, 255, 0.82));
+  border: 1px dashed var(--app-color-border-strong, rgba(38, 51, 46, 0.16));
+}
+.switcher-caption { font-size: 23rpx; line-height: 1.5; color: var(--app-color-text-secondary, #64716b); }
+.switcher-pills { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.switcher-pill {
+  display: inline-flex; align-items: center; min-height: 56rpx; padding: 0 22rpx;
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.15s ease;
+}
+.switcher-pill:active { transform: scale(0.96); }
+.switcher-pill.is-active {
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.16));
+  border-color: var(--app-color-primary, #70ae9b);
+}
+.switcher-pill-text { font-size: 22rpx; font-weight: 560; color: var(--app-color-text-secondary, #64716b); }
+.switcher-pill.is-active .switcher-pill-text { color: var(--app-color-primary-strong, #4f8e7c); font-weight: 650; }
+.group-waiting-row {
+  display: flex; width: 100%; padding: 14rpx 32rpx; gap: 18rpx; align-items: flex-start; box-sizing: border-box;
+  animation: waiting-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.waiting-avatar-stack { display: flex; align-items: center; min-width: 72rpx; min-height: 72rpx; flex-shrink: 0; }
+.waiting-avatar, .waiting-avatar-stack :deep(.waiting-avatar) {
+  width: 44rpx; height: 44rpx; border-radius: 16rpx; flex-shrink: 0;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border: 2rpx solid var(--app-color-surface, #ffffff);
+  box-shadow: 0 6rpx 16rpx rgba(45, 72, 62, 0.12);
+}
+.waiting-avatar.is-stacked, .waiting-avatar-stack :deep(.waiting-avatar.is-stacked) { margin-left: -18rpx; }
+.waiting-content-area { flex: 1; min-width: 0; max-width: calc(100% - 96rpx); display: flex; flex-direction: column; align-items: flex-start; }
+.waiting-speaker-label {
+  margin-bottom: 8rpx; margin-left: 10rpx;
+  color: var(--app-color-primary-strong, #4f8e7c); font-size: var(--app-font-size-caption, 22rpx); font-weight: 650;
+}
+.waiting-bubble-card {
+  padding: 20rpx 26rpx; border-radius: 26rpx; border-top-left-radius: 10rpx;
+  background-color: var(--app-color-bubble-ai, rgba(255, 255, 255, 0.72));
+  border: 1px solid var(--app-color-bubble-ai-border, rgba(112, 174, 155, 0.22));
+  box-shadow: 0 10rpx 30rpx rgba(45, 72, 62, 0.05);
+  animation: waiting-glow 2.4s ease-in-out infinite;
+}
+.waiting-pulse-row { display: flex; align-items: center; gap: 14rpx; flex-wrap: wrap; }
+.waiting-subtitle { font-size: 24rpx; line-height: 1.5; color: var(--app-color-text-secondary, #64716b); }
+.group-continuation-bar {
+  display: inline-flex; align-items: center; align-self: flex-start; flex-wrap: wrap; gap: 12rpx;
+  margin: 8rpx 32rpx 16rpx 122rpx; padding: 10rpx 20rpx;
+  border-radius: var(--app-radius-pill, 999rpx);
+  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.78));
+  border: 1px solid var(--app-color-border, rgba(112, 174, 155, 0.18));
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.05);
+}
+.continuation-avatars { display: flex; align-items: center; flex-shrink: 0; }
+.continuation-avatar, .continuation-avatars :deep(.continuation-avatar) {
+  width: 30rpx; height: 30rpx; border-radius: 10rpx; flex-shrink: 0;
+  border: 2rpx solid var(--app-color-surface, #ffffff);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+}
+.continuation-avatar.is-stacked, .continuation-avatars :deep(.continuation-avatar.is-stacked) { margin-left: -12rpx; }
+.continuation-copy { font-size: 22rpx; line-height: 1.4; color: var(--app-color-text-secondary, #64716b); }
+.ai-thinking { display: flex; align-items: center; gap: 8rpx; padding: 4rpx 2rpx; flex-shrink: 0; }
+.ai-thinking.is-compact { gap: 6rpx; padding: 2rpx 0; }
+.ai-dot {
+  width: 10rpx; height: 10rpx; border-radius: 50%;
+  background-color: var(--app-color-primary, #70ae9b);
+  animation: group-ai-bounce 1.4s ease-in-out infinite;
+}
+.ai-thinking.is-compact .ai-dot { width: 8rpx; height: 8rpx; }
+.ai-dot.delay-1 { animation-delay: 0.2s; }
+.ai-dot.delay-2 { animation-delay: 0.4s; }
+@keyframes group-ai-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-7rpx); opacity: 1; }
+}
+@keyframes waiting-glow {
+  0%, 100% { border-color: var(--app-color-bubble-ai-border, rgba(112, 174, 155, 0.22)); }
+  50% { border-color: var(--app-color-primary, #70ae9b); }
+}
+@keyframes waiting-fade-in {
+  from { opacity: 0; transform: translateY(12rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.is-immersive .round-actions, .is-immersive .round-notice, .is-immersive .round-divider, .is-immersive .composer-feedback {
   --app-color-surface: rgba(20,34,28,.92); --app-color-border: rgba(255,255,255,.18);
   --app-color-border-strong: rgba(255,255,255,.35); --app-color-text-secondary: #e0eae4;
   --app-color-primary-strong: #d2eddf; --app-color-danger: #ffb5ad;
 }
 .is-immersive .round-divider { color: #e0eae4; text-shadow: 0 1px 4px #14221c; }
+.is-immersive .waiting-speaker-label { color: #ffffff; text-shadow: 0 1px 5px rgba(0, 0, 0, 0.7); }
+.is-immersive .waiting-bubble-card {
+  background-color: rgba(19, 29, 27, 0.72); border-color: rgba(255, 255, 255, 0.2);
+}
+.is-immersive .waiting-subtitle, .is-immersive .continuation-copy { color: #e0eae4; }
+.is-immersive .group-continuation-bar {
+  background-color: rgba(19, 29, 27, 0.74); border-color: rgba(255, 255, 255, 0.2);
+}
+.is-immersive .round-candidate-switcher {
+  background-color: rgba(20, 34, 28, 0.86); border-color: rgba(255, 255, 255, 0.22);
+}
+.is-immersive .switcher-caption { color: #d9e4df; }
+.is-immersive .switcher-pill {
+  background-color: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.2);
+}
+.is-immersive .switcher-pill.is-active {
+  background-color: rgba(157, 207, 179, 0.24); border-color: rgba(210, 237, 223, 0.55);
+}
+.is-immersive .switcher-pill-text { color: #e0eae4; }
+.is-immersive .switcher-pill.is-active .switcher-pill-text { color: #ffffff; }
+@media (prefers-reduced-motion: reduce) {
+  .group-waiting-row, .waiting-bubble-card, .ai-dot { animation: none !important; }
+}
 .composer-feedback { display: flex; align-items: center; gap: 16rpx; margin: 8rpx 24rpx; padding: 18rpx 22rpx; border-radius: 20rpx; color: var(--app-color-text-secondary); background: var(--app-color-surface); border: 1px solid var(--app-color-border); }
 .composer-feedback.is-error { color: var(--app-color-danger); }
 .feedback-copy { flex: 1; min-width: 0; font-size: 24rpx; line-height: 1.6; overflow-wrap: anywhere; }

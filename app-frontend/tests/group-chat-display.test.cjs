@@ -22,7 +22,8 @@ function fixture() {
     .replace(/const \{|\} = state;/g, '').split(',').map(name => [name.trim(), vue.ref(null)]));
   Object.assign(state, { group: vue.ref({ session_id: 1, members }), rounds: vue.ref([]),
     portraitData: vue.ref(null), current: vue.ref(null), loading: vue.ref(false), loadingRounds: vue.ref(false),
-    operationBusy: vue.ref(false), loadPortraits() {}, loadAdoptedState() {}, hide() {}, show() {},
+    operationBusy: vue.ref(false), loadPortraits() {}, loadAdoptedState() {}, loadCandidates: async () => {},
+    viewCandidate: async () => {}, command: async () => {}, hide() {}, show() {},
   });
   const scroll = Object.fromEntries(['scrollTop', 'scrollIntoViewId', 'scrollWithAnimation', 'keyboardHeight', 'hasUnreadBelow'].map(key => [key, vue.ref(0)]));
   const anchors = [];
@@ -189,5 +190,104 @@ test('routine progress stays in the composer while errors and stale history stay
   f.state.operationBusy.value = false;
   f.state.notice.value = '操作已完成，当前采用内容以最新轮次为准。';
   assert.equal(f.view.composerFeedback.value, '');
+  f.scope.stop();
+});
+
+test('regenerating hides adopted utterances in place and paused/failed pending candidate switches cleanly without stacking', () => {
+  const f = fixture();
+  const round = {
+    round_id: 1,
+    round_index: 1,
+    status: 'awaiting_confirmation',
+    confirmed: false,
+    user_content: 'hi',
+    utterances: [{ item_id: 1, content: 'old reply' }],
+    pending_candidate: {
+      candidate_id: 2,
+      status: 'generating',
+      error_code: null,
+      utterances: [{ item_id: 2, content: 'new partial' }],
+    },
+  };
+  f.state.rounds.value = [round];
+  f.state.current.value = { latest: { round_id: 1, candidate_id: 1 } };
+  f.state.operationBusy.value = true;
+  assert.equal(f.view.isRoundRegenerating(round), true);
+  assert.equal(f.view.isRoundGenerating(round), true);
+  assert.equal(f.view.activeRoundTab(round), 'pending');
+  assert.equal(f.view.roundHeaderStatus(round), '重新生成中');
+  assert.deepEqual(f.view.displayedUtterances(round).map(item => item.content), ['new partial']);
+
+  f.state.operationBusy.value = false;
+  round.pending_candidate.status = 'failed';
+  round.pending_candidate.error_code = 'resource_paused';
+  assert.equal(f.view.hasPausedOrFailedPendingCandidate(round), true);
+  assert.equal(f.view.activeRoundTab(round), 'pending');
+  assert.deepEqual(f.view.displayedUtterances(round).map(item => item.content), ['new partial']);
+
+  f.view.setRoundTab(1, 'adopted');
+  assert.equal(f.view.activeRoundTab(round), 'adopted');
+  assert.deepEqual(f.view.displayedUtterances(round).map(item => item.content), ['old reply']);
+  f.scope.stop();
+});
+
+test('optimistic send displays immediately and unlocks composer draft once round persists', () => {
+  const f = fixture();
+  f.state.canSend.value = false;
+  f.state.operationBusy.value = true;
+  f.state.submittingKind.value = 'send';
+  f.state.submittedContent.value = 'hello group';
+  f.state.submittedBaseRoundId.value = null;
+  f.state.rounds.value = [];
+
+  assert.equal(f.view.optimisticUserContent.value, 'hello group');
+  assert.equal(f.view.composerDisabled.value, true);
+
+  const persisted = {
+    round_id: 10,
+    round_index: 1,
+    status: 'generating',
+    confirmed: false,
+    user_content: 'hello group',
+    utterances: [],
+  };
+  f.state.rounds.value = [persisted];
+  f.state.current.value = { latest: { round_id: 10 }, active_operation: { kind: 'send', call_count: 1 } };
+
+  assert.equal(f.view.hasPersistedNewSendRound.value, true);
+  assert.equal(f.view.optimisticUserContent.value, '');
+  assert.equal(f.view.composerDisabled.value, false);
+  assert.equal(f.view.isRoundGenerating(persisted), true);
+  f.scope.stop();
+});
+
+test('opening round candidates automatically previews the adopted candidate while guarding stale loads', async () => {
+  const f = fixture();
+  const viewCalls = [];
+  let resolveCandidates;
+  f.state.current.value = { latest: { round_id: 1, candidate_id: 12 } };
+  f.state.loadCandidates = async (rid) => {
+    f.state.candidateRoundId.value = rid;
+    await new Promise(resolve => { resolveCandidates = resolve; });
+    f.state.candidates.value = [
+      { candidate_id: 11, selected: false },
+      { candidate_id: 12, selected: true },
+    ];
+  };
+  f.state.viewCandidate = async (rid, cid) => { viewCalls.push([rid, cid]); };
+
+  const opening = f.view.openCandidates(1);
+  assert.equal(f.view.showCandidates.value, true);
+  resolveCandidates();
+  await opening;
+  assert.deepEqual(viewCalls, [[1, 12]]);
+
+  f.view.showCandidates.value = false;
+  f.state.candidates.value = [];
+  const aborted = f.view.openCandidates(1);
+  f.view.hide();
+  resolveCandidates();
+  await aborted;
+  assert.deepEqual(viewCalls, [[1, 12]]);
   f.scope.stop();
 });

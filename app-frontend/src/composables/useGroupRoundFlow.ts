@@ -58,8 +58,10 @@ export function useGroupRoundFlow(context: Context) {
   const loadingAdoptedState = ref(false), adoptedStateError = ref("");
   let adoptedStateVersion = 0;
   let epoch = 0, historyVersion = 0, candidateVersion = 0, previewVersion = 0;
-  let roundOffset = 0, candidateOffset = 0, retryMore = false;
-  let submittedContent: string | null = null;
+  let roundOffset = 0, candidateOffset = 0, retryMore = false, readingRounds = false;
+  const submittingKind = ref<GroupOperationKind | null>(null);
+  const submittedContent = ref<string | null>(null);
+  const submittedBaseRoundId = ref<number | null>(null);
   let timer: ReturnType<typeof setTimeout> | null = null;
   const operationBusy = computed(() => submitting.value || recovering.value || !!pending.value || !!current.value?.active_operation);
   const historyStale = computed(() => !!current.value && visibleHistoryStamp.value !== historyStamp(current.value));
@@ -134,8 +136,14 @@ export function useGroupRoundFlow(context: Context) {
   function pause() {
     invalidateAdoptedState();
     epoch++; historyVersion++; candidateVersion++; previewVersion++; clearTimer();
+    readingRounds = false;
     loadingRounds.value = loadingCandidates.value = loadingPreview.value = false;
     submitting.value = recovering.value = false;
+    submittingKind.value = null;
+    if (!pending.value) {
+      submittedContent.value = null;
+      submittedBaseRoundId.value = null;
+    }
     current.value = null; canGenerate.value = false;
     visibleHistoryStamp.value = null;
     candidateRoundId.value = null; candidates.value = []; candidateOffset = 0; hasMoreCandidates.value = false;
@@ -145,18 +153,21 @@ export function useGroupRoundFlow(context: Context) {
     pause(); rounds.value = []; roundOffset = 0; hasMoreRounds.value = false; roundsError.value = "";
     candidates.value = []; candidateRoundId.value = null; candidateOffset = 0; hasMoreCandidates.value = false;
     preview.value = null; candidatesError.value = previewError.value = "";
-    draft.value = ""; submittedContent = null; storageReady.value = true; pending.value = null; operationError.value = notice.value = "";
+    draft.value = ""; submittingKind.value = null; submittedContent.value = null; submittedBaseRoundId.value = null;
+    storageReady.value = true; pending.value = null; operationError.value = notice.value = "";
   }
   function schedule() {
     clearTimer();
     if (context.active() && pending.value) timer = setTimeout(() => { void recover(); }, 1500);
   }
   async function loadRounds(more = false, fromRecovery = false): Promise<boolean> {
-    if (!context.active() || !context.id() || context.blocked() || loadingRounds.value || submitting.value
+    if (!context.active() || !context.id() || context.blocked() || readingRounds || loadingRounds.value || submitting.value
       || (recovering.value && !fromRecovery) || (more && !hasMoreRounds.value)) return false;
     const validContext = ticket(), version = ++historyVersion;
     const valid = () => validContext() && version === historyVersion;
-    loadingRounds.value = true; roundsError.value = ""; retryMore = more;
+    readingRounds = true;
+    if (!fromRecovery || rounds.value.length === 0) loadingRounds.value = true;
+    roundsError.value = ""; retryMore = more;
     try {
       const page: GetGroupRoundsResponse = await getGroupRounds(context.id()!, 20, more ? roundOffset : 0);
       if (!valid()) return false;
@@ -176,6 +187,7 @@ export function useGroupRoundFlow(context: Context) {
     } catch (cause) { if (valid()) roundsError.value = errorMessage(cause); return false; }
     finally {
       if (valid()) {
+        readingRounds = false;
         loadingRounds.value = false;
         if (!fromRecovery && pending.value) void recover();
       }
@@ -239,17 +251,21 @@ export function useGroupRoundFlow(context: Context) {
       if (request.rejected) {
         if (!await refreshViews(valid)) return;
         remember(null);
+        submittedContent.value = null;
+        submittedBaseRoundId.value = null;
         operationError.value = "上次请求未被接受，本机记录已清理，可以修正后重新操作。";
         return;
       }
       const result = await getGroupRequest(context.id()!, request.request_id);
       if (!valid() || pending.value?.request_id !== request.request_id) return;
       observe(result.current, result.can_generate);
-      if (request.kind === "send" && submittedContent !== null && draft.value === submittedContent) draft.value = "";
+      if (request.kind === "send" && submittedContent.value !== null && draft.value === submittedContent.value) draft.value = "";
       const terminal = result.status === "succeeded" || result.status === "failed";
       if (!await refreshViews(valid)) return;
       if (terminal) {
         remember(null);
+        submittedContent.value = null;
+        submittedBaseRoundId.value = null;
         notice.value = result.error_code === 'resource_paused' ? '本次执行已暂停，已保存的回复可继续。'
           : result.status === "failed" ? "本次执行未完成，已保存前缀可查看。可显式继续、重新生成或撤回。"
           : request.kind === "discard" ? "这轮已撤回，不再进入后续剧情。" : "操作已完成，当前采用内容以最新轮次为准。";
@@ -286,8 +302,12 @@ export function useGroupRoundFlow(context: Context) {
       if (kind === "resume" && (!candidate.can_resume || !canGenerate.value)) return;
     }
     const valid = ticket(), id = context.id()!;
-    submitting.value = true; operationError.value = ""; notice.value = ""; clearTimer();
+    submitting.value = true; submittingKind.value = kind; operationError.value = ""; notice.value = ""; clearTimer();
     const content = draft.value;
+    if (kind === "send") {
+      submittedContent.value = content;
+      submittedBaseRoundId.value = latest?.round_id ?? null;
+    }
     const targetId = candidate?.candidate_id, targetRevision = candidate?.revision;
     const body: GroupObservedCommand = { client_request_id: requestId(), expected_group_revision: state.group_revision,
       observed_round_id: latest?.round_id ?? null, observed_candidate_id: latest?.candidate_id ?? null,
@@ -306,7 +326,6 @@ export function useGroupRoundFlow(context: Context) {
         if (!valid()) return;
       }
       remember({ request_id: body.client_request_id, kind });
-      if (kind === "send") submittedContent = content;
       // 后续恢复仅使用 GET。接受回执的旧版本不回写到当前选择。
       sent = true;
       let receipt: GroupAcceptedOperation;
@@ -324,7 +343,8 @@ export function useGroupRoundFlow(context: Context) {
       if (!valid()) return;
       rejected = /\[API Error (400|403|404|409|422)\]/.test(cause instanceof Error ? cause.message : String(cause));
       if (sent && rejected) {
-        submittedContent = null;
+        submittedContent.value = null;
+        submittedBaseRoundId.value = null;
         try { remember(null); }
         catch {
           const record = { request_id: body.client_request_id, kind, rejected: true };
@@ -339,13 +359,20 @@ export function useGroupRoundFlow(context: Context) {
     } finally {
       if (valid()) {
         submitting.value = false;
+        submittingKind.value = null;
         if (sent && !rejected) void recover();
-        else if (sent) { current.value = null; void loadRounds(); }
+        else {
+          if (!sent || rejected) {
+            submittedContent.value = null;
+            submittedBaseRoundId.value = null;
+          }
+          if (sent) { current.value = null; void loadRounds(); }
+        }
       }
     }
   }
   return { rounds, loadingRounds, roundsError, hasMoreRounds, loadRounds, retryRounds: () => loadRounds(retryMore),
-    current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
+    current, canGenerate, draft, submitting, submittingKind, submittedContent, submittedBaseRoundId, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
     canSend, canRegenerate, canDiscard, recover, command, resumeRound, candidates, candidateRoundId, loadingCandidates, candidatesError,
     hasMoreCandidates, loadCandidates, preview, loadingPreview, previewError, viewCandidate,
     adoptedState, loadingAdoptedState, adoptedStateError, loadAdoptedState, pause, reset };

@@ -455,3 +455,64 @@ test('direct continue reports a failed candidate lookup without submitting', asy
   await f.flow.resumeRound({round_id:1,candidate_id:12});
   assert.equal(f.posts.length,0); assert.match(f.flow.operationError.value,/lookup unavailable/); f.stop();
 });
+
+test('background recovery polling does not flicker loadingRounds once rounds are loaded', async () => {
+  const delayedRounds = deferred();
+  let roundReads = 0;
+  const f = fixture({
+    getGroupRounds: () => ++roundReads === 1 ? Promise.resolve(page(state(1, latest()))) : delayedRounds.promise,
+    getGroupRequest: async () => ({ ...operation('running'), current: state(1, latest(), operation('running')), can_generate: true }),
+  });
+  f.model.current = state(1, latest());
+  await f.start();
+  assert.equal(f.flow.rounds.value.length, 1);
+  assert.equal(f.flow.loadingRounds.value, false);
+
+  const recovering = f.flow.command('regenerate');
+  await flush();
+  assert.equal(f.flow.recovering.value, true);
+  assert.equal(f.flow.operationBusy.value, true);
+  assert.equal(f.flow.loadingRounds.value, false);
+  assert.equal(f.flow.locked.value, true);
+
+  delayedRounds.resolve(page(state(1, latest(), operation('running'))));
+  await recovering;
+  await flush();
+  assert.equal(f.flow.loadingRounds.value, false);
+  f.stop();
+});
+
+test('submittingKind and submittedContent track active send and reset on rejection or completion', async () => {
+  const post = deferred();
+  const f = fixture({
+    sendGroupRound: () => post.promise,
+    getGroupRequest: async () => ({ ...operation('succeeded'), current: state(2, latest()), can_generate: true }),
+  });
+  await f.start();
+  f.flow.draft.value = 'optimistic line';
+  const sending = f.flow.command('send');
+  assert.equal(f.flow.submittingKind.value, 'send');
+  assert.equal(f.flow.submittedContent.value, 'optimistic line');
+
+  f.model.current = state(2, latest());
+  post.resolve({ status: 'queued', accepted: { group_revision: 1 } });
+  await sending;
+  await flush();
+  assert.equal(f.flow.submittingKind.value, null);
+  assert.equal(f.flow.submittedContent.value, null);
+  assert.equal(f.flow.submittedBaseRoundId.value, null);
+
+  const rejectedPost = deferred();
+  f.api.sendGroupRound = () => rejectedPost.promise;
+  f.flow.draft.value = 'bad line';
+  const rejecting = f.flow.command('send');
+  assert.equal(f.flow.submittingKind.value, 'send');
+  assert.equal(f.flow.submittedContent.value, 'bad line');
+  rejectedPost.reject(new Error('[API Error 422] /rounds: {"detail":"rejected"}'));
+  await rejecting;
+  await flush();
+  assert.equal(f.flow.submittingKind.value, null);
+  assert.equal(f.flow.submittedContent.value, null);
+  assert.equal(f.flow.draft.value, 'bad line');
+  f.stop();
+});
