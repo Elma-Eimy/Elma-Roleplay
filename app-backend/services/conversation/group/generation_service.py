@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 
 from fastapi.concurrency import run_in_threadpool
@@ -104,7 +105,9 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
         history._begin_write(db)
         _, candidate = history._writable(session_id, candidate_id, revision, db)
         candidate_state.fail(candidate, code)
-        history._require_group(session_id, db).group_revision += 1
+        group = history._require_group(session_id, db)
+        group.group_revision += 1
+        group.updated_at = datetime.utcnow()
         committed_revision = candidate.revision
         db.commit()
         return committed_revision

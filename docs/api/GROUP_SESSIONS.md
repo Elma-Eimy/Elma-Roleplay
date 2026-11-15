@@ -53,9 +53,9 @@
 
 ## 列表与详情
 
-`GET /group-sessions?limit=20&offset=0`：limit 为 1–100，offset 非负，按 updated_at、id 倒序稳定分页。返回 `{sessions, total, limit, offset, has_more}`，每群只出现一次，不含记忆正文。旧 `/sessions` 列表和角色记忆导航均排除群聊。
+`GET /group-sessions?limit=20&offset=0`：limit 为 1–100，offset 非负，按 updated_at、id 倒序稳定分页（轮次、发言、候选操作均刷新 updated_at）。返回 `{sessions, total, limit, offset, has_more}`，每群只出现一次，不含记忆正文。旧 `/sessions` 列表和角色记忆导航均排除群聊。
 
-`GET /group-sessions/{session_id}` 返回单个群聊。列表中的元素和详情结构相同：
+`GET /group-sessions/{session_id}` 返回单个群聊。列表中的元素和详情结构相同；`last_message` 返回最新未撤回轮次所选候选的最后一条发言（无发言时回退到该轮用户输入，无有效轮次时为 null）：
 
 ```json
 {
@@ -67,6 +67,7 @@
   "created_at": "2026-11-04T10:00:00",
   "updated_at": "2026-11-04T10:00:00",
   "can_generate": false,
+  "last_message": null,
   "members": [
     {
       "persona_id": 301,

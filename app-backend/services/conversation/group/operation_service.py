@@ -218,6 +218,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             else:
                 latest.discarded_at = now
         group.group_revision += 1
+        group.updated_at = now
         accepted = dict(round_id=latest.id, candidate_id=selected.id, group_revision=group.group_revision,
                         candidate_revision=selected.revision, kind=kind)
         operation = GroupRoundOperation(session_id=session_id, round_id=latest.id, candidate_id=selected.id,

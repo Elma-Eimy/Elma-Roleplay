@@ -172,3 +172,30 @@ class GroupSessionRoutesTests(unittest.TestCase):
         self.assertEqual([], self.client.get(f"/group-sessions/{sid}/rounds").json()["rounds"])
         self.assertEqual(422, self.client.get(f"/group-sessions/{sid}/rounds?limit=101").status_code)
         self.assertEqual(422, self.client.get(f"/group-sessions/{sid}/rounds?offset=-1").status_code)
+
+    def test_group_list_and_detail_include_last_message_and_refresh_updated_at(self):
+        from datetime import datetime, timedelta
+        from services.conversation.group import history_service as history
+        first = self.client.post("/group-sessions", json=self.payload).json()
+        second = self.client.post("/group-sessions", json={**self.payload, "title": "second"}).json()
+        sid1, sid2 = first["session_id"], second["session_id"]
+        self.assertIsNone(first["last_message"])
+        old_time = datetime(2025, 1, 1, 10, 0, 0)
+        self.db.get(Session, sid1).updated_at = old_time
+        self.db.get(Session, sid2).updated_at = old_time + timedelta(hours=1)
+        self.db.commit()
+        a, b = [member["persona_id"] for member in first["members"]]
+        target = asyncio.run(history.prepare_group_round(sid1, "hello everyone", (a, b), self.db))
+        after_prepare = self.client.get(f"/group-sessions/{sid1}").json()
+        self.assertEqual("user", after_prepare["last_message"]["role"])
+        self.assertIsNone(after_prepare["last_message"]["speaker_name"])
+        self.assertEqual("hello everyone", after_prepare["last_message"]["content"])
+        saved = asyncio.run(history.append_group_utterance(sid1, target["candidate_id"], b, "nice to meet you", (a, b), 1, self.db))
+        asyncio.run(history.finish_group_round(sid1, target["candidate_id"], saved["revision"], self.db))
+        listed = self.client.get("/group-sessions").json()["sessions"]
+        self.assertEqual([sid1, sid2], [item["session_id"] for item in listed])
+        self.assertEqual("assistant", listed[0]["last_message"]["role"])
+        self.assertEqual(first["members"][1]["character"]["name"], listed[0]["last_message"]["speaker_name"])
+        self.assertEqual("nice to meet you", listed[0]["last_message"]["content"])
+        self.assertIsNone(listed[1]["last_message"])
+        self.assertEqual(listed[0], self.client.get(f"/group-sessions/{sid1}").json())

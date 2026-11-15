@@ -2,6 +2,7 @@
 import logging
 import json
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import and_, or_, func, text
 
@@ -141,6 +142,7 @@ def _prepare(session_id, user_content, visible_to, db, *, unit_plan=None, model=
             units._write_units(item, unit_plan, _members(session_id, db), user_content, db)
             audit.record(candidate, "user_visibility", unit_plan, model, db, item=item)
         group.group_revision += 1
+        group.updated_at = datetime.utcnow()
         candidate.revision = 1
         result = {"round_id": round_.id, "candidate_id": candidate.id, "revision": 1}
         db.commit()
@@ -195,6 +197,7 @@ def _append(session_id, candidate_id, speaker, content, visible_to, revision, db
         if candidate.dispatch_version == 1:
             dispatches.complete(candidate, sequence, speaker, db)
         candidate_state.utterance_saved(candidate, completed_steps=count)
+        _require_group(session_id, db).updated_at = datetime.utcnow()
         result = {"item_id": item.id, "sequence": sequence, "revision": candidate.revision}
         db.commit()
         return result
@@ -226,7 +229,9 @@ def _finish(session_id, candidate_id, revision, failed, db, *, finish_reason=Non
                 from .checkpoint_service import validate_prefix
                 validate_prefix(round_, candidate, db)
             candidate_state.finish(candidate, finish_reason, persistent=candidate.dispatch_version == 1)
-        _require_group(session_id, db).group_revision += 1
+        group = _require_group(session_id, db)
+        group.group_revision += 1
+        group.updated_at = datetime.utcnow()
         result = {"candidate_id": candidate.id, "revision": candidate.revision, "status": candidate.status}
         db.commit()
         return result
