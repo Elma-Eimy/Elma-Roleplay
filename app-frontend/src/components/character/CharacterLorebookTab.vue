@@ -535,12 +535,12 @@ const handleUnbind = async (lorebookId: number) => {
   align-items: center;
   gap: 8rpx;
   padding: 10rpx 20rpx;
-  background-color: var(--app-color-text-primary, #26332e);
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   border-radius: 30rpx;
 }
 
 .bind-action-btn:active {
-  background-color: #000000;
+  background-color: #427a6a;
   transform: scale(0.97);
 }
 
@@ -571,7 +571,7 @@ const handleUnbind = async (lorebookId: number) => {
   border-radius: 16rpx;
   padding: 12rpx 20rpx;
   gap: 12rpx;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.01);
+  box-shadow: 0 4rpx 14rpx rgba(45, 72, 62, 0.04);
 }
 
 .bound-tag-icon {
@@ -587,7 +587,7 @@ const handleUnbind = async (lorebookId: number) => {
 
 .bound-tag-close {
   font-size: 32rpx;
-  color: #ff3b30;
+  color: var(--app-color-danger, #d9655d);
   font-weight: 400;
   padding: 0 4rpx;
   line-height: 1;
@@ -667,7 +667,7 @@ const handleUnbind = async (lorebookId: number) => {
   align-items: center;
   justify-content: center;
   font-size: 32rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .lore-source-tag {
@@ -688,7 +688,7 @@ const handleUnbind = async (lorebookId: number) => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(10px);
   z-index: 100;
   display: flex;
@@ -700,13 +700,13 @@ const handleUnbind = async (lorebookId: number) => {
   width: 600rpx;
   height: 60%;
   max-height: 800rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
+  background-color: var(--app-color-surface, #ffffff);
+  border-radius: var(--app-radius-lg, 32rpx);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.14));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .bind-modal-header {
@@ -714,18 +714,18 @@ const handleUnbind = async (lorebookId: number) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .bind-modal-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .bind-modal-close {
   font-size: 40rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   font-weight: 300;
   line-height: 1;
 }
@@ -746,14 +746,14 @@ const handleUnbind = async (lorebookId: number) => {
   display: flex;
   align-items: center;
   padding: 24rpx;
-  background-color: rgba(0,0,0,0.01);
+  background-color: var(--app-color-background, #f7f9f7);
   border-radius: 20rpx;
   gap: 20rpx;
-  border: 1px solid rgba(0,0,0,0.02);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .bind-modal-item:active {
-  background-color: rgba(0,0,0,0.04);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .bind-item-icon {
@@ -773,7 +773,7 @@ const handleUnbind = async (lorebookId: number) => {
 .bind-item-name {
   font-size: 26rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -781,7 +781,7 @@ const handleUnbind = async (lorebookId: number) => {
 
 .bind-item-desc {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
@@ -792,7 +792,7 @@ const handleUnbind = async (lorebookId: number) => {
   font-size: 22rpx;
   font-weight: 600;
   color: #ffffff;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   padding: 8rpx 20rpx;
   border-radius: 24rpx;
   flex-shrink: 0;
@@ -810,12 +810,12 @@ const handleUnbind = async (lorebookId: number) => {
 .bind-empty-desc {
   font-size: 28rpx;
   font-weight: 600;
-  color: #3a3a3c;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .bind-empty-hint {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.4;
   max-width: 400rpx;
 }
@@ -842,13 +842,13 @@ const handleUnbind = async (lorebookId: number) => {
 
 .bind-modal-footer {
   padding: 20rpx 36rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   text-align: center;
-  background-color: rgba(0, 0, 0, 0.015);
+  background-color: var(--app-color-background, #f7f9f7);
 }
 
 .bind-modal-footer:active {
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .bind-modal-footer-text {
@@ -869,7 +869,7 @@ const handleUnbind = async (lorebookId: number) => {
 
 .empty-branches-text {
   font-size: 26rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.5;
 }
 </style>

@@ -228,8 +228,8 @@ const confirmDelete = (lb: LorebookSummary) => {
   uni.showModal({
     title: "删除世界书",
     content: `确定要删除《${lb.name}》吗？删除后，已关联该世界书的角色将不再检索其中的设定条目。`,
-    confirmColor: "#ff3b30",
-    cancelColor: "#8e8e93",
+    confirmColor: "#d9655d",
+    cancelColor: "#64716b",
     success: async (res) => {
       if (res.confirm) {
         try {
@@ -270,7 +270,7 @@ const onLongPress = (lb: LorebookSummary) => {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
-  background-color: #fafafa;
+  background-color: var(--app-color-background, #f7f9f7);
   overflow: hidden;
 }
 
@@ -284,9 +284,9 @@ const onLongPress = (lb: LorebookSummary) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: rgba(255, 255, 255, 0.65);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
   backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   z-index: 50;
   flex-shrink: 0;
 }
@@ -298,12 +298,12 @@ const onLongPress = (lb: LorebookSummary) => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(112, 174, 155, 0.08);
   transition: background-color 0.2s;
 }
 
 .back-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .back-icon {
@@ -314,7 +314,7 @@ const onLongPress = (lb: LorebookSummary) => {
 .nav-title {
   font-size: 34rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: -0.5px;
 }
 
@@ -332,6 +332,9 @@ const onLongPress = (lb: LorebookSummary) => {
 
 .content-panel {
   padding: 30rpx 36rpx 100rpx 36rpx;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 /* ===== 导入卡片 ===== */
@@ -339,17 +342,17 @@ const onLongPress = (lb: LorebookSummary) => {
   display: flex;
   align-items: center;
   padding: 36rpx;
-  background-color: #ffffff;
-  border: 1px dashed rgba(0, 0, 0, 0.12);
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px dashed rgba(112, 174, 155, 0.42);
   border-radius: 24rpx;
   gap: 28rpx;
   transition: all 0.2s ease;
   margin-bottom: 40rpx;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.01);
+  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.06));
 }
 
 .import-card:active {
-  background-color: rgba(0, 0, 0, 0.01);
+  background-color: rgba(112, 174, 155, 0.05);
   transform: scale(0.99);
 }
 
@@ -357,7 +360,7 @@ const onLongPress = (lb: LorebookSummary) => {
   width: 88rpx;
   height: 88rpx;
   border-radius: 20rpx;
-  background-color: rgba(0, 122, 255, 0.06);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -378,12 +381,12 @@ const onLongPress = (lb: LorebookSummary) => {
 .import-title {
   font-size: 30rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .import-desc {
   font-size: 24rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.3;
 }
 
@@ -395,7 +398,7 @@ const onLongPress = (lb: LorebookSummary) => {
 .section-title {
   font-size: 26rpx;
   font-weight: 600;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -408,11 +411,11 @@ const onLongPress = (lb: LorebookSummary) => {
 }
 
 .lorebook-item {
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 24rpx;
   padding: 36rpx;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.06));
   display: flex;
   flex-direction: column;
   gap: 16rpx;
@@ -421,7 +424,7 @@ const onLongPress = (lb: LorebookSummary) => {
 
 .lorebook-item:active {
   transform: translateY(-2rpx);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 16rpx 40rpx rgba(45, 72, 62, 0.09);
 }
 
 .item-header {
@@ -447,7 +450,7 @@ const onLongPress = (lb: LorebookSummary) => {
 .book-name {
   font-size: 30rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -456,8 +459,8 @@ const onLongPress = (lb: LorebookSummary) => {
 .badge {
   font-size: 22rpx;
   font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   padding: 6rpx 16rpx;
   border-radius: 30rpx;
   flex-shrink: 0;
@@ -465,7 +468,7 @@ const onLongPress = (lb: LorebookSummary) => {
 
 .item-desc {
   font-size: 26rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -480,13 +483,13 @@ const onLongPress = (lb: LorebookSummary) => {
   align-items: center;
   margin-top: 10rpx;
   padding-top: 20rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.02);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .meta-text {
   font-size: 22rpx;
-  color: #8e8e93;
-  background-color: rgba(0, 0, 0, 0.02);
+  color: var(--app-color-text-secondary, #64716b);
+  background-color: var(--app-color-background, #f7f9f7);
   padding: 4rpx 12rpx;
   border-radius: 8rpx;
   margin-right: 12rpx;
@@ -498,12 +501,12 @@ const onLongPress = (lb: LorebookSummary) => {
   gap: 8rpx;
   padding: 10rpx 18rpx;
   border-radius: 12rpx;
-  background-color: rgba(255, 59, 48, 0.05);
+  background-color: rgba(217, 101, 93, 0.07);
   transition: background-color 0.2s;
 }
 
 .delete-action-btn:active {
-  background-color: rgba(255, 59, 48, 0.12);
+  background-color: rgba(217, 101, 93, 0.15);
 }
 
 .delete-icon {
@@ -514,12 +517,12 @@ const onLongPress = (lb: LorebookSummary) => {
 .delete-btn-text {
   font-size: 22rpx;
   font-weight: 600;
-  color: #ff3b30;
+  color: var(--app-color-danger, #d9655d);
 }
 
 /* Android Performance Fallbacks */
 .is-android .nav-bar {
   backdrop-filter: none !important;
-  background-color: #ffffff !important;
+  background-color: var(--app-color-surface, #ffffff) !important;
 }
 </style>

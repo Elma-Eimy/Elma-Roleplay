@@ -4,7 +4,7 @@
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
-  background-color: #fafafa;
+  background-color: var(--app-color-background, #f7f9f7);
   overflow: hidden;
 }
 
@@ -18,9 +18,9 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: rgba(255, 255, 255, 0.65);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
   backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   z-index: 50;
   flex-shrink: 0;
 }
@@ -32,12 +32,12 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(112, 174, 155, 0.08);
   transition: background-color 0.2s;
 }
 
 .back-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .back-icon {
@@ -48,21 +48,21 @@
 .nav-title {
   font-size: 34rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: -0.5px;
 }
 
 .save-header-btn {
-  font-size: 28rpx;
+  font-size: 26rpx;
   font-weight: 600;
-  color: #1c1c1e;
-  padding: 12rpx 20rpx;
-  background-color: rgba(0, 0, 0, 0.04);
-  border-radius: 12rpx;
+  color: var(--app-color-primary-strong, #4f8e7c);
+  padding: 12rpx 24rpx;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  border-radius: 999rpx;
 }
 
 .save-header-btn:active {
-  background-color: rgba(0, 0, 0, 0.08);
+  background-color: rgba(112, 174, 155, 0.24);
 }
 
 /* ===== 滚动容器 ===== */
@@ -74,15 +74,18 @@
 
 .content-panel {
   padding: 30rpx 36rpx 240rpx 36rpx;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 /* ===== 表单组卡片 ===== */
 .card-group {
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 24rpx;
   padding: 36rpx;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.06));
   margin-bottom: 36rpx;
   display: flex;
   flex-direction: column;
@@ -98,7 +101,7 @@
 .group-title {
   font-size: 26rpx;
   font-weight: 700;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -123,7 +126,7 @@
 }
 
 .form-item.border-bottom {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding-bottom: 24rpx;
   flex-direction: row;
   justify-content: space-between;
@@ -141,36 +144,36 @@
 .label {
   font-size: 28rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .label-desc {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.3;
 }
 
 .input {
   width: 100%;
   height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 14rpx;
   padding: 0 20rpx;
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
 .textarea-small {
   width: 100%;
   height: 150rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 14rpx;
   padding: 20rpx;
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
@@ -178,7 +181,8 @@
 .stepper {
   display: flex;
   align-items: center;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 16rpx;
   height: 64rpx;
   overflow: hidden;
@@ -188,7 +192,8 @@
 .stepper-large {
   display: flex;
   align-items: center;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 16rpx;
   height: 64rpx;
   overflow: hidden;
@@ -203,18 +208,18 @@
   justify-content: center;
   font-size: 28rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .step-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .step-value {
   padding: 0 20rpx;
   font-size: 26rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   min-width: 60rpx;
   text-align: center;
 }
@@ -223,7 +228,7 @@
 .custom-toggle {
   width: 90rpx;
   height: 52rpx;
-  background-color: rgba(0, 0, 0, 0.08);
+  background-color: rgba(38, 51, 46, 0.14);
   border-radius: 30rpx;
   padding: 4rpx;
   box-sizing: border-box;
@@ -239,7 +244,7 @@
 }
 
 .custom-toggle.is-on {
-  background-color: #30d158;
+  background-color: var(--app-color-primary, #70ae9b);
 }
 
 .toggle-thumb {
@@ -247,7 +252,7 @@
   height: 44rpx;
   background-color: #ffffff;
   border-radius: 50%;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 3px 8px rgba(45, 72, 62, 0.18);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -276,7 +281,7 @@
 .entries-section-title {
   font-size: 26rpx;
   font-weight: 700;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   letter-spacing: 0.5px;
 }
 
@@ -285,13 +290,13 @@
   align-items: center;
   gap: 8rpx;
   padding: 12rpx 24rpx;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   border-radius: 40rpx;
-  box-shadow: 0 4px 10rpx rgba(0,0,0,0.15);
+  box-shadow: 0 6rpx 16rpx rgba(79, 142, 124, 0.24);
 }
 
 .add-entry-btn:active {
-  background-color: #000000;
+  background-color: #427a6a;
   transform: scale(0.97);
 }
 
@@ -315,11 +320,11 @@
 }
 
 .entry-item-card {
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 24rpx;
   padding: 36rpx;
-  border: 1px solid rgba(0, 0, 0, 0.03);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.06));
   display: flex;
   flex-direction: column;
   gap: 16rpx;
@@ -347,15 +352,15 @@
 .entry-key-tag {
   font-size: 22rpx;
   font-weight: 600;
-  color: #1c1c1e;
-  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
   padding: 6rpx 16rpx;
   border-radius: 30rpx;
 }
 
 .entry-key-tag.constant-badge {
   color: #ffffff;
-  background-color: #34c759;
+  background-color: var(--app-color-success, #5e9f76);
 }
 
 .entry-switch-row {
@@ -367,7 +372,7 @@
 
 .entry-body {
   font-size: 26rpx;
-  color: #3a3a3c;
+  color: var(--app-color-text-primary, #26332e);
   line-height: 1.4;
   word-break: break-all;
 }
@@ -381,8 +386,8 @@
 
 .meta-item {
   font-size: 20rpx;
-  color: #8e8e93;
-  background-color: rgba(0,0,0,0.02);
+  color: var(--app-color-text-secondary, #64716b);
+  background-color: var(--app-color-background, #f7f9f7);
   padding: 4rpx 10rpx;
   border-radius: 6rpx;
 }
@@ -393,7 +398,7 @@
   gap: 28rpx;
   margin-top: 10rpx;
   padding-top: 20rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.02);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .action-item {
@@ -411,11 +416,11 @@
 .action-text {
   font-size: 22rpx;
   font-weight: 600;
-  color: #545456;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .action-text.danger {
-  color: #ff3b30;
+  color: var(--app-color-danger, #d9655d);
 }
 
 .empty-entries {
@@ -425,7 +430,7 @@
 
 .empty-entries-text {
   font-size: 26rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 /* ===== 底部操作栏 ===== */
@@ -434,9 +439,9 @@
   bottom: 0;
   left: 0;
   width: 100vw;
-  background-color: rgba(255, 255, 255, 0.85);
+  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
   backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding: 24rpx 36rpx calc(env(safe-area-inset-bottom, 24rpx) + 24rpx) 36rpx;
   box-sizing: border-box;
   z-index: 40;
@@ -444,17 +449,19 @@
 
 .footer-save-btn {
   width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
   height: 90rpx;
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   border-radius: 45rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 12rpx 28rpx rgba(79, 142, 124, 0.25);
 }
 
 .footer-save-btn:active {
-  background-color: #000000;
+  background-color: #427a6a;
   transform: scale(0.99);
 }
 
@@ -467,12 +474,12 @@
 /* Android Performance Fallbacks */
 .is-android .nav-bar {
   backdrop-filter: none !important;
-  background-color: #ffffff !important;
+  background-color: var(--app-color-surface, #ffffff) !important;
 }
 
 .is-android .footer {
   backdrop-filter: none !important;
-  background-color: #ffffff !important;
+  background-color: var(--app-color-surface, #ffffff) !important;
 }
 
 /* ===== 搜索栏样式 ===== */
@@ -486,11 +493,12 @@
 .search-input {
   width: 100%;
   height: 72rpx;
-  background-color: #f2f2f7;
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 18rpx;
   padding: 0 60rpx 0 24rpx;
   font-size: 26rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
@@ -498,6 +506,6 @@
   position: absolute;
   right: 20rpx;
   font-size: 36rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   padding: 10rpx;
 }

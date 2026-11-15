@@ -364,8 +364,8 @@ const handleResetDatabase = () => {
   uni.showModal({
     title: "重置本地数据",
     content: "确定要重置本地数据库吗？所有新创建的角色和会话记录将被清空，并恢复为初始默认示例数据。",
-    confirmColor: "#ff3b30",
-    cancelColor: "#8e8e93",
+    confirmColor: "#d9655d",
+    cancelColor: "#64716b",
     success: (res) => {
       if (res.confirm) {
         try {
