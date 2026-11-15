@@ -14,6 +14,12 @@ import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatSettingsStore } from "./chatSettingsStore";
 import { createCancellation } from "@/utils/cancellation";
 import { createChatStreamBuffer } from "@/utils/chatStreamBuffer";
+import {
+  applyCandidateSnapshot,
+  buildChatRequest,
+  createAppStreamRequest,
+  findLatestPersistedMessageId,
+} from "@/utils/chatRequest";
 import type { Cancellation } from "@/utils/cancellation";
 
 export type MessageStatus = "sending" | "streaming" | "done" | "error";
@@ -110,11 +116,17 @@ export const useChatStore = defineStore("chat", () => {
     afterMessageId?: number;
   }
 
+  function syncPersonaAffection(
+    affectionScore: number | null | undefined,
+    affectionDelta = 0,
+    mood?: string | null
+  ) {
+    if (affectionScore === null || affectionScore === undefined) return;
+    usePersonaStore().applyAffectionChange(affectionDelta, affectionScore, mood || undefined);
+  }
+
   function latestPersistedMessageId() {
-    return messages.value.reduce((latest, message) => Math.max(
-      latest, message.id > 0 ? message.id : 0,
-      ...(message.candidates?.map((candidate) => candidate.id) ?? [])
-    ), 0);
+    return findLatestPersistedMessageId(messages.value);
   }
 
   /** 只读历史恢复；服务端仍在生成时持续等待，不重新提交聊天请求。 */
@@ -239,9 +251,10 @@ export const useChatStore = defineStore("chat", () => {
         const placeholderId = addStreamingPlaceholder();
         void pollPendingGeneration(sessionId, version, { placeholderId });
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!current()) return;
-      setError(e.message || "Failed to load chat history");
+      const errMessage = e instanceof Error ? e.message : "Failed to load chat history";
+      setError(errMessage || "Failed to load chat history");
     } finally {
       if (current() && !isStillGenerating) isLoading.value = false;
     }
@@ -317,26 +330,8 @@ export const useChatStore = defineStore("chat", () => {
           
           if (sibling) {
             // 更新当前气泡的数据为新的替补候选
-            msg.id = sibling.id;
-            msg.content = sibling.content;
-            msg.emotion_tag = sibling.emotion_tag;
-            msg.affection_change = sibling.affection_change;
-            msg.audio_path = sibling.audio_path || null;
-            msg.clientId = `msg-${sibling.id}`; // 保持 clientId 一致
-            
-            // 重新计算活动 index
-            const activeIdx = msg.candidates.findIndex((c) => c.id === sibling.id);
-            msg.active_index = activeIdx !== -1 ? activeIdx : 0;
-            
-            // 更新 Persona 的好感度
-            const personaStore = usePersonaStore();
-            if (res.affection_score !== null && res.affection_score !== undefined) {
-              personaStore.applyAffectionChange(
-                0,
-                res.affection_score,
-                res.current_mood || undefined
-              );
-            }
+            applyCandidateSnapshot(msg, sibling, { syncClientId: true });
+            syncPersonaAffection(res.affection_score, 0, res.current_mood);
             return { status: "success" };
           }
         }
@@ -344,16 +339,7 @@ export const useChatStore = defineStore("chat", () => {
       
       // 3. 常规删除：如果没有候选替补，或者该消息不是 assistant 消息，则直接移除整个气泡
       messages.value = messages.value.filter((m) => m.id !== id);
-      
-      // 同时应用好感度与心情变更到 Persona Store
-      const personaStore = usePersonaStore();
-      if (res.affection_score !== null && res.affection_score !== undefined) {
-        personaStore.applyAffectionChange(
-          0,
-          res.affection_score,
-          res.current_mood || undefined
-        );
-      }
+      syncPersonaAffection(res.affection_score, 0, res.current_mood);
       return { status: "success" };
     } catch (e: unknown) {
       if (!current()) return { status: "stale" };
@@ -390,130 +376,103 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function buildChatRequest(
+  interface PreparedTurn {
+    text: string;
+    isRegenerate?: boolean;
+    placeholderId: string;
+    userTempId?: string;
+  }
+
+  /** 发送与重新生成共用的模型参数等待、上下文校验与三端流式派发。 */
+  async function dispatchChatGeneration(
     sessionId: number,
-    text: string,
-    generation: GenerationOverride,
-    userNickname: string
-  ): ChatRequest {
+    prepareTurn: () => PreparedTurn
+  ) {
+    isLoading.value = true;
+    clearError();
+    const version = sessionVersion;
+    const endpoint = getBaseUrl();
     const settingsStore = useChatSettingsStore();
-    return {
-      session_id: sessionId,
-      user_message: text,
-      ...generation,
-      user_nickname: userNickname,
-      temperature: settingsStore.temperature ?? undefined,
-      top_p: settingsStore.top_p ?? undefined,
-      presence_penalty: settingsStore.presence_penalty ?? undefined,
-      frequency_penalty: settingsStore.frequency_penalty ?? undefined,
-      repetition_penalty: settingsStore.repetition_penalty ?? undefined,
-    };
+    let generation: GenerationOverride;
+    try {
+      generation = await settingsStore.requestGeneration(sessionId);
+    } catch (error) {
+      if (version === sessionVersion && endpoint === getBaseUrl()) {
+        setError(error instanceof Error ? error.message : String(error));
+        isLoading.value = false;
+      }
+      return;
+    }
+    if (version !== sessionVersion || endpoint !== getBaseUrl() || activeSessionId.value !== sessionId) return;
+
+    const { text, isRegenerate, placeholderId, userTempId } = prepareTurn();
+    const requestParams = buildChatRequest(
+      sessionId,
+      text,
+      generation,
+      usePersonaStore().userNickname,
+      settingsStore,
+      Boolean(isRegenerate)
+    );
+
+    // #ifdef APP-PLUS
+    activeStreamRequest.value = createAppStreamRequest({
+      placeholderId,
+      params: requestParams,
+      baseUrl: getBaseUrl(),
+      apiKey: getSavedApiKey(),
+      userMessageTempId: userTempId,
+    });
+    // #endif
+
+    // #ifndef APP-PLUS
+    await receiveCurrentStream(requestParams, placeholderId, userTempId);
+    // #endif
   }
 
   /** 重新生成最后一次 AI 回复（支持无感重发，避免出现双重用户气泡的 Bug） */
   async function regenerateChatMessage(sessionId: number) {
     if (isLoading.value || activeSessionId.value !== sessionId) return;
-    
-    const personaStore = usePersonaStore();
-    
+
     // 1. 查找最后一条属于用户的历史消息以提取其内容
     const lastUserMsg = [...messages.value].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
 
-    isLoading.value = true;
-    clearError();
-    const version = sessionVersion;
-    const endpoint = getBaseUrl();
-    let generation;
-    try {
-      generation = await useChatSettingsStore().requestGeneration(sessionId);
-    } catch (error) {
-      if (version === sessionVersion && endpoint === getBaseUrl()) {
-        setError(error instanceof Error ? error.message : String(error));
-        isLoading.value = false;
+    await dispatchChatGeneration(sessionId, () => {
+      const afterMessageId = latestPersistedMessageId();
+
+      // 2. 如果当前最后一条消息是 AI 的回复，直接从本地消息缓存中移出
+      //（后端在 /chat 接口收到 is_regenerate: true 时会自动物理删除最新的 AI 消息，这里无需调用 apiDeleteMessage，防止发生“双重删除”导致上一条回复也被删掉的 Bug）
+      const lastMsg = messages.value[messages.value.length - 1];
+      if (lastMsg && lastMsg.role === "assistant") {
+        messages.value.pop();
       }
-      return;
-    }
-    if (version !== sessionVersion || endpoint !== getBaseUrl() || activeSessionId.value !== sessionId) return;
 
-    const afterMessageId = latestPersistedMessageId();
+      // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
+      const placeholderId = addStreamingPlaceholder();
+      streamBaselines.set(placeholderId, afterMessageId);
 
-    // 2. 如果当前最后一条消息是 AI 的回复，直接从本地消息缓存中移出
-    //（后端在 /chat 接口收到 is_regenerate: true 时会自动物理删除最新的 AI 消息，这里无需调用 apiDeleteMessage，防止发生“双重删除”导致上一条回复也被删掉的 Bug）
-    const lastMsg = messages.value[messages.value.length - 1];
-    if (lastMsg && lastMsg.role === "assistant") {
-      messages.value.pop();
-    }
-
-    // 3. 直接建立流式占位符开启第二轮 AI 生成，无需二次追加用户消息副本
-    const streamPlaceholderId = addStreamingPlaceholder();
-    streamBaselines.set(streamPlaceholderId, afterMessageId);
-
-    const requestParams: ChatRequest = {
-      ...buildChatRequest(sessionId, lastUserMsg.content, generation, personaStore.userNickname),
-      is_regenerate: true,
-    };
-
-    // #ifdef APP-PLUS
-    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    activeStreamRequest.value = {
-      requestId,
-      placeholderId: streamPlaceholderId,
-      params: requestParams,
-      baseUrl: getBaseUrl(),
-      apiKey: getSavedApiKey(),
-      timestamp: Date.now()
-    };
-    // #endif
-
-    // #ifndef APP-PLUS
-    await receiveCurrentStream(requestParams, streamPlaceholderId);
-    // #endif
+      return {
+        text: lastUserMsg.content,
+        isRegenerate: true,
+        placeholderId,
+      };
+    });
   }
 
   /** 发送一条新消息并处理流式返回的分块数据 */
   async function sendChatMessage(sessionId: number, text: string) {
     if (isLoading.value || activeSessionId.value !== sessionId) return;
-    
-    const personaStore = usePersonaStore();
-    
-    isLoading.value = true;
-    clearError();
-    const version = sessionVersion;
-    const endpoint = getBaseUrl();
-    let generation;
-    try {
-      generation = await useChatSettingsStore().requestGeneration(sessionId);
-    } catch (error) {
-      if (version === sessionVersion && endpoint === getBaseUrl()) {
-        setError(error instanceof Error ? error.message : String(error));
-        isLoading.value = false;
-      }
-      return;
-    }
-    if (version !== sessionVersion || endpoint !== getBaseUrl() || activeSessionId.value !== sessionId) return;
 
-    const tempId = addOptimisticUserMessage(text);
-    const streamPlaceholderId = addStreamingPlaceholder();
-
-    const requestParams = buildChatRequest(sessionId, text, generation, personaStore.userNickname);
-
-    // #ifdef APP-PLUS
-    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    activeStreamRequest.value = {
-      requestId,
-      placeholderId: streamPlaceholderId,
-      userMessageTempId: tempId,
-      params: requestParams,
-      baseUrl: getBaseUrl(),
-      apiKey: getSavedApiKey(),
-      timestamp: Date.now()
-    };
-    // #endif
-
-    // #ifndef APP-PLUS
-    await receiveCurrentStream(requestParams, streamPlaceholderId, tempId);
-    // #endif
+    await dispatchChatGeneration(sessionId, () => {
+      const userTempId = addOptimisticUserMessage(text);
+      const placeholderId = addStreamingPlaceholder();
+      return {
+        text,
+        placeholderId,
+        userTempId,
+      };
+    });
   }
 
   /** 乐观更新：在服务器确认前立即向列表添加用户发送的消息 */
@@ -628,14 +587,11 @@ export const useChatStore = defineStore("chat", () => {
       }
     }
 
-    if (meta.affection_score !== undefined) {
-      const personaStore = usePersonaStore();
-      personaStore.applyAffectionChange(
-        meta.affection_change ?? 0,
-        meta.affection_score,
-        meta.emotion_tag ?? undefined
-      );
-    }
+    syncPersonaAffection(
+      meta.affection_score,
+      meta.affection_change ?? 0,
+      meta.emotion_tag
+    );
 
     isLoading.value = false;
     activeStreamRequest.value = null;
@@ -705,26 +661,13 @@ export const useChatStore = defineStore("chat", () => {
         const targetMsg = messages.value[msgIdx];
         const candidate = targetMsg.candidates?.find((c) => c.id === targetCandidateId);
         if (candidate) {
-          targetMsg.id = candidate.id;
-          targetMsg.content = candidate.content;
-          targetMsg.emotion_tag = candidate.emotion_tag;
-          targetMsg.affection_change = candidate.affection_change;
-          targetMsg.created_at = candidate.created_at;
-          targetMsg.audio_path = candidate.audio_path || null;
-          
+          applyCandidateSnapshot(targetMsg, candidate, { syncCreatedAt: true });
           const activeIdx = targetMsg.candidates?.findIndex((c) => c.id === targetCandidateId) ?? 0;
           targetMsg.active_index = activeIdx;
         }
       }
-      
-      const personaStore = usePersonaStore();
-      if (res.affection_score !== null) {
-        personaStore.applyAffectionChange(
-          0,
-          res.affection_score,
-          res.current_mood || undefined
-        );
-      }
+
+      syncPersonaAffection(res.affection_score, 0, res.current_mood);
       return { status: "success" };
     } catch (e: unknown) {
       if (!current()) return { status: "stale" };
@@ -759,7 +702,7 @@ export const useChatStore = defineStore("chat", () => {
         isLoading.value = false;
         return true;
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Failed to load more chat history", e);
     } finally {
       if (current()) isLoading.value = false;
