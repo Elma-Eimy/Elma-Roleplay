@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import logging
+import threading
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +15,7 @@ from core.config import settings
 is_worker_running = True
 PROCESSING_LEASE_SECONDS = 300
 MAX_BACKOFF_SECONDS = 3600
+logger = logging.getLogger(__name__)
 
 async def run_outbox_worker():
     global is_worker_running
@@ -26,6 +29,31 @@ async def run_outbox_worker():
         await asyncio.sleep(5.0)  # 每 5 秒检查一次
 
 async def process_pending_jobs():
+    """在线程内完成一轮处理；取消后等待当前任务及数据库会话清理。"""
+    stop_requested = threading.Event()
+    work = asyncio.create_task(asyncio.to_thread(_process_pending_jobs, stop_requested))
+    cancelled = False
+    try:
+        while True:
+            try:
+                await asyncio.shield(work)
+                break
+            except asyncio.CancelledError:
+                if work.cancelled():
+                    raise
+                stop_requested.set()
+                cancelled = True
+    except Exception as exc:
+        if not cancelled:
+            raise
+        logger.warning("outbox_shutdown_failed error_type=%s", type(exc).__name__)
+    if cancelled:
+        raise asyncio.CancelledError
+
+
+def _process_pending_jobs(stop_requested):
+    if stop_requested.is_set():
+        return
     db = SessionLocal()
     try:
         now = datetime.now()
@@ -49,6 +77,8 @@ async def process_pending_jobs():
             return
 
         for job in jobs:
+            if stop_requested.is_set():
+                break
             if job.status == OutboxJobStatus.processing:
                 job.last_error = "Processing lease expired; retrying idempotently"
 
@@ -61,9 +91,8 @@ async def process_pending_jobs():
             payload = job.payload
 
             try:
-                # 在线程执行器（thread executor）中处理任务，以避免阻塞事件循环
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, execute_task, task_type, payload)
+                # Session 与外部执行留在同一个线程，取消不打断当前任务的持久结果。
+                execute_task(task_type, payload)
 
                 # 成功时：
                 # 物理删除该任务，以保持发件箱（outbox）表干净且体积小
