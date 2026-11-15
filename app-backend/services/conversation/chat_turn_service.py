@@ -200,8 +200,9 @@ def run_post_turn_maintenance(session_id: int, persona_id: int) -> None:
                 persona_id, session_id, db
             )
             if cognition_unseen >= settings.APP_COGNITION_UPDATE_INTERVAL:
-                cognition_service.update_cognition_state(persona_id, db)
-                print(f"[INFO] 自动认知更新完成 (persona_id={persona_id})")
+                result = cognition_service.update_cognition_state(persona_id, db)
+                if result is not None:
+                    print(f"[INFO] 自动认知更新完成 (persona_id={persona_id})")
         except Exception as exc:
             db.rollback()
             print(f"[WARN] 自动认知更新失败: {exc}")
