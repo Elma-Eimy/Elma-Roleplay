@@ -185,7 +185,9 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             # 等待 worker_task 在后台自然运行完成
             await worker_task
 
-        asyncio.run(run_scenario())
+        with patch.object(chat_router, "schedule_post_turn_maintenance") as schedule:
+            asyncio.run(run_scenario())
+        schedule.assert_called_once_with(self.session_id, self.persona_id)
 
         # 验证即使连接中途断开，锁正常释放，回复成功入库，用户消息未被清理
         self.assertFalse(is_session_locked(self.session_id))

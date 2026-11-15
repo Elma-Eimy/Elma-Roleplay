@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from application.banner import print_startup_banner
 from application.group_runtime import group_runtime, fail_interrupted_group_candidates
+from application.chat_maintenance import start_chat_maintenance
 from core.locking import stop_group_executions
 from core.database import run_migrations
 from services.infrastructure.outbox_worker import run_outbox_worker
@@ -37,6 +38,8 @@ async def _owned_lifespan(app: FastAPI, owner):
     run_migrations()
     fail_interrupted_group_candidates(owner)
     app.state.group_runtime_owner = owner
+    maintenance = start_chat_maintenance()
+    app.state.chat_maintenance = maintenance
     task = asyncio.create_task(run_outbox_worker(), name="outbox-worker")
     app.state.outbox_task = task
     cleanup_task = asyncio.create_task(run_charx_cleanup(), name="charx-cleanup")
@@ -50,7 +53,9 @@ async def _owned_lifespan(app: FastAPI, owner):
         yield
     finally:
         owner.accepting = False
-        shutdown = asyncio.create_task(_stop_workers(group_memory_task, memory_task, cleanup_task, task, group_owner=owner), name="application-shutdown")
+        maintenance.accepting = False
+        shutdown = asyncio.create_task(_stop_workers(group_memory_task, memory_task, cleanup_task, task,
+            group_owner=owner, maintenance=maintenance), name="application-shutdown")
         cancelled = False
         while True:
             try:
@@ -67,13 +72,17 @@ async def _owned_lifespan(app: FastAPI, owner):
             raise errors[0]
 
 
-async def _stop_workers(*tasks, group_owner=None):
+async def _stop_workers(*tasks, group_owner=None, maintenance=None):
     for task in tasks:
         task.cancel()
     if group_owner is not None:
         await stop_group_executions(group_owner)
     results = await asyncio.gather(*tasks, return_exceptions=True)
     print("[SHUTDOWN] Stopped background outbox worker.")
-    await cancel_all_stream_tasks()
+    try:
+        await cancel_all_stream_tasks()
+    finally:
+        if maintenance is not None:
+            await maintenance.stop()
     print("[SHUTDOWN] Cleaned up active chat stream workers.")
     return [result for result in results if isinstance(result, Exception)]

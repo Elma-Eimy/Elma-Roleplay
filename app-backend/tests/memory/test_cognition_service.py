@@ -203,4 +203,3 @@ class CognitionServiceTests(unittest.TestCase):
             db.get(SessionPersona, self.pid).session.fork_message_id = self.uid
 
         self.assertIsNone(self.update(inspect))
-

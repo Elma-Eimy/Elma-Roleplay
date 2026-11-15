@@ -27,6 +27,7 @@ from services.parse import _extract_xml_block, extract_stream_reply_prefix
 from core.locking import get_session_lock
 
 from application.session_routes import SessionAPIRouter
+from application.chat_maintenance import schedule_post_turn_maintenance
 
 router = SessionAPIRouter()
 
@@ -147,11 +148,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             raise
 
         # ── Step 5: 后台触发提纯检查 ──
-        background_tasks.add_task(
-            chat_turn_service.run_post_turn_maintenance,
-            request.session_id,
-            turn.persona.id,
-        )
+        schedule_post_turn_maintenance(request.session_id, turn.persona.id)
 
         return {
             "reply": reply_text,
@@ -265,13 +262,7 @@ async def _run_stream_worker(
             raise asyncio.CancelledError()
 
         # 触发后台提纯与认知更新（独立任务）
-        asyncio.create_task(
-            run_in_threadpool(
-                chat_turn_service.run_post_turn_maintenance,
-                session_id,
-                persona_id,
-            )
-        )
+        schedule_post_turn_maintenance(session_id, persona_id)
 
         meta_payload = {
             "emotion_tag": emotion_tag,
