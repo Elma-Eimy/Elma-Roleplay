@@ -1,4 +1,18 @@
-import { request, getBaseUrl, getHeaders, USE_MOCK, getMockDB, setMockDB } from "./config";
+import { request, getBaseUrl, getHeaders, USE_MOCK, getMockDB, setMockDB, type MockDatabase } from "./config";
+import { resolveCharacterLorebookRefs } from "../utils/lorebookDisplay";
+
+function syncMockCharactersLorebooks(db: MockDatabase): void {
+  const library = db.lorebooks || [];
+  for (const char of db.characters || []) {
+    char.lorebooks = resolveCharacterLorebookRefs(char, library);
+  }
+}
+
+function getMockCharacterLorebookIds(extensions: Record<string, unknown> | undefined): number[] {
+  const raw = extensions?.lorebook_ids;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((id): id is number => typeof id === "number" && Number.isFinite(id));
+}
 
 export interface LorebookEntry {
   keys: string[];
@@ -71,6 +85,7 @@ export async function updateLorebook(
     const idx = db.lorebooks.findIndex((l) => l.id === id);
     if (idx === -1) throw new Error("Lorebook not found");
     db.lorebooks[idx] = { ...db.lorebooks[idx], ...data };
+    syncMockCharactersLorebooks(db);
     setMockDB(db);
     return {
       message: "Lorebook updated successfully (Mock)",
@@ -96,10 +111,13 @@ export async function deleteLorebook(id: number): Promise<{ message: string; lor
     db.lorebooks = (db.lorebooks || []).filter((l) => l.id !== id);
     // 级联清除 MockDB 角色绑定关系
     (db.characters || []).forEach((c) => {
-      if (c.extensions && c.extensions.lorebook_ids) {
-        c.extensions.lorebook_ids = c.extensions.lorebook_ids.filter((lid: number) => lid !== id);
+      if (c.extensions) {
+        c.extensions.lorebook_ids = getMockCharacterLorebookIds(c.extensions).filter(
+          (lid) => lid !== id,
+        );
       }
     });
+    syncMockCharactersLorebooks(db);
     setMockDB(db);
     return {
       message: "Lorebook deleted successfully (Mock)",
@@ -208,10 +226,12 @@ export async function bindLorebook(characterId: number, lorebookId: number): Pro
     const char = db.characters.find((c) => c.id === characterId);
     if (!char) throw new Error("Character not found");
     if (!char.extensions) char.extensions = {};
-    if (!char.extensions.lorebook_ids) char.extensions.lorebook_ids = [];
-    if (!char.extensions.lorebook_ids.includes(lorebookId)) {
-      char.extensions.lorebook_ids.push(lorebookId);
+    const ids = getMockCharacterLorebookIds(char.extensions);
+    if (!ids.includes(lorebookId)) {
+      ids.push(lorebookId);
     }
+    char.extensions.lorebook_ids = ids;
+    char.lorebooks = resolveCharacterLorebookRefs(char, db.lorebooks || []);
     setMockDB(db);
     return { message: "Successfully bound (Mock)" };
   }
@@ -228,9 +248,12 @@ export async function unbindLorebook(characterId: number, lorebookId: number): P
     const db = getMockDB();
     const char = db.characters.find((c) => c.id === characterId);
     if (!char) throw new Error("Character not found");
-    if (char.extensions && char.extensions.lorebook_ids) {
-      char.extensions.lorebook_ids = char.extensions.lorebook_ids.filter((id: number) => id !== lorebookId);
+    if (char.extensions) {
+      char.extensions.lorebook_ids = getMockCharacterLorebookIds(char.extensions).filter(
+        (id) => id !== lorebookId,
+      );
     }
+    char.lorebooks = resolveCharacterLorebookRefs(char, db.lorebooks || []);
     setMockDB(db);
     return { message: "Successfully unbound (Mock)" };
   }

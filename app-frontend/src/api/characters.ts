@@ -1,4 +1,5 @@
 import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
+import { resolveCharacterLorebookRefs } from "../utils/lorebookDisplay";
 import type {
   CharacterBase,
   CharacterSummary,
@@ -231,7 +232,10 @@ export async function getCharacter(characterId: number): Promise<CharacterDetail
     if (!char) {
       throw new Error(`Character ${characterId} not found`);
     }
-    return char;
+    return {
+      ...char,
+      lorebooks: resolveCharacterLorebookRefs(char, db.lorebooks || []),
+    };
   }
 
   return request<CharacterDetail>(`/characters/${characterId}`);
