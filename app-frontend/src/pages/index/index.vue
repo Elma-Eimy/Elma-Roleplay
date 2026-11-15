@@ -24,6 +24,11 @@
             <text class="menu-text">开启新故事</text>
           </view>
           <view class="menu-divider"></view>
+          <view class="menu-item" @tap="handleMenuAction('create_group')">
+            <image class="menu-icon" src="/static/icons/menu_group.svg" mode="aspectFit" />
+            <text class="menu-text">发起群聊</text>
+          </view>
+          <view class="menu-divider"></view>
           <view class="menu-item" @tap="handleMenuAction('add_character')">
             <image class="menu-icon" src="/static/icons/menu_user_plus.svg" mode="aspectFit" />
             <text class="menu-text">创建新角色</text>
@@ -35,11 +40,7 @@
     </AppPageHeader>
 
     <scroll-view scroll-y class="home-scroll">
-      <view class="home-content" :class="{ 'has-recent-stories': recentSessions.length > 0 }">
-        <view class="group-entry" role="button" aria-label="查看与创建群聊故事" @tap="goToGroups">
-          <view><text class="group-entry-title">群聊故事</text><text class="group-entry-copy">邀请几位角色，在同一场景相遇</text></view>
-          <text class="group-entry-link">查看与创建 ›</text>
-        </view>
+      <view class="home-content" :class="{ 'has-recent-stories': recentStories.length > 0 }">
         <view v-if="isHomeLoading && !hasHomeContent" class="home-skeleton">
           <view class="skeleton-feature"></view>
           <view class="skeleton-heading"></view>
@@ -49,38 +50,53 @@
         </view>
 
         <template v-else-if="hasHomeContent">
-          <view v-if="featuredSession" class="featured-section">
+          <view v-if="featuredStory" class="featured-section">
             <view class="section-kicker-row">
               <text class="section-kicker">继续故事</text>
               <text class="featured-time">
-                {{ formatDate(featuredSession.lastMessageTime || featuredSession.updated_at) }}
+                {{ formatDate(featuredStory.lastMessageTime) }}
               </text>
             </view>
 
             <view
               class="featured-card"
-              @tap="goToChat(featuredSession)"
-              @longpress="onSessionLongPress(featuredSession)"
-              @contextmenu.prevent="onSessionLongPress(featuredSession)"
+              @tap="goToStory(featuredStory)"
+              @longpress="onStoryLongPress(featuredStory)"
+              @contextmenu.prevent="onStoryLongPress(featuredStory)"
             >
               <AvatarImage
-                v-if="featuredSession.characterAvatar"
+                v-if="featuredBackgroundAvatar"
                 class="featured-art"
-                :src="getAvatarUrl(featuredSession.characterAvatar)"
+                :src="getAvatarUrl(featuredBackgroundAvatar)"
                 :lazy-load="false"
               />
               <view class="featured-image-wash"></view>
-              <view class="featured-cover-label">未完 · 待续</view>
+              <view class="featured-cover-label">{{ featuredStory.kind === 'group' ? '群聊 · 待续' : '未完 · 待续' }}</view>
 
               <view class="featured-copy">
                 <view class="featured-character-row">
-                  <view class="featured-status-dot"></view>
-                  <text class="featured-character">{{ featuredSession.characterName }}</text>
+                  <view v-if="featuredStory.kind === 'group'" class="featured-group-avatars">
+                    <view
+                      v-for="(avatar, idx) in featuredStory.avatars.slice(0, 3)"
+                      :key="idx"
+                      class="featured-group-avatar-item"
+                    >
+                      <AvatarImage
+                        v-if="avatar.avatarPath"
+                        class="featured-group-avatar-img"
+                        :src="getAvatarUrl(avatar.avatarPath)"
+                        :lazy-load="false"
+                      />
+                      <text v-else class="featured-group-avatar-initial">{{ avatar.name.slice(0, 1) }}</text>
+                    </view>
+                  </view>
+                  <view v-else class="featured-status-dot"></view>
+                  <text class="featured-character">{{ featuredStory.subtitle }}</text>
                 </view>
-                <text class="featured-title">{{ getSessionTitle(featuredSession) }}</text>
-                <text class="featured-preview">{{ getSessionPreview(featuredSession) }}</text>
+                <text class="featured-title">{{ featuredStory.title }}</text>
+                <text class="featured-preview">{{ featuredStory.preview }}</text>
 
-                <view class="continue-button" @tap.stop="goToChat(featuredSession)">
+                <view class="continue-button" @tap.stop="goToStory(featuredStory)">
                   <text class="continue-label">继续这段故事</text>
                   <text class="continue-arrow">→</text>
                 </view>
@@ -149,7 +165,7 @@
             </scroll-view>
           </view>
 
-          <view v-if="recentSessions.length > 0" class="recent-section">
+          <view v-if="recentStories.length > 0" class="recent-section">
             <view class="section-heading recent-heading">
               <view class="section-heading-copy">
                 <text class="section-title">最近故事</text>
@@ -159,27 +175,50 @@
 
             <view class="recent-story-list">
               <view
-                v-for="session in recentSessions"
-                :key="session.id"
+                v-for="story in recentStories"
+                :key="story.key"
                 class="story-row"
-                @tap="goToChat(session)"
-                @longpress="onSessionLongPress(session)"
-                @contextmenu.prevent="onSessionLongPress(session)"
+                @tap="goToStory(story)"
+                @longpress="onStoryLongPress(story)"
+                @contextmenu.prevent="onStoryLongPress(story)"
               >
                 <AvatarImage
+                  v-if="story.kind === 'single'"
                   class="story-avatar"
-                  :src="getAvatarUrl(session.characterAvatar)"
+                  :src="getAvatarUrl(story.avatars[0]?.avatarPath || '')"
                 />
+                <view
+                  v-else
+                  class="story-group-avatar"
+                  :class="`count-${Math.min(story.avatars.length, 3)}`"
+                >
+                  <view
+                    v-for="(avatar, idx) in story.avatars.slice(0, 3)"
+                    :key="idx"
+                    class="group-avatar-tile"
+                    :class="{ 'is-lead': story.avatars.length === 3 && idx === 0 }"
+                  >
+                    <AvatarImage
+                      v-if="avatar.avatarPath"
+                      class="group-avatar-img"
+                      :src="getAvatarUrl(avatar.avatarPath)"
+                    />
+                    <text v-else class="group-avatar-fallback">{{ avatar.name.slice(0, 1) }}</text>
+                  </view>
+                </view>
 
                 <view class="story-copy">
                   <view class="story-meta-row">
-                    <text class="story-character">{{ session.characterName }}</text>
+                    <view class="story-meta-lead">
+                      <text v-if="story.kind === 'group'" class="story-group-badge">群聊</text>
+                      <text class="story-character">{{ story.subtitle }}</text>
+                    </view>
                     <text class="story-time">
-                      {{ formatDate(session.lastMessageTime || session.updated_at) }}
+                      {{ formatDate(story.lastMessageTime) }}
                     </text>
                   </view>
-                  <text class="story-title">{{ getSessionTitle(session) }}</text>
-                  <text class="story-preview">{{ getSessionPreview(session) }}</text>
+                  <text class="story-title">{{ story.title }}</text>
+                  <text class="story-preview">{{ story.preview }}</text>
                 </view>
 
                 <text class="story-chevron">›</text>
@@ -187,9 +226,9 @@
             </view>
           </view>
 
-          <view v-else-if="featuredSession" class="recent-prompt">
+          <view v-else-if="featuredStory" class="recent-prompt">
             <text class="recent-prompt-title">这里只有一条故事线</text>
-            <text class="recent-prompt-copy">从角色画册选择另一位角色，开启不同的相遇。</text>
+            <text class="recent-prompt-copy">从角色画册选择另一位角色，或从右上角发起群聊，开启不同的相遇。</text>
           </view>
         </template>
 
@@ -238,7 +277,11 @@ import {
   updateSessionTitle,
   deleteSession,
 } from "@/api/sessions";
-import type { RecentSessionSummary, SessionSummary } from "@/api/sessions";
+import { deleteGroupSession, getGroupSessions } from "@/api/groupSessions";
+import { getBaseUrl } from "@/api/config";
+import type { RecentSessionSummary } from "@/api/sessions";
+import type { GroupSessionDetail } from "@/types/groupSessions";
+import { mergeHomeStories, type HomeSingleSession, type HomeStoryItem } from "@/utils/homeStories";
 import TabBar from "@/components/common/TabBar.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import AppEmptyState from "@/components/common/AppEmptyState.vue";
@@ -247,27 +290,25 @@ import AppPrimaryButton from "@/components/common/AppPrimaryButton.vue";
 import AppSoftGlow from "@/components/common/AppSoftGlow.vue";
 import { getAvatarUrl } from "@/api/characters";
 
-interface HomeSession extends SessionSummary {
-  characterName: string;
-  characterAvatar: string;
-  lastMessage: string;
-  lastMessageTime: string;
-  unread: boolean;
-}
-
 const personaStore = usePersonaStore();
 const isMenuOpen = ref(false);
 
 const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
 
-const sessions = ref<HomeSession[]>([]);
+const singleSessions = ref<HomeSingleSession[]>([]);
+const groupSessions = ref<GroupSessionDetail[]>([]);
 const isLoading = ref(false);
+let storyLoadVersion = 0;
 const RECENT_SESSION_LIMIT = 50;
 const QUICK_CHARACTER_LIMIT = 10;
 
-const featuredSession = computed(() => sessions.value[0] || null);
-const recentSessions = computed(() => sessions.value.slice(1));
+const stories = computed(() => mergeHomeStories(singleSessions.value, groupSessions.value));
+const featuredStory = computed(() => stories.value[0] || null);
+const featuredBackgroundAvatar = computed(
+  () => featuredStory.value?.avatars.find(item => !!item.avatarPath)?.avatarPath || ""
+);
+const recentStories = computed(() => stories.value.slice(1));
 const quickCharacters = computed(() =>
   personaStore.characterList.slice(0, QUICK_CHARACTER_LIMIT)
 );
@@ -275,7 +316,7 @@ const isHomeLoading = computed(
   () => isLoading.value || personaStore.isLoadingCharacters
 );
 const hasHomeContent = computed(
-  () => sessions.value.length > 0 || personaStore.characterList.length > 0
+  () => stories.value.length > 0 || personaStore.characterList.length > 0
 );
 
 let isAndroid = false;
@@ -283,65 +324,83 @@ let isAndroid = false;
 isAndroid = uni.getSystemInfoSync().platform === 'android';
 // #endif
 
-const loadRecentSessions = async () => {
+const fetchSingleSessions = async (): Promise<HomeSingleSession[]> => {
+  try {
+    const response = await getRecentSessions(RECENT_SESSION_LIMIT);
+    return response.sessions.map(decorateRecentSession);
+  } catch (error) {
+    // 仅在旧后端尚未提供聚合接口时回退，网络故障时避免制造更多请求。
+    if (!isUnsupportedRecentSessionsEndpoint(error)) {
+      throw error;
+    }
+    console.warn("Recent sessions endpoint is unavailable; using legacy requests.");
+  }
+
+  // 旧后端回退：复用首页已加载的角色列表，逐一读取其会话。
+  const allSessions: HomeSingleSession[] = [];
+  const promises = personaStore.characterList.map(async (char) => {
+    try {
+      const res = await getAllSessions(char.id);
+      const decorated = res.sessions.map((s) => ({
+        ...s,
+        characterName: char.name,
+        characterAvatar: char.avatar_path,
+        lastMessage: s.last_message?.content
+          ? s.last_message.content.replace(/\s+/g, " ").trim()
+          : "开启新的聊天...",
+        lastMessageTime: s.last_message?.created_at || s.updated_at,
+        unread: false
+      }));
+      allSessions.push(...decorated);
+    } catch (err) {
+      console.error(`Failed to load sessions for character ${char.id}`, err);
+    }
+  });
+  await Promise.all(promises);
+  return allSessions;
+};
+
+const fetchGroupSessions = async (): Promise<GroupSessionDetail[]> => {
+  try {
+    const response = await getGroupSessions(RECENT_SESSION_LIMIT, 0);
+    return response.sessions ?? [];
+  } catch (error) {
+    console.warn("Failed to load group sessions", error);
+    return [];
+  }
+};
+
+const loadRecentStories = async () => {
+  const version = ++storyLoadVersion;
+  const server = getBaseUrl();
   isLoading.value = true;
   try {
-    try {
-      const response = await getRecentSessions(RECENT_SESSION_LIMIT);
-      sessions.value = response.sessions
-        .map(decorateRecentSession)
-        .sort(
-          (a, b) =>
-            new Date(b.lastMessageTime).getTime() -
-            new Date(a.lastMessageTime).getTime()
-        );
-      return;
-    } catch (error) {
-      // 仅在旧后端尚未提供聚合接口时回退，网络故障时避免制造更多请求。
-      if (!isUnsupportedRecentSessionsEndpoint(error)) {
-        throw error;
-      }
-      console.warn("Recent sessions endpoint is unavailable; using legacy requests.");
+    const [singleResult, groupResult] = await Promise.allSettled([
+      fetchSingleSessions(),
+      fetchGroupSessions(),
+    ]);
+    if (version !== storyLoadVersion || getBaseUrl() !== server) return;
+    if (singleResult.status === "fulfilled") {
+      singleSessions.value = singleResult.value;
+    } else {
+      console.error("Failed to load recent sessions", singleResult.reason);
     }
-
-    // 旧后端回退：复用首页已加载的角色列表，逐一读取其会话。
-    const allSessions: HomeSession[] = [];
-    const promises = personaStore.characterList.map(async (char) => {
-      try {
-        const res = await getAllSessions(char.id);
-        const decorated = res.sessions.map((s) => ({
-          ...s,
-          characterName: char.name,
-          characterAvatar: char.avatar_path,
-          lastMessage: s.last_message?.content
-            ? s.last_message.content.replace(/\s+/g, " ").trim()
-            : "开启新的聊天...",
-          lastMessageTime: s.last_message?.created_at || s.updated_at,
-          unread: false
-        }));
-        allSessions.push(...decorated);
-      } catch (err) {
-        console.error(`Failed to load sessions for character ${char.id}`, err);
-      }
-    });
-    await Promise.all(promises);
-
-    // 按最近消息发送时间倒序排列。
-    allSessions.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
-    sessions.value = allSessions;
-  } catch (e) {
-    console.error("Failed to load recent sessions", e);
+    if (groupResult.status === "fulfilled") {
+      groupSessions.value = groupResult.value;
+    }
   } finally {
-    isLoading.value = false;
+    if (version === storyLoadVersion) {
+      isLoading.value = false;
+    }
   }
 };
 
 const loadHomeData = async () => {
   await personaStore.loadCharacters(QUICK_CHARACTER_LIMIT, 0);
-  await loadRecentSessions();
+  await loadRecentStories();
 };
 
-const decorateRecentSession = (session: RecentSessionSummary): HomeSession => {
+const decorateRecentSession = (session: RecentSessionSummary): HomeSingleSession => {
   const lastMessage = session.last_message;
   return {
     ...session,
@@ -371,14 +430,16 @@ const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value;
 };
 
-const goToGroups = () => uni.navigateTo({ url: "/pages/group/index" });
-
 const handleMenuAction = (action: string) => {
   isMenuOpen.value = false;
-  
+
   if (action === 'create_session') {
     uni.switchTab({
       url: '/pages/character/index'
+    });
+  } else if (action === 'create_group') {
+    uni.navigateTo({
+      url: '/pages/group/create'
     });
   } else if (action === 'add_character') {
     uni.navigateTo({
@@ -387,9 +448,15 @@ const handleMenuAction = (action: string) => {
   }
 };
 
-const goToChat = (session: HomeSession) => {
+const goToStory = (story: HomeStoryItem) => {
+  if (story.kind === "group") {
+    uni.navigateTo({
+      url: `/pages/group/detail?sessionId=${story.id}`
+    });
+    return;
+  }
   uni.navigateTo({
-    url: `/pages/chat/chat?sessionId=${session.id}`
+    url: `/pages/chat/chat?sessionId=${story.id}`
   });
 };
 
@@ -417,14 +484,37 @@ const goToImportCharacter = () => {
   });
 };
 
-const getSessionTitle = (session: HomeSession) =>
-  session.title?.trim() || `${session.characterName || "角色"}的故事`;
-
-const getSessionPreview = (session: HomeSession) =>
-  session.lastMessage?.trim() || "故事还没有写下第一句话…";
-
-const onSessionLongPress = (session: HomeSession) => {
+const onStoryLongPress = (story: HomeStoryItem) => {
   uni.vibrateShort({ success: () => {} });
+  if (story.kind === "group") {
+    uni.showActionSheet({
+      itemList: ['删除群聊'],
+      success: (res) => {
+        if (res.tapIndex !== 0) return;
+        uni.showModal({
+          title: '删除群聊',
+          content: '确定要删除此群聊吗？所有群聊记录与群内记忆数据将无法找回。',
+          confirmColor: '#D9655D',
+          cancelColor: '#7C8983',
+          success: async (mRes) => {
+            if (!mRes.confirm) return;
+            try {
+              await deleteGroupSession(story.id);
+              await loadRecentStories();
+              uni.showToast({ title: '删除成功', icon: 'success' });
+            } catch (e: unknown) {
+              console.error("Failed to delete group session", e);
+              const errMessage = e instanceof Error ? e.message : "删除失败，请检查网络与后端配置";
+              uni.showToast({ title: errMessage || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
+            }
+          }
+        });
+      }
+    });
+    return;
+  }
+
+  const session = story.singleSession;
   uni.showActionSheet({
     itemList: ['重命名', '删除会话'],
     success: (res) => {
@@ -442,7 +532,7 @@ const onSessionLongPress = (session: HomeSession) => {
               try {
                 await deleteSession(session.id);
                 useChatSettingsStore().removeSession(session.id);
-                await loadRecentSessions();
+                await loadRecentStories();
                 uni.showToast({ title: '删除成功', icon: 'success' });
               } catch (e: unknown) {
                 console.error("Failed to delete session", e);
@@ -467,7 +557,7 @@ const saveRename = async () => {
     try {
       await updateSessionTitle(renamingSessionId.value, newSessionTitle.value.trim());
       cancelRename();
-      await loadRecentSessions();
+      await loadRecentStories();
     } catch (e) {
       console.error("Failed to update session title", e);
     }

@@ -165,17 +165,67 @@ for (const change of ["story", "server", "hide"]) {
   });
 }
 
-test("group pages keep the home entry and use the independent group flow", () => {
+test("group pages integrate creation into home menu and flatten group stories into the home feed", () => {
   const routes = JSON.parse(fs.readFileSync(path.join(sourceRoot, "pages.json"), "utf8"));
   assert.equal(routes.pages[0].path, "pages/index/index");
   for (const name of ["index", "create", "detail"]) {
     assert.ok(routes.pages.some(page => page.path === `pages/group/${name}`));
   }
   const home = fs.readFileSync(path.join(sourceRoot, "pages/index/index.vue"), "utf8");
-  assert.match(home, /@tap="goToGroups"/);
+  assert.doesNotMatch(home, /class="group-entry"/);
+  assert.match(home, /handleMenuAction\('create_group'\)/);
+  assert.match(home, /\/pages\/group\/create/);
+  assert.match(home, /getGroupSessions/);
+  assert.match(home, /mergeHomeStories/);
+  assert.match(home, /\/pages\/group\/detail\?sessionId=/);
   const detail = fs.readFileSync(path.join(sourceRoot, "pages/group/detail.vue"), "utf8");
   assert.doesNotMatch(detail, /sendMessage|chatStore/);
   assert.match(detail, /state.command\('send'\)/);
+});
+
+test("homeStories merges single and group sessions by latest activity and resolves previews", () => {
+  const load = createLoader();
+  const { mergeHomeStories, resolveGroupPreview } = load("utils/homeStories.ts");
+  const singleOld = {
+    id: 1, title: "旧单聊", parent_session_id: null, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-02T10:00:00Z",
+    characterName: "露娜", characterAvatar: "/a.png", lastMessage: "晚安", lastMessageTime: "2026-11-02T10:00:00Z", unread: false,
+  };
+  const singleMid = {
+    id: 2, title: "", parent_session_id: null, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-03T10:00:00Z",
+    characterName: "艾琳", characterAvatar: "/b.png", lastMessage: "", lastMessageTime: "2026-11-03T10:00:00Z", unread: false,
+  };
+  const groupNewest = {
+    kind: "group", session_id: 20, title: "酒馆夜谈", user_nickname: "旅人",
+    shared_setting: "边境酒馆", created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-04T10:00:00Z",
+    can_generate: true,
+    last_message: { role: "assistant", speaker_name: "露娜", content: "  夜色正好  ", created_at: "2026-11-04T12:00:00Z" },
+    members: [
+      { persona_id: 1, slot: 1, character: { id: 1, name: "露娜", avatar_path: "/a.png" }, greeting_content: "欢迎" },
+      { persona_id: 2, slot: 2, character: { id: 2, name: "艾琳", avatar_path: null }, greeting_content: null },
+    ],
+  };
+  const groupFallback = {
+    kind: "group", session_id: 19, title: "", user_nickname: "旅人",
+    shared_setting: null, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-01T12:00:00Z",
+    can_generate: false, last_message: null,
+    members: [
+      { persona_id: 3, slot: 1, character: { id: 3, name: "凯尔", avatar_path: "" }, greeting_content: "  你好，旅人  " },
+      { persona_id: 4, slot: 2, character: { id: 4, name: "米娅", avatar_path: "" }, greeting_content: null },
+    ],
+  };
+  const merged = mergeHomeStories([singleOld, singleMid], [groupFallback, groupNewest]);
+  assert.deepEqual(plain(merged.map(item => item.key)), ["group-20", "single-2", "single-1", "group-19"]);
+  assert.equal(merged[0].kind, "group");
+  assert.equal(merged[0].subtitle, "露娜 · 艾琳");
+  assert.equal(merged[0].preview, "露娜: 夜色正好");
+  assert.equal(merged[1].title, "艾琳的故事");
+  assert.equal(merged[3].title, "群聊故事");
+  assert.equal(merged[3].preview, "凯尔: 你好，旅人");
+  assert.equal(resolveGroupPreview({ ...groupFallback, shared_setting: "  共同起点  " }), "共同起点");
+  assert.equal(resolveGroupPreview({
+    ...groupFallback,
+    last_message: { role: "user", speaker_name: null, content: "大家好", created_at: "2026-11-01T13:00:00Z" },
+  }), "旅人: 大家好");
 });
 
 for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {

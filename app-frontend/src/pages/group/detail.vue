@@ -31,7 +31,7 @@
           @jump-to-bottom="onJumpToBottom"
         >
           <AppStatusState v-if="loading && !group" kind="loading" title="正在读取群聊" />
-          <AppStatusState v-else-if="!group" kind="error" title="暂时无法查看群聊" :description="error || '请返回列表重新选择群聊。'" :action-label="needsSelection ? '返回群聊列表' : '重新加载'" @action="retry" />
+          <AppStatusState v-else-if="!group" kind="error" title="暂时无法查看群聊" :description="error || '请返回故事列表重新选择群聊。'" :action-label="needsSelection ? '返回故事列表' : '重新加载'" @action="retry" />
           <view v-else class="group-transcript">
             <view v-if="hasMoreRounds" class="history-actions">
               <button class="history-pill" :disabled="loading || loadingRounds || deleting || operationBusy" @tap="moreRounds">
@@ -189,7 +189,7 @@ async function openMemberPrompt(personaId: number) {
   finally { if (valid()) promptLoading.value = false; }
 }
 
-const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
+const backToList = () => uni.navigateBack({ fail: () => uni.switchTab({ url: "/pages/index/index" }) });
 const chatSettingsStore = useChatSettingsStore();
 const state = useGroupSessionDetail(backToList, id => chatSettingsStore.requestGeneration(id, { ...chatSettingsStore.selection }));
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,

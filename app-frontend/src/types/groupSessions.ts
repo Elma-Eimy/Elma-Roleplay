@@ -42,6 +42,13 @@ export interface GroupSessionMember {
   };
 }
 
+export interface GroupLastMessageSummary {
+  role: "assistant" | "user";
+  speaker_name: string | null;
+  content: string;
+  created_at: string | null;
+}
+
 export interface GroupSessionDetail {
   kind: "group";
   session_id: number;
@@ -52,6 +59,7 @@ export interface GroupSessionDetail {
   updated_at: string;
   can_generate: boolean;
   group_revision?: number;
+  last_message?: GroupLastMessageSummary | null;
   members: GroupSessionMember[];
 }
 

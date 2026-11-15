@@ -60,7 +60,7 @@
         <text v-if="error" class="group-error" role="alert">{{ error }}</text>
         <text v-else-if="validation" class="group-copy">{{ validation }}</text>
         <AppPrimaryButton label="创建群聊" loading-text="正在创建" :block="true" :loading="submitting" :disabled="locked || !!validation" @tap="state.submit" />
-        <view v-if="uncertain" class="group-action" role="button" @tap="backToList">查看群聊列表</view>
+        <view v-if="uncertain" class="group-action" role="button" @tap="backToList">返回故事列表</view>
         <view v-if="created" class="group-action" role="button" @tap="openCreated">查看已创建的群聊</view>
       </view>
     </scroll-view>
@@ -101,7 +101,7 @@ const sourceIndex = (id: number) => {
   const member = members.value.find(item => item.character.id === id);
   return Math.max(0, member?.sources.findIndex(source => source.id === member.sourceSessionId) ?? 0);
 };
-const backToList = () => uni.navigateBack({ fail: () => uni.redirectTo({ url: "/pages/group/index" }) });
+const backToList = () => uni.navigateBack({ fail: () => uni.switchTab({ url: "/pages/index/index" }) });
 const openCreated = () => { if (created.value) uni.redirectTo({ url: `/pages/group/detail?sessionId=${created.value.session_id}` }); };
 </script>
 
