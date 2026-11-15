@@ -169,36 +169,59 @@ const triggerFileInput = () => {
   handleImport();
 };
 
+const submitImportedLorebook = async (fileObj: File | string) => {
+  uni.showLoading({ title: "正在导入世界书..." });
+  try {
+    const importRes = await importLorebook(fileObj);
+    uni.showToast({ title: `导入成功: ${importRes.name}`, icon: "success" });
+    loadLorebooks();
+  } catch (e: unknown) {
+    console.error("Failed to import lorebook", e);
+    const errMessage = e instanceof Error ? e.message : "导入失败，请检查文件格式";
+    uni.showToast({ title: errMessage || "导入失败，请检查文件格式", icon: "none" });
+  } finally {
+    uni.hideLoading();
+  }
+};
+
 const handleImport = () => {
   // #ifdef APP-PLUS
   uni.showToast({ title: "请选择包含世界书配置的 JSON 文件", icon: "none" });
   // #endif
-  
-  uni.chooseFile({
+
+  // #ifdef MP-WEIXIN
+  uni.chooseMessageFile({
     count: 1,
-    type: "all",
-    extension: [".json"],
-    success: async (res) => {
-      uni.showLoading({ title: "正在导入世界书..." });
-      try {
-        const tempFiles = res.tempFiles as Array<File | { file?: File; path?: string }> | undefined;
-        const firstTemp = tempFiles?.[0];
-        const fileObj = (firstTemp && "file" in firstTemp && firstTemp.file) || firstTemp || res.tempFilePaths[0];
-        const importRes = await importLorebook(fileObj as File | string);
-        uni.showToast({ title: `导入成功: ${importRes.name}`, icon: "success" });
-        loadLorebooks();
-      } catch (e: unknown) {
-        console.error("Failed to import lorebook", e);
-        const errMessage = e instanceof Error ? e.message : "导入失败，请检查文件格式";
-        uni.showToast({ title: errMessage || "导入失败，请检查文件格式", icon: "none" });
-      } finally {
-        uni.hideLoading();
+    type: "file",
+    extension: ["json"],
+    success: (res) => {
+      const firstPath = res.tempFiles?.[0]?.path;
+      if (firstPath) {
+        submitImportedLorebook(firstPath);
       }
     },
     fail: (err) => {
       console.log("取消文件选择", err);
-    }
+    },
   });
+  // #endif
+
+  // #ifndef MP-WEIXIN
+  uni.chooseFile({
+    count: 1,
+    type: "all",
+    extension: [".json"],
+    success: (res) => {
+      const tempFiles = res.tempFiles as Array<File | { file?: File; path?: string }> | undefined;
+      const firstTemp = tempFiles?.[0];
+      const fileObj = (firstTemp && "file" in firstTemp && firstTemp.file) || firstTemp || res.tempFilePaths[0];
+      submitImportedLorebook(fileObj as File | string);
+    },
+    fail: (err) => {
+      console.log("取消文件选择", err);
+    },
+  });
+  // #endif
 };
 
 const confirmDelete = (lb: LorebookSummary) => {

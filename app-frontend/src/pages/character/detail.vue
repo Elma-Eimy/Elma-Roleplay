@@ -98,7 +98,7 @@
             :class="{ 'is-active': activeTab === 'lorebook' }"
             @tap="activeTab = 'lorebook'"
           >
-            <text class="tab-label">世界</text>
+            <text class="tab-label">世界书</text>
           </view>
           <view
             class="tab-item"
@@ -192,7 +192,7 @@
         </view>
 
         <!-- Tab 2: 人设细节卡片 -->
-        <view v-if="activeTab === 'profile'" class="char-header-section">
+        <view v-if="activeTab === 'profile'" class="portrait-library-card">
           <CharacterPortraitPanel :character-id="character.id" :timeline="portraitLibraryRevision" />
         </view>
         <CharacterProfileTab 
@@ -521,6 +521,15 @@ const getAffectionClass = (score: number | undefined | null) => {
 onLoad((options) => {
   if (options && options.id) {
     characterId.value = parseInt(options.id, 10);
+  }
+  const requestedTab = options?.tab;
+  if (
+    requestedTab === "profile" ||
+    requestedTab === "lorebook" ||
+    requestedTab === "memory" ||
+    requestedTab === "sessions"
+  ) {
+    activeTab.value = requestedTab;
   }
 });
 

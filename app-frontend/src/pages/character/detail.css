@@ -174,7 +174,8 @@
 }
 
 /* ===== 角色头部基本设定 ===== */
-.char-header-section {
+.char-header-section,
+.portrait-library-card {
   position: relative;
   z-index: 20;
   margin: -92rpx var(--app-page-gutter, 36rpx) 28rpx;
@@ -187,6 +188,11 @@
   background-color: rgba(255, 255, 255, 0.88);
   box-shadow: var(--app-shadow-raised, 0 20rpx 52rpx rgba(45, 72, 62, 0.12));
   backdrop-filter: blur(20px);
+}
+
+.portrait-library-card {
+  z-index: 1;
+  margin: 0 var(--app-page-gutter, 36rpx) 24rpx;
 }
 
 .archive-eyebrow {

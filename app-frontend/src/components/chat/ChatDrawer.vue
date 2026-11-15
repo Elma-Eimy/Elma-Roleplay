@@ -13,7 +13,7 @@
         <slot name="top" />
 
         <!-- ① 角色卡片面板 -->
-        <view class="char-card">
+        <view class="char-card" @tap="openCharacterProfile">
           <button
             class="char-card-avatar-link"
             :aria-label="`查看${drawerName}的人物档案`"
@@ -27,7 +27,10 @@
             />
           </button>
           <view class="char-card-info">
-            <text class="char-card-name">{{ drawerName }}</text>
+            <view class="char-card-name-row">
+              <text class="char-card-name">{{ drawerName }}</text>
+              <text v-if="drawerCharacter?.id" class="char-card-profile-hint">档案 ›</text>
+            </view>
             <view class="mood-badge">
               <view class="mood-dot"></view>
               <text class="mood-text">{{ drawerMood || '在线' }}</text>

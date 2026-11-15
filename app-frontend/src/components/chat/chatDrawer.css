@@ -114,11 +114,28 @@
   gap: 10rpx;
 }
 
+.char-card-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
 .char-card-name {
   font-size: 30rpx;
   font-weight: 700;
   color: #ffffff;
   letter-spacing: -0.3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.char-card-profile-hint {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.72);
+  flex-shrink: 0;
 }
 
 .mood-badge {
