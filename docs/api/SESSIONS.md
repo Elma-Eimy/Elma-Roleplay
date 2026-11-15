@@ -526,7 +526,9 @@ Errors: `404` for missing story/local record; `422` for invalid request; `409` f
           "lower_bound": 4800,
           "upper_bound": 7600
         },
-        "recent_history": {"characters": 6000, "estimated_tokens": 3900, "lower_bound": 3000, "upper_bound": 5000},
+        "examples": {"characters": 1200, "estimated_tokens": 820, "lower_bound": 560, "upper_bound": 1200},
+        "context_summary": {"characters": 0, "estimated_tokens": 0, "lower_bound": 0, "upper_bound": 0},
+        "recent_history": {"characters": 4800, "estimated_tokens": 3080, "lower_bound": 2440, "upper_bound": 3800},
         "scenario": {"characters": 300, "estimated_tokens": 220, "lower_bound": 150, "upper_bound": 350},
         "cognition": {"characters": 500, "estimated_tokens": 350, "lower_bound": 250, "upper_bound": 500},
         "status": {"characters": 120, "estimated_tokens": 90, "lower_bound": 60, "upper_bound": 150},
@@ -543,7 +545,9 @@ Errors: `404` for missing story/local record; `422` for invalid request; `409` f
 
   | Section | Content |
   | :--- | :--- |
-  | `character` | Character definition, output requirements, examples, supplemental rules, and other prompt instructions. |
+  | `character` | Character definition, output requirements, supplemental rules, and other prompt instructions. |
+  | `examples` | Compiled `mes_example` dialogue examples (`【对话示例说明】`, few-shot turns, fallback text, and `【对话示例结束】`). |
+  | `context_summary` | Compressed summary of earlier dialogue (`<context_summary>`). |
   | `recent_history` | Recent and inherited history injected before the current user message. |
   | `scenario` | Current scenario. |
   | `cognition` | Persona cognition state. |
