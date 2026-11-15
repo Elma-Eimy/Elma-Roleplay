@@ -66,56 +66,21 @@
         </view>
 
         <template v-else>
-          <view
+          <MemoryItemCard
             v-for="item in filteredMemories"
             :key="item.id"
-            class="memory-card"
-            :class="{ 'is-inherited': !item.is_local, 'is-superseded': item.is_superseded }"
-          >
-            <view class="card-body">
-              <view v-if="editingId === item.id" class="edit-mode-container">
-                <textarea
-                  v-model="editingContent"
-                  class="card-textarea"
-                  :maxlength="-1"
-                  :show-confirm-bar="false"
-                />
-                <view class="edit-actions">
-                  <view class="edit-btn cancel" @tap="cancelInlineEdit">取消</view>
-                  <view class="edit-btn save" @tap="saveInlineEdit(item.id)">保存</view>
-                </view>
-              </view>
-              <view v-else class="content-text-container">
-                <text class="content-text">{{ item.content }}</text>
-              </view>
-            </view>
-
-            <view v-if="editingId !== item.id" class="card-meta">
-              <view class="tag-row">
-                <text class="memory-type-badge">{{ getMemoryTypeLabel(item.memory_type) }}</text>
-                <text v-if="!item.is_local" class="inherited-badge">{{ groupPersonaId ? '入群时继承' : '来自主故事' }}</text>
-                <text v-else class="local-badge">{{ localLabel || '当前故事' }}</text>
-                <text v-if="item.is_superseded" class="superseded-badge">历史原卡</text>
-                <text v-if="item.consolidation_id" class="local-badge">整理结果</text>
-                <text v-if="item.source_start_message_id || item.source_message_id" class="source-text">
-                  {{ formatMemorySource(item) }}
-                </text>
-              </view>
-              <text v-if="item.indexed !== undefined" class="source-text">{{ item.indexed ? '已建向量索引' : '向量待同步' }}</text>
-              <text class="score-text">权重 {{ item.importance_score.toFixed(1) }}</text>
-            </view>
-
-            <view v-if="!groupPersonaId && item.is_local && !item.consolidation_id && !item.is_superseded && editingId !== item.id" class="card-actions">
-              <view class="action-icon-btn" @tap="startInlineEdit(item)">
-                <image class="action-svg-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
-                <text class="action-icon-text">编辑</text>
-              </view>
-              <view class="action-icon-btn danger" @tap="deleteMemory(item.id)">
-                <image class="action-svg-icon" src="/static/icons/drawer_trash.svg" mode="aspectFit" />
-                <text class="action-icon-text">删除</text>
-              </view>
-            </view>
-          </view>
+            :item="item"
+            :is-editing="editingId === item.id"
+            :editing-content="editingContent"
+            :editable="!groupPersonaId && item.is_local && !item.consolidation_id && !item.is_superseded"
+            :local-label="localLabel"
+            :group-mode="Boolean(groupPersonaId)"
+            @start-edit="startInlineEdit"
+            @update:editing-content="editingContent = $event"
+            @cancel-edit="cancelInlineEdit"
+            @save-edit="saveInlineEdit"
+            @delete="deleteMemory"
+          />
         </template>
 
         <view v-if="!isLoading && memories.length > 0" class="list-footer">
@@ -124,36 +89,14 @@
         </view>
       </scroll-view>
 
-      <view v-if="!groupPersonaId" class="add-memory-container" :class="{ 'is-expanded': isAddMemoryOpen }">
-        <view v-if="!isAddMemoryOpen" class="add-trigger" @tap="openAddMemory">
-          <view class="add-trigger-icon">+</view>
-          <view class="add-trigger-copy">
-            <text class="add-trigger-title">添加一条记忆</text>
-            <text class="add-trigger-description">补充希望 AI 长期记住的内容</text>
-          </view>
-        </view>
-        <view v-else class="add-composer">
-          <view class="add-composer-header">
-            <text class="add-composer-title">添加一条记忆</text>
-            <text class="add-composer-cancel" @tap="closeAddMemory">取消</text>
-          </view>
-          <textarea
-            v-model="newMemoryContent"
-            class="add-textarea"
-            placeholder="例如：我不喜欢别人叫我的全名"
-            :maxlength="-1"
-            :show-confirm-bar="false"
-            :focus="isAddMemoryOpen"
-          />
-          <view
-            class="add-submit-btn"
-            :class="{ 'is-active': newMemoryContent.trim().length > 0 }"
-            @tap="addMemory"
-          >
-            <text class="submit-btn-text">添加到记忆</text>
-          </view>
-        </view>
-      </view>
+      <MemoryAddComposer
+        v-if="!groupPersonaId"
+        v-model="newMemoryContent"
+        :expanded="isAddMemoryOpen"
+        @open="openAddMemory"
+        @cancel="closeAddMemory"
+        @submit="addMemory"
+      />
       </template>
     </view>
   </view>
@@ -164,6 +107,8 @@ import { ref, computed, watch } from "vue";
 import { getGroupMemberMemories } from "@/api/groupSessions";
 import MemoryProcessingPanel from "./MemoryProcessingPanel.vue";
 import MemoryConsolidationPanel from "./MemoryConsolidationPanel.vue";
+import MemoryItemCard from "./MemoryItemCard.vue";
+import MemoryAddComposer from "./MemoryAddComposer.vue";
 import {
   getSessionMemories,
   createSessionMemory,
@@ -241,29 +186,6 @@ const getFilterQuery = (
   if (filter === "inherited") return { scope: "inherited", status: "active" };
   if (filter === "superseded") return { scope: "all", status: "superseded" };
   return { scope: "all", status: "active" };
-};
-
-const memoryTypeLabels: Record<string, string> = {
-  fact: "事实",
-  event: "经历",
-  emotion: "情绪",
-  relationship: "关系",
-  preference: "偏好",
-  personality: "性格",
-  summary: "摘要"
-};
-
-const getMemoryTypeLabel = (type: string) => {
-  return memoryTypeLabels[type.trim().toLowerCase()] || "其他";
-};
-
-const formatMemorySource = (item: MemoryChunk) => {
-  const startId = item.source_start_message_id || item.source_message_id;
-  const endId = item.source_message_id;
-  if (startId && endId && startId !== endId) {
-    return `消息 #${startId}–#${endId}`;
-  }
-  return `消息 #${startId}`;
 };
 
 const openAddMemory = () => {
@@ -344,7 +266,7 @@ watch(
 );
 
 // 监听搜索词变化并进行防抖检索
-let searchTimeout: any = null;
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 watch(searchQuery, () => {
   if (searchTimeout) {
     clearTimeout(searchTimeout);
@@ -720,189 +642,6 @@ const addMemory = async () => {
   text-align: center;
 }
 
-/* Memory Card */
-.memory-card {
-  background-color: #ffffff;
-  border-radius: 20rpx;
-  padding: 26rpx;
-  margin-bottom: 20rpx;
-  box-shadow: 0 6rpx 20rpx rgba(22, 22, 28, 0.035);
-  border: 1px solid rgba(60, 60, 67, 0.06);
-  transition: transform 0.2s;
-}
-
-.memory-card.is-inherited {
-  border-left: 5rpx solid rgba(88, 86, 214, 0.55);
-  background-color: rgba(248, 247, 255, 0.9);
-}
-
-.memory-card.is-superseded {
-  opacity: 0.58;
-  border-color: rgba(255, 149, 0, 0.16);
-  box-shadow: none;
-}
-
-.card-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16rpx;
-}
-
-.tag-row {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8rpx;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.memory-type-badge {
-  font-size: 20rpx;
-  font-weight: 600;
-  color: #5856d6;
-  background-color: rgba(88, 86, 214, 0.1);
-  padding: 5rpx 12rpx;
-  border-radius: 8rpx;
-}
-
-.inherited-badge {
-  font-size: 20rpx;
-  font-weight: 500;
-  color: #5856d6;
-  background-color: rgba(88, 86, 214, 0.08);
-  padding: 5rpx 12rpx;
-  border-radius: 8rpx;
-}
-
-.local-badge {
-  font-size: 20rpx;
-  font-weight: 500;
-  color: #248a3d;
-  background-color: rgba(52, 199, 89, 0.09);
-  padding: 5rpx 12rpx;
-  border-radius: 8rpx;
-}
-
-.superseded-badge {
-  font-size: 20rpx;
-  font-weight: 500;
-  color: #ff9500;
-  background-color: rgba(255, 149, 0, 0.10);
-  padding: 5rpx 12rpx;
-  border-radius: 8rpx;
-}
-
-.source-text {
-  font-size: 20rpx;
-  font-weight: 500;
-  color: #8e8e93;
-}
-
-.score-text {
-  flex-shrink: 0;
-  padding-top: 4rpx;
-  font-size: 21rpx;
-  font-weight: 550;
-  color: #636366;
-}
-
-.card-body {
-  margin-bottom: 20rpx;
-}
-
-.content-text {
-  font-size: 28rpx;
-  color: #1c1c1e;
-  line-height: 1.62;
-  word-break: break-word;
-}
-
-/* Actions */
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.03);
-  padding-top: 12rpx;
-  margin-top: 18rpx;
-}
-
-.action-icon-btn {
-  display: flex;
-  align-items: center;
-  gap: 6rpx;
-  min-height: 48rpx;
-  padding: 0 12rpx;
-  border-radius: 12rpx;
-  opacity: 0.65;
-  transition: opacity 0.2s, background-color 0.2s;
-}
-
-.action-icon-btn:active {
-  opacity: 1;
-  background-color: rgba(0, 0, 0, 0.04);
-}
-
-.action-svg-icon {
-  width: 24rpx;
-  height: 24rpx;
-}
-
-.action-icon-text {
-  font-size: 22rpx;
-  color: #3a3a3c;
-  font-weight: 500;
-}
-
-.action-icon-btn.danger .action-icon-text {
-  color: #ff3b30;
-}
-
-/* Inline Edit Style */
-.edit-mode-container {
-  display: flex;
-  flex-direction: column;
-  gap: 16rpx;
-}
-
-.card-textarea {
-  width: 100%;
-  height: 140rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 12rpx;
-  padding: 12rpx 16rpx;
-  font-size: 26rpx;
-  color: #1c1c1e;
-  line-height: 1.4;
-  box-sizing: border-box;
-}
-
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 16rpx;
-}
-
-.edit-btn {
-  padding: 8rpx 20rpx;
-  border-radius: 10rpx;
-  font-size: 22rpx;
-  font-weight: 500;
-}
-
-.edit-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.05);
-  color: #8e8e93;
-}
-
-.edit-btn.save {
-  background-color: #1c1c1e;
-  color: #ffffff;
-}
-
 /* Loading skeleton */
 .skeleton-list {
   width: 100%;
@@ -961,124 +700,6 @@ const addMemory = async () => {
 
 @keyframes skeletonShimmer {
   to { left: 130%; }
-}
-
-/* Add memory box at bottom */
-.add-memory-container {
-  padding: 18rpx 32rpx calc(24rpx + env(safe-area-inset-bottom));
-  background-color: #ffffff;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
-  flex-shrink: 0;
-}
-
-.add-trigger {
-  display: flex;
-  align-items: center;
-  gap: 16rpx;
-  padding: 18rpx 20rpx;
-  border: 1px solid rgba(88, 86, 214, 0.10);
-  border-radius: 18rpx;
-  background-color: rgba(88, 86, 214, 0.055);
-  transition: transform 0.2s, background-color 0.2s;
-}
-
-.add-trigger:active {
-  transform: scale(0.99);
-  background-color: rgba(88, 86, 214, 0.09);
-}
-
-.add-trigger-icon {
-  width: 54rpx;
-  height: 54rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background-color: #5856d6;
-  color: #ffffff;
-  font-size: 36rpx;
-  font-weight: 400;
-  line-height: 1;
-}
-
-.add-trigger-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3rpx;
-}
-
-.add-trigger-title {
-  color: #2c2c2e;
-  font-size: 25rpx;
-  font-weight: 650;
-}
-
-.add-trigger-description {
-  color: #8e8e93;
-  font-size: 20rpx;
-}
-
-.add-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 14rpx;
-}
-
-.add-composer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.add-composer-title {
-  color: #2c2c2e;
-  font-size: 25rpx;
-  font-weight: 650;
-}
-
-.add-composer-cancel {
-  padding: 8rpx 0 8rpx 20rpx;
-  color: #8e8e93;
-  font-size: 23rpx;
-}
-
-.add-textarea {
-  width: 100%;
-  height: 140rpx;
-  background-color: #f8f8fa;
-  border: 1px solid rgba(60, 60, 67, 0.08);
-  border-radius: 16rpx;
-  padding: 16rpx 20rpx;
-  font-size: 26rpx;
-  color: #1c1c1e;
-  line-height: 1.4;
-  box-sizing: border-box;
-}
-
-.add-submit-btn {
-  width: 100%;
-  height: 68rpx;
-  background-color: rgba(0, 0, 0, 0.04);
-  border-radius: 16rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.2s;
-}
-
-.add-submit-btn.is-active {
-  background-color: #1c1c1e;
-}
-
-.submit-btn-text {
-  font-size: 26rpx;
-  color: rgba(255, 255, 255, 0.4);
-  font-weight: 600;
-}
-
-.add-submit-btn.is-active .submit-btn-text {
-  color: #ffffff;
 }
 
 /* Pagination Footer */

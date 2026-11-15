@@ -13,6 +13,8 @@ export { default as GroupPortraitPicker } from './GroupPortraitPicker.vue';
 export { default as GroupCandidateModal } from './GroupCandidateModal.vue';
 export { default as SamplingParamsPanel } from './SamplingParamsPanel.vue';
 export { default as MemoryManagerModal } from './MemoryManagerModal.vue';
+export { default as MemoryItemCard } from './MemoryItemCard.vue';
+export { default as MemoryAddComposer } from './MemoryAddComposer.vue';
 export { default as PromptPreviewModal } from './PromptPreviewModal.vue';
 export { default as BranchTreePanel } from './BranchTreePanel.vue';
 export { default as ChatHeader } from './ChatHeader.vue';

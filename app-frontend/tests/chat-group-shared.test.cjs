@@ -1,7 +1,8 @@
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const ts = require('typescript'), vue = require('vue');
 const { parse, compileScript } = require('@vue/compiler-sfc');
-const { sourceRoot } = require('./helpers/load-ts.cjs');
+const { createLoader, sourceRoot } = require('./helpers/load-ts.cjs');
+const chatBubbleContent = createLoader()('utils/chatBubbleContent.ts');
 function component(name, props, mocks, uni = {}) {
   const filename = path.join(sourceRoot, 'components/chat', name + '.vue');
   const script = compileScript(parse(fs.readFileSync(filename, 'utf8')).descriptor, { id: name }).content;
@@ -22,6 +23,7 @@ test('shared bubble in group mode is pure and cannot emit or trigger candidate s
   const f = component('ChatBubble', { readOnly: true, message: { id: 9, role: 'assistant', status: 'done', content: 'hello', candidates: [{id:1},{id:2}] }, userNickname: '群聊用户', characterName: '群聊角色' }, {
     '@/utils/markdown': { renderChatMarkdown: s => s },
     '@/utils/chatDisplay': { createBoundedCache: () => new Map(), formatThoughtTitle: s => s, lastNonEmptyLine: s => s },
+    '@/utils/chatBubbleContent': chatBubbleContent,
   });
   f.state.switchCandidateVersion(1); f.state.playTTS(); f.state.handleLongPress();
   assert.equal(f.emitted.length, 0);
@@ -31,6 +33,7 @@ test('shared bubble in group mode is pure and cannot emit or trigger candidate s
   const interactive = component('ChatBubble', { readOnly: false, message: { id: 9, role: 'assistant', status: 'done', content: 'hello', candidates: [{id:11},{id:12}], active_index: 0 }, userNickname: '单聊用户', characterName: '单聊角色' }, {
     '@/utils/markdown': { renderChatMarkdown: s => s },
     '@/utils/chatDisplay': { createBoundedCache: () => new Map(), formatThoughtTitle: s => s, lastNonEmptyLine: s => s },
+    '@/utils/chatBubbleContent': chatBubbleContent,
   });
   interactive.state.switchCandidateVersion(1); interactive.state.playTTS();
   assert.deepEqual(JSON.parse(JSON.stringify(interactive.emitted)), [
@@ -146,5 +149,53 @@ test('group candidate modal resolves selected status, candidate labels and previ
   assert.equal(f.state.candidateStatus('failed', 'timeout'), '未完成');
   assert.equal(f.state.candidateStatus('awaiting_confirmation', null), '完整结果');
   assert.deepEqual(JSON.parse(JSON.stringify(f.state.previewPortraits.value)), [{ persona_id: 1, portrait_id: 9, image_path: 'p9.png' }]);
+  f.scope.stop();
+});
+
+test('group utterances fold avatar and name only for consecutive utterances from the same speaker', () => {
+  const f = component('GroupUtterances', {
+    utterances: [
+      { item_id: 1, speaker_persona_id: 10, speaker_name: '甲', content: '一' },
+      { item_id: 2, speaker_persona_id: 10, speaker_name: '甲', content: '二' },
+      { item_id: 3, speaker_persona_id: 20, speaker_name: '乙', content: '三' },
+      { item_id: 4, speaker_persona_id: 10, speaker_name: '甲', content: '四' },
+    ],
+    members: [
+      { persona_id: 10, slot: 1, character: { avatar_path: 'a.png' } },
+      { persona_id: 20, slot: 2, character: { avatar_path: 'b.png' } },
+    ],
+  }, {
+    '@/api/characters': { getAvatarUrl: path => path },
+  });
+  assert.equal(f.state.shouldShowSpeaker(0), true);
+  assert.equal(f.state.shouldShowSpeaker(1), false);
+  assert.equal(f.state.shouldShowSpeaker(2), true);
+  assert.equal(f.state.shouldShowSpeaker(3), true);
+  f.scope.stop();
+});
+
+test('memory item card formats labels, source ranges, and propagates inline edits', () => {
+  const f = component('MemoryItemCard', {
+    item: {
+      id: 7,
+      content: '喜欢下雨天散步',
+      memory_type: 'Preference',
+      importance_score: 0.8,
+      is_local: true,
+      source_start_message_id: 12,
+      source_message_id: 15,
+    },
+    isEditing: true,
+    editingContent: '原始内容',
+    editable: true,
+  }, {});
+  assert.equal(f.state.getMemoryTypeLabel('Preference'), '偏好');
+  assert.equal(f.state.getMemoryTypeLabel('unknown_type'), '其他');
+  assert.equal(f.state.formatMemorySource({ source_start_message_id: 12, source_message_id: 15 }), '消息 #12–#15');
+  assert.equal(f.state.formatMemorySource({ source_message_id: 15 }), '消息 #15');
+  f.state.draftContent.value = '修改后的记忆';
+  assert.deepEqual(JSON.parse(JSON.stringify(f.emitted)), [
+    { event: 'update:editing-content', args: ['修改后的记忆'] },
+  ]);
   f.scope.stop();
 });

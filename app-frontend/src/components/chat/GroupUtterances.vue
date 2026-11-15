@@ -1,13 +1,14 @@
 <template>
   <view class="group-utterances">
     <ChatBubble
-      v-for="utterance in utterances"
+      v-for="(utterance, index) in utterances"
       :key="utterance.item_id"
       :message="{ role: 'assistant', content: utterance.content, status: 'done' }"
       :character-name="`${utterance.speaker_name} · 成员 ${memberSlot(utterance.speaker_persona_id)}`"
       :avatar-url="memberAvatar(utterance.speaker_persona_id)"
       :user-nickname="userNickname"
-      show-name
+      :show-avatar="shouldShowSpeaker(index)"
+      :show-name="shouldShowSpeaker(index)"
       read-only
     />
   </view>
@@ -27,6 +28,9 @@ const props = withDefaults(defineProps<{
   portraits: undefined,
   userNickname: "",
 });
+
+const shouldShowSpeaker = (index: number) =>
+  index === 0 || props.utterances[index - 1]?.speaker_persona_id !== props.utterances[index]?.speaker_persona_id;
 
 const memberSlot = (id: number) => props.members.find(member => member.persona_id === id)?.slot ?? "?";
 const memberAvatar = (id: number) => getAvatarUrl(

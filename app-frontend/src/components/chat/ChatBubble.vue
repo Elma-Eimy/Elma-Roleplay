@@ -149,6 +149,12 @@ import {
   formatThoughtTitle,
   lastNonEmptyLine,
 } from "@/utils/chatDisplay";
+import {
+  parseBubbleContent,
+  replaceBubblePlaceholders,
+  stripStatusTags,
+  stripThoughtTags,
+} from "@/utils/chatBubbleContent";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 
 export interface ChatBubbleMessage {
@@ -362,13 +368,7 @@ const isThoughtExpanded = ref(false);
 // 替换 {{char}} / {{user}} 占位符
 const replacePlaceholders = (text: string) => {
   try {
-    if (!text) return "";
-    const str = String(text);
-    const charName = props.characterName || "角色";
-    const userName = props.userNickname || "用户";
-    return str
-      .replace(/\{\{char\}\}/gi, charName)
-      .replace(/\{\{user\}\}/gi, userName);
+    return replaceBubblePlaceholders(text, props.characterName, props.userNickname);
   } catch (err) {
     console.error("[ChatBubble] replacePlaceholders error:", err, "text:", text);
     return String(text || "");
@@ -377,51 +377,16 @@ const replacePlaceholders = (text: string) => {
 
 const parsedContent = computed(() => {
   try {
-    let content = props.message?.content;
-    if (content === null || content === undefined) {
-      content = "";
-    } else {
-      content = String(content);
-    }
-
-    // 1. 过滤掉 <status ...> 自定义标签，防止 rich-text 渲染自定义 XML 标签导致原生端崩溃
-    content = content.replace(/<status[^>]*\/?>/gi, "");
-
-    content = replacePlaceholders(content);
-
-    if (isUser.value) {
-      return { thought: "", reply: content };
-    }
-
-    // 优先采用独立的 reasoning_content 字段（API 标准格式）
-    let thought = props.message?.reasoning_content ? String(props.message.reasoning_content) : "";
-    let reply = content;
-
-    // 如果独立的 reasoning_content 为空，再尝试 fallback 从 content 中解析 <thought> 标签
-    if (!thought) {
-      const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
-      const match = content.match(thoughtRegex);
-      if (match) {
-        thought = match[1].trim();
-        reply = content.replace(thoughtRegex, "").trim();
-      }
-    } else {
-      // 如果是用独立的 reasoning_content，仍要清理 content 中残留的 <thought> 标签
-      reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-    }
-
-    thought = replacePlaceholders(thought);
-
-    // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
-    thought = thought.replace(/<\/?thought[^>]*>/gi, "");
-    reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-
-    return { thought, reply };
+    return parseBubbleContent({
+      content: props.message?.content,
+      reasoningContent: props.message?.reasoning_content,
+      isUser: isUser.value,
+      characterName: props.characterName,
+      userNickname: props.userNickname,
+    });
   } catch (err) {
     console.error("[ChatBubble] parsedContent error:", err, "message:", props.message);
-    const fallback = String(props.message?.content || "")
-      .replace(/<status[^>]*\/?>/gi, "")
-      .replace(/<\/?thought[^>]*>/gi, "");
+    const fallback = stripThoughtTags(stripStatusTags(String(props.message?.content || "")));
     return { thought: "", reply: fallback };
   }
 });
