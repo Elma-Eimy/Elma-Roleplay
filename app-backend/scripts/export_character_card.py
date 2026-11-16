@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from services.parse import read_png_card_payloads
+from services.media.character_card_parser import read_png_card_payloads
 
 
 def main():

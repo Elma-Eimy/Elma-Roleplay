@@ -24,7 +24,7 @@ import services.conversation.chat_engine as chat_engine
 import services.conversation.context_assembler as context_assembler
 import services.conversation.chat_turn_service as chat_turn_service
 import services.conversation.message_service as message_service
-from services.parse import _extract_xml_block, extract_stream_reply_prefix
+from services.conversation.reply_parser import _extract_xml_block, extract_stream_reply_prefix
 from core.locking import get_session_lock
 
 from application.session_routes import SessionAPIRouter

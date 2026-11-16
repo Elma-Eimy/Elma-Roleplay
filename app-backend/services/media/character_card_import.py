@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 
-from services.parse import parse_character_card
+from services.media.character_card_parser import parse_character_card
 
 
 def import_character_card(content: bytes, extension: str, upload_dir: str) -> dict:

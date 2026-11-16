@@ -16,7 +16,7 @@ import time
 from typing import Optional
 
 from core.config import settings
-from services.parse import _extract_xml_block
+from services.conversation.reply_parser import _extract_xml_block
 from services.infrastructure.model_capabilities import ModelSelection, generation_controls, resolve_selection, model_capability
 from services.infrastructure.llm_logger import log_llm_stream_wrapper_async, log_llm_completion_async
 from services.infrastructure.logging_context import diagnostic_task, log_event

@@ -69,7 +69,7 @@ async def _database(operation, *args, **kwargs):
 
 
 def _parse(raw, context):
-    from services.parse import extract_xml_block
+    from services.conversation.reply_parser import extract_xml_block
     if not isinstance(raw, str):
         raise GroupGenerationError('invalid_output')
     if isinstance(raw, str) and raw.lstrip().startswith('{'):
