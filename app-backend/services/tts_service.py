@@ -1,6 +1,5 @@
 import os
 import hashlib
-import base64
 import httpx
 import threading
 import logging
@@ -9,6 +8,7 @@ from services.infrastructure.logging_context import diagnostic_task, log_event
 logger = logging.getLogger(__name__)
 from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
+from services.infrastructure.tts_provider import build_speech_request, request_speech_async, request_speech_sync
 from services.media.tts_text import TTSTextProcessor
 
 class TTSService(TTSTextProcessor):
@@ -184,62 +184,15 @@ class TTSService(TTSTextProcessor):
             raise ValueError("未检测到可安全合成的目标角色台词。")
 
         # 缓存未命中，调用云端 MIMO API
-        url = f"{settings.TTS_MIMO_BASE_URL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {settings.MIMO_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        # 准备 payload 结构，兼容 MiMo API 规格
-        payload = {
-            "model": settings.TTS_MIMO_MODEL,
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": text_clean
-                }
-            ],
-            "audio": {
-                "format": "mp3",
-                "voice": voice
-            }
-        }
-        
-        # 如果语速不等于默认 1.0，则设置语速参数
-        if speed != 1.0:
-            payload["audio"]["speed"] = speed
+        url, headers, payload = build_speech_request(
+            text_clean, voice, speed, base_url=settings.TTS_MIMO_BASE_URL,
+            api_key=settings.MIMO_API_KEY, model=settings.TTS_MIMO_MODEL,
+        )
 
         log_event(logger, logging.INFO, "tts_provider_requested")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                response = await client.post(url, headers=headers, json=payload)
-                if response.status_code != 200:
-                    log_event(logger, logging.ERROR, "tts_provider_rejected", status_code=response.status_code)
-                response.raise_for_status()
-            except Exception as e:
-                log_event(logger, logging.ERROR, "tts_provider_failed", error_type=type(e).__name__)
-                raise RuntimeError(f"调用云端语音 API 失败: {str(e)}")
-
-            # 兼容两种返回格式：
-            # 1. 代理转换后的直接音频流 (Content-Type: audio/...)
-            content_type = response.headers.get("content-type", "").lower()
-            if "audio" in content_type:
-                audio_bytes = response.content
-                log_event(logger, logging.DEBUG, "tts_audio_received", size_bytes=len(audio_bytes))
-            else:
-                # 2. 小米官方的标准 JSON 响应，包含 Base64 数据
-                try:
-                    res_json = response.json()
-                    audio_data_base64 = res_json["choices"][0]["message"]["audio"]["data"]
-                    audio_bytes = base64.b64decode(audio_data_base64)
-                    log_event(logger, logging.DEBUG, "tts_audio_received", size_bytes=len(audio_bytes))
-                except KeyError as e:
-                    log_event(logger, logging.ERROR, "tts_response_invalid", phase="structure")
-                    raise RuntimeError("云端语音 API 返回格式异常。")
-                except Exception as e:
-                    log_event(logger, logging.ERROR, "tts_response_invalid", phase="decode", error_type=type(e).__name__)
-                    raise RuntimeError(f"解析语音数据失败: {str(e)}")
+            audio_bytes = await request_speech_async(client, url, headers, payload, logger=logger)
 
             # 写入本地缓存文件
             with open(filepath, "wb") as f:
@@ -337,52 +290,15 @@ class TTSService(TTSTextProcessor):
         if not text_clean or not text_clean.strip():
             raise ValueError("未检测到可安全合成的目标角色台词。")
 
-        url = f"{settings.TTS_MIMO_BASE_URL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {settings.MIMO_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": settings.TTS_MIMO_MODEL,
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": text_clean
-                }
-            ],
-            "audio": {
-                "format": "mp3",
-                "voice": voice
-            }
-        }
-        
-        if speed != 1.0:
-            payload["audio"]["speed"] = speed
+        url, headers, payload = build_speech_request(
+            text_clean, voice, speed, base_url=settings.TTS_MIMO_BASE_URL,
+            api_key=settings.MIMO_API_KEY, model=settings.TTS_MIMO_MODEL,
+        )
 
         log_event(logger, logging.INFO, "tts_provider_requested")
 
         client = self._get_client()
-        try:
-            response = client.post(url, headers=headers, json=payload)
-            if response.status_code != 200:
-                log_event(logger, logging.ERROR, "tts_provider_rejected", status_code=response.status_code)
-            response.raise_for_status()
-        except Exception as e:
-            log_event(logger, logging.ERROR, "tts_provider_failed", error_type=type(e).__name__)
-            raise RuntimeError(f"调用云端语音 API 失败: {str(e)}")
-
-        content_type = response.headers.get("content-type", "").lower()
-        if "audio" in content_type:
-            audio_bytes = response.content
-        else:
-            try:
-                res_json = response.json()
-                audio_data_base64 = res_json["choices"][0]["message"]["audio"]["data"]
-                audio_bytes = base64.b64decode(audio_data_base64)
-            except Exception as e:
-                log_event(logger, logging.ERROR, "tts_response_invalid", phase="decode", error_type=type(e).__name__)
-                raise RuntimeError("解析云端语音响应失败")
+        audio_bytes = request_speech_sync(client, url, headers, payload, logger=logger)
 
         with open(filepath, "wb") as f:
             f.write(audio_bytes)
