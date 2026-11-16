@@ -480,8 +480,10 @@ app-backend/
 │
 ├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
 │   ├── media/
+│   │   ├── character_card_parser.py # JSON/PNG 角色卡、元数据与 Prompt DSL 规范化
 │   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
+│   │   ├── reply_parser.py  # 单聊/群聊共用回复、状态增量与流式前缀解析
 │   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
 │   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）
 │   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
@@ -516,7 +518,8 @@ app-backend/
 │   │   │   ├── layout.py # 消息前缀、历史转换与背景定位
 │   │   │   └── token_estimator.py # 启发式 Prompt Token 范围估算服务
 │   │   ├── retrieval_query_service.py # 上下文化检索查询生成器
-│   │   └── session_service.py # 会话生命周期与分支状态拷贝/回滚服务
+│   │   ├── session_query_service.py # 单聊列表、详情、当前故事历史与候选批量读取
+│   │   └── session_service.py # 创建、删除、分支与回复保存；兼容原查询入口
 │   ├── infrastructure/      # 底层基础设施与服务客户端
 │   │   ├── clients.py       # Chroma/SQLite 客户端连接管理
 │   │   ├── llm_logger.py    # LLM 输入输出专门调试日志器
@@ -535,7 +538,7 @@ app-backend/
 │   │   ├── session_memory_query_service.py # 记忆分页、分类统计与角色故事导航
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
-│   ├── parse.py             # SillyTavern 角色卡解析与清洗
+│   ├── parse.py             # 旧角色卡/回复解析路径的兼容导出
 │   └── tts_service.py       # TTS 文本预处理与音频缓存自愈重建服务
 │
 ├── schemas.py               # Pydantic 请求/响应模型

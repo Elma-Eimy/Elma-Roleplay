@@ -4,6 +4,10 @@
 
 ## 自动回归
 
+`conversation/test_single_session_access.py` 验证单聊查询的兼容导出、详情缺失/无 Persona 行为、群聊拒绝、一次会话加载、调用方写事务保留，以及当前故事历史与跨故事候选隔离；独立进程确认查询模块不加载生命周期服务、配置、数据库或记忆模块。`api/test_recent_sessions.py` 保留最近会话固定两次查询和稳定分页回归；`test_stream_background_persistence.py` 在新查询模块注入生成结束，继续检查历史查询期间释放锁时响应仍标记待完成。相关源码和测试继续由隔离入口完整复制，无需扩展复制范围。
+
+`parsing/test_parser_boundaries.py` 验证旧 `services.parse` 的函数、正则与别名继续指向领域实现；独立进程分别导入角色卡与回复解析模块，确认不加载对方、兼容入口、配置或数据库模块。角色卡/PNG/CHARX、XML 容错、状态增量及流式前缀由 `parsing/` 既有回归覆盖，Prompt DSL 与聊天流输出仍由对话回归验证；隔离副本继续完整复制 `services/`、`scripts/` 和 `tests/`，无需扩展复制清单。
+
 记忆测试的共用数据、模型替身和辅助断言放在 `tests/support/memory/`；群聊迁移的旧库、种子数据、快照和版本锚点放在 `tests/support/migrations/`。这些夹具类不继承 `unittest.TestCase`，也不包含 `test_*` 方法。记忆及群聊迁移测试从 support 导入夹具，不导入其他测试模块；保持测试类名与方法名稳定，迁移夹具通过 `addCleanup` 释放临时库和补丁。统一隔离入口仍完整复制 `tests/`，无需单独扩展复制清单。
 
 `infrastructure/test_llm_logging.py` 验证日志默认关闭、同步/异步流故障隔离、原始异常与取消保持、跨 chunk 密钥脱敏、超大输出缓冲及 UTF-8 并发轮转上限；另注入慢写盘与慢关闭，检查异步聊天、流结束及生命周期关闭期间事件循环仍可推进，重复取消等待日志线程失败收尾。`test_logging_context.py` 验证任务编号嵌套复用、异步隔离、函数签名及宿主处理器故障隔离。配置回归覆盖启动配置和无界保留参数拒绝，TTS 与 Outbox 回归检查错误日志不带正文，`conversation/test_stream_background_persistence.py` 故障注入确认日志写入失败后回复仍落库且锁释放。所有文件写入临时目录，不使用开发日志、数据库或真实模型；测试副本仍完整复制 `application/`、`core/`、`services/` 和 `tests/`。

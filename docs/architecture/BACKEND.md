@@ -46,7 +46,11 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 群聊内部的归属校验、个人历史、操作者状态和前缀校验分别由 `group/guards.py`、`history_projection.py`、`state_projection.py` 和 `prefix_validation.py` 提供；历史写入、检查点与操作者查询沿同一方向复用，不相互读取私有校验。具体依赖和事务归属见 [群聊模块边界](GROUP_CHAT.md#代码组织与维护入口)。
 
-`character_service.py`、`parse.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色、角色卡解析和 TTS 功能。后续可按领域继续组织，迁移时应同时更新调用方，避免保留多份实现。
+`services/media/character_card_parser.py` 负责 JSON/PNG 角色卡读取、元数据写回和字段规范化，保留角色卡 Prompt DSL。`services/conversation/reply_parser.py` 负责单聊与群聊回复的 XML 容错、状态增量和流式正文前缀解析。两个解析模块可独立导入，不相互依赖，也不通过兼容入口加载对方；`services/parse.py` 只重导出原函数、正则与旧别名。生产服务、聊天路由和角色卡工具直接导入对应领域实现，旧导入仍指向同一函数对象。
+
+`services/conversation/session_query_service.py` 统一单聊最近会话、角色会话列表、详情、当前故事历史和候选批量读取。`session_service.py` 保留创建、删除、分支与回复保存，并兼容导出原有查询函数；路由和记忆故事导航直接依赖查询模块。查询沿用调用方 Session，不自行提交、回滚或重新取得事务；详情缺失由服务返回空值，HTTP 404 仍由路由转换。列表继续在统计与分页前排除群聊，历史和候选只读取当前故事，不合并祖先原文。
+
+`character_service.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色与 TTS 功能。会话剩余写入职责和 TTS 边界按具体调用关系另行评估，不按文件行数继续拆分。
 
 `services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
 
