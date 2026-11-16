@@ -525,6 +525,7 @@ app-backend/
 │   │   ├── clients.py       # Chroma/SQLite 客户端连接管理
 │   │   ├── llm_logger.py    # LLM 输入输出专门调试日志器
 │   │   ├── llm_provider.py  # 统一大模型服务适配器接口（解耦 SDK 调用）
+│   │   ├── tts_provider.py  # 语音请求构造、单次 POST 与音频响应解码
 │   │   └── outbox_worker.py # 发件箱后台异步任务处理器（向量同步、音频/头像清理与延迟退避）
 │   ├── lorebook/            # 世界书引擎
 │   │   ├── ahocorasick.py   # Aho-Corasick AC自动机快速多词匹配算法
@@ -540,7 +541,7 @@ app-backend/
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
 │   ├── parse.py             # 旧角色卡/回复解析路径的兼容导出
-│   └── tts_service.py       # 模型预处理编排、语音请求、缓存与消息绑定
+│   └── tts_service.py       # 模型预处理与客户端生命周期、缓存和消息绑定
 │
 ├── schemas.py               # Pydantic 请求/响应模型
 ├── alembic.ini              # Alembic 数据库迁移配置文件
