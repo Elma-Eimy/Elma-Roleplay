@@ -22,7 +22,7 @@
 
 ## 代码组织与维护入口
 
-群聊会话与执行服务集中在 `services/conversation/group/`，文件名不再重复 `group_` 前缀。调用方从对应模块导入，包内使用相对导入；`__init__.py` 不统一加载服务。现有函数签名、事务归属与函数内延迟导入继续保留。
+群聊会话与执行服务集中在 `services/conversation/group/`，文件名不再重复 `group_` 前缀。调用方从对应模块导入，包内使用相对导入；`__init__.py` 不统一加载服务。历史、检查点和查询服务的既有入口继续保留兼容导出；事务仍由对应业务服务持有，共用校验与投影不提交、回滚或重新取得事务。
 
 | 维护内容 | 模块 |
 | --- | --- |
@@ -30,8 +30,33 @@
 | 接受请求、后台执行与整轮编排 | `operation_service.py`、`background_service.py`、`round_service.py` |
 | 导演、成员上下文、模型快照与角色生成 | `director_service.py`、`context_service.py`、`call_snapshot.py`、`generation_service.py` |
 | 历史、候选、执行校验与检查点 | `history_service.py`、`candidate_state.py`、`execution_scope.py`、`checkpoint_service.py` |
+| 共用归属校验、个人历史与操作者状态投影 | `guards.py`、`history_projection.py`、`state_projection.py` |
+| 新旧候选前缀校验 | `prefix_validation.py` |
 | 业务调度、回应依据及旧协议读取 | `dispatch_service.py`、`turn_plan.py`、`legacy_protocol.py` |
 | 可见单元与审计 | `unit_protocol.py`、`unit_service.py`、`audit_service.py` |
+
+共用读取与校验按下图向下依赖。`query_service.py` 还通过 `context_service.py` 复用角色状态与 Prompt 装配；这些装配不会反向读取操作者查询服务。
+
+```mermaid
+flowchart TD
+    history[history_service] --> guards[guards]
+    history --> personal[history_projection]
+    history --> state[state_projection]
+    history --> prefix[prefix_validation]
+    checkpoint[checkpoint_service] --> guards
+    checkpoint --> prefix
+    query[query_service] --> guards
+    query --> state
+    query --> prefix
+    prefix --> plan[turn_plan]
+    prefix --> legacy[legacy_protocol]
+    plan --> personal
+    plan --> legacy
+    personal --> units[unit_service]
+    units --> legacy
+```
+
+`guards.py` 复用既有会话异常与执行作用域校验，集中提供群聊、成员、候选版本、知情记录和调用方事务检查。`history_projection.py` 在调用方快照内筛选已确认的所选历史与当前候选 sequence 边界，生成不可变个人 DTO；`state_projection.py` 统一轮次、活动请求与操作者能力投影。`prefix_validation.py` 在同一事务内核对新业务调度或旧审计前缀，不写入检查点。旧协议通过显式传入的回应依据解析函数校验引用，不反向导入 `turn_plan.py`。既有历史查询、恢复检查及检查点服务保留兼容入口，内部调用直接依赖实现所属模块。
 
 单聊与群聊共享的访问校验、角色状态和 Prompt 编译仍在 `conversation/` 及其 `prompting/` 子包；成员记忆在 `services/memory/`，立绘在 `services/media/`，进程运行权和生命周期在 `application/`。测试入口递归复制整个 `services/`，自动发现资源入口的边界回归也递归扫描服务子包。
 

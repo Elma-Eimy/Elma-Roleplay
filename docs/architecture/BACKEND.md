@@ -44,6 +44,8 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 | `scripts/` | 显式执行的查询和重置工具 | 自动启动的业务流程 |
 | `tests/` | 自动回归和独立手动场景 | 生产业务实现 |
 
+群聊内部的归属校验、个人历史、操作者状态和前缀校验分别由 `group/guards.py`、`history_projection.py`、`state_projection.py` 和 `prefix_validation.py` 提供；历史写入、检查点与操作者查询沿同一方向复用，不相互读取私有校验。具体依赖和事务归属见 [群聊模块边界](GROUP_CHAT.md#代码组织与维护入口)。
+
 `character_service.py`、`parse.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色、角色卡解析和 TTS 功能。后续可按领域继续组织，迁移时应同时更新调用方，避免保留多份实现。
 
 `services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
