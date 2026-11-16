@@ -85,4 +85,3 @@ class MemoryConsolidationFixture:
         overview = get_character_memory_overview(character_id=self.character.id, limit=50, offset=0, db=self.db)
         for story in overview["sessions"]:
             self.assertEqual(self.view(story["session_id"])["facets"], story["memory_stats"])
-

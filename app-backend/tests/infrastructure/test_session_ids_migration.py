@@ -5,14 +5,14 @@ from alembic import command
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
-from tests.infrastructure import test_group_operations_migration as fixtures
+from tests.support.migrations import group_operations as fixtures
 
 
 class SessionIdsMigrationTests(unittest.TestCase):
-    snapshot = fixtures.GroupOperationsMigrationTests.snapshot
+    snapshot = fixtures.GroupOperationsMigrationFixture.snapshot
 
     def test_populated_upgrade_preserves_rows_and_prevents_id_reuse(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config, fixtures.HEAD)
         self.old_tables = inspect(self.engine).get_table_names()
         before = self.snapshot()

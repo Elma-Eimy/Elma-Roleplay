@@ -2,13 +2,13 @@
 import unittest
 from alembic import command
 from sqlalchemy import inspect
-from tests.infrastructure import test_group_operations_migration as fixtures
+from tests.support.migrations import group_operations as fixtures
 
 
 class GroupPortraitMigrationTests(unittest.TestCase):
-    snapshot = fixtures.GroupOperationsMigrationTests.snapshot
+    snapshot = fixtures.GroupOperationsMigrationFixture.snapshot
     def setUp(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config, 'b6e7f8a9b0c1')
 
     def test_upgrade_preserves_old_rows_and_allows_empty_downgrade(self):

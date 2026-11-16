@@ -5,17 +5,17 @@ from alembic import command
 from sqlalchemy import event, inspect
 from sqlalchemy.exc import IntegrityError
 from core.models import GroupDispatch, GroupRoundCandidate
-from tests.infrastructure import test_group_units_migration as fixtures
+from tests.support.migrations import group_units as fixtures
 
 OLD = 'b8a9b0c1d2e3'
 HEAD = 'b9b0c1d2e3f4'
 
 
 class GroupDispatchMigrationTests(unittest.TestCase):
-    snapshot = fixtures.GroupUnitsMigrationTests.snapshot
+    snapshot = fixtures.GroupUnitsMigrationFixture.snapshot
 
     def setUp(self):
-        fixtures.GroupUnitsMigrationTests.setUp(self)
+        fixtures.GroupUnitsMigrationFixture.setUp(self)
         command.upgrade(self.config, OLD)
 
     def test_upgrade_preserves_legacy_data_and_matches_orm_without_backfill(self):

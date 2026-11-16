@@ -4,19 +4,12 @@ from alembic import command
 from sqlalchemy import inspect, text, event
 from sqlalchemy.exc import IntegrityError
 from core.models import GroupRound, GroupRoundCandidate, GroupRoundOperation
-from tests.infrastructure import test_group_units_migration as fixtures
-
-HEAD = "b1e2f3a4b5c6"
-OLD = fixtures.HEAD
 
 
-class GroupOperationsMigrationTests(unittest.TestCase):
-    snapshot = fixtures.GroupUnitsMigrationTests.snapshot
+from tests.support.migrations.group_operations import HEAD, OLD, GroupOperationsMigrationFixture
 
-    def setUp(self):
-        fixtures.GroupUnitsMigrationTests.setUp(self)
-        command.upgrade(self.config, OLD)
 
+class GroupOperationsMigrationTests(GroupOperationsMigrationFixture, unittest.TestCase):
     def test_upgrade_preserves_content_permissions_and_schema_matches_orm(self):
         with self.engine.connect() as db:
             before = {table: db.execute(text("SELECT * FROM " + table)).all() for table in (

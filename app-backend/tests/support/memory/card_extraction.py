@@ -95,4 +95,3 @@ class MemoryCardExtractionFixture:
         return retrieve_write_candidates(
             self.persona.id, self.persona.character_id, "用户的猫叫豆包", self.db,
             memory_type=MemoryType.fact, temporal_status="unknown", temporal_note=None, **kwargs)
-

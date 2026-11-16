@@ -75,4 +75,3 @@ class MemoryEventBufferFixture:
         result = create_session_service(character_id=self.persona.character_id, parent_session_id=self.session_id,
                                         title="分支", greeting_index=None, start_message_id=message_id, db=self.db)
         return result["persona_id"]
-

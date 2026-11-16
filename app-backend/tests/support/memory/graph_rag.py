@@ -79,4 +79,3 @@ class GraphRagFixture:
                               "source_start": message.id, "source_end": message.id}})
         self.db.commit()
         return memory
-

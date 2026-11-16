@@ -2,12 +2,12 @@
 import unittest
 from alembic import command
 from sqlalchemy import inspect
-from tests.infrastructure import test_group_snapshot_migration as fixtures
+from tests.support.migrations import group_snapshot as fixtures
 
 
 class GroupGreetingMigrationTests(unittest.TestCase):
     def setUp(self):
-        fixtures.GroupSnapshotMigrationTests.setUp(self)
+        fixtures.GroupSnapshotMigrationFixture.setUp(self)
         command.upgrade(self.config, 'b7f8a9b0c1d2')
 
     def test_old_origin_preserved_without_automatic_greeting_and_empty_downgrade(self):
