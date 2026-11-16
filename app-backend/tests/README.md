@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+记忆测试的共用数据、模型替身和辅助断言放在 `tests/support/memory/`；群聊迁移的旧库、种子数据、快照和版本锚点放在 `tests/support/migrations/`。这些夹具类不继承 `unittest.TestCase`，也不包含 `test_*` 方法。记忆及群聊迁移测试从 support 导入夹具，不导入其他测试模块；保持测试类名与方法名稳定，迁移夹具通过 `addCleanup` 释放临时库和补丁。统一隔离入口仍完整复制 `tests/`，无需单独扩展复制清单。
+
 `infrastructure/test_llm_logging.py` 验证日志默认关闭、同步/异步流故障隔离、原始异常与取消保持、跨 chunk 密钥脱敏、超大输出缓冲及 UTF-8 并发轮转上限；另注入慢写盘与慢关闭，检查异步聊天、流结束及生命周期关闭期间事件循环仍可推进，重复取消等待日志线程失败收尾。`test_logging_context.py` 验证任务编号嵌套复用、异步隔离、函数签名及宿主处理器故障隔离。配置回归覆盖启动配置和无界保留参数拒绝，TTS 与 Outbox 回归检查错误日志不带正文，`conversation/test_stream_background_persistence.py` 故障注入确认日志写入失败后回复仍落库且锁释放。所有文件写入临时目录，不使用开发日志、数据库或真实模型；测试副本仍完整复制 `application/`、`core/`、`services/` 和 `tests/`。
 
 `infrastructure/test_outbox_worker.py` 使用临时 SQLite 验证数据库操作、外部执行及 Session 关闭归属同一工作线程，写锁等待期间事件循环心跳仍可推进，取消与重复取消等待当前任务持久结果及清理，并保留后续待处理任务。另覆盖取消期间失败的退避记录、过期租约恢复及重试冷却；向量最新值、删除和失败重试由既有 `test_vector_outbox_consistency.py` 验证。不访问真实向量服务或开发数据库，隔离副本复制范围保持原样。
