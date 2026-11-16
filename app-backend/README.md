@@ -481,6 +481,7 @@ app-backend/
 ├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
 │   ├── media/
 │   │   ├── character_card_parser.py # JSON/PNG 角色卡、元数据与 Prompt DSL 规范化
+│   │   ├── tts_text.py       # 无 I/O 的台词规则、提示词、校验与安全回退
 │   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
 │   │   ├── reply_parser.py  # 单聊/群聊共用回复、状态增量与流式前缀解析
@@ -539,7 +540,7 @@ app-backend/
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
 │   ├── parse.py             # 旧角色卡/回复解析路径的兼容导出
-│   └── tts_service.py       # TTS 文本预处理与音频缓存自愈重建服务
+│   └── tts_service.py       # 模型预处理编排、语音请求、缓存与消息绑定
 │
 ├── schemas.py               # Pydantic 请求/响应模型
 ├── alembic.ini              # Alembic 数据库迁移配置文件

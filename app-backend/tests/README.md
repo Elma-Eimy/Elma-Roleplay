@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`tts/test_tts_preprocessing.py` 使用模型与 HTTP 替身检查台词提炼、压缩重试、无台词结果、安全回退和日志脱敏。另验证独立文本策略在不加载配置/模型/HTTP/数据库的子进程中执行，原服务继承方法与实例覆盖保持有效，普通文本及消息绑定的既有 p2 缓存命中不触发预处理、语音请求或数据库提交。`infrastructure/test_audio_files.py` 继续覆盖旧音频下载与恢复，群聊消息在创建缓存前拒绝的规则由 API 边界回归验证。源码与测试仍由隔离入口完整复制，不访问真实语音服务或开发缓存。
+
 `conversation/test_single_session_access.py` 验证单聊查询的兼容导出、详情缺失/无 Persona 行为、群聊拒绝、一次会话加载、调用方写事务保留，以及当前故事历史与跨故事候选隔离；独立进程确认查询模块不加载生命周期服务、配置、数据库或记忆模块。`api/test_recent_sessions.py` 保留最近会话固定两次查询和稳定分页回归；`test_stream_background_persistence.py` 在新查询模块注入生成结束，继续检查历史查询期间释放锁时响应仍标记待完成。相关源码和测试继续由隔离入口完整复制，无需扩展复制范围。
 
 `parsing/test_parser_boundaries.py` 验证旧 `services.parse` 的函数、正则与别名继续指向领域实现；独立进程分别导入角色卡与回复解析模块，确认不加载对方、兼容入口、配置或数据库模块。角色卡/PNG/CHARX、XML 容错、状态增量及流式前缀由 `parsing/` 既有回归覆盖，Prompt DSL 与聊天流输出仍由对话回归验证；隔离副本继续完整复制 `services/`、`scripts/` 和 `tests/`，无需扩展复制清单。

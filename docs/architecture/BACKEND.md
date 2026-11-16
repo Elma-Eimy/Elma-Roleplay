@@ -50,7 +50,9 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 `services/conversation/session_query_service.py` 统一单聊最近会话、角色会话列表、详情、当前故事历史和候选批量读取。`session_service.py` 保留创建、删除、分支与回复保存，并兼容导出原有查询函数；路由和记忆故事导航直接依赖查询模块。查询沿用调用方 Session，不自行提交、回滚或重新取得事务；详情缺失由服务返回空值，HTTP 404 仍由路由转换。列表继续在统计与分页前排除群聊，历史和候选只读取当前故事，不合并祖先原文。
 
-`character_service.py` 和 `tts_service.py` 暂保留在 `services/` 根目录，分别承担角色与 TTS 功能。会话剩余写入职责和 TTS 边界按具体调用关系另行评估，不按文件行数继续拆分。
+`services/media/tts_text.py` 的 `TTSTextProcessor` 维护无 I/O 的台词规则、提示词构造、模型结果校验、截断和安全回退，可独立导入并执行，不加载配置、HTTP、模型或数据库模块。`TTSService` 继承该策略，保留原方法、阈值属性与实例覆盖方式；模型选择和同步/异步预处理调用、诊断装饰器、HTTP 客户端、缓存及消息绑定仍由 `services/tts_service.py` 管理。文本方法继续通过 `self` 调用，不创建另一份策略实例。
+
+本次不调整文本规则或提示词，预处理版本仍为 `2`，已存在的普通文本和消息绑定 p2 缓存继续命中；日志名称和任务编号包装保持原样。`character_service.py` 暂保留在 `services/` 根目录，会话剩余写入职责与 TTS 请求、缓存及绑定边界按具体调用关系继续评估。
 
 `services/conversation/chat_engine.py` 的 `_prepare_generation_kwargs()` 为流式与非流式生成统一准备参数，按请求、角色卡和全局默认值解析采样与思考设置，再交给模型能力适配。两个生成入口分别保留原有调用、响应解析及错误处理；上下文装配与回合持久化不进入参数准备函数。
 
@@ -139,4 +141,4 @@ Outbox 任务保存在 `app.state.outbox_task` 中，由创建它的 lifespan �
 - 测试入口和范围见 [测试指南](../../app-backend/tests/README.md)，维护命令见 [工具说明](../../app-backend/scripts/README.md)。记忆共用数据与模型替身位于 `tests/support/memory/`，群聊迁移旧库与快照位于 `tests/support/migrations/`；夹具不继承 `TestCase`，不反向导入测试模块，隔离副本沿用完整复制 `tests/` 的范围。
 - 每次移动代码都同步修改导入、测试临时副本的复制范围和文档，运行 `python -m tests` 后再继续下一层调整。
 
-后续可继续检查 `core/config.py` 的配置职责、数据库引擎的初始化，以及角色卡解析和 TTS 的领域归属。这些变更需要各自的行为测试，不通过单纯改目录一次性混入。
+后续可继续检查 `core/config.py` 的配置职责、数据库引擎的初始化，以及 TTS 外部请求、缓存和消息绑定的边界。这些变更需要各自的行为测试，不通过单纯改目录一次性混入。
