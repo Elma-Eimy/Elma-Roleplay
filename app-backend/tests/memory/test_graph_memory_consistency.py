@@ -7,15 +7,15 @@ from services.memory.graph_evidence import content_fingerprint, snapshot_sources
 from services.memory.graph_service import retrieve_graph_context, upsert_graph_data
 from services.memory.memory_visibility import memory_view
 from services.memory.memory_manager import delete_memory_chunk, update_memory_chunk
-from tests.memory import test_graph_rag_quality as fixture
-from tests.memory import test_memory_card_extraction as extraction_fixture
+from tests.support.memory import graph_rag as fixture
+from tests.support.memory import card_extraction as extraction_fixture
 from services.memory import memory_extraction_service as extraction
 
 
 class GraphMemoryConsistencyTests(unittest.TestCase):
-    setUp = fixture.GraphRagQualityTests.setUp
-    tearDown = fixture.GraphRagQualityTests.tearDown
-    _upsert = fixture.GraphRagQualityTests._upsert
+    setUp = fixture.GraphRagFixture.setUp
+    tearDown = fixture.GraphRagFixture.tearDown
+    _upsert = fixture.GraphRagFixture._upsert
 
     def fact(self, persona=None, description="小红喜欢蛋糕。", relation="likes", entities=None):
         return self._upsert(persona or self.parent_persona,
@@ -181,9 +181,9 @@ class GraphMemoryConsistencyTests(unittest.TestCase):
 
 
 class GraphExtractionIntegrationTests(unittest.TestCase):
-    setUp = extraction_fixture.MemoryCardExtractionTests.setUp
-    tearDown = extraction_fixture.MemoryCardExtractionTests.tearDown
-    _provider_with_payload = staticmethod(extraction_fixture.MemoryCardExtractionTests._provider_with_payload)
+    setUp = extraction_fixture.MemoryCardExtractionFixture.setUp
+    tearDown = extraction_fixture.MemoryCardExtractionFixture.tearDown
+    _provider_with_payload = staticmethod(extraction_fixture.MemoryCardExtractionFixture._provider_with_payload)
 
     def payload(self):
         return {"memories": [

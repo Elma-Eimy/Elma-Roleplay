@@ -8,16 +8,17 @@ from core.models import MemoryChunk, MemoryType, MemoryExtractionJob, Character,
 from services.memory import memory_extraction_service as extraction
 from services.memory.memory_extraction_jobs import process_due_jobs, processing_status, pending_context
 from services.memory.memory_event_buffer import load_event_snapshot, event_context
-from tests.memory import test_memory_event_buffer as fixture
+from tests.support.memory import event_buffer as fixture
+from tests.support.memory.card_extraction import MemoryCardExtractionFixture
 
 
 class ExtractionJobTests(unittest.TestCase):
-    setUp = fixture.MemoryEventBufferTests.setUp
-    tearDown = fixture.MemoryEventBufferTests.tearDown
-    advance = fixture.MemoryEventBufferTests.advance
-    card = fixture.MemoryEventBufferTests.card
-    extract = fixture.MemoryEventBufferTests.extract
-    buffer = fixture.MemoryEventBufferTests.buffer
+    setUp = fixture.MemoryEventBufferFixture.setUp
+    tearDown = fixture.MemoryEventBufferFixture.tearDown
+    advance = fixture.MemoryEventBufferFixture.advance
+    card = fixture.MemoryEventBufferFixture.card
+    extract = fixture.MemoryEventBufferFixture.extract
+    buffer = fixture.MemoryEventBufferFixture.buffer
 
     def old_fact(self, text, status="unknown", note=None):
         chunk = MemoryChunk(persona_id=self.persona.id, origin_session_id=self.session_id,
@@ -44,8 +45,7 @@ class ExtractionJobTests(unittest.TestCase):
             return {"relation": "coexist"}
 
         # The fixture patches the resolver; set the callback on that mock through a separate payload provider.
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": cards, "entities": [], "relations": []})
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": cards, "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
              patch.object(extraction, "resolve_memory_relationship_via_llm", side_effect=decide):
             self.assertEqual(1, extraction.summarize_and_store_memory(self.session_id, self.db))
@@ -53,7 +53,6 @@ class ExtractionJobTests(unittest.TestCase):
 
     def test_vector_query_releases_read_transaction(self):
         from services.memory import memory_write_candidates
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         from types import SimpleNamespace
         from unittest.mock import MagicMock
         for index in range(14):
@@ -67,7 +66,7 @@ class ExtractionJobTests(unittest.TestCase):
             checked.append(True)
             return {"ids": [[]], "distances": [[]]}
 
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card(
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card(
             "User prefers coffee.", memory_type="fact", temporal_status="unknown", event_status="complete")],
             "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
@@ -80,8 +79,7 @@ class ExtractionJobTests(unittest.TestCase):
         self.old_fact("User prefers coffee.")
         cards = [self.card("User prefers hot coffee.", memory_type="fact", event_status="complete", temporal_status="unknown"),
                  self.card("User and Lin completed a beach visit.", event_status="complete")]
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": cards, "entities": [], "relations": []})
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": cards, "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
              patch.object(extraction, "resolve_memory_relationship_via_llm", side_effect=extraction.MemoryDecisionDeferred("offline")):
             self.assertEqual(1, extraction.summarize_and_store_memory(self.session_id, self.db))
@@ -106,8 +104,7 @@ class ExtractionJobTests(unittest.TestCase):
     def test_same_content_with_more_precise_time_creates_a_version(self):
         old = self.old_fact("User lives in Hangzhou.")
         seen = []
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card(
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card(
             "User lives in Hangzhou.", memory_type="fact", event_status="complete", temporal_status="current", temporal_note="Friday")],
             "entities": [], "relations": []})
 
@@ -140,9 +137,8 @@ class ExtractionJobTests(unittest.TestCase):
 
     def test_manual_response_reports_retrying_instead_of_success(self):
         self.old_fact("User prefers coffee.")
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         from routers.sessions import trigger_memory_summary
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card(
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card(
             "User prefers hot coffee.", memory_type="fact", event_status="complete")], "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
              patch.object(extraction, "resolve_memory_relationship_via_llm", side_effect=RuntimeError("private provider text")):
@@ -158,8 +154,7 @@ class ExtractionJobTests(unittest.TestCase):
         self.assertNotIn("private", json.dumps(response))
 
     def test_capture_failure_retries_without_new_chat_messages(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card(event_status="complete")],
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card(event_status="complete")],
                                                                     "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", side_effect=ConnectionError("offline")):
             self.assertEqual(0, extraction.summarize_and_store_memory(self.session_id, self.db))
@@ -173,9 +168,8 @@ class ExtractionJobTests(unittest.TestCase):
         provider.generate.assert_called_once()
 
     def test_manual_flush_marks_previously_captured_candidates_for_closure(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         from routers.sessions import trigger_memory_summary
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card()], "entities": [], "relations": []})
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card()], "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider):
             extraction.summarize_and_store_memory(self.session_id, self.db, _process=False)
         waiting = self.db.query(MemoryExtractionJob).one()
@@ -191,8 +185,7 @@ class ExtractionJobTests(unittest.TestCase):
         self.assertEqual("completed", processing_status(self.persona.id, self.db)["status"])
 
     def test_relation_model_receives_time_fields_without_internal_evidence(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"relation": "same", "matched_memory_id": 9})
+        provider = MemoryCardExtractionFixture._provider_with_payload({"relation": "same", "matched_memory_id": 9})
         old = {"id": 9, "content": "User lives in Hangzhou.", "temporal_status": "unknown", "temporal_note": None,
                "_source_evidence": [{"hash": "internal-evidence"}]}
         new = {"content": "User lives in Hangzhou.", "temporal_status": "current", "temporal_note": "Friday",
@@ -205,9 +198,8 @@ class ExtractionJobTests(unittest.TestCase):
         self.assertNotIn("internal-evidence", json.dumps(sent))
 
     def test_expired_processing_row_does_not_break_claiming_another_job(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         from services.memory.memory_extraction_jobs import _claim
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [
             self.card("User prefers coffee.", memory_type="fact", event_status="complete"),
             self.card("User owns a black cat.", memory_type="fact", event_status="complete")], "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider):
@@ -223,8 +215,7 @@ class ExtractionJobTests(unittest.TestCase):
         self.assertIsNone(_claim(second_id, self.db))
 
     def test_backfilled_current_fact_becomes_historical_without_replacing_later_fact(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [self.card(
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [self.card(
             "User lives in Beijing.", memory_type="fact", temporal_status="current", event_status="complete")],
             "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider):
@@ -242,11 +233,10 @@ class ExtractionJobTests(unittest.TestCase):
         self.assertEqual("current", newer.temporal_status)
 
     def test_edit_before_processing_preserves_event_with_independent_sources(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         cards = [self.card(source_start_message_id=self.source_ids[0], source_end_message_id=self.source_ids[0]),
                  self.card("User prefers coffee.", memory_type="fact", event_status="complete",
                            source_start_message_id=self.source_ids[1], source_end_message_id=self.source_ids[1])]
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": cards, "entities": [
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": cards, "entities": [
             {"name": "Cafe", "memory_indices": [0, 1]}], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider):
             extraction.summarize_and_store_memory(self.session_id, self.db, _process=False)

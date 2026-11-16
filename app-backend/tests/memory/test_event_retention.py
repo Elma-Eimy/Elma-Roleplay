@@ -7,7 +7,7 @@ from unittest.mock import patch
 from core.models import ChatMessage, GraphEntity, MemoryChunk, MemoryEventBuffer, SessionPersona
 from services.memory import memory_extraction_service as extraction
 from services.memory.memory_event_buffer import event_context, load_event_snapshot
-from tests.memory import test_memory_event_buffer as fixture
+from tests.support.memory import event_buffer as fixture
 
 
 def retained_facts(facts, texts):
@@ -15,14 +15,17 @@ def retained_facts(facts, texts):
                 for text in texts) for fact in facts]
 
 
+from tests.support.memory.card_extraction import MemoryCardExtractionFixture
+
+
 class EventRetentionTests(unittest.TestCase):
-    setUp = fixture.MemoryEventBufferTests.setUp
-    tearDown = fixture.MemoryEventBufferTests.tearDown
-    advance = fixture.MemoryEventBufferTests.advance
-    card = fixture.MemoryEventBufferTests.card
-    extract = fixture.MemoryEventBufferTests.extract
-    buffer = fixture.MemoryEventBufferTests.buffer
-    fork = fixture.MemoryEventBufferTests.fork
+    setUp = fixture.MemoryEventBufferFixture.setUp
+    tearDown = fixture.MemoryEventBufferFixture.tearDown
+    advance = fixture.MemoryEventBufferFixture.advance
+    card = fixture.MemoryEventBufferFixture.card
+    extract = fixture.MemoryEventBufferFixture.extract
+    buffer = fixture.MemoryEventBufferFixture.buffer
+    fork = fixture.MemoryEventBufferFixture.fork
 
     def test_fixed_dialogues_keep_all_accepted_facts_across_checkpoints_and_restart(self):
         cases = json.loads((Path(__file__).parents[1] / "fixtures/event_retention_cases.json").read_text(encoding="utf-8"))
@@ -102,14 +105,13 @@ class EventRetentionTests(unittest.TestCase):
         self.assertEqual(2, self.db.query(MemoryChunk).filter_by(event_id=event_id).count())
 
     def test_ordinary_card_cannot_replace_an_existing_event_checkpoint(self):
-        from tests.memory.test_memory_card_extraction import MemoryCardExtractionTests
         self.extract([self.card("The old beach stage contained a precise promise.")])
         event_id = self.buffer().id
         extraction.summarize_and_store_memory(self.session_id, self.db, flush_events=True)
         old = self.db.query(MemoryChunk).one()
         old_id, old_text = old.id, old.content
         self.advance("Another event was completed.")
-        provider = MemoryCardExtractionTests._provider_with_payload({"memories": [
+        provider = MemoryCardExtractionFixture._provider_with_payload({"memories": [
             self.card("A newly completed event.", event_status="complete")], "entities": [], "relations": []})
         with patch.object(extraction, "get_llm_provider", return_value=provider), patch.object(
                 extraction, "resolve_memory_relationship_via_llm", return_value={
