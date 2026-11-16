@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Optional
+import logging
 
 from sqlalchemy.orm import Session as DBSession
 
@@ -18,6 +19,9 @@ from core.models import (
 import services.conversation.session_service as session_service
 import services.memory.cognition_service as cognition_service
 import services.memory.memory_extraction_service as memory_extraction_service
+from services.infrastructure.logging_context import log_event
+
+logger = logging.getLogger(__name__)
 
 
 class ChatTurnError(Exception):
@@ -167,7 +171,7 @@ def abort_chat_turn(turn: ChatTurn, db: DBSession) -> bool:
         return True
     except Exception as exc:
         db.rollback()
-        print(f"[WARN] 清理失败聊天回合时发生异常: {exc}")
+        log_event(logger, logging.WARNING, "chat_turn_abort_failed", error_type=type(exc).__name__)
         return False
 
 
@@ -186,14 +190,12 @@ def run_post_turn_maintenance(session_id: int, persona_id: int) -> None:
                 from services.memory.memory_extraction_jobs import processing_status, request_capture
                 request_capture(persona_id, db)
                 memory_status = processing_status(persona_id, db)
-                print(
-                    f"[INFO] 自动记忆提纯已入队 "
-                    f"(session_id={session_id}, trigger={effective_limit}, "
-                    f"status={memory_status['status']}, pending={memory_status['pending_count']})"
-                )
+                log_event(logger, logging.INFO, "chat_memory_enqueued", session_id=session_id,
+                          persona_id=persona_id, pending_count=memory_status["pending_count"])
         except Exception as exc:
             db.rollback()
-            print(f"[WARN] 自动记忆提纯失败: {exc}")
+            log_event(logger, logging.WARNING, "chat_memory_enqueue_failed", session_id=session_id,
+                      persona_id=persona_id, error_type=type(exc).__name__)
 
         try:
             cognition_unseen = cognition_service.get_cognition_unseen_count(
@@ -202,9 +204,9 @@ def run_post_turn_maintenance(session_id: int, persona_id: int) -> None:
             if cognition_unseen >= settings.APP_COGNITION_UPDATE_INTERVAL:
                 result = cognition_service.update_cognition_state(persona_id, db)
                 if result is not None:
-                    print(f"[INFO] 自动认知更新完成 (persona_id={persona_id})")
+                    log_event(logger, logging.INFO, "chat_cognition_updated", persona_id=persona_id)
         except Exception as exc:
             db.rollback()
-            print(f"[WARN] 自动认知更新失败: {exc}")
+            log_event(logger, logging.WARNING, "chat_cognition_failed", persona_id=persona_id, error_type=type(exc).__name__)
     finally:
         db.close()

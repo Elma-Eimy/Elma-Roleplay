@@ -15,6 +15,7 @@ from services.infrastructure.outbox_worker import run_outbox_worker
 from services.memory.memory_retry_worker import run_group_memory_worker, run_memory_retry_worker
 from routers.chat import cancel_all_stream_tasks
 from services.media.charx_import import cleanup_previews
+from services.infrastructure.llm_logger import close_debug_log_async
 
 
 async def run_charx_cleanup():
@@ -82,7 +83,10 @@ async def _stop_workers(*tasks, group_owner=None, maintenance=None):
     try:
         await cancel_all_stream_tasks()
     finally:
-        if maintenance is not None:
-            await maintenance.stop()
+        try:
+            if maintenance is not None:
+                await maintenance.stop()
+        finally:
+            await close_debug_log_async()
     print("[SHUTDOWN] Cleaned up active chat stream workers.")
     return [result for result in results if isinstance(result, Exception)]

@@ -18,6 +18,13 @@ load_dotenv(os.path.join(parent_dir, ".env"))
 # 声明式系统配置蓝图 (CONFIG_SCHEMA)
 # 作用: 只要在这里新增配置项，系统在启动时就会自动为用户的 config.yaml 补齐默认值，并动态绑定为类属性，实现“零修改升级”
 CONFIG_SCHEMA = {
+    "logging": {
+        "llm_debug_enabled": {"type": bool, "default": False, "dynamic": False, "attr": "LOG_LLM_DEBUG_ENABLED"},
+        "llm_debug_path": {"type": str, "default": "logs/llm_debug.log", "dynamic": False, "attr": "LOG_LLM_DEBUG_PATH", "is_path": True},
+        "llm_debug_max_bytes": {"type": int, "default": 1048576, "dynamic": False, "attr": "LOG_LLM_DEBUG_MAX_BYTES"},
+        "llm_debug_backup_count": {"type": int, "default": 3, "dynamic": False, "attr": "LOG_LLM_DEBUG_BACKUP_COUNT"},
+        "llm_debug_excerpt_bytes": {"type": int, "default": 4096, "dynamic": False, "attr": "LOG_LLM_DEBUG_EXCERPT_BYTES"},
+    },
     "llm": {
         "group_json_mode": {"type": bool, "default": False, "dynamic": False, "attr": "LLM_GROUP_JSON_MODE"},
         # 新版对话模型独立于思考开关；旧配置升级时保留原先实际选中的模型。
@@ -268,6 +275,11 @@ class Settings:
             raise ValueError("配置值类型无效。") from exc
 
     def _post_process_config(self):
+        for name, lower, upper in (("LOG_LLM_DEBUG_MAX_BYTES", 4096, 104857600),
+                                   ("LOG_LLM_DEBUG_BACKUP_COUNT", 1, 20),
+                                   ("LOG_LLM_DEBUG_EXCERPT_BYTES", 128, 65536)):
+            if not lower <= getattr(self, name) <= upper:
+                raise ValueError(f"{name} 必须在 {lower} 与 {upper} 之间。")
         self.ACTIVE_CHAT_MODEL = self.LLM_DEFAULT_CHAT_MODEL
         self.config["llm"]["reasoning_mode"] = self.LLM_REASONING_MODE
 

@@ -23,6 +23,26 @@ class TestConfigSystem(unittest.TestCase):
         self.path.write_text(yaml.safe_dump({"llm": llm or {}, **sections}), encoding="utf-8")
         return Settings(self.path)
 
+    def test_model_debug_logging_defaults_off_and_remains_startup_only(self):
+        config = self.settings(logging={"llm_debug_path": str(Path(self.directory.name) / "debug.log")})
+        self.assertFalse(config.LOG_LLM_DEBUG_ENABLED)
+        self.assertEqual(1048576, config.LOG_LLM_DEBUG_MAX_BYTES)
+        self.assertEqual(3, config.LOG_LLM_DEBUG_BACKUP_COUNT)
+        before = self.path.read_bytes()
+        config.update_and_persist({"llm_debug_enabled": True})
+        self.assertFalse(config.LOG_LLM_DEBUG_ENABLED)
+        self.assertEqual(before, self.path.read_bytes())
+
+    def test_model_debug_logging_rejects_unbounded_or_invalid_retention(self):
+        for key, value in (("llm_debug_max_bytes", 0), ("llm_debug_backup_count", 0),
+                           ("llm_debug_backup_count", 21), ("llm_debug_excerpt_bytes", -1)):
+            with self.subTest(key=key, value=value):
+                self.path.write_text(yaml.safe_dump({"logging": {key: value}}), encoding="utf-8")
+                before = self.path.read_bytes()
+                with self.assertRaises(ValueError):
+                    Settings(self.path)
+                self.assertEqual(before, self.path.read_bytes())
+
     def test_legacy_slots_migrate_once_without_switching_models_on_thinking_change(self):
         for enabled in (False, True):
             with self.subTest(enabled=enabled):
