@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`infrastructure/test_llm_logging.py` 验证日志默认关闭、同步/异步流故障隔离、原始异常与取消保持、跨 chunk 密钥脱敏、超大输出缓冲及 UTF-8 并发轮转上限；另注入慢写盘与慢关闭，检查异步聊天、流结束及生命周期关闭期间事件循环仍可推进，重复取消等待日志线程失败收尾。`test_logging_context.py` 验证任务编号嵌套复用、异步隔离、函数签名及宿主处理器故障隔离。配置回归覆盖启动配置和无界保留参数拒绝，TTS 与 Outbox 回归检查错误日志不带正文，`conversation/test_stream_background_persistence.py` 故障注入确认日志写入失败后回复仍落库且锁释放。所有文件写入临时目录，不使用开发日志、数据库或真实模型；测试副本仍完整复制 `application/`、`core/`、`services/` 和 `tests/`。
+
 `infrastructure/test_outbox_worker.py` 使用临时 SQLite 验证数据库操作、外部执行及 Session 关闭归属同一工作线程，写锁等待期间事件循环心跳仍可推进，取消与重复取消等待当前任务持久结果及清理，并保留后续待处理任务。另覆盖取消期间失败的退避记录、过期租约恢复及重试冷却；向量最新值、删除和失败重试由既有 `test_vector_outbox_consistency.py` 验证。不访问真实向量服务或开发数据库，隔离副本复制范围保持原样。
 
 `memory/test_cognition_service.py` 使用临时 SQLite 和模型替身验证无事务模型调用、消息编辑/删除/候选切换导致的过期结果丢弃、分支隔离与边界变化、并发发布、进度不回退、新消息保留及失败回滚。`conversation/test_chat_maintenance.py` 验证非流式入口登记、模型调用期间重复取消关闭仍等待数据库会话清理、线程失败收尾与生命周期登记表重建；流式断连后的维护登记由 `conversation/test_stream_background_persistence.py` 覆盖。测试不访问开发数据库或真实模型，新增模块沿用隔离入口复制整个 `application/`、`services/` 和 `tests/` 的范围。

@@ -420,6 +420,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
+模型调试日志默认关闭，可在 `config.yaml` 的 `logging` 节设置 `llm_debug_enabled: true` 后重启。默认路径为 `logs/llm_debug.log`，每份 1 MiB、另保留 3 份备份；请求、正文和思考只记录有界摘录，配置中的密钥会被替换。异步聊天的写入、轮转和关闭文件在工作线程执行，取消会等待在途日志操作结束，日志故障不会让聊天失败。普通运行日志使用宿主 Python logging，不输出 TTS 台词、供应商响应正文或异常正文。详细预算、任务关联与旧日志保留规则见[日志与诊断](../docs/architecture/BACKEND.md#日志与诊断)，示例见 [config.yaml.example](config.yaml.example)。
+
 ## API 参考
 
 完整请求、响应和前后端契约统一维护在根目录的 [API 总表](../API_TABLE.md)，记忆筛选、继承和故事导航规则见 [记忆模块 API](../docs/api/MEMORY_API.md)。

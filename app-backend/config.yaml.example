@@ -6,6 +6,15 @@
 # CHAT_API_KEY / EMBEDDING_API_KEY / MIMO_API_KEY / ACCESS_API_KEY。
 # 只列出常用配置，其余字段在启动时按 core/config.py 的 CONFIG_SCHEMA 自动补齐。
 
+logging:
+  # 默认不记录 Prompt、正文或思考摘录；修改本节后重启后端生效。
+  llm_debug_enabled: false
+  llm_debug_path: logs/llm_debug.log
+  # 单个文件最多 1 MiB，另保留 3 份备份；单次摘录也受文件预算约束。
+  llm_debug_max_bytes: 1048576
+  llm_debug_backup_count: 3
+  llm_debug_excerpt_bytes: 4096
+
 llm:
   # OpenAI 兼容服务的基础 URL；按服务商要求填写，通常以 /v1 结尾。
   # 下列地址及模型名均为占位值，必须替换后才能调用模型。
