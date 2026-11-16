@@ -9,6 +9,7 @@ from datetime import datetime
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from . import director_service as director, generation_service as generation
 from . import history_service as history
+from . import guards
 from . import checkpoint_service as checkpoints
 from .call_snapshot import capture_group_calls, persist_group_calls, require_executable_calls, DIRECTOR_CALL_LIMIT
 from .context_service import build_member_context
@@ -48,8 +49,8 @@ class GroupRoundBudget:
 async def run_group_round(session_id, user_content, db, *, runtime, model=None, thinking_mode=None,
                           reasoning_effort=None, max_steps=4, timeout=300, call_model=None, collect_inputs=False,
                           protocol_version=2, shared_chat=True):
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     require_group_runtime(runtime, db.get_bind())
     if type(protocol_version) is not int or protocol_version != 2 or shared_chat is not True:
         raise ValueError("旧群聊生成链路已移除，只支持共同群聊 XML")

@@ -4,6 +4,7 @@ import json
 from core.models import (GroupContentItem, GroupDirectorStep, GroupContentUnit, GroupUnitVisibility, GroupContentVisibility)
 from .unit_protocol import (parse_user_units, parse_role_units, parse_unit_visibility, ContentUnit, UnitPlan)
 from services.conversation.session_access import SessionKindConflict
+from .guards import member_ids
 
 
 def _user_plan(item, owner, db):
@@ -60,12 +61,10 @@ def _pending_requests(round_, candidate, persona_id, before_sequence, db):
 
 
 
-def validate_prefix(round_, candidate, db):
+def validate_prefix(round_, candidate, db, *, resolve_basis, read_sources):
     """校验整个持久前缀，不以当前 revision 大于旧审计为重复调度依据。"""
     def invalid():
         raise SessionKindConflict("候选检查点与前缀不一致，请整轮重生成或撤回")
-    from .turn_plan import _validate_basis
-    from . import history_service as history
     turn_policy = _planning(candidate, db)
 
     def action_valid(step, before):
@@ -74,11 +73,11 @@ def validate_prefix(round_, candidate, db):
         if value != {**base, **({"basis": value["basis"]} if "basis" in value else {})}:
             invalid()
         if "basis" in value or turn_policy or json.loads(candidate.call_snapshot_json or '{}').get('reply_target'):
-            return _validate_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
+            return resolve_basis(candidate.session_id, step.speaker_persona_id, round_, candidate, before, value.get("basis"), db)
     if candidate.protocol_version != 2 or candidate.checkpoint not in (
             "user_visibility", "next_action", "role_generation", "finish"):
         invalid()
-    members = history._members(candidate.session_id, db)
+    members = member_ids(candidate.session_id, db)
     items = db.query(GroupContentItem).filter_by(candidate_id=candidate.id).order_by(GroupContentItem.sequence).all()
     steps = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index).all()
     if not items or [i.sequence for i in items] != list(range(len(items))) or items[0].kind != "user":
@@ -161,19 +160,17 @@ def validate_prefix(round_, candidate, db):
         if step.speaker_persona_id not in members:
             invalid()
         action_valid(step, len(items))
-        from .turn_plan import _sources
-        if not _sources(candidate.session_id, step.speaker_persona_id, round_, candidate, 2**63-1, db):
+        if not read_sources(candidate.session_id, step.speaker_persona_id, round_, candidate, 2**63-1, db):
             invalid()
         return step.speaker_persona_id
     return None
 
 
 
-def _current_basis(session_id, persona_id, round_, candidate, before_sequence, db):
-    from .turn_plan import _validate_basis
+def _current_basis(session_id, persona_id, round_, candidate, before_sequence, db, *, resolve_basis):
     step = db.query(GroupDirectorStep).filter_by(candidate_id=candidate.id).order_by(GroupDirectorStep.step_index.desc()).first()
     if step and step.stage == "next_action" and step.speaker_persona_id == persona_id:
         basis = json.loads(step.decision_json).get("basis")
         if basis is not None:
-            return _validate_basis(session_id, persona_id, round_, candidate, before_sequence, basis, db)
+            return resolve_basis(session_id, persona_id, round_, candidate, before_sequence, basis, db)
     return None

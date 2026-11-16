@@ -11,7 +11,8 @@ from services.memory.group_memory_recall import recall_inherited_memories
 from core.config import settings
 from core.models import GroupContentItem, GroupContentVisibility, GroupRound, GroupRoundCandidate, SessionPersona
 from .unit_service import _complete_author_visibility
-from . import history_service as history
+from .history_projection import member_history, content_query
+from . import guards
 from services.conversation.chat_engine import _prepare_generation_kwargs
 from services.conversation.prompting.compiler import build_group_messages
 from services.conversation.role_state_schema import decode_state, merge_state
@@ -41,7 +42,7 @@ def _member_state(persona, group, round_, candidate, before_sequence, db):
         # 共同设定可长达 20000 字，是背景文本，不能塞入限长 300 字的 scene。
         state.pop("scene", None)
     affection, mood = initial["affection_score"] or 0, initial["current_mood"]
-    rows = history._content_query(group.id, round_, candidate, before_sequence, db).join(
+    rows = content_query(group.id, round_, candidate, before_sequence, db).join(
         GroupContentVisibility, and_(GroupContentVisibility.item_id == GroupContentItem.id,
             GroupContentVisibility.recipient_persona_id == persona.id,
             GroupContentVisibility.decision == "visible")).filter(
@@ -96,9 +97,9 @@ def build_member_context(session_id, persona_id, candidate_id, expected_revision
 
 def _read_context(session_id, persona_id, candidate_id, expected_revision, db, model,
                   generation_parameters_json, history_limit, scope, distances, preview=False):
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
-    history._positive(persona_id, "成员")
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
+    guards.positive(persona_id, "成员")
     db.rollback()
     db.expire_all()
     db.execute(text("BEGIN"))
@@ -112,11 +113,11 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
             if candidate.revision != expected_revision or round_.selected_candidate_id != candidate.id:
                 raise SessionKindConflict('剧情已变化，请刷新后查看提示词')
         else:
-            round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
+            round_, candidate = guards.require_writable_candidate(session_id, candidate_id, expected_revision, db, scope=scope)
         persona = db.get(SessionPersona, persona_id)
         if persona is None or persona.session_id != session_id:
             raise GroupSessionValidationError("发言成员不属于本群")
-        group = history._require_group(session_id, db)
+        group = guards.require_group(session_id, db)
         last_sequence = db.query(func.max(GroupContentItem.sequence)).filter_by(candidate_id=candidate_id).scalar()
         if last_sequence is None:
             raise GroupSessionValidationError("候选缺少用户内容项")
@@ -125,7 +126,7 @@ def _read_context(session_id, persona_id, candidate_id, expected_revision, db, m
         limit = min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT if history_limit is None else history_limit))
         if policy.get('reply_target'):
             limit = max(limit, before)
-        rows = history._member_history(session_id, persona_id, round_, candidate, before,
+        rows = member_history(session_id, persona_id, round_, candidate, before,
             limit, db)
         from .turn_plan import _pending_requests, _current_basis
         requests = _pending_requests(round_, candidate, persona_id, before, db)

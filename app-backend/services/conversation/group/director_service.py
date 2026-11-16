@@ -6,7 +6,8 @@ from sqlalchemy import text
 
 from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem, GroupContentVisibility,
                          GroupContentUnit, GroupUnitVisibility, SessionPersona)
-from . import history_service as history
+from .history_projection import member_history
+from . import guards
 from services.conversation.session_access import group_session_operation
 
 
@@ -181,15 +182,15 @@ def build_director_messages(context, stage="next_action", *, protocol_version=2,
 @group_session_operation
 def build_director_context(session_id, db, *, candidate_id=None, expected_revision=None, max_chars=24000, scope=None, turn_policy=0,
                            reply_target=False):
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     if type(max_chars) is not int or max_chars < 1:
         raise GroupDirectorError("invalid_budget")
     db.rollback()
     db.expire_all()
     db.execute(text("BEGIN"))
     try:
-        group = history._require_group(session_id, db)
+        group = guards.require_group(session_id, db)
         members = db.query(SessionPersona).filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all()
         ids = tuple(member.id for member in members)
         _ids(ids)
@@ -211,7 +212,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
             boundary = None
             current = []
         else:
-            round_, candidate = history._writable(session_id, candidate_id, expected_revision, db, scope=scope)
+            round_, candidate = guards.require_writable_candidate(session_id, candidate_id, expected_revision, db, scope=scope)
             boundary = round_.round_index
             current = query.filter(GroupRoundCandidate.id == candidate_id).order_by(GroupContentItem.sequence).all()
             if reply_target:
@@ -219,7 +220,7 @@ def build_director_context(session_id, db, *, candidate_id=None, expected_revisi
                     'count': sum(item.kind == 'utterance' and item.speaker_persona_id == pid for item, _ in current)}
                     for pid in ids]
             eligible = (() if scope is not None and candidate.checkpoint == "user_visibility" else
-                        tuple(pid for pid in ids if history._member_history(session_id, pid, round_, candidate, 2**63-1, 1, db)))
+                        tuple(pid for pid in ids if member_history(session_id, pid, round_, candidate, 2**63-1, 1, db)))
             if (turn_policy or reply_target) and candidate.checkpoint != "user_visibility":
                 from .turn_plan import _sources
                 sources = {str(pid): _sources(session_id, pid, round_, candidate, 2**63-1, db) for pid in ids}

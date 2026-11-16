@@ -13,10 +13,35 @@ from core.models import (GroupRound, GroupRoundCandidate, GroupContentItem, Grou
                          ChatMessage, MessageRole, MemoryExtractionJob, Character)
 from services.conversation.group import history_service as history
 from services.conversation.group import session_service as groups
+from services.conversation.group.history_projection import member_history
+from services.conversation.group.state_projection import group_state
 from services.conversation.session_access import SessionKindConflict
 
 
 class GroupHistoryTests(GroupHistoryFixture, unittest.TestCase):
+    def test_shared_projections_preserve_the_callers_write_transaction(self):
+        sid, (a, b) = self.group()
+        target = self.prepare(sid, (a, b), "shared original")
+        group = history._require_group(sid, self.db)
+        original_title = group.title
+        original_revision = group.group_revision
+        group.title = "caller pending title"
+        group.group_revision += 10
+        self.db.flush()
+        round_ = self.db.get(GroupRound, target["round_id"])
+        candidate = self.db.get(GroupRoundCandidate, target["candidate_id"])
+
+        rows = member_history(sid, a, round_, candidate, 100, 10, self.db)
+        state = group_state(group, self.db)
+        self.assertEqual(["shared original"], [row.content for row in rows])
+        self.assertEqual(original_revision + 10, state["group_revision"])
+        self.assertTrue(self.db.connection().connection.driver_connection.in_transaction)
+        self.db.expire(group)
+        self.assertEqual("caller pending title", group.title)
+        self.db.rollback()
+        self.assertEqual(original_title, group.title)
+        self.assertEqual(original_revision, group.group_revision)
+
     def test_round_keeps_original_user_once_and_one_pending_round(self):
         sid, (a, b) = self.group()
         target = self.prepare(sid, (a,))

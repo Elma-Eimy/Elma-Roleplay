@@ -2,33 +2,24 @@
 import json
 from datetime import datetime, timedelta
 from core.models import GroupRoundCandidate, GroupRoundOperation, GroupContentItem
-from . import history_service as history, audit_service as audit
+from . import audit_service as audit
+from . import guards
+from .session_service import _begin_write
+from .prefix_validation import saved_steps, validate_prefix
 from . import candidate_state as candidate_state
-from . import dispatch_service as dispatches, legacy_protocol as legacy_protocol
 from .execution_scope import GroupTargetScope, bind_target, target, _authorize
 from . import unit_service as units
 from services.conversation.session_access import SessionKindConflict
 
 
 def _write(scope, revision, db):
-    history._begin_write(db)
+    _begin_write(db)
     return target(scope, scope.session_id, scope.candidate_id, revision, db)
-
-
-def saved_steps(candidate_id, db):
-    return db.query(GroupContentItem).filter_by(candidate_id=candidate_id, kind="utterance").count()
-
-
-def validate_prefix(round_, candidate, db):
-    from .turn_plan import _validate_basis
-    if candidate.dispatch_version == 1:
-        return dispatches.validate_prefix(round_, candidate, db, resolve_basis=_validate_basis)
-    return legacy_protocol.validate_prefix(round_, candidate, db)
 
 
 def start(scope, revision, db):
     try:
-        history._begin_write(db)
+        _begin_write(db)
         operation = db.get(GroupRoundOperation, scope.operation_id)
         if operation.status != "queued":
             raise SessionKindConflict("请求已经启动或结束")
@@ -87,8 +78,8 @@ def save_user(scope, revision, plan, model, db):
             raise SessionKindConflict("初判已经保存")
         item = db.query(GroupContentItem).filter_by(candidate_id=candidate.id, sequence=0).one()
         visible = tuple(sorted(set.intersection(*(set(ids) for ids in plan.audiences))))
-        history._visibility(item, visible, history._members(scope.session_id, db), db)
-        units._write_units(item, plan, history._members(scope.session_id, db), round_.user_content, db)
+        guards.write_visibility(item, visible, guards.member_ids(scope.session_id, db), db)
+        units._write_units(item, plan, guards.member_ids(scope.session_id, db), round_.user_content, db)
         audit.record(candidate, "user_visibility", plan, model, db, item=item)
         candidate_state.user_saved(candidate)
         result = dict(round_id=round_.id, candidate_id=candidate.id, revision=candidate.revision)
@@ -120,7 +111,7 @@ def finish(scope, revision, reason, model, db):
         audit.record(candidate, "finish", reason, model, db)
         candidate_state.finish(candidate, reason, persistent=True)
         round_.selected_candidate_id = candidate.id
-        history._require_group(scope.session_id, db).group_revision += 1
+        guards.require_group(scope.session_id, db).group_revision += 1
         operation = db.get(GroupRoundOperation, scope.operation_id)
         operation.status = "succeeded"
         operation.finished_at = datetime.utcnow()
@@ -135,7 +126,7 @@ def finish(scope, revision, reason, model, db):
 
 def fail(scope, revision, code, db):
     try:
-        history._begin_write(db)
+        _begin_write(db)
         operation = db.get(GroupRoundOperation, scope.operation_id)
         candidate = db.get(GroupRoundCandidate, scope.candidate_id)
         # 最终提交已经获胜时不再覆盖成功；启动客户端失败也能收敛 queued 回执。
@@ -148,7 +139,7 @@ def fail(scope, revision, code, db):
             operation.error_code = "version_conflict"
             operation.finished_at = datetime.utcnow()
             operation.revision += 1
-            history._require_group(scope.session_id, db).group_revision += 1
+            guards.require_group(scope.session_id, db).group_revision += 1
             db.commit()
             return None
         if operation.status == "queued":
@@ -160,7 +151,7 @@ def fail(scope, revision, code, db):
         operation.error_code = code
         operation.finished_at = datetime.utcnow()
         operation.revision += 1
-        history._require_group(scope.session_id, db).group_revision += 1
+        guards.require_group(scope.session_id, db).group_revision += 1
         result = candidate.revision
         db.commit()
         return result
