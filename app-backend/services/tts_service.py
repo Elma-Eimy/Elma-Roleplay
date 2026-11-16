@@ -5,6 +5,10 @@ import hashlib
 import base64
 import httpx
 import threading
+import logging
+from services.infrastructure.logging_context import diagnostic_task, log_event
+
+logger = logging.getLogger(__name__)
 from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
 
@@ -301,6 +305,7 @@ class TTSService:
             )
         return ""
 
+    @diagnostic_task("tts-preprocess")
     async def preprocess_roleplay_text_llm(self, text: str, character_name: str = None) -> str:
         """异步提取 TTS 台词；长文本压缩，失败时安全降级。"""
         if not text or not text.strip():
@@ -321,14 +326,15 @@ class TTSService:
                 )
                 return self._parse_preprocess_response(response, text)
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(type(exc).__name__)
                 # 只有模型返回了可重试的格式/质量问题才再次调用；网络或供应商
                 # 故障直接进入本地安全回退，避免等待两次超时。
                 if not isinstance(exc, ValueError):
                     break
-        print(f"[WARN] TTS LLM 预处理失败，使用安全台词提取: {'; '.join(errors)}")
+        log_event(logger, logging.WARNING, "tts_preprocess_fallback", error_types=",".join(errors))
         return self._safe_fallback_extract(text, character_name)
 
+    @diagnostic_task("tts-preprocess")
     def preprocess_roleplay_text_llm_sync(self, text: str, character_name: str = None) -> str:
         """同步提取 TTS 台词；与异步路径共用提示词、解析和回退规则。"""
         if not text or not text.strip():
@@ -349,10 +355,10 @@ class TTSService:
                 )
                 return self._parse_preprocess_response(response, text)
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(type(exc).__name__)
                 if not isinstance(exc, ValueError):
                     break
-        print(f"[WARN] (同步) TTS LLM 预处理失败，使用安全台词提取: {'; '.join(errors)}")
+        log_event(logger, logging.WARNING, "tts_preprocess_fallback", error_types=",".join(errors))
         return self._safe_fallback_extract(text, character_name)
 
     @classmethod
@@ -369,6 +375,7 @@ class TTSService:
             self.client = httpx.Client(timeout=60.0)
         return self.client
 
+    @diagnostic_task("tts")
     async def generate_speech_async(self, text: str, voice: str = None, speed: float = 1.0, message_id: int = None, db = None) -> str:
         """
         异步方法：合成文本为音频 MP3 文件，自动进行哈希缓存，并返回相对于静态路由的音频 URL 路径。
@@ -412,7 +419,7 @@ class TTSService:
                 if session and session.persona and session.persona.character:
                     character_name = session.persona.character.name
             except Exception as e:
-                print(f"[WARN] 获取角色名称失败: {e}")
+                log_event(logger, logging.WARNING, "tts_character_lookup_failed", error_type=type(e).__name__)
 
             # 检查数据库中是否存在 audio_path 且为 mp3 文件，且物理文件确实存在
             if (
@@ -422,10 +429,10 @@ class TTSService:
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
-                    print(f"[INFO] TTS (数据库绑定模式) 缓存命中: {cached_filepath}")
+                    log_event(logger, logging.DEBUG, "tts_cache_hit")
                     return db_message.audio_path
                 else:
-                    print(f"[WARN] TTS (数据库绑定模式) 物理文件已丢失或格式不符: {cached_filepath}，触发被动重建...")
+                    log_event(logger, logging.INFO, "tts_cache_rebuild")
         else:
             if not text or not text.strip():
                 raise ValueError("合成文本不能为空。")
@@ -444,7 +451,7 @@ class TTSService:
 
             # 命中缓存，直接返回静态 URL
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                print(f"[INFO] TTS 缓存命中: {filepath}")
+                log_event(logger, logging.DEBUG, "tts_cache_hit")
                 return f"/audio/{filename}"
 
         # 敏感词或密钥检查
@@ -482,16 +489,16 @@ class TTSService:
         if speed != 1.0:
             payload["audio"]["speed"] = speed
 
-        print(f"[INFO] 正在调用 MIMO API 请求语音合成: '{text_clean[:20]}...' (voice={voice}, speed={speed})")
+        log_event(logger, logging.INFO, "tts_provider_requested")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code != 200:
-                    print(f"[ERROR] MIMO API 错误响应 (HTTP {response.status_code}): {response.text}")
+                    log_event(logger, logging.ERROR, "tts_provider_rejected", status_code=response.status_code)
                 response.raise_for_status()
             except Exception as e:
-                print(f"[ERROR] MIMO API 请求失败: {e}")
+                log_event(logger, logging.ERROR, "tts_provider_failed", error_type=type(e).__name__)
                 raise RuntimeError(f"调用云端语音 API 失败: {str(e)}")
 
             # 兼容两种返回格式：
@@ -499,25 +506,25 @@ class TTSService:
             content_type = response.headers.get("content-type", "").lower()
             if "audio" in content_type:
                 audio_bytes = response.content
-                print(f"[INFO] 收到直接音频二进制流，大小: {len(audio_bytes) / 1024:.2f} KB")
+                log_event(logger, logging.DEBUG, "tts_audio_received", size_bytes=len(audio_bytes))
             else:
                 # 2. 小米官方的标准 JSON 响应，包含 Base64 数据
                 try:
                     res_json = response.json()
                     audio_data_base64 = res_json["choices"][0]["message"]["audio"]["data"]
                     audio_bytes = base64.b64decode(audio_data_base64)
-                    print(f"[INFO] 解析 JSON 成功，收到 Base64 编码音频，解码后大小: {len(audio_bytes) / 1024:.2f} KB")
+                    log_event(logger, logging.DEBUG, "tts_audio_received", size_bytes=len(audio_bytes))
                 except KeyError as e:
-                    print(f"[ERROR] 响应 JSON 结构不符合 MiMo API 规范: {response.text[:200]}")
+                    log_event(logger, logging.ERROR, "tts_response_invalid", phase="structure")
                     raise RuntimeError("云端语音 API 返回格式异常。")
                 except Exception as e:
-                    print(f"[ERROR] 解析 JSON/解码 Base64 失败: {e}")
+                    log_event(logger, logging.ERROR, "tts_response_invalid", phase="decode", error_type=type(e).__name__)
                     raise RuntimeError(f"解析语音数据失败: {str(e)}")
 
             # 写入本地缓存文件
             with open(filepath, "wb") as f:
                 f.write(audio_bytes)
-            print(f"[SUCCESS] 本地语音文件已缓存: {filepath}")
+            log_event(logger, logging.INFO, "tts_audio_cached")
             
             # 绑定消息ID模式下，回写到数据库
             audio_url = f"/audio/{filename}"
@@ -525,13 +532,14 @@ class TTSService:
                 db_message.audio_path = audio_url
                 db.commit()
                 db.refresh(db_message)
-                print(f"[INFO] 数据库记录已更新，将 audio_path 设为: {audio_url}")
+                log_event(logger, logging.INFO, "tts_message_bound", message_id=message_id)
             
             # 触发异步后台缓存清理
             threading.Thread(target=self._prune_cache_background, daemon=True).start()
 
         return audio_url
 
+    @diagnostic_task("tts")
     def generate_speech_sync(self, text: str, voice: str = None, speed: float = 1.0, message_id: int = None, db = None) -> str:
         """
         同步方法：供测试脚本或非异步上下文使用
@@ -572,7 +580,7 @@ class TTSService:
                 if session and session.persona and session.persona.character:
                     character_name = session.persona.character.name
             except Exception as e:
-                print(f"[WARN] 获取角色名称失败: {e}")
+                log_event(logger, logging.WARNING, "tts_character_lookup_failed", error_type=type(e).__name__)
 
             if (
                 db_message.audio_path
@@ -581,10 +589,10 @@ class TTSService:
                 cached_filename = os.path.basename(db_message.audio_path)
                 cached_filepath = os.path.join(cache_dir, cached_filename)
                 if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
-                    print(f"[INFO] (同步) TTS (数据库绑定模式) 缓存命中: {cached_filepath}")
+                    log_event(logger, logging.DEBUG, "tts_cache_hit")
                     return db_message.audio_path
                 else:
-                    print(f"[WARN] (同步) TTS (数据库绑定模式) 物理文件已丢失或格式不符: {cached_filepath}，触发被动重建...")
+                    log_event(logger, logging.INFO, "tts_cache_rebuild")
         else:
             if not text or not text.strip():
                 raise ValueError("合成文本不能为空。")
@@ -599,7 +607,7 @@ class TTSService:
             filepath = os.path.join(cache_dir, filename)
 
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                print(f"[INFO] (同步) TTS 缓存命中: {filepath}")
+                log_event(logger, logging.DEBUG, "tts_cache_hit")
                 return f"/audio/{filename}"
 
         if not settings.MIMO_API_KEY:
@@ -632,16 +640,16 @@ class TTSService:
         if speed != 1.0:
             payload["audio"]["speed"] = speed
 
-        print(f"[INFO] (同步) 正在调用 MIMO API 请求语音合成: '{text_clean[:20]}...' (voice={voice})")
+        log_event(logger, logging.INFO, "tts_provider_requested")
 
         client = self._get_client()
         try:
             response = client.post(url, headers=headers, json=payload)
             if response.status_code != 200:
-                print(f"[ERROR] (同步) MIMO API 错误响应 (HTTP {response.status_code}): {response.text}")
+                log_event(logger, logging.ERROR, "tts_provider_rejected", status_code=response.status_code)
             response.raise_for_status()
         except Exception as e:
-            print(f"[ERROR] (同步) MIMO API 请求失败: {e}")
+            log_event(logger, logging.ERROR, "tts_provider_failed", error_type=type(e).__name__)
             raise RuntimeError(f"调用云端语音 API 失败: {str(e)}")
 
         content_type = response.headers.get("content-type", "").lower()
@@ -653,24 +661,25 @@ class TTSService:
                 audio_data_base64 = res_json["choices"][0]["message"]["audio"]["data"]
                 audio_bytes = base64.b64decode(audio_data_base64)
             except Exception as e:
-                print(f"[ERROR] (同步) 解析/解码失败: {e}. 响应内容: {response.text[:200]}")
+                log_event(logger, logging.ERROR, "tts_response_invalid", phase="decode", error_type=type(e).__name__)
                 raise RuntimeError("解析云端语音响应失败")
 
         with open(filepath, "wb") as f:
             f.write(audio_bytes)
-        print(f"[SUCCESS] (同步) 本地语音文件已缓存: {filepath}")
+        log_event(logger, logging.INFO, "tts_audio_cached")
         
         audio_url = f"/audio/{filename}"
         if is_message_bound and db_message:
             db_message.audio_path = audio_url
             db.commit()
             db.refresh(db_message)
-            print(f"[INFO] (同步) 数据库记录已更新，将 audio_path 设为: {audio_url}")
+            log_event(logger, logging.INFO, "tts_message_bound", message_id=message_id)
 
         threading.Thread(target=self._prune_cache_background, daemon=True).start()
 
         return audio_url
 
+    @diagnostic_task("tts-cache")
     def _prune_cache_background(self):
         """
         后台线程：检查缓存目录中的文件数量，如果超过设定的最大值，
@@ -698,7 +707,7 @@ class TTSService:
             if len(files) <= max_files:
                 return
 
-            print(f"[INFO] [LRU 清理线程] 缓存音频文件数 ({len(files)}) 超过上限 ({max_files})，开始清理...")
+            log_event(logger, logging.INFO, "tts_cache_prune_started", count=len(files), max_files=max_files)
 
             # 按照修改时间排序（从旧到新）
             files.sort(key=lambda x: x[1])
@@ -713,8 +722,8 @@ class TTSService:
                     os.remove(path)
                     deleted_count += 1
                 except OSError as e:
-                    print(f"[WARN] [LRU 清理线程] 无法删除缓存文件 {path}: {e}")
+                    log_event(logger, logging.WARNING, "tts_cache_delete_failed", error_type=type(e).__name__)
 
-            print(f"[SUCCESS] [LRU 清理线程] 清理完成，共删除 {deleted_count} 个老音频文件。")
+            log_event(logger, logging.INFO, "tts_cache_prune_completed", count=deleted_count)
         except Exception as e:
-            print(f"[ERROR] [LRU 清理线程] 清理缓存发生异常: {e}")
+            log_event(logger, logging.ERROR, "tts_cache_prune_failed", error_type=type(e).__name__)

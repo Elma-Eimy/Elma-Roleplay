@@ -180,6 +180,19 @@ class OutboxWorkerTests(unittest.TestCase):
         self.assertEqual(0, job.attempts)
         self.assertGreater(job.run_after, datetime.now() + timedelta(minutes=59))
 
+    def test_failure_log_has_job_id_without_payload_or_exception_body(self):
+        job_id = self.add_job()
+        with patch.object(worker, "SessionLocal", self.sessions), patch.object(
+            worker, "execute_task", side_effect=ValueError("credential-and-private-response"),
+        ), self.assertLogs(worker.logger, level="INFO") as captured:
+            asyncio.run(worker.process_pending_jobs())
+        output = " ".join(captured.output)
+        self.assertIn(f"task_id=outbox-{job_id}", output)
+        self.assertIn("error_type=ValueError", output)
+        self.assertNotIn("credential-and-private-response", output)
+        self.assertNotIn("Traceback", output)
+        self.assertEqual(OutboxJobStatus.failed, self.db.get(OutboxJob, job_id).status)
+
     def test_cancellation_during_sqlite_lock_wait_keeps_loop_live_and_waits_for_cleanup(self):
         first, second = self.add_job(), self.add_job()
         locked, claiming, release = threading.Event(), threading.Event(), threading.Event()

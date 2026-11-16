@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,6 +27,50 @@ def response(payload=None, *, finish_reason="stop", raw_content=None):
 class TTSPreprocessingTests(unittest.TestCase):
     def setUp(self):
         self.service = TTSService()
+
+    def test_preprocess_failure_logs_only_task_id_and_error_type(self):
+        failure = RuntimeError("credential-and-private-response")
+        provider = SimpleNamespace(generate_async=AsyncMock(side_effect=failure), generate=MagicMock(side_effect=failure))
+        with patch("services.infrastructure.llm_provider.get_llm_provider", return_value=provider), self.assertLogs(
+            "services.tts_service", level="INFO",
+        ) as captured:
+            self.assertEqual("私人台词", asyncio.run(self.service.preprocess_roleplay_text_llm("“私人台词”")))
+            self.assertEqual("私人台词", self.service.preprocess_roleplay_text_llm_sync("“私人台词”"))
+        output = " ".join(captured.output)
+        self.assertIn("task_id=tts-preprocess-", output)
+        self.assertIn("RuntimeError", output)
+        self.assertNotIn("credential-and-private-response", output)
+        self.assertNotIn("私人台词", output)
+
+    def test_provider_rejection_does_not_log_body_credentials_or_spoken_text(self):
+        response = MagicMock(status_code=500, text="private-response-body")
+        response.raise_for_status.side_effect = RuntimeError("fake-mimo-credential private-response-body")
+        client = MagicMock()
+        client.post = AsyncMock(return_value=response)
+        manager = MagicMock()
+        manager.__aenter__ = AsyncMock(return_value=client)
+        manager.__aexit__ = AsyncMock(return_value=False)
+        sync_client = MagicMock()
+        sync_client.post.return_value = response
+
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "services.tts_service.settings.TTS_CACHE_DIR", directory,
+        ), patch("services.tts_service.settings.TTS_ENABLED", True), patch(
+            "services.tts_service.settings.MIMO_API_KEY", "fake-mimo-credential",
+        ), patch.object(self.service, "preprocess_roleplay_text_llm", new_callable=AsyncMock, return_value="私人台词"), patch.object(
+            self.service, "preprocess_roleplay_text_llm_sync", return_value="私人台词",
+        ), patch("services.tts_service.httpx.AsyncClient", return_value=manager), patch.object(
+            self.service, "_get_client", return_value=sync_client,
+        ), self.assertLogs("services.tts_service", level="INFO") as captured:
+            with self.assertRaises(RuntimeError):
+                asyncio.run(self.service.generate_speech_async("私人台词"))
+            with self.assertRaises(RuntimeError):
+                self.service.generate_speech_sync("私人台词")
+        output = " ".join(captured.output)
+        self.assertIn("status_code=500", output)
+        self.assertIn("task_id=tts-", output)
+        for private in ("fake-mimo-credential", "private-response-body", "私人台词"):
+            self.assertNotIn(private, output)
 
     def test_short_text_uses_structured_result_and_disables_thinking(self):
         provider = SimpleNamespace(
