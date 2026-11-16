@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.tts_service import TTSService
+from services.media.tts_text import TTSTextProcessor
 
 
 def response(payload=None, *, finish_reason="stop", raw_content=None):
@@ -27,6 +32,85 @@ def response(payload=None, *, finish_reason="stop", raw_content=None):
 class TTSPreprocessingTests(unittest.TestCase):
     def setUp(self):
         self.service = TTSService()
+
+    def test_text_methods_remain_available_through_the_service(self):
+        for name in (
+            "preprocess_roleplay_text_rules", "_normalize_style_tags", "_build_preprocess_messages",
+            "_normalize_control_tags", "_sanitize_spoken_text", "_parse_preprocess_response",
+            "_truncate_spoken_text", "_safe_fallback_extract",
+        ):
+            with self.subTest(method=name):
+                self.assertIs(getattr(TTSService, name), getattr(TTSTextProcessor, name))
+        self.assertEqual("2", self.service.PREPROCESSOR_VERSION)
+
+    def test_text_strategy_runs_without_model_cache_or_database_dependencies(self):
+        script = textwrap.dedent('''
+            import sys
+            from types import SimpleNamespace as N
+            from services.media.tts_text import TTSTextProcessor
+            processor = TTSTextProcessor()
+            assert processor._safe_fallback_extract('角色：“先走吧。”', '角色') == '先走吧。'
+            assert len(processor._build_preprocess_messages('待处理正文')) == 2
+            response = N(choices=[N(finish_reason='stop', message=N(
+                content='{"status":"ok","spoken_text":"[温柔]你好。"}'))])
+            assert processor._parse_preprocess_response(response, '你好。') == '[温柔]你好。'
+            forbidden = ('services.tts_service', 'core.config', 'core.database',
+                         'services.infrastructure.llm_provider', 'httpx')
+            assert not [name for name in forbidden if name in sys.modules]
+        ''')
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True,
+            text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_inherited_text_strategy_honors_service_overrides(self):
+        with patch.object(self.service, "_sanitize_spoken_text", return_value="兼容清洗") as clean:
+            self.assertEqual("兼容清洗", self.service._parse_preprocess_response(
+                response({"status": "ok", "spoken_text": "原正文"}), "原正文",
+            ))
+        clean.assert_called_once_with("原正文")
+        with patch.object(self.service, "LONG_TEXT_THRESHOLD", 2), patch.object(
+            self.service, "MAX_SPOKEN_CHARS", 3,
+        ):
+            messages = self.service._build_preprocess_messages("长文本输入")
+            self.assertIn("不得超过 3 个字符", messages[0]["content"])
+            with self.assertRaisesRegex(ValueError, "未有效压缩"):
+                self.service._parse_preprocess_response(
+                    response({"status": "ok", "spoken_text": "超过三个字"}), "长文本输入",
+                )
+
+    def test_existing_p2_cache_hits_skip_preprocessing_and_provider_calls(self):
+        cases = (
+            (None, "02434807217a181a509f46a2ffe7cea0.mp3"),
+            (7, "msg_7_p2_testvoice_1.00.mp3"),
+        )
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "services.tts_service.settings.TTS_CACHE_DIR", directory,
+        ), patch("services.tts_service.settings.TTS_ENABLED", True), patch(
+            "services.tts_service.settings.MIMO_API_KEY", "",
+        ), patch("services.conversation.session_access.get_single_message") as load, patch.object(
+            self.service, "preprocess_roleplay_text_llm", new_callable=AsyncMock,
+        ) as asynchronous, patch.object(self.service, "preprocess_roleplay_text_llm_sync") as synchronous, patch.object(
+            self.service, "_get_client",
+        ) as client, patch("services.tts_service.httpx.AsyncClient") as async_client:
+            for message_id, filename in cases:
+                with self.subTest(message_id=message_id):
+                    expected = "/audio/" + filename
+                    (Path(directory) / filename).write_bytes(b"cached audio")
+                    db = MagicMock()
+                    load.return_value = SimpleNamespace(content="你好。", audio_path=expected, session=None)
+                    self.assertEqual(expected, asyncio.run(self.service.generate_speech_async(
+                        "你好。", voice="testvoice", message_id=message_id, db=db,
+                    )))
+                    self.assertEqual(expected, self.service.generate_speech_sync(
+                        "你好。", voice="testvoice", message_id=message_id, db=db,
+                    ))
+                    db.commit.assert_not_called()
+            asynchronous.assert_not_awaited()
+            synchronous.assert_not_called()
+            client.assert_not_called()
+            async_client.assert_not_called()
 
     def test_preprocess_failure_logs_only_task_id_and_error_type(self):
         failure = RuntimeError("credential-and-private-response")
