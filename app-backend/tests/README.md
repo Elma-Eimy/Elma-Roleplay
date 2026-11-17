@@ -4,6 +4,8 @@
 
 ## 自动回归
 
+`tts/test_tts_cache.py` 检查缓存模块独立导入和文件操作不初始化配置、模型、HTTP 或数据库，固定 p2 命名与显式版本/语速格式，验证原清理入口按修改时间淘汰、保留非 MP3 文件，以及单文件删除失败后继续清理且日志不含异常正文。`test_tts_transport.py` 另覆盖消息缓存缺失、空文件和绑定不匹配时重建，写文件失败不绑定，提交失败保留已写文件且不刷新或启动清理，以及禁用与缺失消息的校验顺序；这四项行为回归在缓存拆分前后均通过。事务提交继续使用调用方 Session，未改为线程间共享。
+
 `tts/test_tts_transport.py` 使用 HTTP 替身验证同步/异步请求的认证头、目标音色、语速省略与显式传递、提炼正文，以及直接音频和 Base64 响应；另覆盖 HTTP/网络/结构/解码失败保持原异常与日志脱敏、单次请求不重试、消息绑定前文件已写入、异步客户端在提交后关闭，以及取消后关闭客户端且不写音频或绑定。四项行为回归在拆分前后运行对照；独立导入回归另确认适配器不加载配置、数据库、HTTP 客户端或原服务。所有请求为模型/HTTP 替身，文件仅写入临时目录，隔离副本沿用完整复制 `services/` 与 `tests/` 的范围。
 
 `tts/test_tts_preprocessing.py` 使用模型与 HTTP 替身检查台词提炼、压缩重试、无台词结果、安全回退和日志脱敏。另验证独立文本策略在不加载配置/模型/HTTP/数据库的子进程中执行，原服务继承方法与实例覆盖保持有效，普通文本及消息绑定的既有 p2 缓存命中不触发预处理、语音请求或数据库提交。`infrastructure/test_audio_files.py` 继续覆盖旧音频下载与恢复，群聊消息在创建缓存前拒绝的规则由 API 边界回归验证。源码与测试仍由隔离入口完整复制，不访问真实语音服务或开发缓存。
@@ -54,7 +56,7 @@ M2-A 审查回归还覆盖 autoflush 开/关、未 flush 与已 flush 的调用�
 
 `conversation/group/test_group_session_service.py` 验证群聊服务的来源冻结、事务与资源归属，覆盖分支/整理、并发修改、角色删除竞争、取消与大样本导入；`infrastructure/test_group_snapshot_migration.py` 验证快照迁移、来源删除独立和非空降级保护。均使用虚构临时数据，不调用真实模型或 Embedding。
 
-`api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外，群聊专用服务用 `group_session_operation` 声明类型并验证拒绝单聊资源。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。
+`api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，实例方法绑定真实服务实例后验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外，群聊专用服务用 `group_session_operation` 声明类型并验证拒绝单聊资源。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。
 
 `memory/test_memory_processing_status.py` 验证只读状态接口不入队、故事隔离、排队与运行计数、重试和取消、缺失故事或 Persona，以及捕获成功时间；候选提交时间由 `test_memory_extraction_jobs.py` 覆盖。`infrastructure/test_memory_completion_migration.py` 检查旧任务升级后时间为空，升降级保留任务。均使用临时库和模型替身。
 

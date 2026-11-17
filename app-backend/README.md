@@ -482,6 +482,7 @@ app-backend/
 │   ├── media/
 │   │   ├── character_card_parser.py # JSON/PNG 角色卡、元数据与 Prompt DSL 规范化
 │   │   ├── tts_text.py       # 无 I/O 的台词规则、提示词、校验与安全回退
+│   │   ├── tts_cache.py      # 缓存命名、文件读写与按修改时间淘汰
 │   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
 │   │   ├── reply_parser.py  # 单聊/群聊共用回复、状态增量与流式前缀解析
