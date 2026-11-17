@@ -1,5 +1,5 @@
 import os
-import hashlib
+from dataclasses import dataclass
 import httpx
 import threading
 import logging
@@ -10,6 +10,18 @@ from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
 from services.infrastructure.tts_provider import build_speech_request, request_speech_async, request_speech_sync
 from services.media.tts_text import TTSTextProcessor
+from services.media.tts_cache import TTSAudioCache, prune_cache
+
+
+@dataclass(frozen=True)
+class _PreparedSpeech:
+    text: str
+    voice: str
+    character_name: str | None
+    cache: TTSAudioCache
+    message: object = None
+    cached_url: str | None = None
+
 
 class TTSService(TTSTextProcessor):
     _instance = None
@@ -100,79 +112,10 @@ class TTSService(TTSTextProcessor):
         """
         异步方法：合成文本为音频 MP3 文件，自动进行哈希缓存，并返回相对于静态路由的音频 URL 路径。
         """
-        db_message = None
-        if message_id is not None and db is not None:
-            from services.conversation.session_access import get_single_message
-            db_message = get_single_message(message_id, db)
-
-        if not settings.TTS_ENABLED:
-            raise ValueError("TTS 语音合成服务在配置中已被禁用。")
-
-        # 默认音色处理
-        if not voice:
-            voice = settings.TTS_DEFAULT_VOICE
-
-        cache_dir = settings.TTS_CACHE_DIR
-        os.makedirs(cache_dir, exist_ok=True)
-
-        is_message_bound = False
-
-        character_name = None
-        if message_id is not None and db is not None:
-            if not db_message:
-                raise ValueError(f"Message ID {message_id} 在数据库中不存在。")
-            
-            # 使用数据库中的 content，保证合成文本一致性
-            text = db_message.content
-            is_message_bound = True
-
-            # 预处理器升级时自动使用新缓存，避免继续播放旧版原文音频。
-            filename = (
-                f"msg_{message_id}_p{self.PREPROCESSOR_VERSION}_"
-                f"{voice}_{speed:.2f}.mp3"
-            )
-            filepath = os.path.join(cache_dir, filename)
-
-            # 尝试获取说话的角色名字以过滤旁白
-            try:
-                session = db_message.session
-                if session and session.persona and session.persona.character:
-                    character_name = session.persona.character.name
-            except Exception as e:
-                log_event(logger, logging.WARNING, "tts_character_lookup_failed", error_type=type(e).__name__)
-
-            # 检查数据库中是否存在 audio_path 且为 mp3 文件，且物理文件确实存在
-            if (
-                db_message.audio_path
-                and os.path.basename(db_message.audio_path) == filename
-            ):
-                cached_filename = os.path.basename(db_message.audio_path)
-                cached_filepath = os.path.join(cache_dir, cached_filename)
-                if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
-                    log_event(logger, logging.DEBUG, "tts_cache_hit")
-                    return db_message.audio_path
-                else:
-                    log_event(logger, logging.INFO, "tts_cache_rebuild")
-        else:
-            if not text or not text.strip():
-                raise ValueError("合成文本不能为空。")
-
-        # 如果没有绑定消息ID，或者物理文件丢失需要重建/首次合成
-        if not is_message_bound:
-            # 普通文本模式：用原始 text 直接算 MD5
-            # 注意：此处用 text 而不是 text_clean，能够 100% 避免重复播放时的 LLM 耗时及哈希抖动
-            hash_input = (
-                f"p{self.PREPROCESSOR_VERSION}_"
-                f"{text.strip()}_{voice}_{speed:.2f}"
-            )
-            md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
-            filename = f"{md5_hash}.mp3"
-            filepath = os.path.join(cache_dir, filename)
-
-            # 命中缓存，直接返回静态 URL
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                log_event(logger, logging.DEBUG, "tts_cache_hit")
-                return f"/audio/{filename}"
+        prepared = self._prepare_speech(text, voice, speed, message_id, db)
+        if prepared.cached_url is not None:
+            return prepared.cached_url
+        text, voice, character_name = prepared.text, prepared.voice, prepared.character_name
 
         # 敏感词或密钥检查
         if not settings.MIMO_API_KEY:
@@ -194,21 +137,7 @@ class TTSService(TTSTextProcessor):
         async with httpx.AsyncClient(timeout=60.0) as client:
             audio_bytes = await request_speech_async(client, url, headers, payload, logger=logger)
 
-            # 写入本地缓存文件
-            with open(filepath, "wb") as f:
-                f.write(audio_bytes)
-            log_event(logger, logging.INFO, "tts_audio_cached")
-            
-            # 绑定消息ID模式下，回写到数据库
-            audio_url = f"/audio/{filename}"
-            if is_message_bound and db_message:
-                db_message.audio_path = audio_url
-                db.commit()
-                db.refresh(db_message)
-                log_event(logger, logging.INFO, "tts_message_bound", message_id=message_id)
-            
-            # 触发异步后台缓存清理
-            threading.Thread(target=self._prune_cache_background, daemon=True).start()
+            audio_url = self._save_speech(prepared, audio_bytes, message_id, db)
 
         return audio_url
 
@@ -217,71 +146,10 @@ class TTSService(TTSTextProcessor):
         """
         同步方法：供测试脚本或非异步上下文使用
         """
-        db_message = None
-        if message_id is not None and db is not None:
-            from services.conversation.session_access import get_single_message
-            db_message = get_single_message(message_id, db)
-
-        if not settings.TTS_ENABLED:
-            raise ValueError("TTS 语音合成服务在配置中已被禁用。")
-
-        if not voice:
-            voice = settings.TTS_DEFAULT_VOICE
-
-        cache_dir = settings.TTS_CACHE_DIR
-        os.makedirs(cache_dir, exist_ok=True)
-
-        is_message_bound = False
-
-        character_name = None
-        if message_id is not None and db is not None:
-            if not db_message:
-                raise ValueError(f"Message ID {message_id} 在数据库中不存在。")
-            
-            text = db_message.content
-            is_message_bound = True
-
-            filename = (
-                f"msg_{message_id}_p{self.PREPROCESSOR_VERSION}_"
-                f"{voice}_{speed:.2f}.mp3"
-            )
-            filepath = os.path.join(cache_dir, filename)
-
-            # 尝试获取说话的角色名字以过滤旁白
-            try:
-                session = db_message.session
-                if session and session.persona and session.persona.character:
-                    character_name = session.persona.character.name
-            except Exception as e:
-                log_event(logger, logging.WARNING, "tts_character_lookup_failed", error_type=type(e).__name__)
-
-            if (
-                db_message.audio_path
-                and os.path.basename(db_message.audio_path) == filename
-            ):
-                cached_filename = os.path.basename(db_message.audio_path)
-                cached_filepath = os.path.join(cache_dir, cached_filename)
-                if os.path.exists(cached_filepath) and os.path.getsize(cached_filepath) > 0:
-                    log_event(logger, logging.DEBUG, "tts_cache_hit")
-                    return db_message.audio_path
-                else:
-                    log_event(logger, logging.INFO, "tts_cache_rebuild")
-        else:
-            if not text or not text.strip():
-                raise ValueError("合成文本不能为空。")
-
-        if not is_message_bound:
-            hash_input = (
-                f"p{self.PREPROCESSOR_VERSION}_"
-                f"{text.strip()}_{voice}_{speed:.2f}"
-            )
-            md5_hash = hashlib.md5(hash_input.encode("utf-8")).hexdigest()
-            filename = f"{md5_hash}.mp3"
-            filepath = os.path.join(cache_dir, filename)
-
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                log_event(logger, logging.DEBUG, "tts_cache_hit")
-                return f"/audio/{filename}"
+        prepared = self._prepare_speech(text, voice, speed, message_id, db)
+        if prepared.cached_url is not None:
+            return prepared.cached_url
+        text, voice, character_name = prepared.text, prepared.voice, prepared.character_name
 
         if not settings.MIMO_API_KEY:
             raise ValueError("未配置 MIMO_API_KEY，无法调用云端语音合成接口。")
@@ -300,66 +168,89 @@ class TTSService(TTSTextProcessor):
         client = self._get_client()
         audio_bytes = request_speech_sync(client, url, headers, payload, logger=logger)
 
-        with open(filepath, "wb") as f:
-            f.write(audio_bytes)
+        return self._save_speech(prepared, audio_bytes, message_id, db)
+
+    def _prepare_speech(self, text, voice, speed, message_id, db):
+        """共用消息读取与缓存判定；保留类型检查、禁用检查和缺失消息的先后顺序。"""
+        db_message = None
+        if message_id is not None and db is not None:
+            from services.conversation.session_access import get_single_message
+            db_message = get_single_message(message_id, db)
+
+        if not settings.TTS_ENABLED:
+            raise ValueError("TTS 语音合成服务在配置中已被禁用。")
+
+        # 默认音色处理
+        if not voice:
+            voice = settings.TTS_DEFAULT_VOICE
+
+        cache_dir = settings.TTS_CACHE_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+
+        is_message_bound = False
+
+        character_name = None
+        if message_id is not None and db is not None:
+            if not db_message:
+                raise ValueError(f"Message ID {message_id} 在数据库中不存在。")
+
+            # 使用数据库中的 content，保证合成文本一致性
+            text = db_message.content
+            is_message_bound = True
+
+            cache = TTSAudioCache.for_message(
+                cache_dir, message_id, self.PREPROCESSOR_VERSION, voice, speed,
+            )
+
+            # 尝试获取说话的角色名字以过滤旁白
+            try:
+                session = db_message.session
+                if session and session.persona and session.persona.character:
+                    character_name = session.persona.character.name
+            except Exception as e:
+                log_event(logger, logging.WARNING, "tts_character_lookup_failed", error_type=type(e).__name__)
+
+            # 检查数据库中是否存在 audio_path 且为 mp3 文件，且物理文件确实存在
+            if (
+                db_message.audio_path
+                and os.path.basename(db_message.audio_path) == cache.filename
+            ):
+                if cache.is_ready():
+                    log_event(logger, logging.DEBUG, "tts_cache_hit")
+                    return _PreparedSpeech(text, voice, character_name, cache, db_message, db_message.audio_path)
+                else:
+                    log_event(logger, logging.INFO, "tts_cache_rebuild")
+        else:
+            if not text or not text.strip():
+                raise ValueError("合成文本不能为空。")
+
+        if not is_message_bound:
+            cache = TTSAudioCache.for_text(
+                cache_dir, text, self.PREPROCESSOR_VERSION, voice, speed,
+            )
+            if cache.is_ready():
+                log_event(logger, logging.DEBUG, "tts_cache_hit")
+                return _PreparedSpeech(text, voice, character_name, cache, cached_url=cache.audio_url)
+
+        return _PreparedSpeech(text, voice, character_name, cache, db_message)
+
+    def _save_speech(self, prepared, audio_bytes, message_id, db):
+        """先写文件再提交绑定；沿用调用方 Session，不另开事务或转交线程。"""
+        prepared.cache.write(audio_bytes)
         log_event(logger, logging.INFO, "tts_audio_cached")
-        
-        audio_url = f"/audio/{filename}"
-        if is_message_bound and db_message:
-            db_message.audio_path = audio_url
+        audio_url = prepared.cache.audio_url
+        if prepared.message:
+            prepared.message.audio_path = audio_url
             db.commit()
-            db.refresh(db_message)
+            db.refresh(prepared.message)
             log_event(logger, logging.INFO, "tts_message_bound", message_id=message_id)
-
         threading.Thread(target=self._prune_cache_background, daemon=True).start()
-
         return audio_url
 
     @diagnostic_task("tts-cache")
     def _prune_cache_background(self):
-        """
-        后台线程：检查缓存目录中的文件数量，如果超过设定的最大值，
-        则根据文件的最后修改时间（mtime）从小到大排序，删除最老的文件，
-        实现 LRU (Least Recently Used) 淘汰机制。
-        """
+        """保留后台清理入口，文件淘汰由缓存模块执行。"""
         try:
-            cache_dir = settings.TTS_CACHE_DIR
-            max_files = settings.TTS_MAX_CACHE_FILES
-
-            if not os.path.exists(cache_dir):
-                return
-
-            # 获取目录下所有 mp3 文件及其修改时间
-            files = []
-            for f in os.listdir(cache_dir):
-                if f.endswith(".mp3"):
-                    p = os.path.join(cache_dir, f)
-                    try:
-                        files.append((p, os.path.getmtime(p)))
-                    except OSError:
-                        continue
-
-            # 如果文件总数未超限，直接返回
-            if len(files) <= max_files:
-                return
-
-            log_event(logger, logging.INFO, "tts_cache_prune_started", count=len(files), max_files=max_files)
-
-            # 按照修改时间排序（从旧到新）
-            files.sort(key=lambda x: x[1])
-
-            # 需要删除的文件数量
-            to_delete_count = len(files) - max_files
-            files_to_delete = files[:to_delete_count]
-
-            deleted_count = 0
-            for path, _ in files_to_delete:
-                try:
-                    os.remove(path)
-                    deleted_count += 1
-                except OSError as e:
-                    log_event(logger, logging.WARNING, "tts_cache_delete_failed", error_type=type(e).__name__)
-
-            log_event(logger, logging.INFO, "tts_cache_prune_completed", count=deleted_count)
-        except Exception as e:
-            log_event(logger, logging.ERROR, "tts_cache_prune_failed", error_type=type(e).__name__)
+            prune_cache(settings.TTS_CACHE_DIR, settings.TTS_MAX_CACHE_FILES, logger=logger)
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "tts_cache_prune_failed", error_type=type(exc).__name__)

@@ -181,3 +181,70 @@ class TTSTransportTests(unittest.TestCase):
                     self.assertIn("task_id=tts-", output)
                     self.assertEqual([], list(self.root.glob("*.mp3")))
         self.thread.assert_not_called()
+
+    def test_missing_empty_and_mismatched_message_cache_are_rebuilt_from_database_text(self):
+        for mode in ("async", "sync"):
+            for state in ("missing", "empty", "mismatched"):
+                with self.subTest(mode=mode, state=state):
+                    path = self.root / "msg_7_p2_default-voice_1.00.mp3"
+                    if path.exists():
+                        path.unlink()
+                    if state == "empty":
+                        path.write_bytes(b"")
+                    elif state == "mismatched":
+                        path.write_bytes(b"unbound-cache")
+                    message = SimpleNamespace(content="数据库原文", session=None,
+                        audio_path="/audio/old.mp3" if state == "mismatched" else "/audio/" + path.name)
+                    db = MagicMock()
+                    self.asynchronous.post.return_value = self.audio_response(raw=True)
+                    self.synchronous.post.return_value = self.audio_response(raw=True)
+                    with patch("services.conversation.session_access.get_single_message", return_value=message):
+                        self.assertEqual("/audio/" + path.name, self.synthesize(mode, message_id=7, db=db))
+                    self.assertEqual(b"ID3-test-audio", path.read_bytes())
+                    db.commit.assert_called_once()
+
+    def test_cache_write_failure_does_not_bind_or_commit_or_start_cleanup(self):
+        for mode in ("async", "sync"):
+            with self.subTest(mode=mode):
+                message = SimpleNamespace(content="数据库原文", audio_path=None, session=None)
+                db = MagicMock()
+                self.asynchronous.post.return_value = self.audio_response(raw=True)
+                self.synchronous.post.return_value = self.audio_response(raw=True)
+                with patch("services.conversation.session_access.get_single_message", return_value=message), patch(
+                    "builtins.open", side_effect=OSError("write failed"),
+                ), self.assertRaises(OSError):
+                    self.synthesize(mode, message_id=7, db=db)
+                self.assertIsNone(message.audio_path)
+                db.commit.assert_not_called()
+                db.refresh.assert_not_called()
+        self.thread.assert_not_called()
+
+    def test_binding_commit_failure_keeps_written_file_and_skips_refresh_and_cleanup(self):
+        for mode in ("async", "sync"):
+            with self.subTest(mode=mode):
+                message = SimpleNamespace(content="数据库原文", audio_path=None, session=None)
+                db = MagicMock()
+                db.commit.side_effect = RuntimeError("commit failed")
+                self.asynchronous.post.return_value = self.audio_response(raw=True)
+                self.synchronous.post.return_value = self.audio_response(raw=True)
+                with patch("services.conversation.session_access.get_single_message", return_value=message):
+                    with self.assertRaisesRegex(RuntimeError, "commit failed"):
+                        self.synthesize(mode, message_id=7, db=db)
+                self.assertEqual(b"ID3-test-audio", (self.root / Path(message.audio_path).name).read_bytes())
+                db.refresh.assert_not_called()
+                db.rollback.assert_not_called()
+        self.thread.assert_not_called()
+
+    def test_missing_message_and_disabled_setting_keep_validation_order(self):
+        for mode in ("async", "sync"):
+            with self.subTest(mode=mode), patch(
+                "services.conversation.session_access.get_single_message", return_value=None,
+            ) as load, patch.object(tts_service.os, "makedirs") as mkdir:
+                with patch.object(tts_service.settings, "TTS_ENABLED", False):
+                    with self.assertRaisesRegex(ValueError, "已被禁用"):
+                        self.synthesize(mode, message_id=7, db=MagicMock())
+                load.assert_called_once()
+                mkdir.assert_not_called()
+                with self.assertRaisesRegex(ValueError, "Message ID 7"):
+                    self.synthesize(mode, message_id=7, db=MagicMock())
+                mkdir.assert_called_once()
