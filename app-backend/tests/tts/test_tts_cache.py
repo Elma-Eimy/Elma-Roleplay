@@ -2,10 +2,12 @@
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +16,104 @@ from services.tts_service import TTSService
 
 
 class TTSCacheTests(unittest.TestCase):
+    def test_partial_write_failure_preserves_previous_cache_and_removes_temporary_file(self):
+        original_open = open
+        original_temporary = tempfile.NamedTemporaryFile
+
+        def failing_writer(factory, *args, **kwargs):
+            handle = factory(*args, **kwargs)
+            write = handle.write
+
+            def fail(data):
+                write(data[:4])
+                handle.flush()
+                raise OSError("partial write failed")
+
+            handle.write = fail
+            return handle
+
+        for previous in (None, b"previous-complete-audio"):
+            with self.subTest(previous=previous), tempfile.TemporaryDirectory() as directory:
+                cache = TTSAudioCache(directory, "target.mp3")
+                if previous is not None:
+                    Path(cache.filepath).write_bytes(previous)
+                with patch("builtins.open", side_effect=lambda *a, **kw: failing_writer(original_open, *a, **kw)), patch(
+                    "tempfile.NamedTemporaryFile", side_effect=lambda *a, **kw: failing_writer(original_temporary, *a, **kw),
+                ), self.assertRaisesRegex(OSError, "partial write failed"):
+                    cache.write(b"new-complete-audio")
+                self.assertEqual(previous is not None, cache.is_ready())
+                if previous is not None:
+                    self.assertEqual(previous, Path(cache.filepath).read_bytes())
+                self.assertEqual({"target.mp3"} if previous is not None else set(),
+                    {path.name for path in Path(directory).iterdir()})
+
+    def test_replace_failure_preserves_previous_cache_and_removes_temporary_file(self):
+        for previous in (None, b"previous-complete-audio"):
+            with self.subTest(previous=previous), tempfile.TemporaryDirectory() as directory:
+                cache = TTSAudioCache(directory, "target.mp3")
+                if previous is not None:
+                    Path(cache.filepath).write_bytes(previous)
+                with patch("services.media.tts_cache.os.replace", side_effect=OSError("replace failed")), self.assertRaisesRegex(
+                    OSError, "replace failed",
+                ):
+                    cache.write(b"new-complete-audio")
+                self.assertEqual(previous is not None, cache.is_ready())
+                if previous is not None:
+                    self.assertEqual(previous, Path(cache.filepath).read_bytes())
+                self.assertEqual({"target.mp3"} if previous is not None else set(),
+                    {path.name for path in Path(directory).iterdir()})
+
+    def test_concurrent_writes_publish_only_complete_audio_and_do_not_share_temporary_files(self):
+        original_open = open
+        original_temporary = tempfile.NamedTemporaryFile
+        first_audio, second_audio = b"first-complete-audio", b"second-complete-audio"
+
+        for previous in (None, b"previous-complete-audio"):
+            with self.subTest(previous=previous), tempfile.TemporaryDirectory() as directory:
+                cache = TTSAudioCache(directory, "target.mp3")
+                if previous is not None:
+                    Path(cache.filepath).write_bytes(previous)
+                started, release = threading.Event(), threading.Event()
+
+                def paused_writer(factory, *args, **kwargs):
+                    handle = factory(*args, **kwargs)
+                    write = handle.write
+
+                    def pause(data):
+                        if data == first_audio:
+                            write(data[:4])
+                            handle.flush()
+                            started.set()
+                            if not release.wait(10):
+                                raise TimeoutError("writer was not released")
+                            write(data[4:])
+                            return len(data)
+                        return write(data)
+
+                    handle.write = pause
+                    return handle
+
+                with ThreadPoolExecutor(max_workers=1) as executor, patch(
+                    "builtins.open", side_effect=lambda *a, **kw: paused_writer(original_open, *a, **kw),
+                ), patch("tempfile.NamedTemporaryFile",
+                    side_effect=lambda *a, **kw: paused_writer(original_temporary, *a, **kw)):
+                    pending = executor.submit(cache.write, first_audio)
+                    try:
+                        self.assertTrue(started.wait(5), "writer did not start")
+                        self.assertEqual(previous is not None, cache.is_ready())
+                        if previous is not None:
+                            self.assertEqual(previous, Path(cache.filepath).read_bytes())
+                        prune_cache(directory, 1, logger=logging.getLogger("test.tts.cache"))
+                        self.assertEqual({"target.mp3"} if previous is not None else set(),
+                            {path.name for path in Path(directory).glob("*.mp3")})
+                        cache.write(second_audio)
+                        self.assertEqual(second_audio, Path(cache.filepath).read_bytes())
+                    finally:
+                        release.set()
+                        pending.result(timeout=5)
+                self.assertEqual(first_audio, Path(cache.filepath).read_bytes())
+                self.assertEqual({"target.mp3"}, {path.name for path in Path(directory).iterdir()})
+
     def test_cache_import_and_file_operations_do_not_initialize_runtime(self):
         script = """
 import sys, tempfile

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import logging
 import os
+import tempfile
 
 from services.infrastructure.logging_context import log_event
 
@@ -36,8 +37,21 @@ class TTSAudioCache:
         return os.path.exists(self.filepath) and os.path.getsize(self.filepath) > 0
 
     def write(self, audio_bytes):
-        with open(self.filepath, "wb") as file:
-            file.write(audio_bytes)
+        # 临时文件与目标同目录，关闭后替换，避免读者命中尚未写完的 MP3。
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="wb", dir=self.directory,
+                prefix=".tts-", suffix=".tmp", delete=False) as file:
+                temporary = file.name
+                file.write(audio_bytes)
+            os.replace(temporary, self.filepath)
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    # 清理失败不能覆盖写入或替换异常；临时文件不会参与缓存命中。
+                    pass
 
 
 def prune_cache(cache_dir, max_files, *, logger):

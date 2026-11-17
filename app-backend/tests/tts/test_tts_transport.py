@@ -212,7 +212,7 @@ class TTSTransportTests(unittest.TestCase):
                 self.synchronous.post.return_value = self.audio_response(raw=True)
                 with patch("services.conversation.session_access.get_single_message", return_value=message), patch(
                     "builtins.open", side_effect=OSError("write failed"),
-                ), self.assertRaises(OSError):
+                ), patch("tempfile.NamedTemporaryFile", side_effect=OSError("write failed")), self.assertRaises(OSError):
                     self.synthesize(mode, message_id=7, db=db)
                 self.assertIsNone(message.audio_path)
                 db.commit.assert_not_called()
@@ -248,3 +248,22 @@ class TTSTransportTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Message ID 7"):
                     self.synthesize(mode, message_id=7, db=MagicMock())
                 mkdir.assert_called_once()
+
+    def test_cache_publication_failure_does_not_bind_or_commit_or_leave_partial_audio(self):
+        for mode in ("async", "sync"):
+            with self.subTest(mode=mode):
+                message = SimpleNamespace(content="数据库原文", audio_path=None, session=None)
+                db = MagicMock()
+                self.asynchronous.post.return_value = self.audio_response(raw=True)
+                self.synchronous.post.return_value = self.audio_response(raw=True)
+                with patch("services.conversation.session_access.get_single_message", return_value=message), patch(
+                    "services.media.tts_cache.os.replace", side_effect=OSError("replace failed"),
+                ), self.assertRaisesRegex(OSError, "replace failed"):
+                    self.synthesize(mode, message_id=7, db=db)
+                if mode == "async":
+                    self.manager.__aexit__.assert_awaited_once()
+                self.assertIsNone(message.audio_path)
+                db.commit.assert_not_called()
+                db.refresh.assert_not_called()
+                self.assertEqual([], list(self.root.iterdir()))
+        self.thread.assert_not_called()
