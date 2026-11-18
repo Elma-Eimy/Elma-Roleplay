@@ -11,6 +11,7 @@ from application.group_runtime import group_runtime, fail_interrupted_group_cand
 from application.chat_maintenance import start_chat_maintenance
 from core.locking import stop_group_executions
 from core.database import run_migrations
+from core.config import settings
 from services.infrastructure.outbox_worker import run_outbox_worker
 from services.memory.memory_retry_worker import run_group_memory_worker, run_memory_retry_worker
 from routers.chat import cancel_all_stream_tasks
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 @asynccontextmanager
 async def _owned_lifespan(app: FastAPI, owner):
+    settings.persist_normalized()
     run_migrations()
     fail_interrupted_group_candidates(owner)
     app.state.group_runtime_owner = owner

@@ -75,6 +75,8 @@ class TestConfigSystem(unittest.TestCase):
     def test_canonical_mode_wins_over_legacy_value_on_load(self):
         config = self.settings({"default_chat_model": "deepseek-flash", "chat_thinking_mode": "enabled", "reasoning_mode": False})
         self.assertTrue(config.LLM_REASONING_MODE)
+        self.assertFalse(yaml.safe_load(self.path.read_text(encoding="utf-8"))["llm"]["reasoning_mode"])
+        config.persist_normalized()
         self.assertTrue(yaml.safe_load(self.path.read_text(encoding="utf-8"))["llm"]["reasoning_mode"])
 
     def test_partial_legacy_slots_preserve_old_auxiliary_defaults(self):
@@ -157,6 +159,8 @@ class TestConfigSystem(unittest.TestCase):
 
     def test_missing_file_is_initialized(self):
         config = Settings(self.path)
+        self.assertFalse(self.path.exists())
+        config.persist_normalized()
         self.assertTrue(self.path.exists())
         self.assertEqual(config.LLM_CHAT_THINKING_MODE, "disabled")
 

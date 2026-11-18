@@ -28,16 +28,43 @@ class ApplicationFactoryTests(unittest.TestCase):
     def test_creating_apps_does_not_start_migrations_or_workers(self):
         with patch("application.lifecycle.run_migrations") as migrations, patch(
             "application.lifecycle.run_outbox_worker", new_callable=AsyncMock
-        ) as worker:
+        ) as worker, patch("application.lifecycle.settings.persist_normalized") as save:
             first = create_app()
             second = create_app()
         self.assertIsNot(first, second)
         self.assertIsNot(first.state, second.state)
         migrations.assert_not_called()
         worker.assert_not_called()
+        save.assert_not_called()
 
 
 class ApplicationLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configuration_is_saved_after_ownership_and_before_migrations(self):
+        events = []
+        with patch("application.lifecycle.group_runtime") as runtime, patch(
+            "application.lifecycle.settings.persist_normalized", side_effect=lambda: events.append("save"),
+        ), patch("application.lifecycle.run_migrations", side_effect=RuntimeError("stop after save")) as migrate:
+            runtime.return_value.__enter__.side_effect = lambda: events.append("lock")
+            runtime.return_value.__exit__.side_effect = lambda *args: events.append("unlock")
+            with self.assertRaisesRegex(RuntimeError, "stop after save"):
+                async with lifespan(FastAPI()):
+                    self.fail("startup must stop at the injected migration failure")
+            migrate.assert_called_once()
+        self.assertEqual(["lock", "save", "unlock"], events)
+
+    async def test_failed_configuration_save_releases_ownership_without_migrations_or_workers(self):
+        with patch("application.lifecycle.group_runtime") as runtime, patch(
+            "application.lifecycle.settings.persist_normalized", side_effect=OSError("configuration save failed"),
+        ), patch("application.lifecycle.run_migrations") as migrate, patch(
+            "application.lifecycle.run_outbox_worker", new_callable=AsyncMock,
+        ) as worker:
+            with self.assertRaisesRegex(OSError, "configuration save failed"):
+                async with lifespan(FastAPI()):
+                    self.fail("startup must fail before serving requests")
+            migrate.assert_not_called()
+            worker.assert_not_called()
+            runtime.return_value.__exit__.assert_called_once()
+
     async def test_worker_is_owned_and_awaited_on_each_lifespan(self):
         started = asyncio.Event()
         stopped = asyncio.Event()
