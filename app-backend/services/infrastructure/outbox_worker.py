@@ -169,12 +169,21 @@ def handle_upsert_vector(payload_str: str):
     memory_id = payload.get("memory_id")
     fallback_character_id = payload.get("character_id")
     fallback_doc_id = payload.get("chroma_doc_id")
-    if not memory_id or not fallback_character_id or not fallback_doc_id:
+    if not memory_id or not fallback_character_id or not isinstance(fallback_doc_id, str) or not fallback_doc_id.strip():
         raise ValueError("Invalid upsert_vector payload")
 
     db = SessionLocal()
     try:
         chunk = db.get(MemoryChunk, memory_id)
+        if chunk is not None and not chunk.chroma_doc_id:
+            # 仅修复空值，保留并发写入已选定的 ID，并在调用向量库前提交。
+            db.query(MemoryChunk).filter(
+                MemoryChunk.id == memory_id,
+                or_(MemoryChunk.chroma_doc_id.is_(None), MemoryChunk.chroma_doc_id == ""),
+            ).update({MemoryChunk.chroma_doc_id: fallback_doc_id}, synchronize_session=False)
+            db.commit()
+            chunk = db.get(MemoryChunk, memory_id, populate_existing=True)
+
         if chunk is None:
             # 该记忆可能会在任务排队后被删除。
             collection = get_character_collection(fallback_character_id)

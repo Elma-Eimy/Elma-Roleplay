@@ -60,7 +60,7 @@ Prompt、世界书和 TTS 的部分机制仍在 [后端说明](../app-backend/RE
 | [群聊实施进度](plans/group-chat/README.md)、[群聊返工问题清单](plans/group-chat/REWORK_ISSUES.md) | 最新状态、用户实测未解决问题与下一步；导航到需求基线、阶段设计和交接历史 |
 | [多立绘与 CHARX 待办](plans/CHARACTER_PORTRAITS_PLAN.md) | 当前基线、样本研究与未完成事项 |
 | [聊天 Store 生命周期评估](plans/CHAT_LIFECYCLE_REVIEW.md) | 初评证据、已完成修复与待评估的 Store 拆分 |
-| [Outbox 向量同步容错与自愈待办](plans/OUTBOX_VECTOR_SELF_HEALING.md) | NULL 文档 ID 重试现象及待实施方案 |
+| [Outbox 向量同步空 ID 排查记录](plans/OUTBOX_VECTOR_SELF_HEALING.md) | 历史重试现象、原因与修复入口 |
 | [更新日志](../CHANGELOG.md) | 最多 10 条近期摘要与月度历史索引 |
 
 群聊模块设计和阶段报告由各自索引维护，总导航不逐项重复进度。近期新增[亲历审查与混合更正回归](testing/group-chat/SOURCE_AND_CORRECTION_CHECKS.md)，区分隔离自动检查与待执行的真实验证。规划记录目标与取舍，报告保存当时的验证证据；当前行为查功能说明与接口契约，不能由旧记录中的“下一步”推断。
