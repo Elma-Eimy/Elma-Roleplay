@@ -401,7 +401,9 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 所有非敏感配置集中在 `config.yaml`，修改后重启生效；部分参数也可通过 `PUT /utils/settings` API 热更新并自动持久化。
 
-常用配置见 [config.yaml.example](config.yaml.example)，完整字段、类型及默认值以 [CONFIG_SCHEMA](core/config.py) 为准。示例的地址与模型名必须替换，TTS 在示例中默认关闭；缺少 YAML 时自动生成的配置使用 Schema 默认值，两者不应混为可直接连接服务的个人配置。
+常用配置见 [config.yaml.example](config.yaml.example)，完整字段、类型及默认值以 [CONFIG_SCHEMA](core/config_schema.py) 为准。示例的地址与模型名必须替换，TTS 在示例中默认关闭；缺少 YAML 时正常启动会使用 Schema 默认值生成配置，两者不应混为可直接连接服务的个人配置。
+
+`core.config` 兼容入口继续读取 `.env` 和 YAML、补齐内存默认值，导入或构造 `Settings` 不保存文件。正常启动取得运行权后、数据库迁移前显式保存必要的配置补齐结果，保存失败会阻止启动；设置接口仍在原子保存成功后发布运行状态。工具若只需配置定义或类，可分别导入 `core.config_schema`、`core.config_settings`，两者导入不读取运行配置；需主动保存时调用 `Settings.persist_normalized()`。独立 Alembic 命令不回写 YAML，现有数据库初始化方式不变。
 
 聊天、记忆、翻译和语音预处理使用 `llm.chat_base_url`，嵌入使用 `llm.embedding_base_url`；各自密钥由 `.env` 提供。`default_chat_model` 与思考开关独立；旧模型槽用于兼容和初始化回退。`model_profiles` 可补充模型显示名称与适配信息。
 
@@ -453,7 +455,7 @@ app-backend/
 ├── requirements.txt
 ├── application/
 │   ├── factory.py           # 应用、CORS、静态资源与路由装配
-│   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   ├── lifecycle.py         # 配置显式保存、数据库迁移与后台任务生命周期
 │   ├── group_runtime.py     # 数据库运行权与群聊中断候选处理
 │   └── banner.py            # 启动地址提示
 ├── scripts/
@@ -465,7 +467,10 @@ app-backend/
 ├── core/
 │   ├── models.py            # SQLAlchemy ORM 模型定义
 │   ├── database.py          # 数据库连接、Session 工厂与迁移函数（由 lifespan 调用）
-│   ├── config.py            # Settings 类，加载 .env + config.yaml
+│   ├── config.py            # 配置兼容入口，读取 .env + config.yaml，不隐式保存
+│   ├── config_schema.py     # 配置字段与默认值，导入无 I/O
+│   ├── config_settings.py   # Settings 类、内存规范化与显式持久化编排
+│   ├── config_storage.py    # YAML 读取与原子保存
 │   ├── auth.py              # X-API-Key 鉴权依赖
 │   ├── locking.py           # 会话级 asyncio.Lock 锁管理
 │   └── utils.py             # 工具函数（获取本机 IP 等）

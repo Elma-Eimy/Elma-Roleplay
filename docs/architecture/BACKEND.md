@@ -7,7 +7,7 @@ main.py
   └─ application.factory.create_app()
        ├─ CORS、静态资源、鉴权依赖和路由装配
        └─ application.lifecycle.lifespan
-            ├─ 启动：取得数据库运行权 → Alembic 升级 → 收敛中断群聊 → 启动 Outbox、单聊/群聊记忆与 CHARX 清理任务
+            ├─ 启动：取得数据库运行权 → 显式保存配置补齐结果 → Alembic 升级 → 收敛中断群聊 → 启动 Outbox、单聊/群聊记忆与 CHARX 清理任务
             └─ 关闭：停止接受群聊与单聊维护 → 等待执行与后台任务清理 → 清理聊天流及维护线程 → 释放数据库运行权
 
 HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
@@ -18,13 +18,17 @@ HTTP 请求 → routers/ → services/ → core/ 与基础设施客户端
 
 `create_app()` 只组装应用，不执行数据库迁移或启动 Worker。向量依赖通过 `services/infrastructure/clients.py` 的 `get_chroma_client()` 和 `get_embedding_function()` 首次使用时创建，分别加锁并在进程内复用；构造失败不缓存，下次使用可以重试。仅导入服务或创建应用不会构造这两项资源，删除向量集合也无需创建 Embedding 函数。
 
-这不代表应用创建没有其他副作用：配置加载、数据库引擎和头像目录等仍沿用现有行为。ChromaDB 与 Embedding 构造错误在首次使用时暴露，而非路由导入时；Outbox 调用失败沿用已有持久重试机制。模型、地址与存储路径仍使用现有配置，不支持靠重复获取函数热切换已创建的资源。
+这不代表应用创建没有其他副作用：兼容配置入口仍读取 `.env` 和 YAML，数据库引擎和头像目录也沿用现有行为；导入与应用创建不保存配置。ChromaDB 与 Embedding 构造错误在首次使用时暴露，而非路由导入时；Outbox 调用失败沿用已有持久重试机制。模型、地址与存储路径仍使用现有配置，不支持靠重复获取函数热切换已创建的资源。
 
 生命周期内的 `run_migrations()` 通过 Alembic 配置属性关闭迁移环境的日志重配置，沿用 Uvicorn 或其他宿主已有的日志级别与处理器；独立命令行迁移仍加载 `alembic.ini`，但不禁用已存在的日志器。测试临时副本包含 `core/`、`alembic/` 和配置文件，启动迁移日志回归在独立进程中执行真实升级，避免污染其他测试的日志状态。
 
 ## 模块边界
 
-`core/config.py` 负责旧配置迁移、类型绑定、配置快照及串行原子保存。`core/model_settings.py` 是不读取全局配置的模型能力、选择与参数规则；基础设施层保留既有调用入口并向规则传入快照。模型和思考模式独立，各辅助任务分别解析；旧双模型槽位只在迁移和旧请求兼容时使用。保存失败不发布新状态，非法 YAML 不静默回退。详见[模型设置](../features/MODEL_SELECTION.md)。
+`core/config_schema.py` 定义 Schema、默认值和字段元数据；`core/config_settings.py` 提供 `Settings` 的读取、旧字段规范化、类型绑定、配置快照与串行更新；`core/config_storage.py` 只在函数被调用时读取 YAML 或原子保存文件。Schema 和 Settings 类模块可独立导入，不读取 `.env` 或运行配置，也不加载全局单例或数据库。`core/config.py` 保留 `CONFIG_SCHEMA`、`Settings` 和真实的 `settings` 单例兼容导出，仍加载 `.env` 与 YAML，但构造和 `migrate_and_bind_config()` 只更新内存，不写文件。
+
+允许写入的业务入口为：lifespan 在取得数据库运行权后、Alembic 升级前调用 `settings.persist_normalized()`，仅保存尚未落盘的默认值或旧配置补齐结果；设置接口继续调用 `update_and_persist()`，校验并保存候选后才发布运行状态。维护工具若需要保存规范化结果，须显式调用 `persist_normalized()`；独立 Alembic 命令只读配置。成功保存后记录持久化基线，重复启动或后续显式保存不重复落盘；保存失败不更新基线，启动失败时释放运行权且不执行数据库迁移或启动 Worker。保持进程内锁、原子替换和全局对象身份，不重新加载外部修改或热切换资源。
+
+`core/model_settings.py` 是不读取全局配置的模型能力、选择与参数规则；基础设施层保留既有调用入口并向规则传入快照。模型和思考模式独立，各辅助任务分别解析；旧双模型槽位只在规范化和旧请求兼容时使用。保存失败不发布新状态，非法 YAML 不静默回退。详见[模型设置](../features/MODEL_SELECTION.md)。
 
 群聊的数据、个人上下文、导演、后台恢复与成员记忆机制见 [群聊架构](GROUP_CHAT.md)。功能范围查 [群聊说明](../features/GROUP_CHAT.md)，HTTP 契约查 [群聊接口](../api/GROUP_SESSIONS.md)。
 
