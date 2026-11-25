@@ -1,7 +1,7 @@
 <template>
   <view v-if="isOpen" class="story-overlay">
     <view class="story-backdrop" @tap="closeModal"></view>
-    <view class="story-panel" role="dialog" aria-label="开启新故事">
+    <view class="story-panel" :class="{ 'has-greetings': showGreetings }" role="dialog" aria-label="开启新故事">
       <view class="story-header"
         ><view
           ><text class="story-kicker">A NEW CHAPTER</text
@@ -28,6 +28,7 @@
             :alternates="alternateGreetings"
             :character-name="characterName || '角色'"
             :user-name="personaStore.nicknameFor(characterId)"
+            inline-preview
           />
           <text v-else class="story-hint"
             >新分支会继承当前剧情进度与人物状态。</text
@@ -118,6 +119,14 @@ const onConfirm = () => {
   border-radius: 28rpx;
   overflow: hidden;
 }
+.story-panel.has-greetings {
+  height: 90vh;
+  height: 90dvh;
+}
+.story-header,
+.story-footer {
+  flex-shrink: 0;
+}
 .story-header {
   padding: 28rpx 32rpx;
   display: flex;
@@ -153,6 +162,9 @@ const onConfirm = () => {
   flex: 1;
   min-height: 0;
   height: 65vh;
+}
+.has-greetings .story-body {
+  height: 0;
 }
 .story-body-inner {
   padding: 0 32rpx 32rpx;
@@ -209,6 +221,10 @@ const onConfirm = () => {
   .story-panel {
     border-radius: 28rpx 28rpx 0 0;
     max-height: 94vh;
+  }
+  .story-panel.has-greetings {
+    height: 94vh;
+    height: 94dvh;
   }
 }
 </style>
