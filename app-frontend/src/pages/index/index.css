@@ -605,6 +605,16 @@
   white-space: nowrap;
 }
 
+.draft-badge {
+  color: var(--app-color-danger, #d9655d);
+  font-weight: 650;
+  margin-right: 6rpx;
+}
+
+.featured-preview .draft-badge {
+  color: #ffd1c7;
+}
+
 .story-chevron {
   flex-shrink: 0;
   color: var(--app-color-text-muted, #a4aea9);

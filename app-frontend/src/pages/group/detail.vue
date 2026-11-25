@@ -78,7 +78,7 @@
           </view>
           <ChatComposer v-model="draft" :use-reasoning="chatSettingsStore.useReasoning" :model-summary="chatSettingsStore.modelSummary"
             :is-focused="isFocused" :is-android="isAndroid" :keyboard-height="keyboardHeight" :wrapper-style="inputWrapperStyle"
-            :is-generating="operationBusy" :disabled="!canSend" :maxlength="20000"
+            :is-generating="operationBusy" :send-disabled="!canSend" :maxlength="20000"
             @open-model-settings="openModelSettings"
             @focus-change="onFocusChange" @line-change="followNewContent" @send="send" />
         </view>
@@ -172,6 +172,7 @@ import GroupUtterances from "@/components/chat/GroupUtterances.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
 import { groupRoundNotice } from "@/utils/groupRounds";
+import { loadChatDraft, saveChatDraft, clearChatDraft } from "@/utils/chatDrafts";
 
 const promptPreview = ref<GroupPromptPreview | null>(null);
 const promptLoading = ref(false), promptError = ref("");
@@ -188,14 +189,55 @@ async function openMemberPrompt(personaId: number) {
   finally { if (valid()) promptLoading.value = false; }
 }
 
+let activeDraftSessionId: number | null = null;
+let activeDraftServer = "";
+let hydratingDraft = false;
+let deletingDraftTarget: { id: number; server: string } | null = null;
 const backToList = () => uni.navigateBack({ fail: () => uni.switchTab({ url: "/pages/index/index" }) });
+const onGroupDeleted = () => {
+  if (deletingDraftTarget) {
+    clearChatDraft("group", deletingDraftTarget.id, deletingDraftTarget.server);
+    deletingDraftTarget = null;
+  }
+  backToList();
+};
 const chatSettingsStore = useChatSettingsStore();
-const state = useGroupSessionDetail(backToList, id => chatSettingsStore.requestGeneration(id, { ...chatSettingsStore.selection }));
+const state = useGroupSessionDetail(onGroupDeleted, id => chatSettingsStore.requestGeneration(id, { ...chatSettingsStore.selection }));
 const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, roundsError, hasMoreRounds,
   current, canGenerate, draft, submitting, recovering, operationError, notice, pending, operationBusy, locked, historyStale, canDelete,
   canSend, canRegenerate, canDiscard, candidates, candidateRoundId, loadingCandidates, candidatesError,
   hasMoreCandidates, preview, loadingPreview, previewError, adoptedState, loadingAdoptedState, adoptedStateError,
   portraitData, loadingPortraits, portraitWriting, portraitError, portraitOptions, canChoosePortrait } = state;
+watch(
+  () => group.value?.session_id,
+  (nextId) => {
+    if (!nextId) {
+      activeDraftSessionId = null;
+      activeDraftServer = "";
+      return;
+    }
+    const server = getBaseUrl();
+    if (nextId !== activeDraftSessionId || server !== activeDraftServer) {
+      activeDraftSessionId = nextId;
+      activeDraftServer = server;
+      const saved = loadChatDraft("group", nextId, server);
+      if (saved || typeof draft.value !== "string" || !draft.value) {
+        hydratingDraft = true;
+        draft.value = saved;
+        hydratingDraft = false;
+      }
+    }
+  },
+  { flush: "sync", immediate: true }
+);
+watch(
+  draft,
+  (value) => {
+    if (hydratingDraft || activeDraftSessionId === null || activeDraftServer !== getBaseUrl()) return;
+    saveChatDraft("group", activeDraftSessionId, typeof value === "string" ? value : "", activeDraftServer);
+  },
+  { flush: "sync" }
+);
 const composerFeedback = computed(() => {
   if (operationError.value) return operationError.value;
   if (!current.value) return '正在同步群聊，已有消息仍可阅读。';
@@ -404,10 +446,13 @@ const confirmAction = (title: string, content: string) => new Promise<boolean>(r
 const confirmDiscard = () => confirmAction('撤回当前轮次？', '此轮将移出后续剧情，已确认的更早轮次不会撤销。');
 const confirmResume = () => confirmAction('继续未完成候选？', '会沿用原参数，从最后保存的进度继续。未保存成功的步骤可能再次调用模型并产生费用。');
 const retry = () => { if (needsSelection.value) backToList(); else void state.load(); };
-const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.showModal({
-  title: "删除整个群聊？", content: "全部成员与本群数据将被删除，来源单聊和角色卡会保留。此操作无法撤销。",
-  confirmText: "删除群聊", confirmColor: "#d9655d", success: result => resolve(result.confirm), fail: () => resolve(false),
-})));
+const remove = () => {
+  deletingDraftTarget = group.value ? { id: group.value.session_id, server: getBaseUrl() } : null;
+  return state.remove(() => new Promise<boolean>(resolve => uni.showModal({
+    title: "删除整个群聊？", content: "全部成员与本群数据将被删除，来源单聊和角色卡会保留。此操作无法撤销。",
+    confirmText: "删除群聊", confirmColor: "#d9655d", success: result => resolve(result.confirm), fail: () => resolve(false),
+  })));
+};
 </script>
 
 <style scoped>

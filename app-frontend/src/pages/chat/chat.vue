@@ -207,6 +207,8 @@ import { useChatMessageActions } from "@/composables/useChatMessageActions";
 import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
 import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
+import { getBaseUrl } from "@/api/config";
+import { loadChatDraft, saveChatDraft, clearChatDraft } from "@/utils/chatDrafts";
 import type { TokenEstimate } from "@/api/sessions";
 import type { BranchSession, BranchTreeSession } from "@/types/chat";
 import type { ChatMessage } from "@/store/chatStore";
@@ -332,8 +334,33 @@ const {
 } = useChatMessageActions(currentSessionId, async () => { pinToBottom(); },
   message => saveKeepsake(message, message.role === "user" ? personaStore.userNickname || "我" : personaStore.characterName || "角色"));
 
+let activeDraftSessionId: number | null = null;
+let activeDraftServer = "";
+let hydratingDraft = false;
+
+const hydrateDraft = (sessionId: number) => {
+  activeDraftSessionId = sessionId;
+  activeDraftServer = getBaseUrl();
+  hydratingDraft = true;
+  inputText.value = loadChatDraft("single", sessionId, activeDraftServer);
+  hydratingDraft = false;
+};
+
+watch(
+  inputText,
+  (value) => {
+    if (hydratingDraft || activeDraftSessionId === null || activeDraftServer !== getBaseUrl()) return;
+    saveChatDraft("single", activeDraftSessionId, value, activeDraftServer);
+  },
+  { flush: "sync" }
+);
+
 watch(() => chatStore.activeSessionId, (id) => {
-  if (id === null) currentSessionId.value = null;
+  if (id === null) {
+    currentSessionId.value = null;
+    activeDraftSessionId = null;
+    activeDraftServer = "";
+  }
 }, { flush: "sync" });
 
 // 平行宇宙时空树的状态变量
@@ -394,6 +421,7 @@ const openBranchTree = async () => {
 const switchSession = async (session: Pick<BranchSession, "id">) => {
   isBranchTreeOpen.value = false;
   currentSessionId.value = session.id;
+  hydrateDraft(session.id);
   backgroundMode.value = readBackgroundMode(session.id);
   isInitLoading.value = true;
   resetPinState();
@@ -486,6 +514,7 @@ const handleTreeNodeLongpress = (session: BranchTreeSession) => {
               try {
                 await deleteSession(session.id);
                 clearBackgroundMode(session.id);
+                clearChatDraft('single', session.id);
                 chatSettingsStore.removeSession(session.id);
                 // 如果删除的是当前会话，需要退回到会话列表首页
                 if (session.id === currentSessionId.value) {
@@ -520,6 +549,7 @@ onLoad(async (options) => {
   if (options && options.sessionId) {
     const sId = parseInt(options.sessionId, 10);
     currentSessionId.value = sId;
+    hydrateDraft(sId);
     backgroundMode.value = readBackgroundMode(sId);
     
     isInitLoading.value = true;
@@ -548,6 +578,8 @@ onLoad(async (options) => {
 });
 
 onUnload(() => {
+  activeDraftSessionId = null;
+  activeDraftServer = '';
   disposePortrait();
   console.log("[chat.vue] onUnload page - resetting chatStore");
   chatStore.$reset();
@@ -611,6 +643,7 @@ const onSend = async () => {
   if (!text || chatStore.isLoading || currentSessionId.value === null || chatStore.activeSessionId !== currentSessionId.value) return;
 
   inputText.value = "";
+  clearChatDraft('single', currentSessionId.value);
   chatStore.sendChatMessage(currentSessionId.value, text);
   pinToBottom();
 };
@@ -702,9 +735,11 @@ const deleteCurrentSession = () => {
       if (res.confirm) {
         try {
           uni.showLoading({ title: '正在删除...' });
-          await deleteSession(currentSessionId.value!);
-          clearBackgroundMode(currentSessionId.value!);
-          chatSettingsStore.removeSession(currentSessionId.value!);
+          const targetSessionId = currentSessionId.value!;
+          await deleteSession(targetSessionId);
+          clearBackgroundMode(targetSessionId);
+          clearChatDraft('single', targetSessionId);
+          chatSettingsStore.removeSession(targetSessionId);
           uni.hideLoading();
           isStatusPanelOpen.value = false;
           uni.navigateBack();

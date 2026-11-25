@@ -27,9 +27,9 @@ function find(node, className) {
 }
 
 test("composer blocks both send gestures while disabled or generating and honors group input limits", () => {
-  for (const [disabled, isGenerating] of [[true, false], [false, true], [false, false]]) {
+  for (const [disabled, sendDisabled, isGenerating] of [[true, false, false], [false, true, false], [false, false, true], [false, false, false]]) {
     const events = [];
-    const tree = render({ modelValue: "draft", disabled, isGenerating, maxlength: 20000,
+    const tree = render({ modelValue: "draft", disabled, sendDisabled, isGenerating, maxlength: 20000,
       showModelSettings: false, isAndroid: false, isFocused: false, wrapperStyle: {},
       keyboardHeight: 0, placeholderText: "", emit: event => events.push(event), handleInput() {},
     }, []);
@@ -38,7 +38,7 @@ test("composer blocks both send gestures while disabled or generating and honors
     assert.equal(input.props.disabled, disabled);
     input.props.onConfirm();
     send.props.onTap();
-    assert.equal(events.length, disabled || isGenerating ? 0 : 2);
+    assert.equal(events.length, disabled || sendDisabled || isGenerating ? 0 : 2);
     assert.equal(find(tree, "reasoning-toggle-row"), null);
   }
 });

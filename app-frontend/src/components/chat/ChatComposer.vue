@@ -38,7 +38,7 @@
         :confirm-hold="true"
         confirm-type="send"
         @input="handleInput"
-        @confirm="!disabled && !isGenerating && emit('send')"
+        @confirm="!disabled && !sendDisabled && !isGenerating && emit('send')"
         @focus="emit('focus-change', true)"
         @blur="emit('focus-change', false)"
         @linechange="emit('line-change')"
@@ -46,11 +46,11 @@
       <view
         class="send-btn"
         :class="{
-          'is-active': !disabled && !isGenerating && modelValue.trim().length > 0,
+          'is-active': !disabled && !sendDisabled && !isGenerating && modelValue.trim().length > 0,
           'is-generating': isGenerating,
         }"
-        :aria-disabled="disabled || isGenerating"
-        @tap="!disabled && !isGenerating && emit('send')"
+        :aria-disabled="disabled || sendDisabled || isGenerating"
+        @tap="!disabled && !sendDisabled && !isGenerating && emit('send')"
       >
         <view v-if="isGenerating" class="send-busy-dots">
           <view class="busy-dot"></view>
@@ -87,12 +87,14 @@ const props = withDefaults(defineProps<{
   wrapperStyle: CSSProperties;
   isGenerating?: boolean;
   disabled?: boolean;
+  sendDisabled?: boolean;
   maxlength?: number;
   showModelSettings?: boolean;
   characterName?: string;
 }>(), {
   isGenerating: false,
   disabled: false,
+  sendDisabled: false,
   maxlength: -1,
   showModelSettings: true,
   characterName: "",

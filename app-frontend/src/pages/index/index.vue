@@ -94,7 +94,7 @@
                   <text class="featured-character">{{ featuredStory.subtitle }}</text>
                 </view>
                 <text class="featured-title">{{ featuredStory.title }}</text>
-                <text class="featured-preview">{{ featuredStory.preview }}</text>
+                <text class="featured-preview"><text v-if="featuredStory.draft" class="draft-badge">[草稿]</text>{{ featuredStory.draft || featuredStory.preview }}</text>
 
                 <view class="continue-button" @tap.stop="goToStory(featuredStory)">
                   <text class="continue-label">继续这段故事</text>
@@ -218,7 +218,7 @@
                     </text>
                   </view>
                   <text class="story-title">{{ story.title }}</text>
-                  <text class="story-preview">{{ story.preview }}</text>
+                  <text class="story-preview"><text v-if="story.draft" class="draft-badge">[草稿]</text>{{ story.draft || story.preview }}</text>
                 </view>
 
                 <text class="story-chevron">›</text>
@@ -282,6 +282,7 @@ import { getBaseUrl } from "@/api/config";
 import type { RecentSessionSummary } from "@/api/sessions";
 import type { GroupSessionDetail } from "@/types/groupSessions";
 import { mergeHomeStories, type HomeSingleSession, type HomeStoryItem } from "@/utils/homeStories";
+import { readAllChatDrafts, clearChatDraft } from "@/utils/chatDrafts";
 import TabBar from "@/components/common/TabBar.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import AppEmptyState from "@/components/common/AppEmptyState.vue";
@@ -298,12 +299,16 @@ const newSessionTitle = ref("");
 
 const singleSessions = ref<HomeSingleSession[]>([]);
 const groupSessions = ref<GroupSessionDetail[]>([]);
+const storyDrafts = ref<Record<string, string>>({});
+const refreshStoryDrafts = () => {
+  storyDrafts.value = readAllChatDrafts();
+};
 const isLoading = ref(false);
 let storyLoadVersion = 0;
 const RECENT_SESSION_LIMIT = 50;
 const QUICK_CHARACTER_LIMIT = 10;
 
-const stories = computed(() => mergeHomeStories(singleSessions.value, groupSessions.value));
+const stories = computed(() => mergeHomeStories(singleSessions.value, groupSessions.value, storyDrafts.value));
 const featuredStory = computed(() => stories.value[0] || null);
 const featuredBackgroundAvatar = computed(
   () => featuredStory.value?.avatars.find(item => !!item.avatarPath)?.avatarPath || ""
@@ -423,6 +428,7 @@ onShow(() => {
   // #ifndef H5
   uni.hideTabBar({ animation: false });
   // #endif
+  refreshStoryDrafts();
   loadHomeData();
 });
 
@@ -500,6 +506,8 @@ const onStoryLongPress = (story: HomeStoryItem) => {
             if (!mRes.confirm) return;
             try {
               await deleteGroupSession(story.id);
+              clearChatDraft("group", story.id);
+              refreshStoryDrafts();
               await loadRecentStories();
               uni.showToast({ title: '删除成功', icon: 'success' });
             } catch (e: unknown) {
@@ -531,6 +539,8 @@ const onStoryLongPress = (story: HomeStoryItem) => {
             if (mRes.confirm) {
               try {
                 await deleteSession(session.id);
+                clearChatDraft("single", session.id);
+                refreshStoryDrafts();
                 useChatSettingsStore().removeSession(session.id);
                 await loadRecentStories();
                 uni.showToast({ title: '删除成功', icon: 'success' });
