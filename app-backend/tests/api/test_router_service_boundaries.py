@@ -182,16 +182,41 @@ class RouterServiceBoundaryTests(unittest.TestCase):
             json.loads(cleanup_job.payload)["file_path"],
         )
 
-    def test_duplicate_create_reports_existing_character_without_overwriting(self):
+    def test_duplicate_name_creates_independent_character_without_overwriting(self):
         response = character_service.create_character({
             "name": self.character.name,
-            "description": "replacement must remain a client draft",
+            "description": "alternate author edition",
             "first_mes": "new start",
         }, self.db)
-        self.assertFalse(response["created"])
-        self.assertEqual(response["character_id"], self.character.id)
+        self.assertTrue(response["created"])
+        self.assertNotEqual(response["character_id"], self.character.id)
         self.db.refresh(self.character)
         self.assertEqual(self.character.description, "test")
+        created = self.db.get(Character, response["character_id"])
+        self.assertEqual("alternate author edition", created.description)
+
+    def test_list_characters_exposes_creator_and_handles_missing_or_malformed_extensions(self):
+        from routers.characters import list_characters
+
+        created = character_service.create_character({
+            "name": "Creator Card",
+            "description": "desc",
+            "first_mes": "hi",
+            "extensions": {"ai_roleplay_card": {"creator": "  Author A  "}},
+        }, self.db)
+        broken = Character(
+            name="Broken Extensions",
+            description="desc",
+            first_mes="hi",
+            extensions="{bad json",
+        )
+        self.db.add(broken)
+        self.db.commit()
+
+        items = {item["id"]: item for item in list_characters(limit=None, offset=None, db=self.db)["characters"]}
+        self.assertEqual("", items[self.character.id]["creator"])
+        self.assertEqual("Author A", items[created["character_id"]]["creator"])
+        self.assertEqual("", items[broken.id]["creator"])
 
     def test_imported_creator_metadata_is_persisted_with_extensions(self):
         from services.parse import _extract_v2_data

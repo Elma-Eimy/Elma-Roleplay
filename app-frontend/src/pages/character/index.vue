@@ -25,7 +25,7 @@
             class="gallery-search-input"
             type="text"
             confirm-type="search"
-            placeholder="搜索角色名或简介…"
+            placeholder="搜索角色名、作者或简介…"
             placeholder-class="gallery-search-placeholder"
           />
           <view v-if="searchQuery" class="gallery-search-clear" role="button" aria-label="清空搜索" @tap="searchQuery = ''">
@@ -62,7 +62,7 @@
             <view class="card-copy">
               <view class="card-label">
                 <view class="card-label-dot"></view>
-                <text class="card-label-text">角色档案</text>
+                <text class="card-label-text">{{ char.creator ? `作者 · ${char.creator}` : "角色档案" }}</text>
               </view>
               <text class="character-name">{{ char.name || "未命名角色" }}</text>
               <text class="character-description">
@@ -165,6 +165,7 @@ const filteredCharacters = computed(() => {
   return personaStore.characterList.filter((char) => {
     const haystack = [
       char.name || "",
+      char.creator || "",
       plainCardText(char.description || "")
     ]
       .join(" ")

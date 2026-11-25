@@ -1,5 +1,6 @@
 import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
 import { resolveCharacterLorebookRefs } from "../utils/lorebookDisplay";
+import { getCardMetadata } from "../utils/characterCard";
 import type {
   CharacterBase,
   CharacterSummary,
@@ -166,10 +167,9 @@ export async function createCharacter(
 ): Promise<CreateCharacterResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
-    const existing = db.characters.find(character => character.name === data.name);
-    if (existing) return { message: "同名角色已存在", character_id: existing.id, name: existing.name, created: false };
+    const nextId = Math.max(Date.now(), ...db.characters.map(c => c.id + 1));
     const newChar = {
-      id: Date.now(),
+      id: nextId,
       ...data,
       created_at: new Date().toISOString(),
     };
@@ -209,6 +209,7 @@ export async function getCharacters(limit?: number, offset?: number): Promise<Ge
         name: c.name,
         avatar_path: c.avatar_path || "",
         description: c.description,
+        creator: getCardMetadata(c).creator,
       })),
     };
   }

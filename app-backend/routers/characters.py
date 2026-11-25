@@ -193,7 +193,8 @@ def list_characters(
         models.Character.id,
         models.Character.name,
         models.Character.avatar_path,
-        models.Character.description
+        models.Character.description,
+        models.Character.extensions,
     )
     if offset is not None:
         query = query.offset(offset)
@@ -212,6 +213,7 @@ def list_characters(
                 if char.description and len(char.description) > 100
                 else char.description
             ),
+            "creator": character_service.extract_character_creator(char.extensions),
         })
     return {"characters": result}
 

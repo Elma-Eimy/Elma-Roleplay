@@ -6,6 +6,7 @@ export interface GroupCharacterOption {
   name: string;
   avatar_path: string | null;
   description?: string;
+  creator?: string;
 }
 
 export type GroupMemberOrigin =

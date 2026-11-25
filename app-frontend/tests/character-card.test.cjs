@@ -176,3 +176,50 @@ for (const platform of ["H5", "APP-PLUS", "MP-WEIXIN"]) {
     assert.equal(calls, 1);
   });
 }
+
+test("Mock character creation permits duplicate names and character list returns creator metadata", async () => {
+  let db = { characters: [], sessions: [], messages: {}, memories: {}, lorebooks: [] };
+  let clock = 1_700_000_000_000;
+  class MockDate extends Date { static now() { return ++clock; } }
+  const config = {
+    USE_MOCK: true,
+    getBaseUrl: () => "https://mock.invalid",
+    DEFAULT_HEADERS: {},
+    request: async () => { throw new Error("unexpected network call"); },
+    getMockDB: () => db,
+    setMockDB: (next) => { db = next; },
+    getHeaders: () => ({}),
+  };
+  const api = createLoader({
+    mocks: { "./config": config },
+    globals: { Date: MockDate },
+  })("api/characters.ts");
+
+  const first = await api.createCharacter({
+    name: "Saber",
+    description: "Version A",
+    extensions: { ai_roleplay_card: { creator: "Author A" } },
+  });
+  const second = await api.createCharacter({
+    name: "Saber",
+    description: "Version B",
+    extensions: { ai_roleplay_card: { creator: "Author B" } },
+  });
+  const third = await api.createCharacter({
+    name: "Saber",
+    description: "No creator",
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, true);
+  assert.notEqual(first.character_id, second.character_id);
+  const listed = await api.getCharacters();
+  assert.deepEqual(
+    listed.characters.map((item) => ({ id: item.id, name: item.name, creator: item.creator })),
+    [
+      { id: first.character_id, name: "Saber", creator: "Author A" },
+      { id: second.character_id, name: "Saber", creator: "Author B" },
+      { id: third.character_id, name: "Saber", creator: "" },
+    ],
+  );
+});

@@ -18,6 +18,7 @@ export interface CharacterSummary {
   name: string;
   avatar_path: string;
   description: string;
+  creator?: string;
 }
 
 export interface CharacterDetail extends CharacterBase {

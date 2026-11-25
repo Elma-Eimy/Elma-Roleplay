@@ -150,7 +150,7 @@
                   </view>
                   <view class="character-card-copy">
                     <text class="character-name">{{ character.name || "未命名角色" }}</text>
-                    <text class="character-card-link">人物档案 ↗</text>
+                    <text class="character-card-link">{{ character.creator ? `作者 · ${character.creator}` : '人物档案 ↗' }}</text>
                   </view>
                 </view>
 

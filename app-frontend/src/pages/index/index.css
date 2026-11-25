@@ -835,7 +835,7 @@
 /* 人物卡保留无图角色的文字入口。 */
 .character-shortcut:active { transform: scale(.97); }
 .character-card-copy { position: absolute; bottom: 22rpx; left: 22rpx; right: 18rpx; }
-.character-card-link { display: block; margin-top: 8rpx; color: var(--app-color-text-secondary, #64716b); font-size: 19rpx; letter-spacing: 1rpx; }
+.character-card-link { display: block; margin-top: 8rpx; color: var(--app-color-text-secondary, #64716b); font-size: 19rpx; letter-spacing: 1rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .character-initial { position: absolute; top: 24rpx; left: 24rpx; color: var(--app-color-primary-strong, #4f8e7c); opacity: .3; font-size: 100rpx; font-weight: 300; }
 .has-portrait .portrait-shade { background: linear-gradient(180deg, transparent 25%, rgba(12, 23, 19, .85) 100%); }
 .has-portrait .character-name { color: #fff; }

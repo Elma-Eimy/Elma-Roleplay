@@ -21,7 +21,7 @@
           <AppStatusState v-else-if="!characters.length" kind="empty" title="还没有角色" description="先到角色库创建角色，再回来邀请他们加入。" />
           <view v-for="character in characters" :key="character.id" class="character-option" :class="{ selected: selected(character.id) }" role="checkbox" :aria-checked="selected(character.id)" :aria-disabled="locked" @tap="state.toggleCharacter(character)">
             <AvatarImage class="group-avatar" :src="getAvatarUrl(character.avatar_path || '')" />
-            <view class="character-copy"><text class="group-label">{{ character.name }}</text><text class="character-description">{{ character.description || '从角色卡设定开始' }}</text></view>
+            <view class="character-copy"><view class="character-name-row"><text class="group-label">{{ character.name }}</text><text v-if="character.creator" class="character-creator">· {{ character.creator }}</text></view><text class="character-description">{{ character.description || '从角色卡设定开始' }}</text></view>
             <text class="selection-mark">{{ selected(character.id) ? '✓' : '＋' }}</text>
           </view>
           <text v-if="characterError && characters.length" class="group-error">{{ characterError }}</text>
@@ -110,7 +110,9 @@ const openCreated = () => { if (created.value) uni.redirectTo({ url: `/pages/gro
 .character-option { display: flex; align-items: center; gap: 20rpx; padding: 20rpx 12rpx; margin-top: 16rpx; border: 1px solid var(--app-color-border); border-radius: var(--app-radius-sm); }
 .character-option.selected { background: var(--app-color-primary-soft); border-color: var(--app-color-primary); }
 .character-copy { flex: 1; min-width: 0; }
-.character-copy .group-label { margin: 0 0 8rpx; }
+.character-name-row { display: flex; align-items: baseline; gap: 8rpx; min-width: 0; margin: 0 0 8rpx; }
+.character-name-row .group-label { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; min-width: 0; }
+.character-creator { flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--app-font-size-caption); color: var(--app-color-text-secondary); }
 .character-description { display: block; color: var(--app-color-text-secondary); font-size: var(--app-font-size-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selection-mark { color: var(--app-color-primary-strong); font-size: 34rpx; padding: 12rpx; }
 </style>

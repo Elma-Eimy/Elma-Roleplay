@@ -380,7 +380,7 @@ const saveCharacter = async (story: { title: string; greeting_index: number | nu
         const response = await createCharacter(characterData);
         if (response.created === false) {
           uni.hideLoading();
-          uni.showModal({ title: "画册中已有同名角色", content: "本次导入尚未保存。可以修改姓名后新建，或打开已有档案，从那里导入更新。", confirmText: "打开档案", cancelText: "继续编辑", success: result => { if (result.confirm) uni.navigateTo({ url: `/pages/character/detail?id=${response.character_id}` }); } });
+          uni.showModal({ title: "服务器未允许同名创建", content: "当前连接的服务器版本尚未放开同名角色新建。可以修改姓名、更新后端服务，或打开已有档案。", confirmText: "打开档案", cancelText: "继续编辑", success: result => { if (result.confirm) uni.navigateTo({ url: `/pages/character/detail?id=${response.character_id}` }); } });
           return;
         }
         id = response.character_id; savedNewCharacterId.value = id;
