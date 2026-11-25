@@ -53,7 +53,6 @@
             </template>
             <AppStatusState v-if="loadingRounds && !rounds.length" kind="loading" title="正在读取发言" />
             <view v-for="round in chronologicalRounds" :id="`group-round-${round.round_id}`" :key="round.round_id" class="saved-round">
-              <text class="round-divider">第 {{ round.round_index }} 轮 · {{ roundStatus(round) }}</text>
               <ChatBubble
                 :message="{ id: -round.round_id * 10 - 1, role: 'user', status: 'done', content: round.user_content }"
                 :user-nickname="group.user_nickname"
@@ -74,7 +73,7 @@
         <view v-if="group" class="group-composer">
           <view v-if="composerFeedback" class="composer-feedback" :class="{ 'is-error': !!operationError }" role="status">
             <text class="feedback-copy">{{ composerFeedback }}</text>
-            <button v-if="historyStale" class="feedback-action" :disabled="loading || loadingRounds || operationBusy" @tap="refreshRounds">刷新</button>
+            <button v-if="historyStale && !operationBusy" class="feedback-action" :disabled="loading || loadingRounds" @tap="refreshRounds">刷新</button>
             <button v-else-if="operationError && (pending || current?.active_operation)" class="feedback-action" :disabled="recovering || submitting || loading" @tap="state.recover">{{ recovering ? '查询中' : '查询结果' }}</button>
           </view>
           <ChatComposer v-model="draft" :use-reasoning="chatSettingsStore.useReasoning" :model-summary="chatSettingsStore.modelSummary"
@@ -172,7 +171,7 @@ import AppStatusState from "@/components/common/AppStatusState.vue";
 import GroupUtterances from "@/components/chat/GroupUtterances.vue";
 import { getAvatarUrl } from "@/api/characters";
 import { useGroupSessionDetail } from "@/composables/useGroupSessions";
-import { groupRoundStatus as roundStatus, groupRoundNotice } from "@/utils/groupRounds";
+import { groupRoundNotice } from "@/utils/groupRounds";
 
 const promptPreview = ref<GroupPromptPreview | null>(null);
 const promptLoading = ref(false), promptError = ref("");
@@ -199,11 +198,22 @@ const { group, loading, deleting, error, needsSelection, rounds, loadingRounds, 
   portraitData, loadingPortraits, portraitWriting, portraitError, portraitOptions, canChoosePortrait } = state;
 const composerFeedback = computed(() => {
   if (operationError.value) return operationError.value;
-  if (historyStale.value) return '剧情已有更新，刷新后继续。';
   if (!current.value) return '正在同步群聊，已有消息仍可阅读。';
   if (!canGenerate.value) return '生成服务暂不可用，已有消息仍可阅读。';
+  const active = current.value.active_operation;
+  const kind = active?.kind ?? pending.value?.kind;
+  if (kind === 'send' || kind === 'regenerate' || kind === 'resume') {
+    const speakerId = active?.speaking_persona_id;
+    const speaker = group.value?.members.find(member => member.persona_id === speakerId);
+    return speaker ? `${speaker.character.name} 正在接话…` : '正在等角色回复…';
+  }
+  if (historyStale.value) return '剧情已有更新，刷新后继续。';
   if (!operationBusy.value && notice.value && !notice.value.startsWith('操作已完成')
       && !notice.value.startsWith('请求已接受')) return notice.value;
+  const latest = current.value.latest;
+  const round = latest && rounds.value.find(row => row.round_id === latest.round_id && row.candidate_id === latest.candidate_id);
+  if (!operationBusy.value && canSend.value && round?.status === 'awaiting_confirmation' && round.finish_reason === 'wait_user'
+      && !round.confirmed && !round.pending_candidate) return '轮到你了';
   return '';
 });
 const palette = STORY_PALETTES[0];
@@ -414,15 +424,13 @@ const remove = () => state.remove(() => new Promise<boolean>(resolve => uni.show
 .is-immersive .history-pill { background-color: rgba(19, 31, 27, 0.72); border-color: rgba(255, 255, 255, 0.16); }
 .is-immersive .history-pill-text { color: #d9e4df; }
 .round-actions { justify-content: flex-start; padding: 0 32rpx 16rpx 116rpx; }
-.round-divider { display: block; text-align: center; font-size: var(--app-font-size-caption); color: var(--app-color-text-muted); margin: 24rpx 0 12rpx; }
 .round-notice, .candidate-notice { display: block; margin: 12rpx 28rpx; padding: 18rpx 24rpx; border-radius: 18rpx; background: var(--app-color-surface); font-size: 24rpx; line-height: 1.6; }
 .candidate-notice { color: var(--app-color-text-secondary); border: 1px dashed var(--app-color-border-strong); }
-.is-immersive .round-actions, .is-immersive .round-notice, .is-immersive .candidate-notice, .is-immersive .round-divider, .is-immersive .composer-feedback {
+.is-immersive .round-actions, .is-immersive .round-notice, .is-immersive .candidate-notice, .is-immersive .composer-feedback {
   --app-color-surface: rgba(20,34,28,.92); --app-color-border: rgba(255,255,255,.18);
   --app-color-border-strong: rgba(255,255,255,.35); --app-color-text-secondary: #e0eae4;
   --app-color-primary-strong: #d2eddf; --app-color-danger: #ffb5ad;
 }
-.is-immersive .round-divider { color: #e0eae4; text-shadow: 0 1px 4px #14221c; }
 .composer-feedback { display: flex; align-items: center; gap: 16rpx; margin: 8rpx 24rpx; padding: 18rpx 22rpx; border-radius: 20rpx; color: var(--app-color-text-secondary); background: var(--app-color-surface); border: 1px solid var(--app-color-border); }
 .composer-feedback.is-error { color: var(--app-color-danger); }
 .feedback-copy { flex: 1; min-width: 0; font-size: 24rpx; line-height: 1.6; overflow-wrap: anywhere; }

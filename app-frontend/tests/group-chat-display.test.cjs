@@ -191,3 +191,27 @@ test('routine progress stays in the composer while errors and stale history stay
   assert.equal(f.view.composerFeedback.value, '');
   f.scope.stop();
 });
+
+test('composer shows the scheduled speaker and hands back only after a natural stop', () => {
+  const f = fixture();
+  f.state.group.value.members[1].character.name = '乙';
+  f.state.canGenerate.value = true;
+  f.state.canSend.value = true;
+  f.state.operationBusy.value = true;
+  const latest = { round_id: 7, candidate_id: 42, confirmed: false };
+  f.state.current.value = { latest, active_operation: { kind: 'regenerate' } };
+  assert.equal(f.view.composerFeedback.value, '正在等角色回复…');
+  f.state.current.value.active_operation.speaking_persona_id = 2;
+  assert.equal(f.view.composerFeedback.value, '乙 正在接话…');
+
+  f.state.current.value.active_operation = null;
+  f.state.operationBusy.value = false;
+  const round = { round_id: 7, candidate_id: 42, status: 'awaiting_confirmation', confirmed: false, finish_reason: 'wait_user' };
+  f.state.rounds.value = [{ ...round, candidate_id: 41 }];
+  assert.equal(f.view.composerFeedback.value, '');
+  f.state.rounds.value = [round];
+  assert.equal(f.view.composerFeedback.value, '轮到你了');
+  f.state.rounds.value = [{ ...round, status: 'failed', error_code: 'resource_paused' }];
+  assert.equal(f.view.composerFeedback.value, '');
+  f.scope.stop();
+});

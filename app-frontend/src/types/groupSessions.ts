@@ -151,6 +151,7 @@ export interface GroupOperationSummary {
   revision: number; round_id: number; candidate_id: number; call_count: number; call_limit: number;
   created_at: string; started_at: string | null; deadline_at: string | null; finished_at: string | null;
   error_code: string | null;
+  speaking_persona_id?: number | null;
 }
 export interface GroupCurrentState {
   group_revision: number;

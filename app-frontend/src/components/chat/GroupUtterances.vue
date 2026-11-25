@@ -4,7 +4,7 @@
       v-for="(utterance, index) in utterances"
       :key="utterance.item_id"
       :message="{ role: 'assistant', content: utterance.content, status: 'done' }"
-      :character-name="`${utterance.speaker_name} · 成员 ${memberSlot(utterance.speaker_persona_id)}`"
+      :character-name="utterance.speaker_name"
       :avatar-url="memberAvatar(utterance.speaker_persona_id)"
       :user-nickname="userNickname"
       :show-avatar="shouldShowSpeaker(index)"
@@ -32,7 +32,6 @@ const props = withDefaults(defineProps<{
 const shouldShowSpeaker = (index: number) =>
   index === 0 || props.utterances[index - 1]?.speaker_persona_id !== props.utterances[index]?.speaker_persona_id;
 
-const memberSlot = (id: number) => props.members.find(member => member.persona_id === id)?.slot ?? "?";
 const memberAvatar = (id: number) => getAvatarUrl(
   props.portraits?.find(row => row.persona_id === id)?.image_path
     || props.members.find(member => member.persona_id === id)?.character.avatar_path || "",

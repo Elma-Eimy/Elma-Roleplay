@@ -124,7 +124,7 @@
             <view v-if="preview" class="candidate-preview">
               <view class="preview-header">
                 <text class="preview-title">
-                  候选 {{ preview.candidate.version }} · {{ isSelected(preview.candidate.candidate_id) ? '当前采用' : '仅预览，未采用' }}
+                  第 {{ preview.round.round_index }} 轮 · 候选 {{ preview.candidate.version }} · {{ isSelected(preview.candidate.candidate_id) ? '当前采用' : '仅预览，未采用' }}
                 </text>
               </view>
 
