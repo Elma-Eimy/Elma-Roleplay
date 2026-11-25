@@ -165,6 +165,8 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 
 current 为 `{group_revision, latest, active_operation, capabilities}`。latest 为空或 `{round_id, candidate_id, candidate_revision, confirmed}`，active_operation 为空或当前活动回执摘要；capabilities 为 can_send、can_regenerate、can_select、can_discard。生成服务不可用时 can_generate、can_send、can_regenerate 和候选 can_resume 为 false；短事务选择和撤回仍按当前状态判断。候选 can_resume 同时核对可靠前缀与提供方，旧失败候选不会伪造参数。以上 GET 均不返回调用参数、凭据、Prompt、reasoning、导演审计、知情行或原始状态增量。
 
+`current.active_operation.speaking_persona_id` 在活动候选进入已调度的角色生成步骤时返回成员 ID。排队、等待下一次调度等阶段返回 `null`，操作结束后 `active_operation` 为空。整轮重生成期间以该操作自己的候选为准。
+
 候选详情的 `state_preview.members` 每项包含 `persona_id`、`affection_score`、`current_mood`、`role_state`，并提供入群时的 `cognition_state`（文本或 null）及该候选可用的 `insights` 数组。每条认识为 `{kind, content, target_persona_id, target_name}`：kind 为 cognition/user/member，分别表示个人认识、对用户的看法和对指定成员的看法；仅 member 类型的目标字段有值。接口不返回原始证据引文或内部 ref。
 
 好感、心情和角色状态按此前已确认所选轮次及目标候选的已保存发言重放，失败候选仅反映保存前缀。`insights` 与实际角色输入使用同一成员投影，受该候选冻结的结果上界、此前已确认所选轮次和成员归属约束；迟到提纯不回填旧候选，返回空数组也不表示所有后台任务都已完成。入群认知是起点，群内成长由 insights 单独表示。此查询面向操作者，不应将所有成员的认识拼接到单个角色输入中。
