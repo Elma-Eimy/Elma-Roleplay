@@ -148,8 +148,8 @@ def add_memory_chunk(
     db.add(chunk)
     db.flush()  # 获取自增 ID
 
-    chroma_doc_id = f"mem_{chunk.id}"
-    chunk.chroma_doc_id = chroma_doc_id
+    chunk.chroma_doc_id = f"mem_{chunk.id}"
+    db.flush()
     _enqueue_vector_upsert(chunk, character_id, db)
 
     if auto_commit:
@@ -604,12 +604,21 @@ def delete_memory_chunk(
     if not chunk:
         raise ValueError("MemoryChunk not found")
 
-    # 异步删除 ChromaDB
-    if chunk.chroma_doc_id:
+    # 当手动管理的中间版本被删除时，保持替换链的连接。Chroma 元数据不参与版本解析；SQLite 对此关系具有权威性。
+    db.query(MemoryChunk).filter(
+        MemoryChunk.supersedes_id == chunk.id
+    ).update(
+        {MemoryChunk.supersedes_id: chunk.supersedes_id},
+        synchronize_session="fetch",
+    )
+
+    # 取得 SQLite 写权后读取文档 ID，包含 Worker 在本次删除前补齐的映射。
+    doc_id = db.query(MemoryChunk.chroma_doc_id).filter_by(id=chunk_id).scalar()
+    if doc_id:
         character_id = chunk.persona.character_id
         payload = {
             "character_id": character_id,
-            "doc_ids": [chunk.chroma_doc_id]
+            "doc_ids": [doc_id]
         }
         job = models.OutboxJob(
             task_type="delete_vector",
@@ -618,13 +627,6 @@ def delete_memory_chunk(
         db.add(job)
         print(f"[INFO] Outbox: 已入库 chunk_id={chunk_id} 的 1 条记忆删除任务")
 
-    # 当手动管理的中间版本被删除时，保持替换链的连接。Chroma 元数据不参与版本解析；SQLite 对此关系具有权威性。
-    db.query(MemoryChunk).filter(
-        MemoryChunk.supersedes_id == chunk.id
-    ).update(
-        {MemoryChunk.supersedes_id: chunk.supersedes_id},
-        synchronize_session="fetch",
-    )
     db.delete(chunk)
     db.commit()
 

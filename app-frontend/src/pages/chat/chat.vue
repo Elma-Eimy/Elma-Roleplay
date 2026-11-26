@@ -50,6 +50,9 @@
           :messages="chatStore.messages"
           :avatar-url="characterAvatarUrl"
           :character-name="personaStore.characterName"
+          :user-nickname="personaStore.userNickname"
+          :is-busy="chatStore.isLoading"
+          :active-audio-message-id="activeAudioMessageId"
           :scroll-top="scrollTop"
           :scroll-into-view-id="scrollIntoViewId"
           :scroll-with-animation="scrollWithAnimation"
@@ -61,6 +64,8 @@
           @retry-failed="onRetryFailed"
           @copy-message="copyMessageContent"
           @regenerate-message="regenerateLatestReply"
+          @play-tts="playMessageTTS"
+          @switch-candidate="onSwitchCandidate"
           @scroll-metrics="onScrollMetrics"
           @jump-to-bottom="onJumpToBottom"
         />
@@ -107,7 +112,7 @@
     />
 
     <!-- 记忆与微观认知状态右侧抽屉面板 -->
-    <ChatDrawer
+    <SingleChatDrawer
       v-if="isStatusPanelOpen"
       :isOpen="isStatusPanelOpen"
       :sessionId="currentSessionId"
@@ -187,7 +192,7 @@ import ChatMessageList from "@/components/chat/ChatMessageList.vue";
 import GenerationSettingsSheet from "@/components/chat/GenerationSettingsSheet.vue";
 import ChatComposer from "@/components/chat/ChatComposer.vue";
 import EditMessageModal from "@/components/chat/EditMessageModal.vue";
-import ChatDrawer from "@/components/chat/ChatDrawer.vue";
+import SingleChatDrawer from "@/components/chat/SingleChatDrawer.vue";
 import MemoryManagerModal from "@/components/chat/MemoryManagerModal.vue";
 import PromptPreviewModal from "@/components/chat/PromptPreviewModal.vue";
 import BranchTreePanel from "@/components/chat/BranchTreePanel.vue";
@@ -197,18 +202,22 @@ import { getAvatarUrl, DEFAULT_AVATAR_URL } from "@/api/characters";
 import { shouldFadeHeaderOnScroll, type ScrollMetrics } from "@/utils/chatDisplay";
 import { useChatScroll } from "@/composables/useChatScroll";
 import { useChatStreamBridge } from "@/composables/useChatStreamBridge";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useChatMessageActions } from "@/composables/useChatMessageActions";
 import StoryKeepsakeSheet from "@/components/chat/StoryKeepsakeSheet.vue";
 import { useStoryKeepsakes } from "@/composables/useStoryKeepsakes";
 import { usePortraitSelection } from "@/composables/usePortraitSelection";
+import { getBaseUrl } from "@/api/config";
+import { loadChatDraft, saveChatDraft, clearChatDraft } from "@/utils/chatDrafts";
 import type { TokenEstimate } from "@/api/sessions";
-import type { BranchSession } from "@/types/chat";
+import type { BranchSession, BranchTreeSession } from "@/types/chat";
 import type { ChatMessage } from "@/store/chatStore";
 
 // 状态存储与 Composable 挂载
 const chatStore = useChatStore();
 const personaStore = usePersonaStore();
 const chatSettingsStore = useChatSettingsStore();
+const { activeAudioMessageId, playMessageTTS } = useAudioPlayer();
 const isModelSettingsOpen = ref(false);
 onShow(() => { void chatSettingsStore.refreshModels(); });
 const {
@@ -325,8 +334,33 @@ const {
 } = useChatMessageActions(currentSessionId, async () => { pinToBottom(); },
   message => saveKeepsake(message, message.role === "user" ? personaStore.userNickname || "我" : personaStore.characterName || "角色"));
 
+let activeDraftSessionId: number | null = null;
+let activeDraftServer = "";
+let hydratingDraft = false;
+
+const hydrateDraft = (sessionId: number) => {
+  activeDraftSessionId = sessionId;
+  activeDraftServer = getBaseUrl();
+  hydratingDraft = true;
+  inputText.value = loadChatDraft("single", sessionId, activeDraftServer);
+  hydratingDraft = false;
+};
+
+watch(
+  inputText,
+  (value) => {
+    if (hydratingDraft || activeDraftSessionId === null || activeDraftServer !== getBaseUrl()) return;
+    saveChatDraft("single", activeDraftSessionId, value, activeDraftServer);
+  },
+  { flush: "sync" }
+);
+
 watch(() => chatStore.activeSessionId, (id) => {
-  if (id === null) currentSessionId.value = null;
+  if (id === null) {
+    currentSessionId.value = null;
+    activeDraftSessionId = null;
+    activeDraftServer = "";
+  }
 }, { flush: "sync" });
 
 // 平行宇宙时空树的状态变量
@@ -387,6 +421,7 @@ const openBranchTree = async () => {
 const switchSession = async (session: Pick<BranchSession, "id">) => {
   isBranchTreeOpen.value = false;
   currentSessionId.value = session.id;
+  hydrateDraft(session.id);
   backgroundMode.value = readBackgroundMode(session.id);
   isInitLoading.value = true;
   resetPinState();
@@ -443,7 +478,7 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
   }
 };
 
-const handleTreeNodeLongpress = (session: BranchSession) => {
+const handleTreeNodeLongpress = (session: BranchTreeSession) => {
   uni.vibrateShort({ success: () => {} });
   uni.showActionSheet({
     itemList: ['重命名分支', '删除分支'],
@@ -472,13 +507,14 @@ const handleTreeNodeLongpress = (session: BranchSession) => {
         uni.showModal({
           title: '删除宇宙分支',
           content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
-          confirmColor: '#ff3b30',
-          cancelColor: '#8e8e93',
+          confirmColor: '#d9655d',
+          cancelColor: '#64716b',
           success: async (modalRes) => {
             if (modalRes.confirm) {
               try {
                 await deleteSession(session.id);
                 clearBackgroundMode(session.id);
+                clearChatDraft('single', session.id);
                 chatSettingsStore.removeSession(session.id);
                 // 如果删除的是当前会话，需要退回到会话列表首页
                 if (session.id === currentSessionId.value) {
@@ -513,6 +549,7 @@ onLoad(async (options) => {
   if (options && options.sessionId) {
     const sId = parseInt(options.sessionId, 10);
     currentSessionId.value = sId;
+    hydrateDraft(sId);
     backgroundMode.value = readBackgroundMode(sId);
     
     isInitLoading.value = true;
@@ -541,6 +578,8 @@ onLoad(async (options) => {
 });
 
 onUnload(() => {
+  activeDraftSessionId = null;
+  activeDraftServer = '';
   disposePortrait();
   console.log("[chat.vue] onUnload page - resetting chatStore");
   chatStore.$reset();
@@ -592,11 +631,19 @@ const onJumpToBottom = () => {
   pinToBottom();
 };
 
+const onSwitchCandidate = async (payload: { messageId: number; candidateId: number }) => {
+  const result = await chatStore.switchActiveCandidate(payload.messageId, payload.candidateId);
+  if (result.status === "error") {
+    uni.showToast({ title: result.message || "切换失败", icon: "none" });
+  }
+};
+
 const onSend = async () => {
   const text = inputText.value.trim();
   if (!text || chatStore.isLoading || currentSessionId.value === null || chatStore.activeSessionId !== currentSessionId.value) return;
 
   inputText.value = "";
+  clearChatDraft('single', currentSessionId.value);
   chatStore.sendChatMessage(currentSessionId.value, text);
   pinToBottom();
 };
@@ -682,15 +729,17 @@ const deleteCurrentSession = () => {
   uni.showModal({
     title: '删除会话',
     content: '确定要删除此会话吗？所有聊天记录与记忆数据将无法找回。',
-    confirmColor: '#ff3b30',
-    cancelColor: '#8e8e93',
+    confirmColor: '#d9655d',
+    cancelColor: '#64716b',
     success: async (res) => {
       if (res.confirm) {
         try {
           uni.showLoading({ title: '正在删除...' });
-          await deleteSession(currentSessionId.value!);
-          clearBackgroundMode(currentSessionId.value!);
-          chatSettingsStore.removeSession(currentSessionId.value!);
+          const targetSessionId = currentSessionId.value!;
+          await deleteSession(targetSessionId);
+          clearBackgroundMode(targetSessionId);
+          clearChatDraft('single', targetSessionId);
+          chatSettingsStore.removeSession(targetSessionId);
           uni.hideLoading();
           isStatusPanelOpen.value = false;
           uni.navigateBack();

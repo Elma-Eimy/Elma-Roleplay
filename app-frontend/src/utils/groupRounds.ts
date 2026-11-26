@@ -1,10 +1,5 @@
 import type { GroupRound } from "../types/groupSessions";
 
-export function groupRoundStatus(round: GroupRound): string {
-  return round.error_code === 'resource_paused' ? '已暂停' : round.confirmed ? "已确认" : round.status === "failed" ? "未完成"
-    : round.status === "generating" ? "处理中" : "待确认";
-}
-
 export function groupRoundNotice(round: GroupRound): string {
   if (round.error_code === 'resource_paused') return '本次执行已暂停，回复已保存，可从当前进度继续。';
   if (round.status === "failed") {

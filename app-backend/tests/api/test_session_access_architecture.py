@@ -130,6 +130,9 @@ class SessionAccessArchitectureTests(unittest.TestCase):
                 module_name = ".".join(path.relative_to(backend).with_suffix("").parts)
                 operation = importlib.import_module(module_name)
                 for part in name.split("."):
+                    if inspect.isclass(operation) and inspect.isfunction(inspect.getattr_static(operation, part)):
+                        # 实例方法需绑定真实实例，不能把 self 当业务参数填成整数。
+                        operation = operation()
                     operation = getattr(operation, part)
                 if getattr(operation, "__session_kind_agnostic__", None):
                     continue

@@ -65,7 +65,7 @@
 * Translations are reading-only: no character, worldbook, prompt, greeting index or chat message is updated. Name, tags and hidden prompt fields remain in the original language. Cache entries survive character deletion and may be reused after reimporting the same content.
 
 ## POST `/characters/create`
-* **Duplicate handling**: The response includes `created: true` for a new record, or `created: false` with the existing `character_id` and `name` for an existing exact name. The latter does not apply the submitted settings. Clients must prompt the user instead of silently opening a story with the old card.
+* **Duplicate handling**: Duplicate character names are permitted; each creation produces an independent record with its own `character_id` and returns `created: true` so multiple versions or authors of the same character can coexist.
 * **Request (JSON)**:
 <!-- request-example: POST /characters/create; PUT /characters/{character_id} -->
   ```json
@@ -105,11 +105,13 @@
         "id": 1,
         "name": "测试小助手",
         "avatar_path": "assets/avatars/4a6b2c8d_helper.png",
-        "description": "描述摘要..."
+        "description": "描述摘要...",
+        "creator": "作者名"
       }
     ]
   }
   ```
+  `creator` is extracted from `extensions.ai_roleplay_card.creator` and defaults to `""` when absent.
 
 ## GET `/characters/{character_id}`
 * **Response (200 OK)**:
@@ -243,7 +245,7 @@
 * `POST /characters/charx/previews/{token}/cancel` idempotently removes staged assets. Previews expire after 15 minutes. A lifespan-owned cleanup task runs at startup and every 60 seconds; request-driven cleanup remains available. Cancelled/expired status markers retain no card/image data and last another 15 minutes. Shutdown stops the task; cleanup resumes at the next startup. Staging is isolated by database path and follows the single-process deployment model. Expensive archive/image processing runs outside the lifecycle lock. Older preview-plan formats expire on access after upgrade.
 * `POST /characters/charx/previews/{token}/import` accepts `{operation:"create_character"|"append_assets"|"update_character",skip_duplicates:true,character_id:null,name:null,portrait_indices:[],avatar_index:null,greeting_index?:number|null,card_mode?:"keep"|"replace"|"fill",sync_lorebook?:bool}`. For backward compatibility, omitted operation is inferred from `character_id` and whether card/lorebook/greeting updates are requested. Creating requires a null target; appending/updating requires an existing target and no name override. Pure `append_assets` requires at least one selected portrait or avatar and never changes character settings; `update_character` allows replacing (`card_mode:"replace"`) or filling empty fields (`card_mode:"fill"`), independently syncing the embedded worldbook (`sync_lorebook:true`; omitted, null or false preserves the existing worldbook), or promoting an alternate opening (`greeting_index`) to `first_mes`. `portrait_indices` contains at most 300 unique nonnegative indices. Null avatar preserves the existing avatar or creates without one.
 * `skip_duplicates` defaults to true: portraits with matching SHA-256 in the target library or this selection are skipped, independent of source name and upload token. False permits duplicate portrait records; identical bytes within the target reuse a managed file. Missing managed files are not reused. Legacy portrait hashes are filled on demand; new uploads persist them. Avatar selection still applies even if the corresponding portrait is skipped.
-* Confirmation returns `{character_id,created,portraits_added,duplicates_skipped,operation,package_sha256,card_updated?}`; `card_updated:true` is included for existing-character setting, worldbook or greeting updates. Changes, references, Outbox jobs and the request-fingerprinted receipt commit together; rollback removes only newly copied files. Identical token/request retries return the stored receipt. Changed requests, duplicate new-role names or deleted receipt targets return `409`; unknown assets `422`; missing/expired previews or missing targets `404`.
+* Confirmation returns `{character_id,created,portraits_added,duplicates_skipped,operation,package_sha256,card_updated?}`; `card_updated:true` is included for existing-character setting, worldbook or greeting updates. Changes, references, Outbox jobs and the request-fingerprinted receipt commit together; rollback removes only newly copied files. Identical token/request retries return the stored receipt. New-character imports permit duplicate names and create independent records. Changed requests or deleted receipt targets return `409`; unknown assets `422`; missing/expired previews or missing targets `404`.
 * `GET /characters/charx/previews/{token}/status` returns `{status,expires_at? ,result?}`. States: `parsing`, `ready`, `imported`, `cancelled`, `expired`, `not_found`, `target_deleted`. `imported` includes the committed result even after staged assets are removed or cancel is called; no request fingerprint is required to read the receipt. The upload response exposes a token only once parsing completes. The frontend queries status after a failed confirmation, freezes uncertain selections, and retries the original request snapshot rather than silently changing it. Definite validation failures with a ready preview permit correction.
 * `charx_plan.py` explicitly maps supported CCv3 fields into the normalized card and compatibility report; it shares text normalization with existing cards. RisuAI modules, triggers, regex and module-contained lorebooks are never loaded. Inline images and variable interfaces are simplified with warnings. No automatic emotions/outfits/greetings behavior is restored. The separate PNG/JSON endpoints retain their existing HTTP contract.
 * New characters keep the package worldbook. Existing-character updates preserve the name and, unless `sync_lorebook:true`, the worldbook. Explicit worldbook sync requires a nonempty valid embedded entries list, otherwise `422`. A selected alternate greeting swaps with the package first greeting before merging; explicit greeting selection updates the first and alternate greeting list even in keep/fill mode. Existing story messages are not rewritten.

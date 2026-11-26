@@ -1,5 +1,7 @@
 """单聊入口拒绝跨类型资源，内部读取复用同一份会话。"""
 import asyncio
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -7,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.models import Base, Character, Session, SessionPersona, ChatMessage, MessageRole
-from services.conversation import session_access, session_service, role_state_service, context_assembler
+from services.conversation import session_access, session_service, session_query_service, role_state_service, context_assembler
 from services.conversation.message_service import update_message
 from services.media import character_portraits
 
@@ -30,6 +32,88 @@ class SingleSessionAccessTests(unittest.TestCase):
 
     def single_checks(self):
         return patch.object(session_access, "_single", wraps=session_access._single)
+
+    def test_query_compatibility_exports_share_the_domain_implementation(self):
+        for name in (
+            "get_recent_sessions", "get_character_sessions", "get_session_history_page",
+            "get_session_history_with_inheritance", "_history_for_session",
+            "get_candidates_by_parent", "_candidates_for_session",
+        ):
+            with self.subTest(name=name):
+                self.assertIs(getattr(session_query_service, name), getattr(session_service, name))
+
+    def test_detail_query_preserves_missing_persona_and_resource_behavior(self):
+        with self.single_checks() as checks:
+            result = session_query_service.get_session_detail(1, self.db)
+        checks.assert_called_once()
+        self.assertEqual(1, result["id"])
+        self.assertEqual(1, result["persona"]["id"])
+        self.assertEqual("fixture", result["character"]["name"])
+        self.assertIsNone(session_query_service.get_session_detail(999, self.db))
+        with self.assertRaises(session_access.SessionKindConflict):
+            session_query_service.get_session_detail(2, self.db)
+        self.db.add(Session(id=3))
+        self.db.commit()
+        empty = session_query_service.get_session_detail(3, self.db)
+        self.assertIsNone(empty["persona"])
+        self.assertIsNone(empty["character"])
+
+    def test_query_reads_preserve_the_callers_write_transaction(self):
+        character = self.db.get(Character, 1)
+        character.name = "caller pending name"
+        self.db.flush()
+        result = session_query_service.get_session_detail(1, self.db)
+        messages, candidates = session_query_service.get_session_history_page(1, self.db, 20)
+        self.assertEqual("caller pending name", result["character"]["name"])
+        self.assertEqual([1], [message.id for message in messages])
+        self.assertEqual({}, candidates)
+        self.assertTrue(self.db.connection().connection.driver_connection.in_transaction)
+        self.db.expire(character)
+        self.assertEqual("caller pending name", character.name)
+        self.db.rollback()
+        self.assertEqual("fixture", character.name)
+
+    def test_history_queries_exclude_ancestors_and_other_story_candidates(self):
+        parent = Session(id=3)
+        self.db.add(parent)
+        self.db.flush()
+        self.db.add(SessionPersona(id=3, session_id=3, character_id=1))
+        self.db.add_all([
+            ChatMessage(id=3, session_id=3, role=MessageRole.user, content="parent fork"),
+            ChatMessage(id=4, session_id=3, role=MessageRole.assistant, parent_id=3, content="parent future"),
+            ChatMessage(id=5, session_id=1, role=MessageRole.assistant, parent_id=1, content="child active"),
+            ChatMessage(id=6, session_id=1, role=MessageRole.assistant, parent_id=1,
+                        content="child alternative", is_active=False),
+            ChatMessage(id=7, session_id=2, role=MessageRole.assistant, parent_id=2, content="other story"),
+        ])
+        self.db.flush()
+        child = self.db.get(Session, 1)
+        child.parent_session_id = parent.id
+        child.fork_message_id = 3
+        self.db.get(SessionPersona, 1).parent_persona_id = 3
+        self.db.commit()
+
+        messages = session_query_service.get_session_history_with_inheritance(1, self.db, 20)
+        self.assertEqual(["hello", "child active"], [message.content for message in messages])
+        page, candidates = session_query_service.get_session_history_page(1, self.db, 20, before_id=5)
+        self.assertEqual([1], [message.id for message in page])
+        self.assertEqual({}, candidates)
+        grouped = session_query_service.get_candidates_by_parent(1, [1, 2, 3], self.db)
+        self.assertEqual({1: [5, 6]}, {key: [row.id for row in rows] for key, rows in grouped.items()})
+
+    def test_query_module_import_does_not_initialize_lifecycle_or_runtime(self):
+        script = (
+            "import sys; import services.conversation.session_query_service; "
+            "forbidden = ('services.conversation.session_service', 'core.config', "
+            "'core.database', 'services.memory'); "
+            "loaded = [name for name in forbidden if name in sys.modules]; "
+            "assert not loaded, loaded"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True,
+            text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_loaders_resolve_ownership_and_preserve_missing_resource_behavior(self):
         for loader in (session_access.get_single_session, session_access.get_single_persona,

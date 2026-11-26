@@ -50,14 +50,50 @@
         </view>
 
         <view class="prompt-preview-content">
-          <view 
-            class="prompt-msg-card" 
-            v-for="(msg, idx) in messages" 
-            :key="idx"
-            :class="'role-' + msg.role"
+          <view v-if="sections.length > 0" class="sections-toolbar">
+            <text class="toolbar-summary">共 {{ sections.length }} 个区块 · {{ messages.length }} 条消息</text>
+            <view class="toolbar-action-btn" @tap="toggleAllSections">
+              <text class="toolbar-action-text">{{ isAllExpanded ? "全部收起" : "全部展开" }}</text>
+            </view>
+          </view>
+
+          <view
+            v-for="section in sections"
+            :key="section.key"
+            class="prompt-section-card"
+            :class="{ 'is-empty-section': section.items.length === 0 }"
           >
-            <view class="prompt-msg-role-tag">{{ msg.role.toUpperCase() }}</view>
-            <text class="prompt-msg-text" :selectable="true" :user-select="true">{{ msg.content }}</text>
+            <view class="section-header" @tap="toggleSection(section.key)">
+              <view class="section-title-col">
+                <text class="section-title">{{ section.title }}</text>
+                <text class="section-subtitle">{{ section.description }}</text>
+              </view>
+              <view class="section-meta-col">
+                <text class="section-badge" :class="{ 'is-muted': section.items.length === 0 }">
+                  {{ section.items.length > 0 ? `${section.items.length} 项 · ${section.totalChars} 字` : "未注入" }}
+                </text>
+                <text class="toggle-arrow" :class="{ 'is-expanded': isSectionExpanded(section.key) }">▼</text>
+              </view>
+            </view>
+
+            <view v-if="isSectionExpanded(section.key)" class="section-body">
+              <view v-if="section.items.length === 0" class="section-empty-hint">
+                <text class="section-empty-text">{{ section.emptyHint }}</text>
+              </view>
+              <view
+                v-else
+                v-for="(item, idx) in section.items"
+                :key="idx"
+                class="prompt-msg-card"
+                :class="'role-' + item.role"
+              >
+                <view class="prompt-msg-header">
+                  <view class="prompt-msg-role-tag">{{ item.role.toUpperCase() }}</view>
+                  <text v-if="item.label" class="prompt-msg-subtag">{{ item.label }}</text>
+                </view>
+                <text class="prompt-msg-text" :selectable="true" :user-select="true">{{ item.content }}</text>
+              </view>
+            </view>
           </view>
         </view>
       </scroll-view>
@@ -66,17 +102,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineProps, defineEmits } from "vue";
-import type { TokenEstimate } from "@/api/sessions";
+import { computed, ref, watch } from "vue";
+import type { TokenEstimate } from "@/types/prompts";
+import {
+  buildPromptPreviewSections,
+  type CompiledPromptMessage,
+  type PromptSectionKey,
+} from "@/utils/promptPreview";
 
-interface CompiledMessage {
-  role: string;
-  content: string;
-}
-
-defineProps<{
+const props = defineProps<{
   isOpen: boolean;
-  messages: CompiledMessage[];
+  messages: CompiledPromptMessage[];
   tokenEstimate?: TokenEstimate | null;
 }>();
 
@@ -85,6 +121,42 @@ const emit = defineEmits<{
 }>();
 
 const isDetailsExpanded = ref(false);
+const expandedSectionKeys = ref<string[]>([]);
+
+const sections = computed(() => buildPromptPreviewSections(props.messages));
+
+watch(
+  [() => props.isOpen, () => props.messages],
+  ([open]) => {
+    if (open) {
+      expandedSectionKeys.value = [];
+    }
+  }
+);
+
+const isSectionExpanded = (key: PromptSectionKey): boolean => {
+  return expandedSectionKeys.value.includes(key);
+};
+
+const toggleSection = (key: PromptSectionKey) => {
+  if (isSectionExpanded(key)) {
+    expandedSectionKeys.value = expandedSectionKeys.value.filter((item) => item !== key);
+  } else {
+    expandedSectionKeys.value = [...expandedSectionKeys.value, key];
+  }
+};
+
+const isAllExpanded = computed(
+  () => sections.value.length > 0 && sections.value.every((sec) => isSectionExpanded(sec.key))
+);
+
+const toggleAllSections = () => {
+  if (isAllExpanded.value) {
+    expandedSectionKeys.value = [];
+  } else {
+    expandedSectionKeys.value = sections.value.map((sec) => sec.key);
+  }
+};
 
 const toggleDetails = () => {
   isDetailsExpanded.value = !isDetailsExpanded.value;
@@ -97,6 +169,7 @@ const close = () => {
 const getSectionName = (key: string): string => {
   const SECTION_NAMES: Record<string, string> = {
     character: "角色设定 (System)",
+    examples: "对话示例 (Examples)",
     context_summary: "上下文摘要",
     recent_history: "历史消息 (History)",
     scenario: "当前场景 (Scenario)",
@@ -119,7 +192,7 @@ const getSectionName = (key: string): string => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(12px);
   z-index: 120;
   display: flex;
@@ -137,12 +210,12 @@ const getSectionName = (key: string): string => {
   width: 90vw;
   max-width: 680rpx;
   height: 80vh;
-  background-color: #f8f8fa;
-  border-radius: 32rpx;
+  background-color: var(--app-color-background, #f7f9f7);
+  border-radius: var(--app-radius-lg, 32rpx);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.14));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   animation: modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
 }
@@ -157,20 +230,20 @@ const getSectionName = (key: string): string => {
   justify-content: space-between;
   align-items: center;
   padding: 32rpx 36rpx;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  background-color: #ffffff;
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  background-color: var(--app-color-surface, #ffffff);
 }
 
 .modal-title {
   font-size: 32rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: -0.3px;
 }
 
 .modal-close-btn {
   font-size: 44rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   cursor: pointer;
   padding: 0 10rpx;
   line-height: 1;
@@ -178,7 +251,7 @@ const getSectionName = (key: string): string => {
 }
 
 .modal-close-btn:active {
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .prompt-preview-scroll {
@@ -190,11 +263,11 @@ const getSectionName = (key: string): string => {
 /* Token Estimate Styles */
 .token-estimate-container {
   margin: 24rpx 36rpx 12rpx 36rpx;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 20rpx;
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.04);
 }
 
 .estimate-summary-row {
@@ -203,11 +276,11 @@ const getSectionName = (key: string): string => {
   padding: 24rpx 28rpx;
   cursor: pointer;
   position: relative;
-  background-color: #ffffff;
+  background-color: var(--app-color-surface, #ffffff);
 }
 
 .estimate-summary-row:active {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: rgba(112, 174, 155, 0.06);
 }
 
 .summary-stat {
@@ -219,7 +292,7 @@ const getSectionName = (key: string): string => {
 
 .stat-label {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   font-weight: 500;
 }
 
@@ -232,16 +305,16 @@ const getSectionName = (key: string): string => {
 .stat-value {
   font-size: 32rpx;
   font-weight: 700;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .stat-value.accent {
-  color: #007aff;
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .stat-range {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .toggle-btn {
@@ -253,7 +326,7 @@ const getSectionName = (key: string): string => {
 
 .toggle-arrow {
   font-size: 20rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   transition: transform 0.3s ease;
 }
 
@@ -263,9 +336,9 @@ const getSectionName = (key: string): string => {
 
 /* Details Table */
 .estimate-details-table {
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding: 20rpx 28rpx 24rpx 28rpx;
-  background-color: rgba(242, 242, 247, 0.4);
+  background-color: rgba(247, 249, 247, 0.72);
   animation: slideDown 0.25s ease-out;
 }
 
@@ -278,9 +351,9 @@ const getSectionName = (key: string): string => {
   display: flex;
   font-size: 20rpx;
   font-weight: 600;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
   padding-bottom: 12rpx;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   margin-bottom: 8rpx;
 }
 
@@ -289,8 +362,8 @@ const getSectionName = (key: string): string => {
   align-items: center;
   padding: 12rpx 0;
   font-size: 22rpx;
-  color: #3a3a3c;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.03);
+  color: var(--app-color-text-primary, #26332e);
+  border-bottom: 1px dashed rgba(38, 51, 46, 0.06);
 }
 
 .table-row:last-child {
@@ -305,7 +378,7 @@ const getSectionName = (key: string): string => {
 .col-chars {
   flex: 1;
   text-align: right;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .col-tokens {
@@ -319,52 +392,173 @@ const getSectionName = (key: string): string => {
 
 .token-main {
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .token-sub {
   font-size: 16rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .method-footer {
   margin-top: 20rpx;
   font-size: 18rpx;
-  color: #aeaea2;
+  color: var(--app-color-text-muted, #89958f);
   text-align: center;
 }
 
 .prompt-preview-content {
-  padding: 36rpx;
+  padding: 20rpx 36rpx 36rpx 36rpx;
   display: flex;
   flex-direction: column;
-  gap: 28rpx;
+  gap: 18rpx;
 }
 
-.prompt-msg-card {
-  background-color: #ffffff;
+.sections-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4rpx 4rpx 8rpx 4rpx;
+}
+
+.toolbar-summary {
+  font-size: 22rpx;
+  color: var(--app-color-text-secondary, #64716b);
+  font-weight: 500;
+}
+
+.toolbar-action-btn {
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  cursor: pointer;
+}
+
+.toolbar-action-btn:active {
+  background-color: rgba(112, 174, 155, 0.24);
+}
+
+.toolbar-action-text {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: var(--app-color-primary-strong, #4f8e7c);
+}
+
+.prompt-section-card {
+  background-color: var(--app-color-surface, #ffffff);
   border-radius: 20rpx;
-  padding: 24rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.04);
+  overflow: hidden;
+}
+
+.prompt-section-card.is-empty-section {
+  background-color: rgba(255, 255, 255, 0.72);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 24rpx 28rpx;
+  cursor: pointer;
+}
+
+.section-header:active {
+  background-color: rgba(112, 174, 155, 0.06);
+}
+
+.section-title-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.section-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--app-color-text-primary, #26332e);
+}
+
+.section-subtitle {
+  font-size: 20rpx;
+  color: var(--app-color-text-secondary, #64716b);
+  line-height: 1.4;
+}
+
+.section-meta-col {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.section-badge {
+  font-size: 20rpx;
+  font-weight: 500;
+  color: var(--app-color-primary-strong, #4f8e7c);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+}
+
+.section-badge.is-muted {
+  color: var(--app-color-text-muted, #89958f);
+  background-color: rgba(38, 51, 46, 0.06);
+}
+
+.section-body {
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  padding: 20rpx;
+  background-color: rgba(247, 249, 247, 0.75);
   display: flex;
   flex-direction: column;
   gap: 16rpx;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.section-empty-hint {
+  padding: 16rpx 12rpx;
+}
+
+.section-empty-text {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: var(--app-color-text-secondary, #64716b);
+}
+
+.prompt-msg-card {
+  background-color: var(--app-color-surface, #ffffff);
+  border-radius: 16rpx;
+  padding: 20rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .prompt-msg-card.role-system {
-  background-color: rgba(0, 122, 255, 0.02);
-  border-color: rgba(0, 122, 255, 0.06);
+  background-color: rgba(139, 184, 220, 0.08);
+  border-color: rgba(139, 184, 220, 0.22);
 }
 
 .prompt-msg-card.role-user {
-  background-color: rgba(0, 0, 0, 0.01);
-  border-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--app-color-surface, #ffffff);
+  border-color: var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .prompt-msg-card.role-assistant {
-  background-color: rgba(52, 199, 89, 0.02);
-  border-color: rgba(52, 199, 89, 0.06);
+  background-color: rgba(112, 174, 155, 0.07);
+  border-color: rgba(112, 174, 155, 0.2);
+}
+
+.prompt-msg-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10rpx;
 }
 
 .prompt-msg-role-tag {
@@ -372,29 +566,44 @@ const getSectionName = (key: string): string => {
   font-weight: 700;
   padding: 4rpx 12rpx;
   border-radius: 6rpx;
-  align-self: flex-start;
   letter-spacing: 0.5px;
 }
 
+.prompt-msg-subtag {
+  font-size: 20rpx;
+  font-weight: 500;
+  color: var(--app-color-text-secondary, #64716b);
+}
+
 .role-system .prompt-msg-role-tag {
-  background-color: rgba(0, 122, 255, 0.1);
-  color: #007aff;
+  background-color: rgba(139, 184, 220, 0.18);
+  color: #3f76a3;
 }
 
 .role-user .prompt-msg-role-tag {
-  background-color: rgba(28, 28, 30, 0.1);
-  color: #1c1c1e;
+  background-color: rgba(38, 51, 46, 0.08);
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .role-assistant .prompt-msg-role-tag {
-  background-color: rgba(52, 199, 89, 0.1);
-  color: #34c759;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.16));
+  color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .prompt-msg-text {
-  font-size: 26rpx;
+  font-size: 25rpx;
   line-height: 1.6;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .prompt-preview-modal,
+  .estimate-details-table,
+  .toggle-arrow {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 </style>

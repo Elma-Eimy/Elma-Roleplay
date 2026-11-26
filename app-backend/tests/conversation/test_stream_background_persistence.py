@@ -53,6 +53,37 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
         choice = SimpleNamespace(delta=delta)
         return SimpleNamespace(choices=[choice])
 
+    def test_debug_log_write_failure_still_persists_reply_and_releases_lock(self):
+        from services.infrastructure import llm_logger
+        turn = chat_turn_service.prepare_chat_turn(self.session_id, self.db, user_message="日志故障回归")
+        user_id = turn.user_message.id
+        queue = asyncio.Queue()
+
+        async def stream():
+            yield self._make_mock_chunk(content='<reply>日志故障仍保存</reply><status emotion="平静" affection_change="0"/>')
+
+        async def scenario():
+            lock = get_session_lock(self.session_id)
+            await lock.acquire()
+            wrapped = llm_logger.log_llm_stream_wrapper_async(stream(), "test", [])
+            await chat_router._run_stream_worker(turn, wrapped, "test", queue, lock,
+                self.session_id, self.persona_id, user_id, None, False)
+            self.assertFalse(lock.locked())
+
+        with patch.object(llm_logger.settings, "LOG_LLM_DEBUG_ENABLED", True), patch.object(
+            llm_logger, "_write_record", side_effect=OSError("disk full"),
+        ):
+            asyncio.run(scenario())
+        with SessionLocal() as db:
+            self.assertIsNotNone(db.get(ChatMessage, user_id))
+            reply = db.query(ChatMessage).filter_by(parent_id=user_id, is_active=True).one()
+            self.assertEqual("日志故障仍保存", reply.content)
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        self.assertTrue(any(event and event.get("type") == "meta" for event in events))
+        self.assertFalse(any(event and event.get("type") == "error" for event in events))
+
     def test_stream_worker_persists_turn_and_releases_lock(self):
         """Worker 在消费完 stream 后，必须原子落库 AI 消息并释放会话锁。"""
         lock = get_session_lock(self.session_id)
@@ -185,7 +216,9 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             # 等待 worker_task 在后台自然运行完成
             await worker_task
 
-        asyncio.run(run_scenario())
+        with patch.object(chat_router, "schedule_post_turn_maintenance") as schedule:
+            asyncio.run(run_scenario())
+        schedule.assert_called_once_with(self.session_id, self.persona_id)
 
         # 验证即使连接中途断开，锁正常释放，回复成功入库，用户消息未被清理
         self.assertFalse(is_session_locked(self.session_id))
@@ -442,7 +475,7 @@ class StreamBackgroundPersistenceTests(unittest.TestCase):
             lock.release()
             return {}
 
-        with patch.object(sessions_router.session_service, "_candidates_for_session", side_effect=finish_during_query):
+        with patch.object(sessions_router.session_query_service, "_candidates_for_session", side_effect=finish_during_query):
             result = sessions_router.get_session_history(self.session_id, db=self.db)
         self.assertTrue(result["is_generating"])
         self.assertEqual("user", result["messages"][-1]["role"])

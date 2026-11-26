@@ -83,33 +83,19 @@ defineOptions({
   name: 'BranchTreeNode'
 });
 
-interface SessionNode {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona?: {
-    id: number;
-    affection_score?: number;
-    current_mood?: string;
-  };
-  lastMessage?: string;
-  children: SessionNode[];
-  depth: number;
-}
+import type { BranchTreeSession, BranchTreeNodeData } from "@/types/chat";
 
 const props = defineProps<{
-  node: SessionNode;
+  node: BranchTreeNodeData;
   depth: number;
   isLast: boolean;
   latestSessionId: number | null;
 }>();
 
 const emit = defineEmits<{
-  (e: 'tap-node', session: any): void;
-  (e: 'longpress-node', session: any): void;
-  (e: 'branch-node', session: any): void;
+  (e: 'tap-node', session: BranchTreeSession): void;
+  (e: 'longpress-node', session: BranchTreeSession): void;
+  (e: 'branch-node', session: BranchTreeSession): void;
 }>();
 
 const formattedDate = computed(() => {
@@ -137,9 +123,9 @@ const onBranch = () => {
 };
 
 // 递归向上传递事件
-const emitTapNode = (session: any) => emit('tap-node', session);
-const emitLongpressNode = (session: any) => emit('longpress-node', session);
-const emitBranchNode = (session: any) => emit('branch-node', session);
+const emitTapNode = (session: BranchTreeSession) => emit('tap-node', session);
+const emitLongpressNode = (session: BranchTreeSession) => emit('longpress-node', session);
+const emitBranchNode = (session: BranchTreeSession) => emit('branch-node', session);
 </script>
 
 <style scoped>
@@ -190,14 +176,14 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 /* ===== 故事卡片主体 ===== */
 .node-card {
   flex: 1;
-  background-color: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 20rpx;
   padding: 24rpx 24rpx;
   display: flex;
   flex-direction: column;
   gap: 12rpx;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
+  box-shadow: 0 4rpx 14rpx rgba(45, 72, 62, 0.04);
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   margin-bottom: 24rpx;
   position: relative;
@@ -205,25 +191,25 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 
 .node-card:active {
   transform: scale(0.985);
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  border-color: rgba(112, 174, 155, 0.32);
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.08);
 }
 
 /* 最新时空的高亮框线 */
 .node-card.is-latest {
-  border-color: rgba(28, 28, 30, 0.15);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02), 0 0 0 1px rgba(28, 28, 30, 0.04);
-  background: linear-gradient(to bottom right, #ffffff, #fafafa);
+  border-color: rgba(112, 174, 155, 0.42);
+  box-shadow: 0 8rpx 22rpx rgba(79, 142, 124, 0.1), 0 0 0 1px rgba(112, 174, 155, 0.18);
+  background: linear-gradient(to bottom right, #ffffff, #f3f8f5);
 }
 
 .latest-badge {
   position: absolute;
   top: -16rpx;
   right: 20rpx;
-  background-color: #1c1c1e;
-  border-radius: 6rpx;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
+  border-radius: 8rpx;
   padding: 4rpx 12rpx;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4rpx 12rpx rgba(79, 142, 124, 0.24);
   z-index: 2;
 }
 
@@ -244,7 +230,7 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 .card-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -262,17 +248,17 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   align-items: center;
   gap: 4rpx;
   font-size: 22rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.03);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding: 6rpx 16rpx;
   border-radius: 40rpx;
 }
 
 .meta-tag.affection {
   font-weight: 600;
-  color: #ff3b30;
-  background-color: rgba(255, 59, 48, 0.02);
-  border-color: rgba(255, 59, 48, 0.05);
+  color: var(--app-color-danger, #d9655d);
+  background-color: rgba(217, 101, 93, 0.06);
+  border-color: rgba(217, 101, 93, 0.14);
 }
 
 .affection-heart-icon-node {
@@ -283,12 +269,12 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
 
 .meta-tag.mood {
   font-weight: 500;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .card-preview {
   font-size: 28rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -303,13 +289,13 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   justify-content: space-between;
   align-items: center;
   margin-top: 4rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.02);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   padding-top: 12rpx;
 }
 
 .card-date {
   font-size: 22rpx;
-  color: #c7c7cc;
+  color: var(--app-color-text-muted, #89958f);
   font-weight: 500;
 }
 
@@ -324,20 +310,20 @@ const emitBranchNode = (session: any) => emit('branch-node', session);
   gap: 6rpx;
   padding: 10rpx 20rpx;
   border-radius: 30rpx;
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: var(--app-color-background, #f7f9f7);
   transition: all 0.2s;
 }
 
 .action-btn:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
 }
 
 .action-btn.enter {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .action-btn.enter:active {
-  background-color: #000000;
+  background-color: #427a6a;
 }
 
 .action-icon {

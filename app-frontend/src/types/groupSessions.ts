@@ -1,3 +1,4 @@
+import type { TokenEstimate } from "./prompts";
 import type { RoleState } from "./roleState";
 
 export interface GroupCharacterOption {
@@ -5,6 +6,7 @@ export interface GroupCharacterOption {
   name: string;
   avatar_path: string | null;
   description?: string;
+  creator?: string;
 }
 
 export type GroupMemberOrigin =
@@ -41,6 +43,13 @@ export interface GroupSessionMember {
   };
 }
 
+export interface GroupLastMessageSummary {
+  role: "assistant" | "user";
+  speaker_name: string | null;
+  content: string;
+  created_at: string | null;
+}
+
 export interface GroupSessionDetail {
   kind: "group";
   session_id: number;
@@ -51,6 +60,7 @@ export interface GroupSessionDetail {
   updated_at: string;
   can_generate: boolean;
   group_revision?: number;
+  last_message?: GroupLastMessageSummary | null;
   members: GroupSessionMember[];
 }
 
@@ -142,6 +152,7 @@ export interface GroupOperationSummary {
   revision: number; round_id: number; candidate_id: number; call_count: number; call_limit: number;
   created_at: string; started_at: string | null; deadline_at: string | null; finished_at: string | null;
   error_code: string | null;
+  speaking_persona_id?: number | null;
 }
 export interface GroupCurrentState {
   group_revision: number;
@@ -202,7 +213,7 @@ export interface GetGroupRequestResponse extends GroupOperationSummary {
 
 export interface GroupPromptPreview {
   messages: { role: string; content: string }[];
-  token_estimate: import("@/api/sessions").TokenEstimate;
+  token_estimate: TokenEstimate;
   candidate_id: number;
   revision: number;
 }

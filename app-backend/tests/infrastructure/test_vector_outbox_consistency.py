@@ -35,6 +35,8 @@ class _StatefulCollection:
     def upsert(self, *, ids, documents, metadatas):
         self.upsert_calls += 1
         for doc_id, document, metadata in zip(ids, documents, metadatas):
+            if not isinstance(doc_id, str) or not doc_id:
+                raise ValueError("Vector document ID must be a non-empty string")
             self.documents[doc_id] = (document, metadata)
 
     def delete(self, *, ids):
@@ -51,7 +53,7 @@ class VectorOutboxConsistencyTests(unittest.TestCase):
             connect_args={"check_same_thread": False},
         )
         Base.metadata.create_all(self.engine)
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
         self.db = self.SessionLocal()
 
         character = Character(
@@ -91,7 +93,7 @@ class VectorOutboxConsistencyTests(unittest.TestCase):
         ):
             asyncio.run(outbox_worker.process_pending_jobs())
 
-    def _add_memory(self, content="用户住在北京。"):
+    def _add_memory(self, content="用户住在北京。", *, auto_commit=True):
         return memory_manager.add_memory_chunk(
             persona_id=self.persona_id,
             character_id=self.character_id,
@@ -101,7 +103,15 @@ class VectorOutboxConsistencyTests(unittest.TestCase):
             origin_session_id=self.session_id,
             source_message_id=None,
             db=self.db,
+            auto_commit=auto_commit,
         )
+
+    def _clear_document_id(self):
+        chunk = self._add_memory()
+        doc_id = chunk.chroma_doc_id
+        chunk.chroma_doc_id = None
+        self.db.commit()
+        return chunk, doc_id
 
     def test_add_commits_memory_and_outbox_before_vector_write(self):
         chunk = self._add_memory()
@@ -125,6 +135,88 @@ class VectorOutboxConsistencyTests(unittest.TestCase):
 
         self.assertEqual(1, len(self.collection.documents))
         self.assertEqual("最新内容", self.collection.documents[chunk.chroma_doc_id][0])
+
+    def test_add_flushes_document_id_without_committing_caller_transaction(self):
+        chunk = self._add_memory(auto_commit=False)
+        row = self.db.query(MemoryChunk.chroma_doc_id).filter_by(id=chunk.id).one()
+        self.assertEqual(f"mem_{chunk.id}", row.chroma_doc_id)
+
+        self.db.rollback()
+        self.assertEqual(0, self.db.query(MemoryChunk).count())
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_upsert_heals_null_document_id_from_task(self):
+        chunk, doc_id = self._clear_document_id()
+
+        self._run_worker()
+        self.db.refresh(chunk)
+
+        self.assertEqual(doc_id, chunk.chroma_doc_id)
+        self.assertEqual({doc_id}, set(self.collection.documents))
+        self.assertEqual(chunk.content, self.collection.documents[doc_id][0])
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_upsert_prefers_current_sqlite_document_id_over_task(self):
+        chunk = self._add_memory()
+        chunk.chroma_doc_id = "current-id"
+        self.db.commit()
+
+        self._run_worker()
+
+        self.assertEqual({"current-id"}, set(self.collection.documents))
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_repair_keeps_document_id_written_after_initial_read(self):
+        chunk, _ = self._clear_document_id()
+        original_get = self.SessionLocal.class_.get
+
+        def get_with_concurrent_write(db, model, ident, **kwargs):
+            row = original_get(db, model, ident, **kwargs)
+            if model is MemoryChunk and row is not None and row.chroma_doc_id is None:
+                with self.SessionLocal() as writer:
+                    concurrent_row = original_get(writer, MemoryChunk, ident)
+                    concurrent_row.chroma_doc_id = "concurrent-id"
+                    writer.commit()
+            return row
+
+        with patch.object(self.SessionLocal.class_, "get", get_with_concurrent_write):
+            self._run_worker()
+
+        self.db.refresh(chunk)
+        self.assertEqual("concurrent-id", chunk.chroma_doc_id)
+        self.assertEqual({"concurrent-id"}, set(self.collection.documents))
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_repaired_document_id_survives_vector_failure_and_retry(self):
+        chunk, doc_id = self._clear_document_id()
+
+        with patch.object(self.collection, "upsert", side_effect=ConnectionError("offline")):
+            self._run_worker()
+
+        self.db.refresh(chunk)
+        self.assertEqual(doc_id, chunk.chroma_doc_id)
+        job = self.db.query(OutboxJob).one()
+        self.assertEqual(OutboxJobStatus.failed, job.status)
+        job.run_after = datetime.now() - timedelta(seconds=1)
+        self.db.commit()
+
+        self._run_worker()
+
+        self.assertEqual({doc_id}, set(self.collection.documents))
+        self.assertEqual(0, self.db.query(OutboxJob).count())
+
+    def test_delete_queues_document_id_repaired_after_chunk_was_loaded(self):
+        chunk, doc_id = self._clear_document_id()
+        chunk_id = chunk.id
+        self.assertIsNone(chunk.chroma_doc_id)
+
+        self._run_worker()
+        self.assertIn(doc_id, self.collection.documents)
+        memory_manager.delete_memory_chunk(chunk_id, self.db)
+        self._run_worker()
+
+        self.assertEqual({}, self.collection.documents)
+        self.assertEqual(0, self.db.query(OutboxJob).count())
 
     def test_vector_failure_is_persisted_and_retry_can_succeed(self):
         self._add_memory()
@@ -164,8 +256,9 @@ class VectorOutboxConsistencyTests(unittest.TestCase):
         self.assertEqual("用户住在北京。", self.collection.documents[chunk.chroma_doc_id][0])
 
     def test_stale_upsert_task_cannot_resurrect_deleted_memory(self):
-        chunk = self._add_memory()
+        chunk, doc_id = self._clear_document_id()
         stale_payload = self.db.query(OutboxJob).one().payload
+        self.collection.documents[doc_id] = (chunk.content, {})
         memory_manager.delete_memory_chunk(chunk.id, self.db)
 
         with (

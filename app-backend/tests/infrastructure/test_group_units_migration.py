@@ -6,20 +6,12 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from core.models import GroupRoundCandidate, GroupContentUnit, GroupUnitVisibility, GroupDirectorStep
-from tests.infrastructure import test_group_round_migration as fixtures
-
-HEAD = "b0d1e2f3a4b5"
-OLD = fixtures.HEAD
 
 
-class GroupUnitsMigrationTests(unittest.TestCase):
-    def setUp(self):
-        fixtures.GroupRoundMigrationTests.setUp(self)
-        command.upgrade(self.config, OLD)
-        fixtures.GroupRoundMigrationTests.seed(self)
+from tests.support.migrations.group_units import HEAD, OLD, GroupUnitsMigrationFixture
 
-    snapshot = fixtures.GroupRoundMigrationTests.snapshot
 
+class GroupUnitsMigrationTests(GroupUnitsMigrationFixture, unittest.TestCase):
     def test_populated_upgrade_preserves_unicode_text_state_and_exact_permissions(self):
         original = self.snapshot()
         with self.engine.begin() as db:

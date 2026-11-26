@@ -116,7 +116,7 @@ const formatDate = (dateString: string) => {
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -133,12 +133,12 @@ const formatDate = (dateString: string) => {
   width: 80vw;
   max-width: 600rpx;
   height: 100%;
-  background-color: #f9fafb; /* Minimalist off-white */
+  background-color: var(--app-color-background, #f7f9f7);
   transform: translateX(-100%);
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   flex-direction: column;
-  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.05);
+  box-shadow: 4px 0 24rpx rgba(45, 72, 62, 0.08);
 }
 
 .is-open .drawer-panel {
@@ -151,14 +151,14 @@ const formatDate = (dateString: string) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #e5e7eb;
-  background-color: #ffffff;
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  background-color: var(--app-color-surface, #ffffff);
 }
 
 .drawer-title {
   font-size: 36rpx;
   font-weight: 700;
-  color: #111827;
+  color: var(--app-color-text-primary, #26332e);
   letter-spacing: 1rpx;
 }
 
@@ -166,7 +166,8 @@ const formatDate = (dateString: string) => {
   width: 64rpx;
   height: 64rpx;
   border-radius: 50%;
-  background-color: #000000;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
+  box-shadow: 0 6rpx 16rpx rgba(79, 142, 124, 0.25);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -192,16 +193,17 @@ const formatDate = (dateString: string) => {
   align-items: center;
   padding: 20rpx 24rpx;
   margin-bottom: 16rpx;
-  background-color: #ffffff;
-  border: 1px solid #e5e7eb;
+  background-color: var(--app-color-surface, #ffffff);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   border-radius: 16rpx;
   transition: all 0.2s ease;
   gap: 20rpx;
 }
 
 .session-item.is-active {
-  border-color: #111827;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  border-color: var(--app-color-primary, #70ae9b);
+  background-color: rgba(112, 174, 155, 0.06);
+  box-shadow: 0 4rpx 14rpx rgba(79, 142, 124, 0.08);
 }
 
 .session-avatar {

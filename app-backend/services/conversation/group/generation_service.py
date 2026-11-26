@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 
 from fastapi.concurrency import run_in_threadpool
@@ -10,6 +11,8 @@ from sqlalchemy import text
 
 from core.locking import group_execution, require_group_execution, require_group_runtime
 from . import history_service as history
+from .session_service import _begin_write
+from . import guards
 from . import candidate_state as candidate_state
 from .execution_scope import GroupTargetScope
 from .context_service import build_member_context
@@ -66,7 +69,7 @@ async def _database(operation, *args, **kwargs):
 
 
 def _parse(raw, context):
-    from services.parse import extract_xml_block
+    from services.conversation.reply_parser import extract_xml_block
     if not isinstance(raw, str):
         raise GroupGenerationError('invalid_output')
     if isinstance(raw, str) and raw.lstrip().startswith('{'):
@@ -101,14 +104,16 @@ def _save(session_id, candidate_id, persona_id, revision, result, visible_to, db
 def _fail(session_id, candidate_id, revision, db, runtime, code):
     require_group_runtime(runtime, db.get_bind())
     try:
-        history._begin_write(db)
-        _, candidate = history._writable(session_id, candidate_id, revision, db)
+        _begin_write(db)
+        _, candidate = guards.require_writable_candidate(session_id, candidate_id, revision, db)
         candidate_state.fail(candidate, code)
-        history._require_group(session_id, db).group_revision += 1
+        group = guards.require_group(session_id, db)
+        group.group_revision += 1
+        group.updated_at = datetime.utcnow()
         committed_revision = candidate.revision
         db.commit()
         return committed_revision
-    except (SessionKindConflict, history.GroupSessionNotFound):
+    except (SessionKindConflict, guards.GroupSessionNotFound):
         db.rollback()
         # 外部已经结束、删除或推进候选时，旧请求不改写新状态。
     except BaseException:
@@ -119,10 +124,10 @@ def _fail(session_id, candidate_id, revision, db, runtime, code):
 @group_session_operation
 async def generate_group_utterance(session_id, candidate_id, speaker_persona_id, expected_revision,
                                    db, *, runtime, decide_visibility, model=None):
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     require_group_runtime(runtime, db.get_bind())
-    history._positive(speaker_persona_id, "发言成员")
+    guards.positive(speaker_persona_id, "发言成员")
     async with group_execution(session_id, db.get_bind(), runtime) as execution:
         return await _generate_with_execution(session_id, candidate_id, speaker_persona_id, expected_revision,
             db, execution=execution, decide_visibility=decide_visibility, model=model)

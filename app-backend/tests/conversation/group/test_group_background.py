@@ -12,11 +12,53 @@ from core.locking import is_session_locked, stop_group_executions
 from application.group_runtime import group_runtime
 from services.conversation.group import background_service as background, checkpoint_service as checkpoints
 from services.conversation.group import operation_service as operations, generation_service as generation
+from services.conversation.group.query_service import get_group_request
 from services.conversation.session_access import SessionKindConflict
 from scripts.group_chat_prototype.worker import _response
 
 
 class GroupBackgroundTests(GroupBackgroundFixture, unittest.TestCase):
+    def test_activity_exposes_only_the_currently_dispatched_speaker(self):
+        sid, ids = self.group()
+
+        async def scenario(owner):
+            director_entered, director_release = asyncio.Event(), asyncio.Event()
+            role_entered, role_release = asyncio.Event(), asyncio.Event()
+            model = Model(ids)
+
+            async def wait(stage, parameters):
+                if stage == "next_action" and not model.saved:
+                    director_entered.set()
+                    await director_release.wait()
+                if stage == "role_generation":
+                    role_entered.set()
+                    await role_release.wait()
+                return await model(stage, parameters)
+
+            request_id = str(uuid4())
+            seen, revision = self.observed(sid)
+            await background.submit_group_operation(sid, request_id, "send", revision, self.db,
+                runtime=owner, call_model=wait, **seen, user_content="hello", model="fixture")
+
+            def active():
+                with self.sessions() as reader:
+                    return get_group_request(sid, request_id, reader)["current"]["active_operation"]
+
+            try:
+                await asyncio.wait_for(director_entered.wait(), 5)
+                self.assertIsNone(active()["speaking_persona_id"])
+                director_release.set()
+                await asyncio.wait_for(role_entered.wait(), 5)
+                self.assertEqual(ids[0], active()["speaking_persona_id"])
+            finally:
+                director_release.set()
+                role_release.set()
+                await self.drain(owner)
+            self.assertIsNone(active())
+
+        with group_runtime(self.engine) as owner:
+            asyncio.run(scenario(owner))
+
     def test_send_succeeds_and_commits_budget_audit_and_operation(self):
         sid, ids = self.group()
         model = Model(ids)

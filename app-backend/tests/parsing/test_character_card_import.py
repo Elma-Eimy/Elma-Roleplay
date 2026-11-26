@@ -8,7 +8,7 @@ import unittest
 import zlib
 
 from services.media.character_card_import import import_character_card
-from services.parse import (
+from services.media.character_card_parser import (
     _extract_v2_data,
     parse_character_card,
     read_png_card_payloads,

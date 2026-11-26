@@ -86,21 +86,23 @@ export async function switchCandidate(
   messageId: number
 ): Promise<SwitchCandidateResponse> {
   const db = getMockDB();
-  let msg: any = null;
-  let sid: string = "";
-  for (const key in db.messages) {
-    const found = db.messages[key].find((m) => m.id === messageId);
+  let msg: Message | null = null;
+  let sid: number | null = null;
+  for (const key of Object.keys(db.messages)) {
+    const numericKey = Number(key);
+    const found = db.messages[numericKey]?.find((m) => m.id === messageId);
     if (found) {
       msg = found;
-      sid = key;
+      sid = numericKey;
       break;
     }
   }
-  if (msg) {
-    const msgs = (db.messages as any)[sid] as any[];
+  if (msg && sid !== null) {
+    const msgs = db.messages[sid];
     if (msgs) {
-      msgs.forEach((m: any) => {
-        if (m.role === "assistant" && m.parent_id === msg.parent_id) {
+      const parentId = msg.parent_id;
+      msgs.forEach((m) => {
+        if (m.role === "assistant" && m.parent_id === parentId) {
           m.is_active = (m.id === messageId);
         }
       });

@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from services.conversation.prompting.compiler import compile_dialogue_examples
-from services.parse import (
+from services.media.character_card_parser import (
     _validate_card_object,
     read_png_card_payloads,
     write_png_card_payloads,

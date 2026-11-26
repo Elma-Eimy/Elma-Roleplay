@@ -2,14 +2,14 @@
 import unittest
 from alembic import command
 from sqlalchemy.exc import IntegrityError
-from tests.infrastructure import test_group_operations_migration as fixtures
+from tests.support.migrations import group_operations as fixtures
 
 
 class GroupCaptureMigrationTests(unittest.TestCase):
-    snapshot = fixtures.GroupOperationsMigrationTests.snapshot
+    snapshot = fixtures.GroupOperationsMigrationFixture.snapshot
 
     def test_insights_upgrade_preserves_old_cards_and_candidate_boundary(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config, "b3a4b5c6d7e8")
         with self.engine.begin() as db:
             db.exec_driver_sql("INSERT INTO group_memory_captures(session_id,round_id,candidate_id,persona_id,cards_json) "
@@ -28,7 +28,7 @@ class GroupCaptureMigrationTests(unittest.TestCase):
         command.downgrade(self.config, "b3a4b5c6d7e8")
 
     def test_upgrade_preserves_data_and_scopes_captures(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config, "b2f3a4b5c6d7")
         before = self.snapshot()
         command.upgrade(self.config, "b3a4b5c6d7e8")
@@ -50,7 +50,7 @@ class GroupCaptureMigrationTests(unittest.TestCase):
         command.downgrade(self.config, "b2f3a4b5c6d7")
 
     def test_recall_migration_backfills_completed_card_and_cascades_its_index_job(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config, "b4c5d6e7f8a9")
         with self.engine.begin() as db:
             db.exec_driver_sql("INSERT INTO group_memory_captures(session_id,round_id,candidate_id,persona_id,cards_json) "

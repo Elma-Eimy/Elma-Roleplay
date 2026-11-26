@@ -71,7 +71,7 @@
         <view v-if="message.status === 'error'" class="error-row">
           <text class="error-text">发送失败</text>
           <text
-            v-if="isUser && message.id < 0"
+            v-if="isUser && (message.id ?? 0) < 0"
             class="retry-link"
             @tap.stop="emit('retry-failed', message)"
           >编辑后重发</text>
@@ -97,42 +97,11 @@
       </view>
 
       <!-- 最新回复常驻操作条 -->
-      <view
+      <ChatActionBar
         v-if="!readOnly && !isUser && isLatestAssistant && message.status === 'done'"
-        class="latest-action-bar"
-        @longpress.stop=""
-        @contextmenu.prevent.stop=""
-      >
-        <view
-          class="action-bar-btn"
-          :class="{ 'is-disabled': chatStore.isLoading }"
-          @tap.stop="!chatStore.isLoading && emit('regenerate-message')"
-        >
-          <image class="action-bar-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
-          <text class="action-bar-label">重新生成</text>
-        </view>
-        <view
-          class="action-bar-btn"
-          :class="{ 'is-playing': activeAudioMessageId === message.id }"
-          @tap.stop="playTTS"
-        >
-          <view v-if="activeAudioMessageId === message.id" class="waveform">
-            <view class="wave-bar bar-1"></view>
-            <view class="wave-bar bar-2"></view>
-            <view class="wave-bar bar-3"></view>
-          </view>
-          <image v-else class="action-bar-icon tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
-          <text class="action-bar-label">{{ activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
-        </view>
-        <view class="action-bar-btn" @tap.stop="emit('copy-message', message)">
-          <image class="action-bar-icon" src="/static/icons/char_list.svg" mode="aspectFit" />
-          <text class="action-bar-label">复制</text>
-        </view>
-        <view class="action-bar-btn" @tap.stop="emit('longpress-message', message)">
-          <text class="action-bar-more">···</text>
-          <text class="action-bar-label">更多</text>
-        </view>
-      </view>
+        :items="latestActionItems"
+        @select="onActionBarSelect"
+      />
 
       <!-- 元数据信息（情绪标签、好感度变动与所使用的模型、语音播报） -->
       <view v-if="!isUser && isMetaVisible" class="meta-area">
@@ -140,16 +109,16 @@
         <view
           v-if="!readOnly && message.status === 'done' && !isLatestAssistant"
           class="meta-tag tts-btn"
-          :class="{ 'is-playing': activeAudioMessageId === message.id }"
+          :class="{ 'is-playing': isPlayingAudio }"
           @tap="playTTS"
         >
-          <view v-if="activeAudioMessageId === message.id" class="waveform">
+          <view v-if="isPlayingAudio" class="waveform">
             <view class="wave-bar bar-1"></view>
             <view class="wave-bar bar-2"></view>
             <view class="wave-bar bar-3"></view>
           </view>
           <image v-else class="tts-icon" src="/static/icons/tts_play.svg" mode="aspectFit" />
-          <text class="tts-text">{{ activeAudioMessageId === message.id ? '播放中' : '朗读' }}</text>
+          <text class="tts-text">{{ isPlayingAudio ? '播放中' : '朗读' }}</text>
         </view>
         <view v-if="message.emotion_tag" class="meta-tag emotion">
           {{ message.emotion_tag }}
@@ -173,29 +142,41 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from "vue";
-import type { ChatMessage } from "@/store/chatStore";
-import { useChatStore } from "@/store/chatStore";
-import { usePersonaStore } from "@/store/personaStore";
-import { useAudioPlayer } from "@/composables/useAudioPlayer";
+import ChatActionBar, { type ChatActionBarItem } from "./ChatActionBar.vue";
 import { renderChatMarkdown as renderMarkdown } from "@/utils/markdown";
 import {
   createBoundedCache,
   formatThoughtTitle,
   lastNonEmptyLine,
 } from "@/utils/chatDisplay";
+import {
+  parseBubbleContent,
+  replaceBubblePlaceholders,
+  stripStatusTags,
+  stripThoughtTags,
+} from "@/utils/chatBubbleContent";
 import AvatarImage from "@/components/common/AvatarImage.vue";
+
+export interface ChatBubbleMessage {
+  id?: number;
+  role: "user" | "assistant" | "system";
+  content: string;
+  reasoning_content?: string | null;
+  emotion_tag?: string | null;
+  affection_change?: number | null;
+  model_used?: string | null;
+  status?: "sending" | "streaming" | "done" | "error";
+  candidates?: { id: number; content?: string }[];
+  active_index?: number;
+}
 
 const STREAM_MARKDOWN_RENDER_DELAY = 48;
 // 已完成消息的 Markdown 渲染结果按内容键缓存，避免翻页或重排时重复解析。
 const markdownCache = createBoundedCache<string>(240);
 
-const chatStore = useChatStore();
-const personaStore = usePersonaStore();
-const { activeAudioMessageId, playMessageTTS } = useAudioPlayer();
-
 const props = withDefaults(
   defineProps<{
-    message: ChatMessage;
+    message: ChatBubbleMessage;
     avatarUrl?: string;
     characterName?: string;
     showName?: boolean;
@@ -203,6 +184,8 @@ const props = withDefaults(
     isLatestAssistant?: boolean;
     animateEntry?: boolean;
     readOnly?: boolean;
+    isBusy?: boolean;
+    isPlayingAudio?: boolean;
     userNickname?: string;
   }>(),
   {
@@ -213,16 +196,45 @@ const props = withDefaults(
     isLatestAssistant: false,
     animateEntry: false,
     readOnly: false,
+    isBusy: false,
+    isPlayingAudio: false,
     userNickname: "",
   }
 );
 
 const emit = defineEmits<{
-  (e: "longpress-message", message: ChatMessage): void;
-  (e: "retry-failed", message: ChatMessage): void;
-  (e: "copy-message", message: ChatMessage): void;
+  (e: "longpress-message", message: ChatBubbleMessage): void;
+  (e: "retry-failed", message: ChatBubbleMessage): void;
+  (e: "copy-message", message: ChatBubbleMessage): void;
   (e: "regenerate-message"): void;
+  (e: "play-tts", message: ChatBubbleMessage): void;
+  (e: "switch-candidate", payload: { messageId: number; candidateId: number }): void;
 }>();
+
+const latestActionItems = computed<ChatActionBarItem[]>(() => [
+  { key: "regenerate", label: "重新生成", icon: "/static/icons/drawer_sync.svg", disabled: props.isBusy },
+  {
+    key: "tts",
+    label: props.isPlayingAudio ? "播放中" : "朗读",
+    icon: "/static/icons/tts_play.svg",
+    waveform: props.isPlayingAudio,
+    active: props.isPlayingAudio,
+  },
+  { key: "copy", label: "复制", icon: "/static/icons/char_list.svg" },
+  { key: "more", label: "更多", isMore: true },
+]);
+
+const onActionBarSelect = (key: string) => {
+  if (key === "regenerate") {
+    if (!props.isBusy) emit("regenerate-message");
+  } else if (key === "tts") {
+    playTTS();
+  } else if (key === "copy") {
+    emit("copy-message", props.message);
+  } else if (key === "more") {
+    emit("longpress-message", props.message);
+  }
+};
 
 // 元数据默认只在最新回复展示；点按其他 AI 气泡可临时展开（含模型名）。
 const isMetaRevealed = ref(false);
@@ -301,11 +313,11 @@ const handleTouchEnd = (e: TouchEvent) => {
 };
 
 const isCandidateSwitchLocked = computed(() =>
-  chatStore.isLoading || props.message?.status === "streaming"
+  props.isBusy || props.message?.status === "streaming"
 );
 
-const switchCandidateVersion = async (direction: number) => {
-  if (props.readOnly || isCandidateSwitchLocked.value || !props.message?.candidates) return;
+const switchCandidateVersion = (direction: number) => {
+  if (props.readOnly || isCandidateSwitchLocked.value || !props.message?.candidates || props.message.id === undefined) return;
   const len = props.message.candidates.length;
   const currentIdx = props.message.active_index ?? 0;
   let targetIdx = currentIdx + direction;
@@ -321,14 +333,13 @@ const switchCandidateVersion = async (direction: number) => {
     try {
       uni.vibrateShort({ success: () => {} });
     } catch (_) {}
-    const result = await chatStore.switchActiveCandidate(props.message.id, targetCandidate.id);
-    if (result.status === "error") uni.showToast({ title: result.message, icon: "none" });
+    emit("switch-candidate", { messageId: props.message.id, candidateId: targetCandidate.id });
   }
 };
 
 const playTTS = () => {
   if (!props.readOnly && props.message?.id) {
-    playMessageTTS(props.message);
+    emit("play-tts", props.message);
   }
 };
 
@@ -357,13 +368,7 @@ const isThoughtExpanded = ref(false);
 // 替换 {{char}} / {{user}} 占位符
 const replacePlaceholders = (text: string) => {
   try {
-    if (!text) return "";
-    const str = String(text);
-    const charName = props.characterName || "角色";
-    const userName = props.userNickname || (props.readOnly ? "用户" : personaStore.userNickname) || "用户";
-    return str
-      .replace(/\{\{char\}\}/gi, charName)
-      .replace(/\{\{user\}\}/gi, userName);
+    return replaceBubblePlaceholders(text, props.characterName, props.userNickname);
   } catch (err) {
     console.error("[ChatBubble] replacePlaceholders error:", err, "text:", text);
     return String(text || "");
@@ -372,51 +377,16 @@ const replacePlaceholders = (text: string) => {
 
 const parsedContent = computed(() => {
   try {
-    let content = props.message?.content;
-    if (content === null || content === undefined) {
-      content = "";
-    } else {
-      content = String(content);
-    }
-
-    // 1. 过滤掉 <status ...> 自定义标签，防止 rich-text 渲染自定义 XML 标签导致原生端崩溃
-    content = content.replace(/<status[^>]*\/?>/gi, "");
-
-    content = replacePlaceholders(content);
-
-    if (isUser.value) {
-      return { thought: "", reply: content };
-    }
-
-    // 优先采用独立的 reasoning_content 字段（API 标准格式）
-    let thought = props.message?.reasoning_content ? String(props.message.reasoning_content) : "";
-    let reply = content;
-
-    // 如果独立的 reasoning_content 为空，再尝试 fallback 从 content 中解析 <thought> 标签
-    if (!thought) {
-      const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/i;
-      const match = content.match(thoughtRegex);
-      if (match) {
-        thought = match[1].trim();
-        reply = content.replace(thoughtRegex, "").trim();
-      }
-    } else {
-      // 如果是用独立的 reasoning_content，仍要清理 content 中残留的 <thought> 标签
-      reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-    }
-
-    thought = replacePlaceholders(thought);
-
-    // 3. 额外清理并移除任何残留或未闭合的 <thought> / </thought> 标签，防止 rich-text 解析时崩溃
-    thought = thought.replace(/<\/?thought[^>]*>/gi, "");
-    reply = reply.replace(/<\/?thought[^>]*>/gi, "");
-
-    return { thought, reply };
+    return parseBubbleContent({
+      content: props.message?.content,
+      reasoningContent: props.message?.reasoning_content,
+      isUser: isUser.value,
+      characterName: props.characterName,
+      userNickname: props.userNickname,
+    });
   } catch (err) {
     console.error("[ChatBubble] parsedContent error:", err, "message:", props.message);
-    const fallback = String(props.message?.content || "")
-      .replace(/<status[^>]*\/?>/gi, "")
-      .replace(/<\/?thought[^>]*>/gi, "");
+    const fallback = stripThoughtTags(stripStatusTags(String(props.message?.content || "")));
     return { thought: "", reply: fallback };
   }
 });
@@ -557,64 +527,6 @@ onUnmounted(() => {
 
 <style scoped>
 @import "./chatMessage.css";
-
-/* ===== 最新回复操作条 ===== */
-.latest-action-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8rpx;
-  margin-top: 10rpx;
-  margin-left: 6rpx;
-}
-
-.action-bar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8rpx;
-  min-height: 48rpx;
-  padding: 0 18rpx;
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  border-radius: var(--app-radius-pill, 999rpx);
-  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.64));
-  color: var(--app-color-text-secondary, #64716b);
-  transition:
-    transform var(--app-motion-fast, 160ms) ease,
-    background-color var(--app-motion-fast, 160ms) ease;
-}
-
-.action-bar-btn:active {
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-  transform: scale(0.95);
-}
-
-.action-bar-btn.is-disabled {
-  opacity: 0.45;
-}
-
-.action-bar-btn.is-playing {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  border-color: rgba(112, 174, 155, 0.2);
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-}
-
-.action-bar-icon {
-  width: 22rpx;
-  height: 22rpx;
-  flex-shrink: 0;
-  opacity: 0.78;
-}
-
-.action-bar-more {
-  font-size: 24rpx;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.action-bar-label {
-  font-size: 21rpx;
-  font-weight: 560;
-}
 
 /* ===== 元数据区域 ===== */
 .meta-area {

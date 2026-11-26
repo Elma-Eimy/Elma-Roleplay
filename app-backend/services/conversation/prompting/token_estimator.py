@@ -13,6 +13,7 @@ from typing import Any, Iterable
 ESTIMATION_METHOD = "heuristic_v1"
 SECTION_ORDER = (
     "character",
+    "examples",
     "context_summary",
     "recent_history",
     "scenario",
@@ -45,6 +46,8 @@ GENERATED_LOREBOOK_RE = re.compile(
     re.IGNORECASE,
 )
 CURRENT_USER_MARKER = "【当前用户的最新消息：】"
+EXAMPLE_CONTEXT_MARKER = "【对话示例说明】"
+EXAMPLE_END_MARKER = "【对话示例结束】"
 
 
 def estimate_text_tokens(text: str | None) -> dict[str, int]:
@@ -126,21 +129,41 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]] | None) -> dict[str, A
     sections = {name: _empty_estimate() for name in SECTION_ORDER}
 
     if payload:
-        _add_text(sections["character"], str(payload[0].get("content", "")))
+        first_content = str(payload[0].get("content", ""))
+        example_marker_index = first_content.find(EXAMPLE_CONTEXT_MARKER)
+        if example_marker_index >= 0:
+            _add_text(sections["character"], first_content[:example_marker_index])
+            _add_text(sections["examples"], first_content[example_marker_index:])
+        else:
+            _add_text(sections["character"], first_content)
 
     # 正常聊天 Payload 以 PHI / 输出契约 system 消息收尾。它仍属于提示指令，
     # 计入 character 区段；随后再定位其前方真正的当前 user 消息。
     has_post_history_system = bool(
-        len(payload) > 1 and payload[-1].get("role") == "system"
+        len(payload) > 1
+        and payload[-1].get("role") == "system"
+        and not str(payload[-1].get("content", "")).startswith(EXAMPLE_END_MARKER)
     )
     conversation_end = len(payload) - 1 if has_post_history_system else len(payload)
     if has_post_history_system:
         _add_text(sections["character"], str(payload[-1].get("content", "")))
 
+    # compile_message_prefix 会用独立 system 消息收尾示例区；若存在则只在其后定位真实历史与本轮输入。
+    example_end_index = None
+    for index in range(1, conversation_end):
+        message = payload[index]
+        if (
+            message.get("role") == "system"
+            and str(message.get("content", "")).startswith(EXAMPLE_END_MARKER)
+        ):
+            example_end_index = index
+            break
+
     # @ Depth 0 世界书可能位于真实用户消息之后，其角色本身也可能是 user。
     # 从后向前跳过带生成标记的世界书消息，定位本轮真正的用户原话。
+    user_search_floor = example_end_index if example_end_index is not None else -1
     final_user_index = None
-    for index in range(conversation_end - 1, -1, -1):
+    for index in range(conversation_end - 1, user_search_floor, -1):
         message = payload[index]
         content = str(message.get("content", ""))
         if (
@@ -151,16 +174,21 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]] | None) -> dict[str, A
             break
 
     # 角色定义可能因 before/after_char 注入而成为首条 system 后的独立
-    # system。在首个非 system 消息前，非动态 system 仍属于角色提示区。
+    # system。在首个非 system 消息前，非动态 system 仍属于角色提示区；
+    # 若直接进入群聊成员可见历史或动态背景，则停止静态扫描交给后续循环。
     leading_system_indexes = set()
     for index in range(1, conversation_end):
         message = payload[index]
         if message.get("role") != "system":
             break
         content = str(message.get("content", ""))
+        if content.startswith(("【其他成员的可见历史资料】", "【当前回合动态背景】", "【较早对话的压缩摘要】")):
+            break
         if TAG_BLOCK_RE.search(content):
             for section_name, fragment in _split_enhanced_user_content(content):
                 _add_text(sections[section_name], fragment)
+        elif content.startswith(EXAMPLE_END_MARKER):
+            _add_text(sections["examples"], content)
         else:
             _add_text(sections["character"], content)
         leading_system_indexes.add(index)
@@ -174,6 +202,8 @@ def estimate_prompt_tokens(messages: list[dict[str, Any]] | None) -> dict[str, A
         if TAG_BLOCK_RE.search(content):
             for section_name, fragment in _split_enhanced_user_content(content):
                 _add_text(sections[section_name], fragment)
+        elif example_end_index is not None and index <= example_end_index:
+            _add_text(sections["examples"], content)
         else:
             _add_text(sections["recent_history"], content)
 

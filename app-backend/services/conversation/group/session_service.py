@@ -6,12 +6,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import func, text
+from sqlalchemy import and_, func, text
 from sqlalchemy.orm import selectinload
 
 from core.locking import get_session_lock
 from core.models import (Session, SessionPersona, Character, CharacterPortrait, ChatMessage,
-                         MemoryChunk, OutboxJob, GroupPersonaOrigin, GroupInheritedMemorySnapshot)
+                         MemoryChunk, OutboxJob, GroupPersonaOrigin, GroupInheritedMemorySnapshot,
+                         GroupRound, GroupContentItem)
 from services.conversation.session_access import (get_single_session, get_group_session,
                                                  group_session_operation, SessionKindConflict)
 from services.conversation.role_state_service import _resolve_state
@@ -249,14 +250,81 @@ def _iso(value):
     return value.isoformat() if value else None
 
 
+def _last_messages(session_ids, db):
+    if not session_ids:
+        return {}
+    latest_round_subq = (
+        db.query(GroupRound.session_id, func.max(GroupRound.round_index).label("max_index"))
+        .filter(GroupRound.session_id.in_(session_ids), GroupRound.discarded_at.is_(None))
+        .group_by(GroupRound.session_id)
+        .subquery()
+    )
+    rounds = (
+        db.query(GroupRound)
+        .join(
+            latest_round_subq,
+            and_(
+                GroupRound.session_id == latest_round_subq.c.session_id,
+                GroupRound.round_index == latest_round_subq.c.max_index,
+            ),
+        )
+        .all()
+    )
+    if not rounds:
+        return {}
+    candidate_ids = [row.selected_candidate_id for row in rounds if row.selected_candidate_id is not None]
+    last_items = {}
+    if candidate_ids:
+        latest_item_subq = (
+            db.query(GroupContentItem.candidate_id, func.max(GroupContentItem.sequence).label("max_seq"))
+            .filter(GroupContentItem.candidate_id.in_(candidate_ids), GroupContentItem.kind == "utterance")
+            .group_by(GroupContentItem.candidate_id)
+            .subquery()
+        )
+        rows = (
+            db.query(GroupContentItem, Character.name)
+            .join(
+                latest_item_subq,
+                and_(
+                    GroupContentItem.candidate_id == latest_item_subq.c.candidate_id,
+                    GroupContentItem.sequence == latest_item_subq.c.max_seq,
+                ),
+            )
+            .outerjoin(SessionPersona, SessionPersona.id == GroupContentItem.speaker_persona_id)
+            .outerjoin(Character, Character.id == SessionPersona.character_id)
+            .all()
+        )
+        for item, speaker_name in rows:
+            last_items[item.candidate_id] = (item, speaker_name)
+    result = {}
+    for row in rounds:
+        entry = last_items.get(row.selected_candidate_id) if row.selected_candidate_id is not None else None
+        if entry is not None:
+            item, speaker_name = entry
+            result[row.session_id] = {
+                "role": "assistant",
+                "speaker_name": speaker_name,
+                "content": item.content,
+                "created_at": _iso(item.created_at),
+            }
+        else:
+            result[row.session_id] = {
+                "role": "user",
+                "speaker_name": None,
+                "content": row.user_content,
+                "created_at": _iso(row.created_at),
+            }
+    return result
+
+
 def _detail(group, db):
     counts = dict(db.query(GroupInheritedMemorySnapshot.persona_id, func.count(GroupInheritedMemorySnapshot.id))
                   .join(SessionPersona, SessionPersona.id == GroupInheritedMemorySnapshot.persona_id)
                   .filter(SessionPersona.session_id == group.id).group_by(GroupInheritedMemorySnapshot.persona_id).all())
-    return _serialize(group, counts)
+    return _serialize(group, counts, _last_messages([group.id], db))
 
 
-def _serialize(group, counts):
+def _serialize(group, counts, last_messages=None):
     members = []
     for persona in group.personas:
         origin, character = persona.group_origin, persona.character
@@ -273,7 +341,8 @@ def _serialize(group, counts):
     return {"kind": "group", "session_id": group.id, "title": group.title,
             "user_nickname": group.user_nickname, "shared_setting": group.shared_setting,
             "created_at": _iso(group.created_at), "updated_at": _iso(group.updated_at),
-            "can_generate": False, "group_revision": group.group_revision, "members": members}
+            "can_generate": False, "group_revision": group.group_revision,
+            "last_message": (last_messages or {}).get(group.id), "members": members}
 
 
 @group_session_operation
@@ -296,7 +365,8 @@ def list_group_sessions(db, *, limit=20, offset=0):
     counts = dict(db.query(GroupInheritedMemorySnapshot.persona_id, func.count(GroupInheritedMemorySnapshot.id))
                   .join(SessionPersona, SessionPersona.id == GroupInheritedMemorySnapshot.persona_id)
                   .filter(SessionPersona.session_id.in_(ids)).group_by(GroupInheritedMemorySnapshot.persona_id).all()) if ids else {}
-    items = [_serialize(group, counts) for group in groups]
+    last_messages = _last_messages(ids, db)
+    items = [_serialize(group, counts, last_messages) for group in groups]
     return {"sessions": items, "total": total, "limit": limit, "offset": offset,
             "has_more": offset + len(items) < total}
 

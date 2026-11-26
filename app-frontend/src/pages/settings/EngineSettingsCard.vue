@@ -28,7 +28,7 @@
           backgroundColor="rgba(38,51,46,0.08)"
           block-color="#ffffff"
           block-size="20"
-          @change="(e: any) => localSettings.temperature = e.detail.value / 10"
+          @change="localSettings.temperature = Number($event.detail.value) / 10"
         />
       </view>
 
@@ -91,7 +91,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.top_p = e.detail.value / 100"
+            @change="localSettings.top_p = Number($event.detail.value) / 100"
           />
         </view>
 
@@ -112,7 +112,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.presence_penalty = (e.detail.value / 10) - 2"
+            @change="localSettings.presence_penalty = (Number($event.detail.value) / 10) - 2"
           />
         </view>
 
@@ -133,7 +133,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.frequency_penalty = (e.detail.value / 10) - 2"
+            @change="localSettings.frequency_penalty = (Number($event.detail.value) / 10) - 2"
           />
         </view>
 
@@ -154,7 +154,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.repetition_penalty = e.detail.value / 100"
+            @change="localSettings.repetition_penalty = Number($event.detail.value) / 100"
           />
         </view>
 
@@ -175,7 +175,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.retrieval_min_importance = e.detail.value / 100"
+            @change="localSettings.retrieval_min_importance = Number($event.detail.value) / 100"
           />
         </view>
 
@@ -196,7 +196,7 @@
             backgroundColor="rgba(38,51,46,0.08)"
             block-color="#ffffff"
             block-size="20"
-            @change="(e: any) => localSettings.retrieval_max_distance = e.detail.value / 10"
+            @change="localSettings.retrieval_max_distance = Number($event.detail.value) / 10"
           />
         </view>
 
@@ -328,17 +328,21 @@ watch(() => props.settings, (newVal) => {
   }
 }, { deep: true });
 
+type NumericSettingKey = {
+  [K in keyof AppSettings]: AppSettings[K] extends number ? K : never;
+}[keyof AppSettings];
+
 // 步进器调整字段逻辑
 const stepInt = (
-  key: keyof AppSettings,
+  key: NumericSettingKey,
   delta: number,
   min: number,
   max: number
 ) => {
-  const cur = localSettings[key] as number;
+  const cur = localSettings[key];
   const next = cur + delta;
   if (next >= min && next <= max) {
-    (localSettings as any)[key] = next;
+    localSettings[key] = next;
   }
 };
 

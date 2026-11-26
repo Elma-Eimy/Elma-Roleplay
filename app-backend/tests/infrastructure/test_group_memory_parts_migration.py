@@ -4,14 +4,14 @@ from alembic import command
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from core.models import GroupRecallCard
-from tests.infrastructure import test_group_operations_migration as fixtures
+from tests.support.migrations import group_operations as fixtures
 
 
 class GroupMemoryPartsMigrationTests(unittest.TestCase):
-    snapshot=fixtures.GroupOperationsMigrationTests.snapshot
+    snapshot=fixtures.GroupOperationsMigrationFixture.snapshot
 
     def setUp(self):
-        fixtures.GroupOperationsMigrationTests.setUp(self)
+        fixtures.GroupOperationsMigrationFixture.setUp(self)
         command.upgrade(self.config,'b5d6e7f8a9b0')
         with self.engine.begin() as db:
             db.exec_driver_sql("INSERT INTO group_memory_captures(session_id,round_id,candidate_id,persona_id,cards_json) "

@@ -7,7 +7,8 @@ from uuid import UUID
 from sqlalchemy import func, text
 
 from core.models import GroupMemberInsight, GroupRecallCard, GroupRound, GroupRoundCandidate, GroupRoundOperation, GroupContentItem
-from . import history_service as history
+from . import guards
+from .state_projection import latest_round as _latest
 from . import candidate_state as candidate_state
 from .execution_scope import has_active_operation as _active
 from .session_service import _begin_write, _locked_write, GroupSessionValidationError
@@ -15,14 +16,9 @@ from services.conversation.session_access import group_session_operation, Sessio
 from .call_snapshot import persist_group_calls, validate_group_call_selection, DIRECTOR_CALL_LIMIT
 
 
-def _latest(session_id, db):
-    return db.query(GroupRound).filter_by(session_id=session_id, discarded_at=None).order_by(
-        GroupRound.round_index.desc()).first()
-
-
 def _observed(group, latest, expected, db):
     revision, round_id, candidate_id, candidate_revision = expected
-    history._positive(revision, "会话版本", 0)
+    guards.positive(revision, "会话版本", 0)
     if group.group_revision != revision or _active(group.id, db):
         raise SessionKindConflict("会话版本已变化或存在活动操作")
     candidate = db.get(GroupRoundCandidate, latest.selected_candidate_id) if latest else None
@@ -49,8 +45,8 @@ async def accept_group_operation(session_id, client_request_id, kind, expected_g
                                  model=None, thinking_mode=None, reasoning_effort=None,
                                  call_snapshot=None, max_steps=4, round_id=None):
     """内部事务原语，不派发模型；运行入口使用后台握手服务。"""
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     request_id, request, fingerprint = _command(client_request_id, kind, expected_group_revision,
         observed_round_id=observed_round_id, observed_candidate_id=observed_candidate_id,
         observed_candidate_revision=observed_candidate_revision, user_content=user_content,
@@ -73,14 +69,14 @@ def _command(client_request_id, kind, expected_group_revision, *, observed_round
         raise GroupSessionValidationError("请求 ID 必须是 UUID") from None
     if kind not in ("send", "regenerate", "resume", "select", "discard"):
         raise GroupSessionValidationError("当前批次不支持该操作")
-    history._positive(expected_group_revision, "会话版本", 0)
+    guards.positive(expected_group_revision, "会话版本", 0)
     for value in (round_id, observed_round_id, observed_candidate_id, target_candidate_id):
         if value is not None:
-            history._positive(value, "资源 ID")
+            guards.positive(value, "资源 ID")
     for value in (observed_candidate_revision, target_candidate_revision):
         if value is not None:
-            history._positive(value, "候选版本", 0)
-    history._positive(max_steps, "成功步数")
+            guards.positive(value, "候选版本", 0)
+    guards.positive(max_steps, "成功步数")
     if max_steps > 6:
         raise GroupSessionValidationError("成功步数不能超过 6")
     if kind in ("send", "regenerate"):
@@ -137,7 +133,7 @@ def _existing(session_id, request_id, fingerprint, db):
 def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_created=False):
     try:
         _begin_write(db)
-        group = history._require_group(session_id, db)
+        group = guards.require_group(session_id, db)
         previous = db.query(GroupRoundOperation).filter_by(session_id=session_id, client_request_id=request_id).first()
         if previous:
             if previous.request_fingerprint != fingerprint:
@@ -154,7 +150,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             from services.media.group_portraits import _freeze_current_choices
             portrait_snapshot = _freeze_current_choices(session_id, db)
             # 幂等命中不重新解析服务器默认参数；首次接受必须保存可靠快照。
-            encoded, provider = persist_group_calls(snapshot, request["max_steps"], history._members(session_id, db))
+            encoded, provider = persist_group_calls(snapshot, request["max_steps"], guards.member_ids(session_id, db))
             validate_group_call_selection(encoded, model=request["model"], thinking_mode=request["thinking_mode"],
                                           reasoning_effort=request["reasoning_effort"])
             if kind == "send":
@@ -191,17 +187,17 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             if not latest or latest.confirmed_at is not None or not selected:
                 raise SessionKindConflict("只能操作最新未确认轮次")
             if kind == "resume":
-                from .checkpoint_service import validate_prefix
+                from .prefix_validation import validate_prefix
                 from .call_snapshot import restore_group_calls
                 target = db.get(GroupRoundCandidate, request["target_candidate_id"])
                 if (not target or target.session_id != session_id or target.round_id != latest.id
                         or target.status != "failed" or target.revision != request["target_candidate_revision"]):
                     raise SessionKindConflict("续接目标或版本无效")
-                snapshot, max_steps = restore_group_calls(target, history._members(session_id, db))
+                snapshot, max_steps = restore_group_calls(target, guards.member_ids(session_id, db))
                 from .call_snapshot import require_executable_calls
                 require_executable_calls(snapshot)
                 validate_prefix(latest, target, db)
-                from .checkpoint_service import saved_steps
+                from .prefix_validation import saved_steps
                 remaining = max_steps - saved_steps(target.id, db)
                 if not snapshot.director_ending and (remaining < 0 or (target.checkpoint == "finish") != (remaining == 0)):
                     raise SessionKindConflict("候选成功步数超限")
@@ -218,6 +214,7 @@ def _accept(session_id, request_id, request, fingerprint, snapshot, db, with_cre
             else:
                 latest.discarded_at = now
         group.group_revision += 1
+        group.updated_at = now
         accepted = dict(round_id=latest.id, candidate_id=selected.id, group_revision=group.group_revision,
                         candidate_revision=selected.revision, kind=kind)
         operation = GroupRoundOperation(session_id=session_id, round_id=latest.id, candidate_id=selected.id,
@@ -262,13 +259,13 @@ def _resources(session_id, request, db):
 @group_session_operation
 def get_group_operation_capabilities(session_id, db):
     """内部能力判定；HTTP 生成仍关闭，旧失败候选不伪造续接参数。"""
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     db.rollback()
     db.expire_all()
     db.execute(text("BEGIN"))
     try:
-        group = history._require_group(session_id, db)
+        group = guards.require_group(session_id, db)
         latest = _latest(session_id, db)
         candidate = db.get(GroupRoundCandidate, latest.selected_candidate_id) if latest else None
         idle = not _active(session_id, db) and (not candidate or candidate.status != "generating")

@@ -1,4 +1,5 @@
 import type { CharacterBase } from "@/api/characters";
+import { coerceRawLorebookEntries } from "./lorebookDisplay";
 
 export type CardImportMode = "replace" | "fill";
 export interface GreetingOption {
@@ -116,9 +117,7 @@ export function getEmbeddedEntries(
   const book = card.extensions?.character_book as
     | { entries?: unknown }
     | undefined;
-  return Array.isArray(book?.entries)
-    ? book!.entries.filter((entry) => entry && typeof entry === "object")
-    : [];
+  return coerceRawLorebookEntries(book?.entries);
 }
 
 const textFields = [

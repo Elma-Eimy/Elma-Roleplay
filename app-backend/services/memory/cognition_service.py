@@ -1,14 +1,36 @@
 """维护角色对自身、世界和用户的宏观认知状态。"""
 
 from typing import Optional
+import logging
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session as DBSession
 
 from core.config import settings
 from services.infrastructure.model_capabilities import auxiliary_controls
 from services.conversation.session_access import get_single_persona
-from core.models import ChatMessage, SessionPersona
+from core.models import ChatMessage
 from services.infrastructure.llm_provider import get_llm_provider
+
+
+logger = logging.getLogger(__name__)
+
+
+def _version(persona):
+    return (persona.session_id, persona.character_id, persona.parent_persona_id,
+            persona.session.parent_session_id, persona.session.fork_message_id,
+            persona.cognition_state, persona.last_cognition_update_msg_id, persona.character.name)
+
+
+def _sources(persona, db, through=None):
+    query = db.query(ChatMessage.id, ChatMessage.role, ChatMessage.content, ChatMessage.parent_id).filter(
+        ChatMessage.session_id == persona.session_id, ChatMessage.is_active == True,
+    )
+    if persona.last_cognition_update_msg_id is not None:
+        query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
+    if through is not None:
+        query = query.filter(ChatMessage.id <= through)
+    return tuple(tuple(row) for row in query.order_by(ChatMessage.id).all())
 
 
 def get_cognition_unseen_count(
@@ -33,28 +55,33 @@ def get_cognition_unseen_count(
 
 def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
     """根据新增对话更新 ``SessionPersona.cognition_state``。"""
+    if db.new or db.dirty or db.deleted:
+        raise ValueError("认知更新不能提交调用方尚未保存的修改")
     persona = get_single_persona(persona_id, db)
     if not persona:
         print(f"[WARN] update_cognition_state: Persona {persona_id} 不存在")
         return None
 
-    session_id = persona.session_id
+    # 显式读取事务让认知版本、分支边界和消息来自同一份 SQLite 快照。
+    db.commit()
+    db.execute(text("BEGIN"))
+    db.expire_all()
+    persona = get_single_persona(persona_id, db)
+    if persona is None:
+        db.rollback()
+        return None
+    expected_version = _version(persona)
     old_cognition = persona.cognition_state or "（尚未建立认知）"
-    query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.is_active == True,
-    )
-    if persona.last_cognition_update_msg_id is not None:
-        query = query.filter(ChatMessage.id > persona.last_cognition_update_msg_id)
-
-    recent_messages = query.order_by(ChatMessage.id).all()
+    recent_messages = _sources(persona, db)
     if not recent_messages:
-        return persona.cognition_state
+        current = persona.cognition_state
+        db.rollback()
+        return current
 
-    last_msg_id = recent_messages[-1].id
+    last_msg_id = recent_messages[-1][0]
     chat_text = "".join(
-        f"{'User' if msg.role.value == 'user' else 'Assistant'}: {msg.content}\n"
-        for msg in recent_messages
+        f"{'User' if role.value == 'user' else 'Assistant'}: {content}\n"
+        for _, role, content, _ in recent_messages
     )
     character_name = persona.character.name
     system_prompt = f"""你是一个角色认知更新专家。你需要基于角色当前的认知状态 and 最近的对话，生成更新后的认知摘要。
@@ -91,19 +118,25 @@ def update_cognition_state(persona_id: int, db: DBSession) -> Optional[str]:
             **auxiliary_controls("memory", settings.LLM_MEMORY_TEMPERATURE),
         )
         new_cognition = response.choices[0].message.content.strip()
+        if not new_cognition:
+            raise ValueError("认知更新结果为空")
 
+        # 先取得写权再校验，禁止其他写入穿过校验与发布之间的窗口。
+        db.execute(text("BEGIN IMMEDIATE"))
+        db.expire_all()
         persona = get_single_persona(persona_id, db)
-        if persona:
-            persona.cognition_state = new_cognition
-            persona.last_cognition_update_msg_id = last_msg_id
-            db.commit()
+        if (persona is None or _version(persona) != expected_version
+                or _sources(persona, db, last_msg_id) != recent_messages):
+            db.rollback()
+            logger.info("cognition_update_discarded persona_id=%s", persona_id)
+            return None
+        persona.cognition_state = new_cognition
+        persona.last_cognition_update_msg_id = last_msg_id
+        db.commit()
 
         print(f"[INFO] cognition_state 已更新 (persona_id={persona_id})")
         return new_cognition
     except Exception as exc:
-        print("==========================================")
-        print("[ERROR] update_cognition_state: LLM 调用失败")
-        print(f"[ERROR] 错误类型: {type(exc).__name__}")
-        print(f"[ERROR] 错误详情: {exc}")
-        print("==========================================")
+        db.rollback()
+        logger.warning("cognition_update_failed persona_id=%s error_type=%s", persona_id, type(exc).__name__)
         return None

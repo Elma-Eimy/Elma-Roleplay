@@ -1,5 +1,5 @@
 """显式定义 CCv3 导入能力；复用旧卡的文本规范化，不隐式继承字段取舍。"""
-from services.parse import _extract_v2_data
+from services.media.character_card_parser import _extract_v2_data
 
 
 TEXT_FIELDS = (

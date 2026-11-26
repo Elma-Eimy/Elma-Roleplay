@@ -1,71 +1,33 @@
 import { request, getBaseUrl, DEFAULT_HEADERS, USE_MOCK, getMockDB, setMockDB, getHeaders } from "./config";
+import { resolveCharacterLorebookRefs } from "../utils/lorebookDisplay";
+import { getCardMetadata } from "../utils/characterCard";
+import type {
+  CharacterBase,
+  CharacterSummary,
+  CharacterDetail,
+  ParsedCharacterData,
+  ParseCharacterResponse,
+  CreateCharacterResponse,
+  UpdateCharacterResponse,
+  DeleteCharacterResponse,
+  UploadAvatarResponse,
+  GetCharactersResponse,
+} from "../types/characters";
+
+export type {
+  CharacterBase,
+  CharacterSummary,
+  CharacterDetail,
+  ParsedCharacterData,
+  ParseCharacterResponse,
+  CreateCharacterResponse,
+  UpdateCharacterResponse,
+  DeleteCharacterResponse,
+  UploadAvatarResponse,
+  GetCharactersResponse,
+} from "../types/characters";
 
 export const DEFAULT_AVATAR_URL = "/static/logo.png";
-
-// ===================== 类型定义 =====================
-
-export interface CharacterBase {
-  name: string;
-  avatar_path?: string;
-  description: string;
-  personality?: string;
-  scenario?: string;
-  first_mes?: string;
-  mes_example?: string;
-  creator_notes?: string;
-  system_prompt_override?: string;
-  post_history_instructions?: string;
-  tags?: string[];
-  extensions?: Record<string, unknown>;
-}
-
-export interface CharacterSummary {
-  id: number;
-  name: string;
-  avatar_path: string;
-  description: string;
-}
-
-export interface CharacterDetail extends CharacterBase {
-  id: number;
-  created_at: string;
-  lorebooks?: { id: number; name: string }[];
-}
-
-export interface ParsedCharacterData extends CharacterBase {}
-
-export interface ParseCharacterResponse {
-  message: string;
-  data: ParsedCharacterData;
-}
-
-export interface CreateCharacterResponse {
-  message: string;
-  character_id: number;
-  name: string;
-  created?: boolean;
-}
-
-export interface UpdateCharacterResponse {
-  message: string;
-  character_id: number;
-  name: string;
-}
-
-export interface DeleteCharacterResponse {
-  message: string;
-  character_id: number;
-  sessions_deleted_count: number;
-}
-
-export interface UploadAvatarResponse {
-  message: string;
-  avatar_path: string;
-}
-
-export interface GetCharactersResponse {
-  characters: CharacterSummary[];
-}
 
 // ===================== API 接口函数 =====================
 
@@ -205,10 +167,9 @@ export async function createCharacter(
 ): Promise<CreateCharacterResponse> {
   if (USE_MOCK) {
     const db = getMockDB();
-    const existing = db.characters.find(character => character.name === data.name);
-    if (existing) return { message: "同名角色已存在", character_id: existing.id, name: existing.name, created: false };
+    const nextId = Math.max(Date.now(), ...db.characters.map(c => c.id + 1));
     const newChar = {
-      id: Date.now(),
+      id: nextId,
       ...data,
       created_at: new Date().toISOString(),
     };
@@ -248,6 +209,7 @@ export async function getCharacters(limit?: number, offset?: number): Promise<Ge
         name: c.name,
         avatar_path: c.avatar_path || "",
         description: c.description,
+        creator: getCardMetadata(c).creator,
       })),
     };
   }
@@ -271,7 +233,10 @@ export async function getCharacter(characterId: number): Promise<CharacterDetail
     if (!char) {
       throw new Error(`Character ${characterId} not found`);
     }
-    return char;
+    return {
+      ...char,
+      lorebooks: resolveCharacterLorebookRefs(char, db.lorebooks || []),
+    };
   }
 
   return request<CharacterDetail>(`/characters/${characterId}`);

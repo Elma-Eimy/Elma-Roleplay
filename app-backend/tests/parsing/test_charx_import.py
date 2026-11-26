@@ -205,17 +205,19 @@ class CharxImportTests(unittest.TestCase):
         self.assertEqual(0, self.db.query(CharacterPackageImport).count())
         self.assertTrue(service.import_package(preview["token"], self.request(), self.db)["created"])
 
-    def test_duplicate_names_and_nonexistent_selection_cannot_modify_characters(self):
+    def test_duplicate_names_create_independent_characters_and_nonexistent_selection_fails(self):
         first = service.preview_package(package())
-        service.import_package(first["token"], self.request(), self.db)
+        first_result = service.import_package(first["token"], self.request(), self.db)
         second = service.preview_package(package())
-        with self.assertRaises(service.CharxConflict):
-            service.import_package(second["token"], self.request(), self.db)
+        second_result = service.import_package(second["token"], self.request(), self.db)
+        self.assertTrue(second_result["created"])
+        self.assertNotEqual(first_result["character_id"], second_result["character_id"])
+        third = service.preview_package(package())
         with self.assertRaises(ValueError):
-            service.import_package(second["token"], self.request(name="新角色", portrait_indices=[999]), self.db)
+            service.import_package(third["token"], self.request(name="新角色", portrait_indices=[999]), self.db)
         with self.assertRaises(LookupError):
-            service.import_package(second["token"], self.request(character_id=999), self.db)
-        self.assertEqual(1, self.db.query(Character).count())
+            service.import_package(third["token"], self.request(character_id=999), self.db)
+        self.assertEqual(2, self.db.query(Character).count())
 
     def test_unsafe_paths_duplicate_names_symlinks_and_compression_are_rejected(self):
         link = zipfile.ZipInfo("assets/link")

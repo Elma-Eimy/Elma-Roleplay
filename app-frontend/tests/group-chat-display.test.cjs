@@ -6,9 +6,9 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const vue = require('vue');
 const { parse, compileScript } = require('@vue/compiler-sfc');
-const { sourceRoot } = require('./helpers/load-ts.cjs');
+const { createLoader, sourceRoot } = require('./helpers/load-ts.cjs');
 
-function fixture() {
+function fixture(initialStorage = []) {
   const filename = path.join(sourceRoot, 'pages/group/detail.vue');
   const source = fs.readFileSync(filename, 'utf8');
   const { descriptor } = parse(source);
@@ -18,6 +18,17 @@ function fixture() {
   } }).outputText;
   const members = [1, 2].map(id => ({ persona_id: id, character: { id: id + 10, avatar_path: `avatar${id}` }, greeting_content: id === 1 ? 'opening' : null }));
   const navigations = [], toasts = [], promptRequests = [];
+  const storage = new Map(initialStorage);
+  const chatDrafts = createLoader({
+    mocks: { '@/api/config': { getBaseUrl: () => 'isolated-server' } },
+    globals: {
+      uni: {
+        getStorageSync: key => storage.get(key),
+        setStorageSync: (key, value) => storage.set(key, value),
+        removeStorageSync: key => storage.delete(key),
+      },
+    },
+  })('utils/chatDrafts.ts');
   const state = Object.fromEntries(source.match(/const \{ group,([\s\S]*?)\} = state;/)[0]
     .replace(/const \{|\} = state;/g, '').split(',').map(name => [name.trim(), vue.ref(null)]));
   Object.assign(state, { group: vue.ref({ session_id: 1, members }), rounds: vue.ref([]),
@@ -52,11 +63,12 @@ function fixture() {
       if (name.endsWith('/characters')) return { getAvatarUrl: value => value };
       if (name.endsWith('/useStoryKeepsakes')) return { STORY_PALETTES: [{}] };
       if (name.endsWith('/groupRounds')) return {};
+      if (name.endsWith('/chatDrafts')) return chatDrafts;
       throw new Error(`Unexpected dependency: ${name}`);
     } }, { filename });
     view = module.exports.default.setup({}, { expose() {} });
   });
-  return { view, state, scope, prefs, navigations, toasts, anchors, scroll, settings, modelCalls, activations, lifecycle, focusScrolls, promptRequests };
+  return { view, state, scope, prefs, navigations, toasts, anchors, scroll, settings, modelCalls, activations, lifecycle, focusScrolls, promptRequests, storage, chatDrafts };
 }
 
 test('member prompt preview ignores a late response after leaving the group', async () => {
@@ -189,5 +201,49 @@ test('routine progress stays in the composer while errors and stale history stay
   f.state.operationBusy.value = false;
   f.state.notice.value = '操作已完成，当前采用内容以最新轮次为准。';
   assert.equal(f.view.composerFeedback.value, '');
+  f.scope.stop();
+});
+
+test('composer shows the scheduled speaker and hands back only after a natural stop', () => {
+  const f = fixture();
+  f.state.group.value.members[1].character.name = '乙';
+  f.state.canGenerate.value = true;
+  f.state.canSend.value = true;
+  f.state.operationBusy.value = true;
+  const latest = { round_id: 7, candidate_id: 42, confirmed: false };
+  f.state.current.value = { latest, active_operation: { kind: 'regenerate' } };
+  assert.equal(f.view.composerFeedback.value, '正在等角色回复…');
+  f.state.current.value.active_operation.speaking_persona_id = 2;
+  assert.equal(f.view.composerFeedback.value, '乙 正在接话…');
+
+  f.state.current.value.active_operation = null;
+  f.state.operationBusy.value = false;
+  const round = { round_id: 7, candidate_id: 42, status: 'awaiting_confirmation', confirmed: false, finish_reason: 'wait_user' };
+  f.state.rounds.value = [{ ...round, candidate_id: 41 }];
+  assert.equal(f.view.composerFeedback.value, '');
+  f.state.rounds.value = [round];
+  assert.equal(f.view.composerFeedback.value, '轮到你了');
+  f.state.rounds.value = [{ ...round, status: 'failed', error_code: 'resource_paused' }];
+  assert.equal(f.view.composerFeedback.value, '');
+  f.scope.stop();
+});
+
+test('group detail restores, persists, clears on send, and preserves draft on leave', () => {
+  const f = fixture([['chat_drafts_v1:isolated-server', JSON.stringify({ 'group:1': '未发出的群聊草稿' })]]);
+  assert.equal(f.state.draft.value, '未发出的群聊草稿');
+
+  f.state.draft.value = '继续补充一句';
+  assert.equal(f.chatDrafts.loadChatDraft('group', 1), '继续补充一句');
+
+  f.state.group.value = null;
+  f.state.draft.value = '';
+  assert.equal(f.chatDrafts.loadChatDraft('group', 1), '继续补充一句');
+
+  f.state.group.value = { session_id: 1, members: [] };
+  assert.equal(f.state.draft.value, '继续补充一句');
+
+  f.state.draft.value = '';
+  assert.equal(f.chatDrafts.loadChatDraft('group', 1), '');
+  assert.equal(f.storage.size, 0);
   f.scope.stop();
 });

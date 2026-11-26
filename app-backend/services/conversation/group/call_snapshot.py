@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.models import SessionPersona
-from . import history_service as history
+from . import guards
 from services.conversation.session_access import group_session_operation
 from services.infrastructure.model_capabilities import resolve_selection, generation_controls, model_capability
 from services.infrastructure.llm_provider import GroupModelConnection
@@ -52,7 +52,7 @@ def require_executable_calls(snapshot):
 
 def persist_group_calls(snapshot, max_steps, member_ids):
     """逐字段保存可重放参数；连接地址只保存无凭据摘要。"""
-    error = history.GroupSessionValidationError
+    error = guards.GroupSessionValidationError
     if not isinstance(snapshot, GroupCallSnapshot):
         raise error("新任务需要冻结调用参数")
     if type(snapshot.turn_policy) is not int or snapshot.turn_policy not in (0, 1, 2):
@@ -161,13 +161,13 @@ def validate_group_call_selection(encoded, *, model, thinking_mode, reasoning_ef
     try:
         selection = resolve_selection(model, thinking_mode, effort=reasoning_effort, config=config)
     except ValueError as exc:
-        raise history.GroupSessionValidationError(str(exc)) from None
+        raise guards.GroupSessionValidationError(str(exc)) from None
     controls = generation_controls(selection, config=config)
     for parameters in (director, *(member["parameters"] for member in value["members"])):
         if (parameters["model"] != selection.model
                 or parameters.get("reasoning_effort") != controls.get("reasoning_effort")
                 or parameters.get("extra_body", {}).get("thinking") != controls.get("extra_body", {}).get("thinking")):
-            raise history.GroupSessionValidationError("请求的模型选择与冻结调用参数不一致")
+            raise guards.GroupSessionValidationError("请求的模型选择与冻结调用参数不一致")
 
 
 def restore_group_calls(candidate, member_ids):
@@ -197,15 +197,15 @@ def restore_group_calls(candidate, member_ids):
             raise ValueError
         return snapshot, value["max_steps"]
     except (ValueError, TypeError, KeyError, AttributeError):
-        raise history.GroupSessionValidationError("原调用参数缺失、损坏或提供方已变化，请整轮重生成") from None
+        raise guards.GroupSessionValidationError("原调用参数缺失、损坏或提供方已变化，请整轮重生成") from None
 
 
 @group_session_operation
 def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reasoning_effort=None, shared_chat=True):
     if shared_chat is not True:
-        raise history.GroupSessionValidationError('旧群聊生成链路已移除')
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+        raise guards.GroupSessionValidationError('旧群聊生成链路已移除')
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     # 只复制模型参数，不复制或序列化连接凭据。
     names = ("LLM_DEFAULT_CHAT_MODEL", "LLM_MODEL_PROFILES",
              "LLM_CHAT_THINKING_MODE", "LLM_REASONING_EFFORT", "LLM_TEMPERATURE", "LLM_TOP_P", "LLM_PRESENCE_PENALTY",
@@ -232,7 +232,7 @@ def capture_group_calls(session_id, db, *, model=None, thinking_mode=None, reaso
     db.expire_all()
     db.execute(text("BEGIN"))
     try:
-        history._require_group(session_id, db)
+        guards.require_group(session_id, db)
         members = tuple((member.id, parameters(member.character)) for member in db.query(SessionPersona)
                         .filter_by(session_id=session_id).order_by(SessionPersona.member_slot).all())
         return GroupCallSnapshot(parameters(), members, min(500, max(1, config.APP_CONTEXT_HISTORY_LIMIT)), float(config.LLM_TIMEOUT),

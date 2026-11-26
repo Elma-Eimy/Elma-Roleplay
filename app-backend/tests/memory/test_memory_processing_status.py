@@ -8,13 +8,13 @@ from application.factory import create_app
 from core.database import get_db
 from core.models import MemoryExtractionJob, Session, SessionPersona
 from services.memory import memory_extraction_jobs as jobs
-from tests.memory import test_memory_event_buffer as fixture
+from tests.support.memory import event_buffer as fixture
 
 
 class MemoryProcessingStatusTests(unittest.TestCase):
-    setUp = fixture.MemoryEventBufferTests.setUp
-    tearDown = fixture.MemoryEventBufferTests.tearDown
-    advance = fixture.MemoryEventBufferTests.advance
+    setUp = fixture.MemoryEventBufferFixture.setUp
+    tearDown = fixture.MemoryEventBufferFixture.tearDown
+    advance = fixture.MemoryEventBufferFixture.advance
 
     def client(self):
         app = create_app()

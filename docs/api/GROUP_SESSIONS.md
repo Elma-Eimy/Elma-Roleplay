@@ -53,9 +53,9 @@
 
 ## 列表与详情
 
-`GET /group-sessions?limit=20&offset=0`：limit 为 1–100，offset 非负，按 updated_at、id 倒序稳定分页。返回 `{sessions, total, limit, offset, has_more}`，每群只出现一次，不含记忆正文。旧 `/sessions` 列表和角色记忆导航均排除群聊。
+`GET /group-sessions?limit=20&offset=0`：limit 为 1–100，offset 非负，按 updated_at、id 倒序稳定分页（轮次、发言、候选操作均刷新 updated_at）。返回 `{sessions, total, limit, offset, has_more}`，每群只出现一次，不含记忆正文。旧 `/sessions` 列表和角色记忆导航均排除群聊。
 
-`GET /group-sessions/{session_id}` 返回单个群聊。列表中的元素和详情结构相同：
+`GET /group-sessions/{session_id}` 返回单个群聊。列表中的元素和详情结构相同；`last_message` 返回最新未撤回轮次所选候选的最后一条发言（无发言时回退到该轮用户输入，无有效轮次时为 null）：
 
 ```json
 {
@@ -67,6 +67,7 @@
   "created_at": "2026-11-04T10:00:00",
   "updated_at": "2026-11-04T10:00:00",
   "can_generate": false,
+  "last_message": null,
   "members": [
     {
       "persona_id": 301,
@@ -163,6 +164,8 @@ send/regenerate/resume 返回 202，select/discard 返回 200，结构为 `{oper
 `GET /group-sessions/{session_id}/rounds/{round_id}/candidates/{candidate_id}` 返回 `{round, candidate, current, can_generate, utterances, state_preview}`。utterances 结构同轮次历史；state_preview 明确携带 candidate_id 和成员的 persona_id、role_state、affection_score、current_mood，只表示该候选自身前缀的投影，不写入或替换 members[].state 起点。失败或未选中的候选也可查看，已确认/撤回轮次不可再操作。
 
 current 为 `{group_revision, latest, active_operation, capabilities}`。latest 为空或 `{round_id, candidate_id, candidate_revision, confirmed}`，active_operation 为空或当前活动回执摘要；capabilities 为 can_send、can_regenerate、can_select、can_discard。生成服务不可用时 can_generate、can_send、can_regenerate 和候选 can_resume 为 false；短事务选择和撤回仍按当前状态判断。候选 can_resume 同时核对可靠前缀与提供方，旧失败候选不会伪造参数。以上 GET 均不返回调用参数、凭据、Prompt、reasoning、导演审计、知情行或原始状态增量。
+
+`current.active_operation.speaking_persona_id` 在活动候选进入已调度的角色生成步骤时返回成员 ID。排队、等待下一次调度等阶段返回 `null`，操作结束后 `active_operation` 为空。整轮重生成期间以该操作自己的候选为准。
 
 候选详情的 `state_preview.members` 每项包含 `persona_id`、`affection_score`、`current_mood`、`role_state`，并提供入群时的 `cognition_state`（文本或 null）及该候选可用的 `insights` 数组。每条认识为 `{kind, content, target_persona_id, target_name}`：kind 为 cognition/user/member，分别表示个人认识、对用户的看法和对指定成员的看法；仅 member 类型的目标字段有值。接口不返回原始证据引文或内部 ref。
 

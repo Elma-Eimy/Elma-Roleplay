@@ -9,7 +9,30 @@
 
     <scroll-view scroll-y class="character-scroll" @scrolltolower="loadNextPage">
       <view class="gallery-content">
-        <view class="gallery-toolbar"><text class="gallery-toolbar-label">你收藏的故事主角</text><button size="mini" @tap="goToImport">导入角色卡</button></view>
+        <view class="gallery-toolbar">
+          <view class="gallery-toolbar-left">
+            <text class="gallery-toolbar-label">你收藏的故事主角</text>
+            <text v-if="personaStore.characterList.length > 0" class="gallery-toolbar-count">{{ filteredCharacters.length }}</text>
+          </view>
+          <view class="gallery-import-pill" role="button" @tap="goToImport">
+            <text class="gallery-import-pill-text">+ 导入角色卡</text>
+          </view>
+        </view>
+
+        <view v-if="personaStore.characterList.length > 0" class="gallery-search-box">
+          <input
+            v-model="searchQuery"
+            class="gallery-search-input"
+            type="text"
+            confirm-type="search"
+            placeholder="搜索角色名、作者或简介…"
+            placeholder-class="gallery-search-placeholder"
+          />
+          <view v-if="searchQuery" class="gallery-search-clear" role="button" aria-label="清空搜索" @tap="searchQuery = ''">
+            <text>×</text>
+          </view>
+        </view>
+
         <view v-if="isInitialLoading" class="gallery-skeleton">
           <view
             v-for="index in 6"
@@ -18,9 +41,9 @@
           ></view>
         </view>
 
-        <view v-else-if="personaStore.characterList.length > 0" class="character-grid">
+        <view v-else-if="filteredCharacters.length > 0" class="character-grid">
           <view
-            v-for="(char, index) in personaStore.characterList"
+            v-for="(char, index) in filteredCharacters"
             :key="char.id"
             class="character-card"
             :class="getCardTheme(index)"
@@ -39,7 +62,7 @@
             <view class="card-copy">
               <view class="card-label">
                 <view class="card-label-dot"></view>
-                <text>角色档案</text>
+                <text class="card-label-text">{{ char.creator ? `作者 · ${char.creator}` : "角色档案" }}</text>
               </view>
               <text class="character-name">{{ char.name || "未命名角色" }}</text>
               <text class="character-description">
@@ -48,6 +71,21 @@
             </view>
           </view>
         </view>
+
+        <AppEmptyState
+          v-else-if="personaStore.characterList.length > 0"
+          eyebrow="画册检索"
+          title="没有找到匹配的角色"
+          :description="`未找到与“${searchQuery.trim()}”相关的角色。`"
+        >
+          <template #actions>
+            <view class="empty-actions-stack">
+              <view class="secondary-button" role="button" @tap="searchQuery = ''">
+                <text class="secondary-button-label">清空搜索条件</text>
+              </view>
+            </view>
+          </template>
+        </AppEmptyState>
 
         <AppEmptyState
           v-else
@@ -116,7 +154,25 @@ const personaStore = usePersonaStore();
 const limit = 15;
 const offset = ref(0);
 const hasMore = ref(true);
+const searchQuery = ref("");
 const cardThemes = ["theme-mint", "theme-sky", "theme-warm"];
+
+const filteredCharacters = computed(() => {
+  const keyword = searchQuery.value.trim().toLowerCase();
+  if (!keyword) {
+    return personaStore.characterList;
+  }
+  return personaStore.characterList.filter((char) => {
+    const haystack = [
+      char.name || "",
+      char.creator || "",
+      plainCardText(char.description || "")
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(keyword);
+  });
+});
 
 const isInitialLoading = computed(
   () =>
@@ -220,7 +276,104 @@ const onCharacterLongPress = (char: CharacterSummary) => {
 }
 
 .gallery-content {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
   padding: 28rpx var(--app-page-gutter, 36rpx) 212rpx;
+  box-sizing: border-box;
+}
+
+.gallery-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20rpx;
+  margin-bottom: 20rpx;
+}
+
+.gallery-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+}
+
+.gallery-toolbar-label {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--app-color-text-secondary, #64716b);
+}
+
+.gallery-toolbar-count {
+  min-width: 36rpx;
+  height: 36rpx;
+  padding: 0 12rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999rpx;
+  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
+  color: var(--app-color-primary-strong, #4f8e7c);
+  font-size: 20rpx;
+  font-weight: 700;
+}
+
+.gallery-import-pill {
+  padding: 10rpx 22rpx;
+  border-radius: 999rpx;
+  background-color: rgba(112, 174, 155, 0.14);
+  border: 1px solid rgba(112, 174, 155, 0.24);
+  transition: background-color var(--app-motion-fast, 160ms) ease, transform var(--app-motion-fast, 160ms) ease;
+}
+
+.gallery-import-pill:active {
+  background-color: rgba(112, 174, 155, 0.24);
+  transform: scale(0.97);
+}
+
+.gallery-import-pill-text {
+  font-size: 23rpx;
+  font-weight: 600;
+  color: var(--app-color-primary-strong, #4f8e7c);
+}
+
+.gallery-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.gallery-search-input {
+  width: 100%;
+  height: 76rpx;
+  padding: 0 68rpx 0 26rpx;
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
+  border-radius: 22rpx;
+  background-color: rgba(255, 255, 255, 0.86);
+  color: var(--app-color-text-primary, #26332e);
+  font-size: 25rpx;
+  box-shadow: 0 6rpx 18rpx rgba(45, 72, 62, 0.04);
+  box-sizing: border-box;
+}
+
+.gallery-search-placeholder {
+  color: var(--app-color-text-muted, #89958f);
+}
+
+.gallery-search-clear {
+  position: absolute;
+  right: 18rpx;
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(38, 51, 46, 0.07);
+  color: var(--app-color-text-secondary, #64716b);
+  font-size: 26rpx;
+  line-height: 1;
 }
 
 .character-grid,
@@ -312,17 +465,24 @@ const onCharacterLongPress = (char: CharacterSummary) => {
 .card-label {
   display: inline-flex;
   align-self: flex-start;
+  max-width: 100%;
   height: 38rpx;
   padding: 0 12rpx;
   align-items: center;
   gap: 8rpx;
-  border: 1px solid rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: var(--app-radius-pill, 999rpx);
-  background-color: rgba(255, 255, 255, 0.68);
+  background-color: rgba(255, 255, 255, 0.76);
   color: var(--app-color-primary-strong, #4f8e7c);
   font-size: 19rpx;
   font-weight: 650;
   backdrop-filter: blur(12px);
+}
+
+.card-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-label-dot {
@@ -467,10 +627,52 @@ const onCharacterLongPress = (char: CharacterSummary) => {
     transform: rotate(360deg);
   }
 }
-</style>
 
-<style scoped>
-.gallery-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20rpx; margin-bottom: 24rpx; }
-.gallery-toolbar-label { font-size: 24rpx; color: var(--app-color-text-secondary, #7c8983); }
-.gallery-toolbar button { margin: 0; padding: 0 24rpx; border-radius: 40rpx; background: #edf4ef; color: #4f8e7c; font-size: 24rpx; }
+@media (hover: hover) {
+  .character-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 38px rgba(45, 72, 62, 0.12);
+  }
+}
+
+@media screen and (min-width: 720px) {
+  .character-grid,
+  .gallery-skeleton {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 24px 20px;
+  }
+
+  .character-card,
+  .skeleton-card {
+    height: 300px;
+    border-radius: 22px;
+  }
+}
+
+@media screen and (min-width: 1040px) {
+  .character-grid,
+  .gallery-skeleton {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 24px 22px;
+  }
+}
+
+@media screen and (min-width: 1240px) {
+  .create-fab {
+    right: calc((100vw - 1180px) / 2 + 28px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .character-card,
+  .gallery-import-pill,
+  .create-fab {
+    transition: none;
+  }
+
+  .skeleton-card,
+  .pagination-spinner {
+    animation: none;
+  }
+}
 </style>

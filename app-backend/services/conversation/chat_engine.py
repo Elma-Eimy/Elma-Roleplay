@@ -11,12 +11,18 @@
 """
 
 import json
+import logging
+import time
 from typing import Optional
 
 from core.config import settings
-from services.parse import _extract_xml_block
+from services.conversation.reply_parser import _extract_xml_block
 from services.infrastructure.model_capabilities import ModelSelection, generation_controls, resolve_selection, model_capability
-from services.infrastructure.llm_logger import log_llm_stream_wrapper_async
+from services.infrastructure.llm_logger import log_llm_stream_wrapper_async, log_llm_completion_async
+from services.infrastructure.logging_context import diagnostic_task, log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_model(use_reasoning: Optional[bool]) -> str:
@@ -119,6 +125,7 @@ def _prepare_generation_kwargs(
     )
 
 
+@diagnostic_task("chat")
 async def generate_reply(
     character,
     messages: list,
@@ -148,12 +155,14 @@ async def generate_reply(
     )
     model = kwargs["model"]
 
+    started = time.monotonic()
     try:
         from services.infrastructure.llm_provider import get_llm_provider
         provider = get_llm_provider()
         kwargs.pop("model", None)
         kwargs.pop("messages", None)
         response = await provider.generate_async(model=model, messages=messages, **kwargs)
+        await log_llm_completion_async(model, messages, response, time.monotonic() - started)
 
         content = response.choices[0].message.content
         reasoning_content = getattr(response.choices[0].message, "reasoning_content", None) or ""
@@ -171,11 +180,7 @@ async def generate_reply(
         }
 
     except Exception as e:
-        print(f"==========================================")
-        print(f"[ERROR] chat_engine.generate_reply 调用大模型 API 失败")
-        print(f"[ERROR] 错误类型: {type(e).__name__}")
-        print(f"[ERROR] 错误详情: {e}")
-        print(f"==========================================")
+        log_event(logger, logging.ERROR, "chat_generation_failed", error_type=type(e).__name__)
         return {
             "reply": "（系统错误：无法连接到思考引擎）",
             "emotion_tag": "困惑",
@@ -183,6 +188,7 @@ async def generate_reply(
         }
 
 
+@diagnostic_task("chat-stream")
 async def generate_reply_stream(
     character,
     messages: list,
@@ -227,9 +233,5 @@ async def generate_reply_stream(
         return logged_stream, model
 
     except Exception as e:
-        print(f"==========================================")
-        print(f"[ERROR] chat_engine.generate_reply_stream 调用大模型 API 失败")
-        print(f"[ERROR] 错误类型: {type(e).__name__}")
-        print(f"[ERROR] 错误详情: {e}")
-        print(f"==========================================")
-        raise e
+        log_event(logger, logging.ERROR, "chat_stream_start_failed", error_type=type(e).__name__)
+        raise

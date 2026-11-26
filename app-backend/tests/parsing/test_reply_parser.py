@@ -2,7 +2,7 @@
 
 import unittest
 
-from services.parse import extract_stream_reply_prefix, extract_xml_block
+from services.conversation.reply_parser import extract_stream_reply_prefix, extract_xml_block
 
 
 class ReplyParserTests(unittest.TestCase):

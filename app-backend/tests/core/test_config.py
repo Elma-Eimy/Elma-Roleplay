@@ -23,6 +23,26 @@ class TestConfigSystem(unittest.TestCase):
         self.path.write_text(yaml.safe_dump({"llm": llm or {}, **sections}), encoding="utf-8")
         return Settings(self.path)
 
+    def test_model_debug_logging_defaults_off_and_remains_startup_only(self):
+        config = self.settings(logging={"llm_debug_path": str(Path(self.directory.name) / "debug.log")})
+        self.assertFalse(config.LOG_LLM_DEBUG_ENABLED)
+        self.assertEqual(1048576, config.LOG_LLM_DEBUG_MAX_BYTES)
+        self.assertEqual(3, config.LOG_LLM_DEBUG_BACKUP_COUNT)
+        before = self.path.read_bytes()
+        config.update_and_persist({"llm_debug_enabled": True})
+        self.assertFalse(config.LOG_LLM_DEBUG_ENABLED)
+        self.assertEqual(before, self.path.read_bytes())
+
+    def test_model_debug_logging_rejects_unbounded_or_invalid_retention(self):
+        for key, value in (("llm_debug_max_bytes", 0), ("llm_debug_backup_count", 0),
+                           ("llm_debug_backup_count", 21), ("llm_debug_excerpt_bytes", -1)):
+            with self.subTest(key=key, value=value):
+                self.path.write_text(yaml.safe_dump({"logging": {key: value}}), encoding="utf-8")
+                before = self.path.read_bytes()
+                with self.assertRaises(ValueError):
+                    Settings(self.path)
+                self.assertEqual(before, self.path.read_bytes())
+
     def test_legacy_slots_migrate_once_without_switching_models_on_thinking_change(self):
         for enabled in (False, True):
             with self.subTest(enabled=enabled):
@@ -55,6 +75,8 @@ class TestConfigSystem(unittest.TestCase):
     def test_canonical_mode_wins_over_legacy_value_on_load(self):
         config = self.settings({"default_chat_model": "deepseek-flash", "chat_thinking_mode": "enabled", "reasoning_mode": False})
         self.assertTrue(config.LLM_REASONING_MODE)
+        self.assertFalse(yaml.safe_load(self.path.read_text(encoding="utf-8"))["llm"]["reasoning_mode"])
+        config.persist_normalized()
         self.assertTrue(yaml.safe_load(self.path.read_text(encoding="utf-8"))["llm"]["reasoning_mode"])
 
     def test_partial_legacy_slots_preserve_old_auxiliary_defaults(self):
@@ -137,6 +159,8 @@ class TestConfigSystem(unittest.TestCase):
 
     def test_missing_file_is_initialized(self):
         config = Settings(self.path)
+        self.assertFalse(self.path.exists())
+        config.persist_normalized()
         self.assertTrue(self.path.exists())
         self.assertEqual(config.LLM_CHAT_THINKING_MODE, "disabled")
 

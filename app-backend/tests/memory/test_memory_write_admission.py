@@ -7,19 +7,19 @@ from unittest.mock import MagicMock, patch
 from core.models import ChatMessage, GraphEntity, MemoryChunk, MemoryType
 from services.memory import memory_extraction_service as extraction
 from services.memory.memory_facts import fact_sources_current
-from tests.memory import test_memory_event_buffer as fixture
+from tests.support.memory import event_buffer as fixture
 
 
 class MemoryWriteAdmissionTests(unittest.TestCase):
     def setUp(self):
-        fixture.MemoryEventBufferTests.setUp(self)
+        fixture.MemoryEventBufferFixture.setUp(self)
         cognition = patch.object(extraction.cognition_service, "update_cognition_state")
         cognition.start()
         self.addCleanup(cognition.stop)
-    tearDown = fixture.MemoryEventBufferTests.tearDown
-    advance = fixture.MemoryEventBufferTests.advance
-    card = fixture.MemoryEventBufferTests.card
-    extract = fixture.MemoryEventBufferTests.extract
+    tearDown = fixture.MemoryEventBufferFixture.tearDown
+    advance = fixture.MemoryEventBufferFixture.advance
+    card = fixture.MemoryEventBufferFixture.card
+    extract = fixture.MemoryEventBufferFixture.extract
 
     def test_high_importance_long_reaction_is_preserved_in_its_event_with_graph(self):
         event = self.card("用户陪林墨在旧书店寻找一本诗集。", event_status="complete", retention="episode")

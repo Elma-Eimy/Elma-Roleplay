@@ -4,11 +4,11 @@ import json
 from core.models import GroupContentItem
 from .legacy_protocol import _user_plan, _planning, _pending_requests, _current_basis as _legacy_basis
 from . import dispatch_service as dispatches
+from .history_projection import member_history
 from services.conversation.session_access import SessionKindConflict
 
 
 def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
-    from . import history_service as history
     from core.config import settings
     limit = (json.loads(candidate.call_snapshot_json)["history_limit"] if candidate.call_snapshot_json else
              min(500, max(1, settings.APP_CONTEXT_HISTORY_LIMIT)))
@@ -17,7 +17,7 @@ def _sources(session_id, persona_id, round_, candidate, before_sequence, db):
         current_count = db.query(GroupContentItem.id).filter_by(candidate_id=candidate.id).filter(
             GroupContentItem.sequence < before_sequence).count()
         limit = max(limit, current_count)
-    rows = history._member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db)
+    rows = member_history(session_id, persona_id, round_, candidate, before_sequence, limit, db)
     sources = {}
     for row in rows:
         if row.kind == "user" and row.visible_units and all(unit.meaning == "request" for unit in row.visible_units):
@@ -58,4 +58,5 @@ def _current_basis(session_id, persona_id, round_, candidate, before_sequence, d
         if decision is not None and decision.response_reference is not None:
             return _validate_basis(session_id, persona_id, round_, candidate, before_sequence, decision.response_reference, db)
         return None
-    return _legacy_basis(session_id, persona_id, round_, candidate, before_sequence, db)
+    return _legacy_basis(session_id, persona_id, round_, candidate, before_sequence, db,
+        resolve_basis=_validate_basis)

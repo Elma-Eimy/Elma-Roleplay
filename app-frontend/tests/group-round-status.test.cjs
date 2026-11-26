@@ -1,11 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createLoader } = require("./helpers/load-ts.cjs");
-const { groupRoundStatus, groupRoundNotice } = createLoader()("utils/groupRounds.ts");
+const { groupRoundNotice } = createLoader()("utils/groupRounds.ts");
 
 test("round display distinguishes normal stops and preserves older server responses", () => {
   const round = { status: "awaiting_confirmation", confirmed: false };
-  assert.equal(groupRoundStatus(round), "待确认");
   assert.equal(groupRoundNotice(round), "");
   assert.equal(groupRoundNotice({ ...round, finish_reason: "wait_user" }), "");
   assert.match(groupRoundNotice({ ...round, finish_reason: "no_visible_basis" }), /未生成角色发言/);
@@ -15,7 +14,6 @@ test("round display distinguishes normal stops and preserves older server respon
 
 test("failed prefix and in-progress states never show a successful stop reason or raw error", () => {
   const round = { status: "failed", finish_reason: "step_limit", error_code: "PRIVATE_RAW_ERROR" };
-  assert.equal(groupRoundStatus(round), "未完成");
   assert.match(groupRoundNotice(round), /已保存的发言仍可查看/);
   assert.doesNotMatch(groupRoundNotice(round), /PRIVATE|上限/);
   assert.match(groupRoundNotice({ ...round, error_code: "timeout" }), /超时/);
@@ -27,7 +25,6 @@ test("failed prefix and in-progress states never show a successful stop reason o
 
 test('resource protection is shown as resumable pause rather than a completed round or a model failure', () => {
   const round = {status:'failed',error_code:'resource_paused',confirmed:false};
-  assert.equal(groupRoundStatus(round),'已暂停');
   assert.match(groupRoundNotice(round),/当前进度继续/);
   assert.doesNotMatch(groupRoundNotice(round),/失败|发言上限/);
 });

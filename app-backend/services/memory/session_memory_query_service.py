@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as DBSession
 from services.conversation.session_access import get_single_session
 from core.models import (Character, MemoryChunk, Session, SessionPersona,
                          MemoryConsolidationScope, MemoryConsolidationSource)
-from services.conversation import session_service
+from services.conversation import session_query_service
 from services.memory.persona_lineage import get_ancestor_persona_ids
 from services.memory.memory_visibility import memory_view, memory_source_bound
 
@@ -233,7 +233,7 @@ def get_character_memory_overview(
     if db.get(Character, character_id) is None:
         raise MemoryQueryNotFoundError("Character not found")
 
-    page = session_service.get_character_sessions(
+    page = session_query_service.get_character_sessions(
         character_id=character_id,
         include_last_message=True,
         limit=limit,

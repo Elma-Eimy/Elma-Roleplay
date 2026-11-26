@@ -4,7 +4,7 @@ import logging
 from sqlalchemy.orm import Session
 from core.locking import group_execution, require_group_runtime
 from core.models import GroupRoundCandidate
-from . import operation_service as operations, history_service as history
+from . import operation_service as operations, guards
 from . import generation_service as generation, checkpoint_service as checkpoints
 from .call_snapshot import capture_group_calls, restore_group_calls
 from .round_service import _execute_round, GroupRoundBudget
@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 @group_session_operation
 async def submit_group_operation(session_id, client_request_id, kind, expected_group_revision, db,
                                  *, runtime, call_model=None, **options):
-    history._require_group(session_id, db)
-    history._require_clean_transaction(db)
+    guards.require_group(session_id, db)
+    guards.require_clean_transaction(db)
     engine = db.get_bind()
     require_group_runtime(runtime, engine)
     if kind not in ("send", "regenerate", "resume"):
-        raise history.GroupSessionValidationError("后台入口只处理生成操作")
+        raise guards.GroupSessionValidationError("后台入口只处理生成操作")
     request_id, request, fingerprint = operations._command(client_request_id, kind, expected_group_revision, **options)
     previous = operations._existing(session_id, request_id, fingerprint, db)
     if previous is not None:
@@ -77,7 +77,7 @@ async def _work(session_id, request_id, request, fingerprint, engine, runtime, a
                     raise asyncio.CancelledError
                 progress = await generation._database(checkpoints.start, scope, target["revision"], db)
                 if snapshot is None:
-                    snapshot, _ = restore_group_calls(db.get(GroupRoundCandidate, scope.candidate_id), history._members(session_id, db))
+                    snapshot, _ = restore_group_calls(db.get(GroupRoundCandidate, scope.candidate_id), guards.member_ids(session_id, db))
                     db.rollback()
                 budget = GroupRoundBudget(max(1, progress["remaining"]), 300, snapshot.call_timeout, director_ending=snapshot.director_ending)
                 async def execute(invoke):

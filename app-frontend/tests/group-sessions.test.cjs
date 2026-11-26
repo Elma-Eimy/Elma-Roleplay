@@ -103,9 +103,22 @@ test("group round API uses shared GET and the explicit session pagination", asyn
 test("mock round history is readonly, paginated and removed with its group", async () => {
   const f = fixture({ mock: true });
   const group = await f.api.createGroupSession(cards());
-  f.db.groupRounds = { [group.session_id]: [1, 2].map(id => ({ round_id: id, round_index: id,
-    candidate_id: id, status: "failed", confirmed: false, user_content: "虚构样本", created_at: "2026-11-05", utterances: [] })) };
+  assert.equal(group.last_message, null);
+  f.db.groupRounds = { [group.session_id]: [
+    { round_id: 1, round_index: 1, candidate_id: 1, status: "awaiting_confirmation", confirmed: true,
+      user_content: "第一轮", created_at: "2026-11-04", utterances: [] },
+    { round_id: 2, round_index: 2, candidate_id: 2, status: "awaiting_confirmation", confirmed: false,
+      user_content: "虚构样本", created_at: "2026-11-05",
+      utterances: [{ item_id: 10, sequence: 1, speaker_persona_id: group.members[0].persona_id,
+        speaker_name: "actor1", content: "最新群聊回复", created_at: "2026-11-05T12:00:00" }] },
+  ] };
   const writes = f.writes;
+  const listed = await f.api.getGroupSessions();
+  assert.deepEqual(plain(listed.sessions[0].last_message), {
+    role: "assistant", speaker_name: "actor1", content: "最新群聊回复", created_at: "2026-11-05T12:00:00",
+  });
+  const detail = await f.api.getGroupSession(group.session_id);
+  assert.deepEqual(plain(detail.last_message), plain(listed.sessions[0].last_message));
   const page = await f.api.getGroupRounds(group.session_id, 1, 0);
   assert.equal(page.rounds[0].round_id, 2); assert.equal(page.has_more, true);
   page.rounds[0].user_content = "mutated";

@@ -1,9 +1,31 @@
 import { getMockDB, setMockDB } from "../config";
 import type { MockDatabase } from "../config";
 import type { CreateGroupSessionParams, GroupSessionDetail, GetGroupSessionsResponse,
-  DeleteGroupSessionResponse, GetGroupRoundsResponse } from "../../types/groupSessions";
+  DeleteGroupSessionResponse, GetGroupRoundsResponse, GroupLastMessageSummary } from "../../types/groupSessions";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+function resolveGroupLastMessage(db: MockDatabase, group: GroupSessionDetail): GroupLastMessageSummary | null {
+  const rounds = db.groupRounds?.[group.session_id];
+  if (!rounds?.length) return group.last_message ?? null;
+  const latest = [...rounds].sort((a, b) => b.round_index - a.round_index)[0];
+  if (!latest) return group.last_message ?? null;
+  const lastUtterance = latest.utterances?.[latest.utterances.length - 1];
+  if (lastUtterance) {
+    return {
+      role: "assistant",
+      speaker_name: lastUtterance.speaker_name,
+      content: lastUtterance.content,
+      created_at: lastUtterance.created_at ?? null,
+    };
+  }
+  return {
+    role: "user",
+    speaker_name: null,
+    content: latest.user_content,
+    created_at: latest.created_at ?? null,
+  };
+}
 
 export async function unsupportedGroupOperation(sessionId: number): Promise<never> {
   requireGroup(getMockDB(), sessionId);
@@ -43,8 +65,11 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
     }
   }
   const db = getMockDB();
-  const characters = params.members.map(member => db.characters.find(character => character.id === member.character_id));
-  if (characters.some(character => !character)) throw new Error("成员角色不存在");
+  const characters = params.members.map(member => {
+    const character = db.characters.find(item => item.id === member.character_id);
+    if (!character) throw new Error("成员角色不存在");
+    return character;
+  });
   const groups = db.groupSessions ?? [];
   const sessionId = Math.max(Date.now(), ...db.sessions.map(session => session.id), ...groups.map(group => group.session_id)) + 1;
   const personaId = Math.max(Date.now(), ...db.sessions.map(session => session.persona?.id ?? 0),
@@ -53,7 +78,7 @@ export async function createGroupSession(params: CreateGroupSessionParams): Prom
   const group: GroupSessionDetail = {
     kind: "group", session_id: sessionId, title, user_nickname: nickname,
     shared_setting: params.shared_setting?.trim() || null,
-    created_at: now, updated_at: now, can_generate: false, group_revision: 0,
+    created_at: now, updated_at: now, can_generate: false, group_revision: 0, last_message: null,
     members: characters.map((character, index) => ({
       greeting_content: (() => {
         const member = params.members[index];
@@ -82,14 +107,18 @@ export async function getGroupSessions(limit = 20, offset = 0): Promise<GetGroup
   if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0) {
     throw new Error("分页参数无效");
   }
-  const groups = [...(getMockDB().groupSessions ?? [])].sort((a, b) =>
-    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime() || b.session_id - a.session_id);
+  const db = getMockDB();
+  const groups = [...(db.groupSessions ?? [])]
+    .map(group => ({ ...group, last_message: resolveGroupLastMessage(db, group) }))
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime() || b.session_id - a.session_id);
   const sessions = groups.slice(offset, offset + limit);
   return clone({ sessions, total: groups.length, limit, offset, has_more: offset + sessions.length < groups.length });
 }
 
 export async function getGroupSession(sessionId: number): Promise<GroupSessionDetail> {
-  return clone(requireGroup(getMockDB(), sessionId));
+  const db = getMockDB();
+  const group = requireGroup(db, sessionId);
+  return clone({ ...group, last_message: resolveGroupLastMessage(db, group) });
 }
 
 export async function deleteGroupSession(sessionId: number): Promise<DeleteGroupSessionResponse> {

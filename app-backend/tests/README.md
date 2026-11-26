@@ -4,6 +4,30 @@
 
 ## 自动回归
 
+`core/test_config_boundaries.py` 在仅复制源码的临时目录和独立进程中检查 Schema/Settings 类导入不读运行文件、兼容入口不创建或回写 YAML、构造与重新绑定只规范化内存，以及显式保存幂等、失败可重试、设置更新与启动保存共享持久化基线；另执行真实 Alembic 升级，验证临时数据库可建且 YAML 不变。`api/test_application.py` 检查应用创建不保存配置、取得运行权后先保存再迁移，以及保存失败释放运行权且不启动迁移和 Worker。原配置模型、并发更新与原子保存故障回归继续保留；隔离入口完整复制 `core/`、`application/` 和 `tests/`，无需扩展复制清单，不读取开发配置或数据库。
+
+缓存原子写入回归覆盖写入中途失败和替换失败保留旧缓存或保持目标缺失、正常异常收尾移除临时文件、同名并发写入只发布完整音频，以及同步/异步发布失败时不回写 `audio_path`、不提交或启动清理。通过阻塞写入的线程与临时目录验证可见性，临时文件不参与 MP3 淘汰；新增 4 项回归在直接覆盖文件的旧实现下均失败。
+
+`tts/test_tts_cache.py` 检查缓存模块独立导入和文件操作不初始化配置、模型、HTTP 或数据库，固定 p2 命名与显式版本/语速格式，验证原清理入口按修改时间淘汰、保留非 MP3 文件，以及单文件删除失败后继续清理且日志不含异常正文。`test_tts_transport.py` 另覆盖消息缓存缺失、空文件和绑定不匹配时重建，写文件失败不绑定，提交失败保留已写文件且不刷新或启动清理，以及禁用与缺失消息的校验顺序；这四项行为回归在缓存拆分前后均通过。事务提交继续使用调用方 Session，未改为线程间共享。
+
+`tts/test_tts_transport.py` 使用 HTTP 替身验证同步/异步请求的认证头、目标音色、语速省略与显式传递、提炼正文，以及直接音频和 Base64 响应；另覆盖 HTTP/网络/结构/解码失败保持原异常与日志脱敏、单次请求不重试、消息绑定前文件已写入、异步客户端在提交后关闭，以及取消后关闭客户端且不写音频或绑定。四项行为回归在拆分前后运行对照；独立导入回归另确认适配器不加载配置、数据库、HTTP 客户端或原服务。所有请求为模型/HTTP 替身，文件仅写入临时目录，隔离副本沿用完整复制 `services/` 与 `tests/` 的范围。
+
+`tts/test_tts_preprocessing.py` 使用模型与 HTTP 替身检查台词提炼、压缩重试、无台词结果、安全回退和日志脱敏。另验证独立文本策略在不加载配置/模型/HTTP/数据库的子进程中执行，原服务继承方法与实例覆盖保持有效，普通文本及消息绑定的既有 p2 缓存命中不触发预处理、语音请求或数据库提交。`infrastructure/test_audio_files.py` 继续覆盖旧音频下载与恢复，群聊消息在创建缓存前拒绝的规则由 API 边界回归验证。源码与测试仍由隔离入口完整复制，不访问真实语音服务或开发缓存。
+
+`conversation/test_single_session_access.py` 验证单聊查询的兼容导出、详情缺失/无 Persona 行为、群聊拒绝、一次会话加载、调用方写事务保留，以及当前故事历史与跨故事候选隔离；独立进程确认查询模块不加载生命周期服务、配置、数据库或记忆模块。`api/test_recent_sessions.py` 保留最近会话固定两次查询和稳定分页回归；`test_stream_background_persistence.py` 在新查询模块注入生成结束，继续检查历史查询期间释放锁时响应仍标记待完成。相关源码和测试继续由隔离入口完整复制，无需扩展复制范围。
+
+`parsing/test_parser_boundaries.py` 验证旧 `services.parse` 的函数、正则与别名继续指向领域实现；独立进程分别导入角色卡与回复解析模块，确认不加载对方、兼容入口、配置或数据库模块。角色卡/PNG/CHARX、XML 容错、状态增量及流式前缀由 `parsing/` 既有回归覆盖，Prompt DSL 与聊天流输出仍由对话回归验证；隔离副本继续完整复制 `services/`、`scripts/` 和 `tests/`，无需扩展复制清单。
+
+记忆测试的共用数据、模型替身和辅助断言放在 `tests/support/memory/`；群聊迁移的旧库、种子数据、快照和版本锚点放在 `tests/support/migrations/`。这些夹具类不继承 `unittest.TestCase`，也不包含 `test_*` 方法。记忆及群聊迁移测试从 support 导入夹具，不导入其他测试模块；保持测试类名与方法名稳定，迁移夹具通过 `addCleanup` 释放临时库和补丁。统一隔离入口仍完整复制 `tests/`，无需单独扩展复制清单。
+
+`infrastructure/test_llm_logging.py` 验证日志默认关闭、同步/异步流故障隔离、原始异常与取消保持、跨 chunk 密钥脱敏、超大输出缓冲及 UTF-8 并发轮转上限；另注入慢写盘与慢关闭，检查异步聊天、流结束及生命周期关闭期间事件循环仍可推进，重复取消等待日志线程失败收尾。`test_logging_context.py` 验证任务编号嵌套复用、异步隔离、函数签名及宿主处理器故障隔离。配置回归覆盖启动配置和无界保留参数拒绝，TTS 与 Outbox 回归检查错误日志不带正文，`conversation/test_stream_background_persistence.py` 故障注入确认日志写入失败后回复仍落库且锁释放。所有文件写入临时目录，不使用开发日志、数据库或真实模型；测试副本仍完整复制 `application/`、`core/`、`services/` 和 `tests/`。
+
+`infrastructure/test_outbox_worker.py` 使用临时 SQLite 验证数据库操作、外部执行及 Session 关闭归属同一工作线程，写锁等待期间事件循环心跳仍可推进，取消与重复取消等待当前任务持久结果及清理，并保留后续待处理任务。另覆盖取消期间失败的退避记录、过期租约恢复及重试冷却；向量最新值、删除和失败重试由既有 `test_vector_outbox_consistency.py` 验证。不访问真实向量服务或开发数据库，隔离副本复制范围保持原样。
+
+`memory/test_cognition_service.py` 使用临时 SQLite 和模型替身验证无事务模型调用、消息编辑/删除/候选切换导致的过期结果丢弃、分支隔离与边界变化、并发发布、进度不回退、新消息保留及失败回滚。`conversation/test_chat_maintenance.py` 验证非流式入口登记、模型调用期间重复取消关闭仍等待数据库会话清理、线程失败收尾与生命周期登记表重建；流式断连后的维护登记由 `conversation/test_stream_background_persistence.py` 覆盖。测试不访问开发数据库或真实模型，新增模块沿用隔离入口复制整个 `application/`、`services/` 和 `tests/` 的范围。
+
+`conversation/group/test_group_service_dependencies.py` 静态检查群聊包全部模块的导入关系，包含函数内相对导入及包内绝对导入，拒绝循环依赖；修改前用例能检出历史、检查点和导演之间的循环。`test_group_history.py` 另验证共用个人历史和操作者状态投影沿用调用方写事务，读取后仍能整体回滚调用方修改；既有回归继续覆盖不可变 DTO、候选与个人可见边界、待提交/已 flush 事务拒绝和失败续接。隔离副本继续完整复制 `services/` 与 `tests/`，不使用开发库或真实模型。
+
 `conversation/group/test_group_dispatch.py` 验证新候选在审计清空后仍能预览、续接和进入下一轮，结束检查点零调用恢复、业务调度损坏拒绝、旧候选兼容，以及审计写入失败时调度和回复原子回滚。`infrastructure/test_group_dispatch_migration.py` 验证旧数据不回填、组合归属约束、升级失败回滚及有损降级保护；均使用临时库和模型替身。
 
 `conversation/group/test_group_candidate_state.py` 检查终态不能被迟到步骤覆盖、持久检查点不能跳步、导演结束与旧条数限制分离，以及失败续接保留已保存的结束决定。事务回滚、版本竞争和执行作用域继续由群聊后台与生成专项覆盖。
@@ -36,7 +60,7 @@ M2-A 审查回归还覆盖 autoflush 开/关、未 flush 与已 flush 的调用�
 
 `conversation/group/test_group_session_service.py` 验证群聊服务的来源冻结、事务与资源归属，覆盖分支/整理、并发修改、角色删除竞争、取消与大样本导入；`infrastructure/test_group_snapshot_migration.py` 验证快照迁移、来源删除独立和非空降级保护。均使用虚构临时数据，不调用真实模型或 Embedding。
 
-`api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外，群聊专用服务用 `group_session_operation` 声明类型并验证拒绝单聊资源。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。
+`api/test_session_access_architecture.py` 自动核对全部已注册路由，并用没有业务校验的新接口验证默认拦截。它扫描 `services/` 中同时接受 `db` 和标准资源 ID 参数的公开函数、类方法，实例方法绑定真实服务实例后验证群聊请求被拒绝且数据不变；共享算法须用 `session_kind_agnostic` 说明例外，群聊专用服务用 `group_session_operation` 声明类型并验证拒绝单聊资源。扫描依赖标准参数命名，不分析任意对象或字典中的隐式引用；自建数据库会话及按任务 ID 调度的后台入口由 `test_group_session_boundary.py` 等专项回归覆盖。
 
 `memory/test_memory_processing_status.py` 验证只读状态接口不入队、故事隔离、排队与运行计数、重试和取消、缺失故事或 Persona，以及捕获成功时间；候选提交时间由 `test_memory_extraction_jobs.py` 覆盖。`infrastructure/test_memory_completion_migration.py` 检查旧任务升级后时间为空，升降级保留任务。均使用临时库和模型替身。
 

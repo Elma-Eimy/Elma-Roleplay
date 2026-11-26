@@ -42,34 +42,16 @@
 import { computed } from "vue";
 import BranchTreeNode from "./BranchTreeNode.vue";
 import AppStatusState from "@/components/common/AppStatusState.vue";
-
-interface Session {
-  id: number;
-  title: string;
-  parent_session_id: number | null;
-  created_at: string;
-  updated_at: string;
-  persona?: {
-    id: number;
-    affection_score?: number;
-    current_mood?: string;
-  };
-  lastMessage?: string;
-}
-
-interface SessionNode extends Session {
-  children: SessionNode[];
-  depth: number;
-}
+import type { BranchTreeSession, BranchTreeNodeData } from "@/types/chat";
 
 const props = defineProps<{
-  sessions: Session[];
+  sessions: BranchTreeSession[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'tap-node', session: any): void;
-  (e: 'longpress-node', session: any): void;
-  (e: 'branch-node', session: any): void;
+  (e: 'tap-node', session: BranchTreeSession): void;
+  (e: 'longpress-node', session: BranchTreeSession): void;
+  (e: 'branch-node', session: BranchTreeSession): void;
 }>();
 
 // 将扁平会话列表转换为时空森林（包含多个树）
@@ -77,8 +59,8 @@ const sessionTreeRoots = computed(() => {
   const list = props.sessions || [];
   if (list.length === 0) return [];
 
-  const map: { [key: number]: SessionNode } = {};
-  const roots: SessionNode[] = [];
+  const map: { [key: number]: BranchTreeNodeData } = {};
+  const roots: BranchTreeNodeData[] = [];
 
   // 1. 初始化节点映射
   list.forEach(s => {
@@ -100,7 +82,7 @@ const sessionTreeRoots = computed(() => {
   });
 
   // 3. 递归设置深度并对子分支按创建时间先后排序
-  const setDepthAndSort = (node: SessionNode, depth: number) => {
+  const setDepthAndSort = (node: BranchTreeNodeData, depth: number) => {
     node.depth = depth;
     node.children.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     node.children.forEach(child => setDepthAndSort(child, depth + 1));
@@ -110,7 +92,7 @@ const sessionTreeRoots = computed(() => {
 
   // 4. 按各个树的最新更新时间（树中任何分支的最晚活跃时间）降序排列
   roots.sort((a, b) => {
-    const getNewestUpdateTime = (node: SessionNode): number => {
+    const getNewestUpdateTime = (node: BranchTreeNodeData): number => {
       let maxTime = new Date(node.updated_at).getTime();
       node.children.forEach(child => {
         const childMax = getNewestUpdateTime(child);
@@ -141,9 +123,9 @@ const latestSessionId = computed(() => {
   return latest.id;
 });
 
-const emitTapNode = (session: any) => emit('tap-node', session);
-const emitLongpressNode = (session: any) => emit('longpress-node', session);
-const emitBranchNode = (session: any) => emit('branch-node', session);
+const emitTapNode = (session: BranchTreeSession) => emit('tap-node', session);
+const emitLongpressNode = (session: BranchTreeSession) => emit('longpress-node', session);
+const emitBranchNode = (session: BranchTreeSession) => emit('branch-node', session);
 </script>
 
 <style scoped>

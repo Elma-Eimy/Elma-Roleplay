@@ -235,7 +235,7 @@ const submit = () => {
 }
 
 .custom-toggle.is-on {
-  background-color: #30d158;
+  background-color: var(--app-color-primary, #70ae9b);
 }
 
 .toggle-thumb {
@@ -243,7 +243,7 @@ const submit = () => {
   height: 44rpx;
   background-color: #ffffff;
   border-radius: 50%;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 3px 8px rgba(45, 72, 62, 0.18);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -267,7 +267,7 @@ const submit = () => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(10px);
   z-index: 100;
   display: flex;
@@ -279,13 +279,13 @@ const submit = () => {
   width: 650rpx;
   height: 80%;
   max-height: 1000rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
+  background-color: var(--app-color-surface, #ffffff);
+  border-radius: var(--app-radius-lg, 32rpx);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.14));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .modal-header {
@@ -293,13 +293,13 @@ const submit = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .modal-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .modal-close {
@@ -337,24 +337,24 @@ const submit = () => {
 .label {
   font-size: 28rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
 }
 
 .hint-text {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.3;
 }
 
 .input {
   width: 100%;
   height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 14rpx;
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
+  border-radius: 16rpx;
   padding: 0 20rpx;
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
@@ -372,12 +372,12 @@ const submit = () => {
 .textarea-modal {
   width: 100%;
   height: 200rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 14rpx;
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
+  border-radius: 16rpx;
   padding: 20rpx;
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
@@ -391,8 +391,8 @@ const submit = () => {
   flex: 1;
   height: 72rpx;
   border-radius: 16rpx;
-  background-color: rgba(0,0,0,0.02);
-  border: 1px solid rgba(0,0,0,0.03);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -400,14 +400,14 @@ const submit = () => {
 }
 
 .radio-item.is-active {
-  background-color: #1c1c1e;
-  border-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
+  border-color: var(--app-color-primary-strong, #4f8e7c);
 }
 
 .radio-text {
   font-size: 24rpx;
   font-weight: 600;
-  color: #545456;
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .radio-item.is-active .radio-text {
@@ -416,7 +416,7 @@ const submit = () => {
 
 .modal-footer {
   padding: 24rpx 36rpx;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
   display: flex;
   gap: 20rpx;
 }
@@ -434,21 +434,21 @@ const submit = () => {
 }
 
 .modal-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.03);
-  color: #48484a;
+  background-color: rgba(38, 51, 46, 0.05);
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .modal-btn.cancel:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: rgba(38, 51, 46, 0.1);
 }
 
 .modal-btn.save {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   color: #ffffff;
 }
 
 .modal-btn.save:active {
-  background-color: #000000;
+  background-color: #427a6a;
 }
 
 .modal-btn.save.is-disabled {
@@ -459,6 +459,6 @@ const submit = () => {
 /* Android Performance Fallbacks */
 .is-android .modal-backdrop {
   backdrop-filter: none !important;
-  background-color: rgba(0, 0, 0, 0.6) !important;
+  background-color: rgba(25, 37, 32, 0.56) !important;
 }
 </style>

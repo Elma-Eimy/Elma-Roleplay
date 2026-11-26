@@ -584,8 +584,6 @@ def import_package(token, request, db):
                 name = (request["name"] or card["name"]).strip()
                 if not name or len(name) > 50 or any(ord(c) < 32 for c in name):
                     raise ValueError("新角色名称须为 1–50 字")
-                if db.query(Character.id).filter_by(name=name).first():
-                    raise CharxConflict("已有同名角色，请改名后新建，或从已有角色档案补充图片")
                 card.update(name=name, avatar_path="")
                 character = Character()
                 _apply_character_data(character, card)

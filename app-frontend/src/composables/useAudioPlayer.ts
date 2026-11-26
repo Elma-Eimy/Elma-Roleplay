@@ -2,9 +2,15 @@ import { ref } from "vue";
 import { getBaseUrl, getHeaders } from "@/api/config";
 import { generateTTS } from "@/api/chat";
 
+export interface AudioPlayableMessage {
+  id: number;
+  content: string;
+  audio_path?: string | null;
+}
+
 // 全局单例状态，确保整个应用生命周期中只有一个播放实例与播放状态
 const activeAudioMessageId = ref<number | null>(null);
-let innerAudioContext: any = null;
+let innerAudioContext: ReturnType<typeof uni.createInnerAudioContext> | null = null;
 let activeDownloadTask: UniApp.DownloadTask | null = null;
 
 export function useAudioPlayer() {
@@ -21,7 +27,7 @@ export function useAudioPlayer() {
           console.log("Audio finished.");
           activeAudioMessageId.value = null;
         });
-        innerAudioContext.onError((err: any) => {
+        innerAudioContext.onError((err) => {
           console.error("Audio error:", err);
           activeAudioMessageId.value = null;
           uni.showToast({ title: "语音播放失败", icon: "none" });
@@ -45,7 +51,7 @@ export function useAudioPlayer() {
     }
   }
 
-  async function playMessageTTS(message: any) {
+  async function playMessageTTS(message: AudioPlayableMessage) {
     const messageId = message.id;
     let audioUrl = message.audio_path;
 
@@ -74,9 +80,10 @@ export function useAudioPlayer() {
         audioUrl = res.audio_url;
         message.audio_path = audioUrl; // 响应式更新消息对象的 audio_path
         uni.hideLoading();
-      } catch (e: any) {
+      } catch (e: unknown) {
         uni.hideLoading();
-        uni.showToast({ title: e.message || "语音合成失败", icon: "none" });
+        const errMessage = e instanceof Error ? e.message : "语音合成失败";
+        uni.showToast({ title: errMessage || "语音合成失败", icon: "none" });
         return;
       }
     }
@@ -100,9 +107,10 @@ export function useAudioPlayer() {
           activeDownloadTask = null;
           if (res.statusCode === 200) {
             // 只有当当前活跃消息仍然是该条消息时才播放（防止下载期间切换或停止了播放）
-            if (activeAudioMessageId.value === messageId) {
-              innerAudioContext.src = res.tempFilePath;
-              innerAudioContext.play();
+            const audioContext = innerAudioContext;
+            if (activeAudioMessageId.value === messageId && audioContext) {
+              audioContext.src = res.tempFilePath;
+              audioContext.play();
             }
           } else {
             console.error("Audio download status error:", res.statusCode);

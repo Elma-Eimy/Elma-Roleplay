@@ -4,13 +4,17 @@
 
 后端职责边界见 [架构说明](../docs/architecture/BACKEND.md)，数据诊断与重置命令见 [维护工具](scripts/README.md)。
 
-群聊候选生命周期集中在 `services/conversation/group/candidate_state.py`，执行权与持久目标校验在 `group/execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。
+群聊候选生命周期集中在 `services/conversation/group/candidate_state.py`，执行权与持久目标校验在 `group/execution_scope.py`；业务服务负责事务与关联更新。内部执行和后台操作复用转换规则，保留旧快照读取与既有续接语义，详见[群聊模块边界](../docs/architecture/GROUP_CHAT.md#候选生命周期与执行校验)。共用归属校验、个人历史和操作者状态投影分别放在 `group/guards.py`、`history_projection.py` 和 `state_projection.py`，前缀读取校验放在 `prefix_validation.py`；这些共用模块沿用调用方事务，不反向依赖历史、检查点或操作者查询服务。
 
 群聊成员立绘使用独立的选择服务和候选快照，资源继续复用角色立绘；启动迁移追加快照列，旧候选不回填，非空快照拒绝有损降级。归属、版本与恢复规则见 [群聊架构](../docs/architecture/GROUP_CHAT.md#成员立绘快照) 和 [群聊接口](../docs/api/GROUP_SESSIONS.md#成员立绘)。
 
 新共同群聊使用独立的业务调度记录保存发言成员和回应目标；旧候选保留原审计读取，升级不重裁权限。新增迁移、兼容边界及回滚保护见[群聊业务调度](../docs/architecture/GROUP_CHAT.md#业务调度与旧协议兼容)。
 
 聊天引擎的流式与非流式入口共用生成参数准备逻辑，统一处理请求、角色卡与全局设置的优先级及模型能力适配；Prompt 装配和消息持久化仍由各自服务负责。
+
+单聊回复保存后的记忆与认知维护统一由应用生命周期登记。关闭时停止新增维护任务，等待已有工作线程关闭数据库会话后才释放运行权；认知模型调用期间不持有事务，返回后在短写事务中复核输入来源、故事分支与旧认知状态，过期结果不发布。边界与验证见[后台任务](../docs/architecture/BACKEND.md#后台任务)。
+
+Outbox 的数据库操作与外部执行在同一个工作线程内完成，SQLite 锁等待不会阻塞事件循环。取消会等待当前任务记录成功或失败并关闭数据库会话，尚未开始的任务保留原状态，租约与幂等重试继续生效。
 
 ChromaDB 客户端和 Embedding 函数在首次使用时初始化，分别加锁并在进程内复用；构造失败后可重试。导入服务不会创建这两项资源，其配置与首次使用时的错误处理见 [初始化边界](../docs/architecture/BACKEND.md#启动与请求链路)。
 
@@ -397,7 +401,9 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 所有非敏感配置集中在 `config.yaml`，修改后重启生效；部分参数也可通过 `PUT /utils/settings` API 热更新并自动持久化。
 
-常用配置见 [config.yaml.example](config.yaml.example)，完整字段、类型及默认值以 [CONFIG_SCHEMA](core/config.py) 为准。示例的地址与模型名必须替换，TTS 在示例中默认关闭；缺少 YAML 时自动生成的配置使用 Schema 默认值，两者不应混为可直接连接服务的个人配置。
+常用配置见 [config.yaml.example](config.yaml.example)，完整字段、类型及默认值以 [CONFIG_SCHEMA](core/config_schema.py) 为准。示例的地址与模型名必须替换，TTS 在示例中默认关闭；缺少 YAML 时正常启动会使用 Schema 默认值生成配置，两者不应混为可直接连接服务的个人配置。
+
+`core.config` 兼容入口继续读取 `.env` 和 YAML、补齐内存默认值，导入或构造 `Settings` 不保存文件。正常启动取得运行权后、数据库迁移前显式保存必要的配置补齐结果，保存失败会阻止启动；设置接口仍在原子保存成功后发布运行状态。工具若只需配置定义或类，可分别导入 `core.config_schema`、`core.config_settings`，两者导入不读取运行配置；需主动保存时调用 `Settings.persist_normalized()`。独立 Alembic 命令不回写 YAML，现有数据库初始化方式不变。
 
 聊天、记忆、翻译和语音预处理使用 `llm.chat_base_url`，嵌入使用 `llm.embedding_base_url`；各自密钥由 `.env` 提供。`default_chat_model` 与思考开关独立；旧模型槽用于兼容和初始化回退。`model_profiles` 可补充模型显示名称与适配信息。
 
@@ -415,6 +421,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 `top_p` · `presence_penalty` · `frequency_penalty` · `repetition_penalty` · `reasoning_effort`
 
 ---
+
+模型调试日志默认关闭，可在 `config.yaml` 的 `logging` 节设置 `llm_debug_enabled: true` 后重启。默认路径为 `logs/llm_debug.log`，每份 1 MiB、另保留 3 份备份；请求、正文和思考只记录有界摘录，配置中的密钥会被替换。异步聊天的写入、轮转和关闭文件在工作线程执行，取消会等待在途日志操作结束，日志故障不会让聊天失败。普通运行日志使用宿主 Python logging，不输出 TTS 台词、供应商响应正文或异常正文。详细预算、任务关联与旧日志保留规则见[日志与诊断](../docs/architecture/BACKEND.md#日志与诊断)，示例见 [config.yaml.example](config.yaml.example)。
 
 ## API 参考
 
@@ -447,7 +455,7 @@ app-backend/
 ├── requirements.txt
 ├── application/
 │   ├── factory.py           # 应用、CORS、静态资源与路由装配
-│   ├── lifecycle.py         # 数据库迁移与 Outbox 任务生命周期
+│   ├── lifecycle.py         # 配置显式保存、数据库迁移与后台任务生命周期
 │   ├── group_runtime.py     # 数据库运行权与群聊中断候选处理
 │   └── banner.py            # 启动地址提示
 ├── scripts/
@@ -459,7 +467,10 @@ app-backend/
 ├── core/
 │   ├── models.py            # SQLAlchemy ORM 模型定义
 │   ├── database.py          # 数据库连接、Session 工厂与迁移函数（由 lifespan 调用）
-│   ├── config.py            # Settings 类，加载 .env + config.yaml
+│   ├── config.py            # 配置兼容入口，读取 .env + config.yaml，不隐式保存
+│   ├── config_schema.py     # 配置字段与默认值，导入无 I/O
+│   ├── config_settings.py   # Settings 类、内存规范化与显式持久化编排
+│   ├── config_storage.py    # YAML 读取与原子保存
 │   ├── auth.py              # X-API-Key 鉴权依赖
 │   ├── locking.py           # 会话级 asyncio.Lock 锁管理
 │   └── utils.py             # 工具函数（获取本机 IP 等）
@@ -474,8 +485,12 @@ app-backend/
 │
 ├── services/                # 业务服务层 (高内聚核心业务逻辑，分包管理)
 │   ├── media/
+│   │   ├── character_card_parser.py # JSON/PNG 角色卡、元数据与 Prompt DSL 规范化
+│   │   ├── tts_text.py       # 无 I/O 的台词规则、提示词、校验与安全回退
+│   │   ├── tts_cache.py      # 缓存命名、文件读写与按修改时间淘汰
 │   │   └── audio_service.py # 音频文件查找与旧格式恢复
 │   ├── conversation/        # 对话与会话相关业务服务
+│   │   ├── reply_parser.py  # 单聊/群聊共用回复、状态增量与流式前缀解析
 │   │   ├── chat_engine.py   # LLM 执行引擎（大模型请求参数合并与响应结构化解析）
 │   │   ├── chat_turn_service.py # 对话回合控制服务（管理锁回滚、SSE 等事务边界）
 │   │   ├── context_assembler.py # 对话上下文装配服务（装配检索、对话历史等拼装 Prompt）
@@ -510,11 +525,13 @@ app-backend/
 │   │   │   ├── layout.py # 消息前缀、历史转换与背景定位
 │   │   │   └── token_estimator.py # 启发式 Prompt Token 范围估算服务
 │   │   ├── retrieval_query_service.py # 上下文化检索查询生成器
-│   │   └── session_service.py # 会话生命周期与分支状态拷贝/回滚服务
+│   │   ├── session_query_service.py # 单聊列表、详情、当前故事历史与候选批量读取
+│   │   └── session_service.py # 创建、删除、分支与回复保存；兼容原查询入口
 │   ├── infrastructure/      # 底层基础设施与服务客户端
 │   │   ├── clients.py       # Chroma/SQLite 客户端连接管理
 │   │   ├── llm_logger.py    # LLM 输入输出专门调试日志器
 │   │   ├── llm_provider.py  # 统一大模型服务适配器接口（解耦 SDK 调用）
+│   │   ├── tts_provider.py  # 语音请求构造、单次 POST 与音频响应解码
 │   │   └── outbox_worker.py # 发件箱后台异步任务处理器（向量同步、音频/头像清理与延迟退避）
 │   ├── lorebook/            # 世界书引擎
 │   │   ├── ahocorasick.py   # Aho-Corasick AC自动机快速多词匹配算法
@@ -529,8 +546,8 @@ app-backend/
 │   │   ├── session_memory_query_service.py # 记忆分页、分类统计与角色故事导航
 │   │   └── session_memory_service.py # 会话专属记忆管理服务
 │   ├── character_service.py # 角色卡增删改查业务服务
-│   ├── parse.py             # SillyTavern 角色卡解析与清洗
-│   └── tts_service.py       # TTS 文本预处理与音频缓存自愈重建服务
+│   ├── parse.py             # 旧角色卡/回复解析路径的兼容导出
+│   └── tts_service.py       # 模型预处理与客户端生命周期、缓存和消息绑定
 │
 ├── schemas.py               # Pydantic 请求/响应模型
 ├── alembic.ini              # Alembic 数据库迁移配置文件

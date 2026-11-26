@@ -9,17 +9,27 @@ from services.conversation.session_access import SessionKindConflict
 from core.models import Character, CharacterPortrait, ChatMessage, OutboxJob, Session, SessionPersona
 
 
-def create_character(data: dict, db: DBSession) -> dict:
-    """创建角色；同名角色存在时沿用原有记录。"""
-    existing = db.query(Character).filter(Character.name == data["name"]).first()
-    if existing is not None:
-        return {
-            "message": f"Character '{data['name']}' already exists.",
-            "character_id": existing.id,
-            "name": existing.name,
-            "created": False,
-        }
+def extract_character_creator(extensions_raw) -> str:
+    """从角色 extensions.ai_roleplay_card 提取作者名，无值或格式异常返回空串。"""
+    if not extensions_raw:
+        return ""
+    parsed = extensions_raw
+    if isinstance(extensions_raw, str):
+        try:
+            parsed = json.loads(extensions_raw)
+        except Exception:
+            return ""
+    if not isinstance(parsed, dict):
+        return ""
+    card_meta = parsed.get("ai_roleplay_card")
+    if not isinstance(card_meta, dict):
+        return ""
+    creator = card_meta.get("creator")
+    return creator.strip() if isinstance(creator, str) else ""
 
+
+def create_character(data: dict, db: DBSession) -> dict:
+    """创建独立角色记录；允许存在同名但不同版本或作者的角色卡。"""
     character = Character()
     _apply_character_data(character, data)
     try:

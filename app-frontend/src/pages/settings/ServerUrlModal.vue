@@ -64,7 +64,7 @@ const save = () => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: var(--app-color-mask, rgba(25, 37, 32, 0.42));
   backdrop-filter: blur(10px);
   z-index: 100;
   display: flex;
@@ -74,26 +74,26 @@ const save = () => {
 
 .edit-modal {
   width: 580rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
+  background-color: var(--app-color-surface, #ffffff);
+  border-radius: var(--app-radius-lg, 32rpx);
   padding: 44rpx 36rpx;
   display: flex;
   flex-direction: column;
   gap: 24rpx;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-card, 0 18rpx 48rpx rgba(45, 72, 62, 0.1));
+  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
 }
 
 .modal-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   text-align: center;
 }
 
 .modal-desc {
   font-size: 22rpx;
-  color: #8e8e93;
+  color: var(--app-color-text-secondary, #64716b);
   line-height: 1.5;
   text-align: center;
 }
@@ -101,12 +101,12 @@ const save = () => {
 .key-input {
   width: 100%;
   height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background-color: var(--app-color-background, #f7f9f7);
+  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
   border-radius: 16rpx;
   padding: 0 24rpx;
   font-size: 28rpx;
-  color: #1c1c1e;
+  color: var(--app-color-text-primary, #26332e);
   box-sizing: border-box;
 }
 
@@ -130,21 +130,21 @@ const save = () => {
 }
 
 .modal-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.03);
-  color: #48484a;
+  background-color: rgba(38, 51, 46, 0.05);
+  color: var(--app-color-text-secondary, #64716b);
 }
 
 .modal-btn.cancel:active {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: rgba(38, 51, 46, 0.1);
 }
 
 .modal-btn.save {
-  background-color: #1c1c1e;
+  background-color: var(--app-color-primary-strong, #4f8e7c);
   color: #ffffff;
 }
 
 .modal-btn.save:active {
-  background-color: #000000;
+  background-color: #427a6a;
   transform: scale(0.97);
 }
 </style>

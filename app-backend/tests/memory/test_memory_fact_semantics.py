@@ -7,21 +7,21 @@ from core.models import MemoryChunk, MemoryType
 from services.memory import memory_extraction_service as extraction, memory_manager
 from services.memory import memory_consolidation_service as consolidation
 from services.memory.graph_evidence import snapshot_sources
-from tests.memory import test_memory_card_extraction as extraction_fixture
-from tests.memory import test_memory_consolidation as consolidation_fixture
+from tests.support.memory import card_extraction as extraction_fixture
+from tests.support.memory import consolidation as consolidation_fixture
 
 
 class FactExtractionTests(unittest.TestCase):
-    setUp = extraction_fixture.MemoryCardExtractionTests.setUp
-    tearDown = extraction_fixture.MemoryCardExtractionTests.tearDown
-    _write_candidate = extraction_fixture.MemoryCardExtractionTests._write_candidate
-    _provider_with_payload = staticmethod(extraction_fixture.MemoryCardExtractionTests._provider_with_payload)
+    setUp = extraction_fixture.MemoryCardExtractionFixture.setUp
+    tearDown = extraction_fixture.MemoryCardExtractionFixture.tearDown
+    _write_candidate = extraction_fixture.MemoryCardExtractionFixture._write_candidate
+    _provider_with_payload = staticmethod(extraction_fixture.MemoryCardExtractionFixture._provider_with_payload)
 
     def extract(self, status=None, candidates=()):
         payload = {"memories": [{"content": "用户计划下个月搬到杭州滨江工作。", "memory_type": "event",
             "temporal_status": status, "temporal_note": "下个月",
             "source_start_message_id": self.messages[0].id, "source_end_message_id": self.messages[2].id}]}
-        provider = extraction_fixture.MemoryCardExtractionTests._provider_with_payload(payload)
+        provider = extraction_fixture.MemoryCardExtractionFixture._provider_with_payload(payload)
         with patch.object(extraction, "get_llm_provider", return_value=provider), \
              patch.object(extraction, "retrieve_write_candidates", return_value=list(candidates)), \
              patch.object(extraction.cognition_service, "update_cognition_state"):
@@ -86,11 +86,11 @@ class FactExtractionTests(unittest.TestCase):
 
 
 class FactConsolidationTests(unittest.TestCase):
-    setUp = consolidation_fixture.MemoryConsolidationTests.setUp
-    tearDown = consolidation_fixture.MemoryConsolidationTests.tearDown
-    memory = consolidation_fixture.MemoryConsolidationTests.memory
-    payload = consolidation_fixture.MemoryConsolidationTests.payload
-    preview = consolidation_fixture.MemoryConsolidationTests.preview
+    setUp = consolidation_fixture.MemoryConsolidationFixture.setUp
+    tearDown = consolidation_fixture.MemoryConsolidationFixture.tearDown
+    memory = consolidation_fixture.MemoryConsolidationFixture.memory
+    payload = consolidation_fixture.MemoryConsolidationFixture.payload
+    preview = consolidation_fixture.MemoryConsolidationFixture.preview
 
     def test_different_story_time_sources_are_not_merged(self):
         self.one.temporal_status = "planned"

@@ -24,6 +24,11 @@
             <text class="menu-text">开启新故事</text>
           </view>
           <view class="menu-divider"></view>
+          <view class="menu-item" @tap="handleMenuAction('create_group')">
+            <image class="menu-icon" src="/static/icons/menu_group.svg" mode="aspectFit" />
+            <text class="menu-text">发起群聊</text>
+          </view>
+          <view class="menu-divider"></view>
           <view class="menu-item" @tap="handleMenuAction('add_character')">
             <image class="menu-icon" src="/static/icons/menu_user_plus.svg" mode="aspectFit" />
             <text class="menu-text">创建新角色</text>
@@ -35,11 +40,7 @@
     </AppPageHeader>
 
     <scroll-view scroll-y class="home-scroll">
-      <view class="home-content" :class="{ 'has-recent-stories': recentSessions.length > 0 }">
-        <view class="group-entry" role="button" aria-label="查看与创建群聊故事" @tap="goToGroups">
-          <view><text class="group-entry-title">群聊故事</text><text class="group-entry-copy">邀请几位角色，在同一场景相遇</text></view>
-          <text class="group-entry-link">查看与创建 ›</text>
-        </view>
+      <view class="home-content" :class="{ 'has-recent-stories': recentStories.length > 0 }">
         <view v-if="isHomeLoading && !hasHomeContent" class="home-skeleton">
           <view class="skeleton-feature"></view>
           <view class="skeleton-heading"></view>
@@ -49,38 +50,53 @@
         </view>
 
         <template v-else-if="hasHomeContent">
-          <view v-if="featuredSession" class="featured-section">
+          <view v-if="featuredStory" class="featured-section">
             <view class="section-kicker-row">
               <text class="section-kicker">继续故事</text>
               <text class="featured-time">
-                {{ formatDate(featuredSession.lastMessageTime || featuredSession.updated_at) }}
+                {{ formatDate(featuredStory.lastMessageTime) }}
               </text>
             </view>
 
             <view
               class="featured-card"
-              @tap="goToChat(featuredSession)"
-              @longpress="onSessionLongPress(featuredSession)"
-              @contextmenu.prevent="onSessionLongPress(featuredSession)"
+              @tap="goToStory(featuredStory)"
+              @longpress="onStoryLongPress(featuredStory)"
+              @contextmenu.prevent="onStoryLongPress(featuredStory)"
             >
               <AvatarImage
-                v-if="featuredSession.characterAvatar"
+                v-if="featuredBackgroundAvatar"
                 class="featured-art"
-                :src="getAvatarUrl(featuredSession.characterAvatar)"
+                :src="getAvatarUrl(featuredBackgroundAvatar)"
                 :lazy-load="false"
               />
               <view class="featured-image-wash"></view>
-              <view class="featured-cover-label">未完 · 待续</view>
+              <view class="featured-cover-label">{{ featuredStory.kind === 'group' ? '群聊 · 待续' : '未完 · 待续' }}</view>
 
               <view class="featured-copy">
                 <view class="featured-character-row">
-                  <view class="featured-status-dot"></view>
-                  <text class="featured-character">{{ featuredSession.characterName }}</text>
+                  <view v-if="featuredStory.kind === 'group'" class="featured-group-avatars">
+                    <view
+                      v-for="(avatar, idx) in featuredStory.avatars.slice(0, 3)"
+                      :key="idx"
+                      class="featured-group-avatar-item"
+                    >
+                      <AvatarImage
+                        v-if="avatar.avatarPath"
+                        class="featured-group-avatar-img"
+                        :src="getAvatarUrl(avatar.avatarPath)"
+                        :lazy-load="false"
+                      />
+                      <text v-else class="featured-group-avatar-initial">{{ avatar.name.slice(0, 1) }}</text>
+                    </view>
+                  </view>
+                  <view v-else class="featured-status-dot"></view>
+                  <text class="featured-character">{{ featuredStory.subtitle }}</text>
                 </view>
-                <text class="featured-title">{{ getSessionTitle(featuredSession) }}</text>
-                <text class="featured-preview">{{ getSessionPreview(featuredSession) }}</text>
+                <text class="featured-title">{{ featuredStory.title }}</text>
+                <text class="featured-preview"><text v-if="featuredStory.draft" class="draft-badge">[草稿]</text>{{ featuredStory.draft || featuredStory.preview }}</text>
 
-                <view class="continue-button" @tap.stop="goToChat(featuredSession)">
+                <view class="continue-button" @tap.stop="goToStory(featuredStory)">
                   <text class="continue-label">继续这段故事</text>
                   <text class="continue-arrow">→</text>
                 </view>
@@ -134,7 +150,7 @@
                   </view>
                   <view class="character-card-copy">
                     <text class="character-name">{{ character.name || "未命名角色" }}</text>
-                    <text class="character-card-link">人物档案 ↗</text>
+                    <text class="character-card-link">{{ character.creator ? `作者 · ${character.creator}` : '人物档案 ↗' }}</text>
                   </view>
                 </view>
 
@@ -149,7 +165,7 @@
             </scroll-view>
           </view>
 
-          <view v-if="recentSessions.length > 0" class="recent-section">
+          <view v-if="recentStories.length > 0" class="recent-section">
             <view class="section-heading recent-heading">
               <view class="section-heading-copy">
                 <text class="section-title">最近故事</text>
@@ -159,27 +175,50 @@
 
             <view class="recent-story-list">
               <view
-                v-for="session in recentSessions"
-                :key="session.id"
+                v-for="story in recentStories"
+                :key="story.key"
                 class="story-row"
-                @tap="goToChat(session)"
-                @longpress="onSessionLongPress(session)"
-                @contextmenu.prevent="onSessionLongPress(session)"
+                @tap="goToStory(story)"
+                @longpress="onStoryLongPress(story)"
+                @contextmenu.prevent="onStoryLongPress(story)"
               >
                 <AvatarImage
+                  v-if="story.kind === 'single'"
                   class="story-avatar"
-                  :src="getAvatarUrl(session.characterAvatar)"
+                  :src="getAvatarUrl(story.avatars[0]?.avatarPath || '')"
                 />
+                <view
+                  v-else
+                  class="story-group-avatar"
+                  :class="`count-${Math.min(story.avatars.length, 3)}`"
+                >
+                  <view
+                    v-for="(avatar, idx) in story.avatars.slice(0, 3)"
+                    :key="idx"
+                    class="group-avatar-tile"
+                    :class="{ 'is-lead': story.avatars.length === 3 && idx === 0 }"
+                  >
+                    <AvatarImage
+                      v-if="avatar.avatarPath"
+                      class="group-avatar-img"
+                      :src="getAvatarUrl(avatar.avatarPath)"
+                    />
+                    <text v-else class="group-avatar-fallback">{{ avatar.name.slice(0, 1) }}</text>
+                  </view>
+                </view>
 
                 <view class="story-copy">
                   <view class="story-meta-row">
-                    <text class="story-character">{{ session.characterName }}</text>
+                    <view class="story-meta-lead">
+                      <text v-if="story.kind === 'group'" class="story-group-badge">群聊</text>
+                      <text class="story-character">{{ story.subtitle }}</text>
+                    </view>
                     <text class="story-time">
-                      {{ formatDate(session.lastMessageTime || session.updated_at) }}
+                      {{ formatDate(story.lastMessageTime) }}
                     </text>
                   </view>
-                  <text class="story-title">{{ getSessionTitle(session) }}</text>
-                  <text class="story-preview">{{ getSessionPreview(session) }}</text>
+                  <text class="story-title">{{ story.title }}</text>
+                  <text class="story-preview"><text v-if="story.draft" class="draft-badge">[草稿]</text>{{ story.draft || story.preview }}</text>
                 </view>
 
                 <text class="story-chevron">›</text>
@@ -187,9 +226,9 @@
             </view>
           </view>
 
-          <view v-else-if="featuredSession" class="recent-prompt">
+          <view v-else-if="featuredStory" class="recent-prompt">
             <text class="recent-prompt-title">这里只有一条故事线</text>
-            <text class="recent-prompt-copy">从角色画册选择另一位角色，开启不同的相遇。</text>
+            <text class="recent-prompt-copy">从角色画册选择另一位角色，或从右上角发起群聊，开启不同的相遇。</text>
           </view>
         </template>
 
@@ -238,7 +277,12 @@ import {
   updateSessionTitle,
   deleteSession,
 } from "@/api/sessions";
-import type { RecentSessionSummary, SessionSummary } from "@/api/sessions";
+import { deleteGroupSession, getGroupSessions } from "@/api/groupSessions";
+import { getBaseUrl } from "@/api/config";
+import type { RecentSessionSummary } from "@/api/sessions";
+import type { GroupSessionDetail } from "@/types/groupSessions";
+import { mergeHomeStories, type HomeSingleSession, type HomeStoryItem } from "@/utils/homeStories";
+import { readAllChatDrafts, clearChatDraft } from "@/utils/chatDrafts";
 import TabBar from "@/components/common/TabBar.vue";
 import AvatarImage from "@/components/common/AvatarImage.vue";
 import AppEmptyState from "@/components/common/AppEmptyState.vue";
@@ -247,27 +291,29 @@ import AppPrimaryButton from "@/components/common/AppPrimaryButton.vue";
 import AppSoftGlow from "@/components/common/AppSoftGlow.vue";
 import { getAvatarUrl } from "@/api/characters";
 
-interface HomeSession extends SessionSummary {
-  characterName: string;
-  characterAvatar: string;
-  lastMessage: string;
-  lastMessageTime: string;
-  unread: boolean;
-}
-
 const personaStore = usePersonaStore();
 const isMenuOpen = ref(false);
 
 const renamingSessionId = ref<number | null>(null);
 const newSessionTitle = ref("");
 
-const sessions = ref<HomeSession[]>([]);
+const singleSessions = ref<HomeSingleSession[]>([]);
+const groupSessions = ref<GroupSessionDetail[]>([]);
+const storyDrafts = ref<Record<string, string>>({});
+const refreshStoryDrafts = () => {
+  storyDrafts.value = readAllChatDrafts();
+};
 const isLoading = ref(false);
+let storyLoadVersion = 0;
 const RECENT_SESSION_LIMIT = 50;
 const QUICK_CHARACTER_LIMIT = 10;
 
-const featuredSession = computed(() => sessions.value[0] || null);
-const recentSessions = computed(() => sessions.value.slice(1));
+const stories = computed(() => mergeHomeStories(singleSessions.value, groupSessions.value, storyDrafts.value));
+const featuredStory = computed(() => stories.value[0] || null);
+const featuredBackgroundAvatar = computed(
+  () => featuredStory.value?.avatars.find(item => !!item.avatarPath)?.avatarPath || ""
+);
+const recentStories = computed(() => stories.value.slice(1));
 const quickCharacters = computed(() =>
   personaStore.characterList.slice(0, QUICK_CHARACTER_LIMIT)
 );
@@ -275,7 +321,7 @@ const isHomeLoading = computed(
   () => isLoading.value || personaStore.isLoadingCharacters
 );
 const hasHomeContent = computed(
-  () => sessions.value.length > 0 || personaStore.characterList.length > 0
+  () => stories.value.length > 0 || personaStore.characterList.length > 0
 );
 
 let isAndroid = false;
@@ -283,65 +329,83 @@ let isAndroid = false;
 isAndroid = uni.getSystemInfoSync().platform === 'android';
 // #endif
 
-const loadRecentSessions = async () => {
+const fetchSingleSessions = async (): Promise<HomeSingleSession[]> => {
+  try {
+    const response = await getRecentSessions(RECENT_SESSION_LIMIT);
+    return response.sessions.map(decorateRecentSession);
+  } catch (error) {
+    // 仅在旧后端尚未提供聚合接口时回退，网络故障时避免制造更多请求。
+    if (!isUnsupportedRecentSessionsEndpoint(error)) {
+      throw error;
+    }
+    console.warn("Recent sessions endpoint is unavailable; using legacy requests.");
+  }
+
+  // 旧后端回退：复用首页已加载的角色列表，逐一读取其会话。
+  const allSessions: HomeSingleSession[] = [];
+  const promises = personaStore.characterList.map(async (char) => {
+    try {
+      const res = await getAllSessions(char.id);
+      const decorated = res.sessions.map((s) => ({
+        ...s,
+        characterName: char.name,
+        characterAvatar: char.avatar_path,
+        lastMessage: s.last_message?.content
+          ? s.last_message.content.replace(/\s+/g, " ").trim()
+          : "开启新的聊天...",
+        lastMessageTime: s.last_message?.created_at || s.updated_at,
+        unread: false
+      }));
+      allSessions.push(...decorated);
+    } catch (err) {
+      console.error(`Failed to load sessions for character ${char.id}`, err);
+    }
+  });
+  await Promise.all(promises);
+  return allSessions;
+};
+
+const fetchGroupSessions = async (): Promise<GroupSessionDetail[]> => {
+  try {
+    const response = await getGroupSessions(RECENT_SESSION_LIMIT, 0);
+    return response.sessions ?? [];
+  } catch (error) {
+    console.warn("Failed to load group sessions", error);
+    return [];
+  }
+};
+
+const loadRecentStories = async () => {
+  const version = ++storyLoadVersion;
+  const server = getBaseUrl();
   isLoading.value = true;
   try {
-    try {
-      const response = await getRecentSessions(RECENT_SESSION_LIMIT);
-      sessions.value = response.sessions
-        .map(decorateRecentSession)
-        .sort(
-          (a, b) =>
-            new Date(b.lastMessageTime).getTime() -
-            new Date(a.lastMessageTime).getTime()
-        );
-      return;
-    } catch (error) {
-      // 仅在旧后端尚未提供聚合接口时回退，网络故障时避免制造更多请求。
-      if (!isUnsupportedRecentSessionsEndpoint(error)) {
-        throw error;
-      }
-      console.warn("Recent sessions endpoint is unavailable; using legacy requests.");
+    const [singleResult, groupResult] = await Promise.allSettled([
+      fetchSingleSessions(),
+      fetchGroupSessions(),
+    ]);
+    if (version !== storyLoadVersion || getBaseUrl() !== server) return;
+    if (singleResult.status === "fulfilled") {
+      singleSessions.value = singleResult.value;
+    } else {
+      console.error("Failed to load recent sessions", singleResult.reason);
     }
-
-    // 旧后端回退：复用首页已加载的角色列表，逐一读取其会话。
-    const allSessions: HomeSession[] = [];
-    const promises = personaStore.characterList.map(async (char) => {
-      try {
-        const res = await getAllSessions(char.id);
-        const decorated = res.sessions.map((s) => ({
-          ...s,
-          characterName: char.name,
-          characterAvatar: char.avatar_path,
-          lastMessage: s.last_message?.content
-            ? s.last_message.content.replace(/\s+/g, " ").trim()
-            : "开启新的聊天...",
-          lastMessageTime: s.last_message?.created_at || s.updated_at,
-          unread: false
-        }));
-        allSessions.push(...decorated);
-      } catch (err) {
-        console.error(`Failed to load sessions for character ${char.id}`, err);
-      }
-    });
-    await Promise.all(promises);
-
-    // 按最近消息发送时间倒序排列。
-    allSessions.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
-    sessions.value = allSessions;
-  } catch (e) {
-    console.error("Failed to load recent sessions", e);
+    if (groupResult.status === "fulfilled") {
+      groupSessions.value = groupResult.value;
+    }
   } finally {
-    isLoading.value = false;
+    if (version === storyLoadVersion) {
+      isLoading.value = false;
+    }
   }
 };
 
 const loadHomeData = async () => {
   await personaStore.loadCharacters(QUICK_CHARACTER_LIMIT, 0);
-  await loadRecentSessions();
+  await loadRecentStories();
 };
 
-const decorateRecentSession = (session: RecentSessionSummary): HomeSession => {
+const decorateRecentSession = (session: RecentSessionSummary): HomeSingleSession => {
   const lastMessage = session.last_message;
   return {
     ...session,
@@ -364,6 +428,7 @@ onShow(() => {
   // #ifndef H5
   uni.hideTabBar({ animation: false });
   // #endif
+  refreshStoryDrafts();
   loadHomeData();
 });
 
@@ -371,14 +436,16 @@ const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value;
 };
 
-const goToGroups = () => uni.navigateTo({ url: "/pages/group/index" });
-
 const handleMenuAction = (action: string) => {
   isMenuOpen.value = false;
-  
+
   if (action === 'create_session') {
     uni.switchTab({
       url: '/pages/character/index'
+    });
+  } else if (action === 'create_group') {
+    uni.navigateTo({
+      url: '/pages/group/create'
     });
   } else if (action === 'add_character') {
     uni.navigateTo({
@@ -387,9 +454,15 @@ const handleMenuAction = (action: string) => {
   }
 };
 
-const goToChat = (session: HomeSession) => {
+const goToStory = (story: HomeStoryItem) => {
+  if (story.kind === "group") {
+    uni.navigateTo({
+      url: `/pages/group/detail?sessionId=${story.id}`
+    });
+    return;
+  }
   uni.navigateTo({
-    url: `/pages/chat/chat?sessionId=${session.id}`
+    url: `/pages/chat/chat?sessionId=${story.id}`
   });
 };
 
@@ -417,14 +490,39 @@ const goToImportCharacter = () => {
   });
 };
 
-const getSessionTitle = (session: HomeSession) =>
-  session.title?.trim() || `${session.characterName || "角色"}的故事`;
-
-const getSessionPreview = (session: HomeSession) =>
-  session.lastMessage?.trim() || "故事还没有写下第一句话…";
-
-const onSessionLongPress = (session: HomeSession) => {
+const onStoryLongPress = (story: HomeStoryItem) => {
   uni.vibrateShort({ success: () => {} });
+  if (story.kind === "group") {
+    uni.showActionSheet({
+      itemList: ['删除群聊'],
+      success: (res) => {
+        if (res.tapIndex !== 0) return;
+        uni.showModal({
+          title: '删除群聊',
+          content: '确定要删除此群聊吗？所有群聊记录与群内记忆数据将无法找回。',
+          confirmColor: '#D9655D',
+          cancelColor: '#7C8983',
+          success: async (mRes) => {
+            if (!mRes.confirm) return;
+            try {
+              await deleteGroupSession(story.id);
+              clearChatDraft("group", story.id);
+              refreshStoryDrafts();
+              await loadRecentStories();
+              uni.showToast({ title: '删除成功', icon: 'success' });
+            } catch (e: unknown) {
+              console.error("Failed to delete group session", e);
+              const errMessage = e instanceof Error ? e.message : "删除失败，请检查网络与后端配置";
+              uni.showToast({ title: errMessage || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
+            }
+          }
+        });
+      }
+    });
+    return;
+  }
+
+  const session = story.singleSession;
   uni.showActionSheet({
     itemList: ['重命名', '删除会话'],
     success: (res) => {
@@ -441,12 +539,15 @@ const onSessionLongPress = (session: HomeSession) => {
             if (mRes.confirm) {
               try {
                 await deleteSession(session.id);
+                clearChatDraft("single", session.id);
+                refreshStoryDrafts();
                 useChatSettingsStore().removeSession(session.id);
-                await loadRecentSessions();
+                await loadRecentStories();
                 uni.showToast({ title: '删除成功', icon: 'success' });
-              } catch (e: any) {
+              } catch (e: unknown) {
                 console.error("Failed to delete session", e);
-                uni.showToast({ title: e.message || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
+                const errMessage = e instanceof Error ? e.message : "删除失败，请检查网络与后端配置";
+                uni.showToast({ title: errMessage || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
               }
             }
           }
@@ -466,7 +567,7 @@ const saveRename = async () => {
     try {
       await updateSessionTitle(renamingSessionId.value, newSessionTitle.value.trim());
       cancelRename();
-      await loadRecentSessions();
+      await loadRecentStories();
     } catch (e) {
       console.error("Failed to update session title", e);
     }
@@ -499,768 +600,5 @@ const formatDate = (dateString: string) => {
 </script>
 
 <style scoped>
-.group-entry { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 24rpx 28rpx; margin-bottom: 28rpx; border: 1px solid var(--app-color-border); border-radius: var(--app-radius-md); background: var(--app-color-surface); }
-.group-entry-title { display: block; font-size: var(--app-font-size-body); font-weight: 650; color: var(--app-color-text-primary); }
-.group-entry-copy { display: block; margin-top: 6rpx; font-size: var(--app-font-size-caption); color: var(--app-color-text-secondary); }
-.group-entry-link { flex-shrink: 0; font-size: var(--app-font-size-caption); color: var(--app-color-primary-strong); }
-.page-container {
-  display: flex;
-  flex-direction: column;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  min-height: 100vh;
-  min-height: 100dvh;
-  background-color: var(--app-color-background, #f7f9f7);
-  overflow: hidden;
-}
-
-/* ===== 顶部操作与菜单 ===== */
-.plus-btn {
-  width: 72rpx;
-  height: 72rpx;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-  transition: transform var(--app-motion-normal, 240ms) cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.plus-btn:active {
-  transform: scale(0.94);
-}
-
-.plus-btn.is-active {
-  transform: rotate(45deg);
-  background-color: rgba(112, 174, 155, 0.22);
-}
-
-.plus-icon {
-  width: 32rpx;
-  height: 32rpx;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.menu-icon {
-  width: 36rpx;
-  height: 36rpx;
-}
-
-/* ===== 下拉快捷菜单 ===== */
-.menu-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  z-index: 40;
-}
-
-.dropdown-menu {
-  position: absolute;
-  top: calc(var(--app-header-height, 112rpx) + env(safe-area-inset-top, 40rpx));
-  right: 28rpx;
-  width: 280rpx;
-  background-color: var(--app-color-surface-translucent, rgba(255, 255, 255, 0.88));
-  backdrop-filter: blur(20px);
-  border-radius: var(--app-radius-md, 24rpx);
-  box-shadow: var(--app-shadow-raised, 0 20rpx 52rpx rgba(45, 72, 62, 0.12));
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  z-index: 100;
-  padding: 8rpx 0;
-  animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  padding: 20rpx 28rpx;
-  gap: 16rpx;
-  transition: background-color 0.2s;
-}
-
-.menu-item:active {
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, 0.14));
-}
-
-.menu-icon {
-  color: var(--app-color-text-primary, #26332e);
-}
-
-.menu-text {
-  font-size: 26rpx;
-  color: var(--app-color-text-primary, #26332e);
-  font-weight: 500;
-}
-
-.menu-divider {
-  height: 1px;
-  background-color: var(--app-color-border, rgba(38, 51, 46, 0.08));
-  margin: 0 20rpx;
-}
-
-/* ===== 首页滚动内容 ===== */
-.home-scroll {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  height: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.home-content {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 28rpx var(--app-page-gutter, 36rpx) 196rpx;
-  box-sizing: border-box;
-}
-
-.section-kicker-row,
-.section-heading,
-.story-meta-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.section-kicker {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  font-weight: 700;
-  letter-spacing: 1.2rpx;
-}
-
-.featured-time,
-.story-time {
-  color: var(--app-color-text-muted, #a4aea9);
-  font-size: var(--app-font-size-caption, 22rpx);
-}
-
-.featured-card {
-  position: relative;
-  display: flex;
-  height: 490rpx;
-  margin-top: 18rpx;
-  overflow: hidden;
-  border-radius: var(--app-radius-lg, 36rpx);
-  background: radial-gradient(ellipse at 85% 5%, #749b8b 0%, #3e5d50 38%, #21372f 100%);
-  box-shadow: 0 16rpx 40rpx rgba(33, 55, 47, .15);
-  transition: transform var(--app-motion-fast, 160ms) ease;
-}
-
-.featured-card:active {
-  transform: scale(0.986);
-}
-
-.featured-art {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.featured-image-wash {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(12, 23, 19, .12) 0%, rgba(12, 23, 19, .1) 20%, rgba(12, 23, 19, .72) 63%, rgba(12, 23, 19, .94) 100%);
-}
-
-.featured-cover-label {
-  position: absolute;
-  top: 30rpx;
-  right: 30rpx;
-  padding: 10rpx 18rpx;
-  border: 1px solid rgba(255, 255, 255, .36);
-  border-radius: 999rpx;
-  color: #fff;
-  background: rgba(18, 32, 26, .4);
-  font-size: 20rpx;
-  letter-spacing: 3rpx;
-}
-
-.featured-copy {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  padding: 32rpx;
-  box-sizing: border-box;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.featured-character-row {
-  display: flex;
-  max-width: 60%;
-  align-items: center;
-  gap: 12rpx;
-  padding: 10rpx 18rpx;
-  border-radius: 999rpx;
-  background: rgba(18, 32, 26, .55);
-}
-
-.featured-status-dot {
-  width: 10rpx;
-  height: 10rpx;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: #c7e4d5;
-}
-
-.featured-character {
-  overflow: hidden;
-  color: #f5faf7;
-  font-size: 22rpx;
-  font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.featured-title {
-  display: -webkit-box;
-  margin-top: auto;
-  overflow: hidden;
-  color: #fff;
-  font-size: 46rpx;
-  font-weight: 650;
-  line-height: 1.3;
-  letter-spacing: 1rpx;
-  text-shadow: 0 2rpx 12rpx rgba(0, 0, 0, .2);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.featured-preview {
-  display: -webkit-box;
-  margin-top: 14rpx;
-  overflow: hidden;
-  color: #e0e9e3;
-  font-size: 24rpx;
-  line-height: 1.65;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.continue-button {
-  display: inline-flex;
-  min-height: 68rpx;
-  margin-top: 24rpx;
-  padding: 0 24rpx;
-  align-items: center;
-  justify-content: center;
-  gap: 36rpx;
-  border-radius: 999rpx;
-  background: #f1f7f3;
-}
-
-.continue-label,
-.continue-arrow {
-  color: #284c3d;
-  font-size: 24rpx;
-  font-weight: 650;
-}
-
-/* ===== 无会话但已有角色 ===== */
-.start-story-card {
-  display: flex;
-  padding: 34rpx;
-  align-items: flex-end;
-  gap: 24rpx;
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, 0.08));
-  border-radius: var(--app-radius-lg, 36rpx);
-  background:
-    radial-gradient(circle at 92% 12%, rgba(139, 184, 220, 0.18), transparent 42%),
-    linear-gradient(140deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 242, 0.96));
-  box-shadow: var(--app-shadow-soft, 0 12rpx 36rpx rgba(45, 72, 62, 0.08));
-}
-
-.start-story-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.start-story-kicker {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-caption, 22rpx);
-  font-weight: 700;
-}
-
-.start-story-title {
-  margin-top: 10rpx;
-  color: var(--app-color-text-primary, #26332e);
-  font-size: var(--app-font-size-title-sm, 32rpx);
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.start-story-description {
-  margin-top: 12rpx;
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  line-height: 1.55;
-}
-
-.start-story-action {
-  display: flex;
-  height: 66rpx;
-  padding: 0 22rpx;
-  align-items: center;
-  gap: 8rpx;
-  border-radius: var(--app-radius-pill, 999rpx);
-  background-color: var(--app-color-primary, #70ae9b);
-  color: #ffffff;
-  font-size: 22rpx;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-/* ===== 我的角色 ===== */
-.characters-section,
-.recent-section {
-  margin-top: 48rpx;
-}
-
-.section-heading-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4rpx;
-}
-
-.section-title {
-  color: var(--app-color-text-primary, #26332e);
-  font-size: var(--app-font-size-title-sm, 32rpx);
-  font-weight: 700;
-}
-
-.section-caption {
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: var(--app-font-size-caption, 22rpx);
-}
-
-.section-link {
-  display: flex;
-  min-height: 64rpx;
-  padding-left: 20rpx;
-  align-items: center;
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  font-weight: 600;
-}
-
-.section-link-arrow {
-  margin-left: 6rpx;
-  font-size: 34rpx;
-  line-height: 1;
-}
-
-.characters-scroll {
-  width: calc(100% + var(--app-page-gutter, 36rpx));
-  margin-top: 22rpx;
-  white-space: nowrap;
-}
-
-.character-strip {
-  display: inline-flex;
-  padding-right: var(--app-page-gutter, 36rpx);
-  gap: 18rpx;
-}
-
-.character-shortcut {
-  position: relative;
-  display: inline-flex;
-  width: 204rpx;
-  height: 276rpx;
-  flex-shrink: 0;
-  overflow: hidden;
-  border: 1px solid var(--app-color-border, rgba(38, 51, 46, .08));
-  border-radius: 24rpx;
-  background: var(--app-color-primary-soft, #e6efea);
-  vertical-align: top;
-  transition: transform var(--app-motion-fast, 160ms) ease;
-}
-
-.character-portrait-wrap {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.character-portrait {
-  width: 100%;
-  height: 100%;
-}
-
-.portrait-shade {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.character-name {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  color: var(--app-color-text-primary, #26332e);
-  font-size: 27rpx;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.add-character-portrait {
-  position: static;
-  display: flex;
-  width: 68rpx;
-  height: 68rpx;
-  margin-bottom: 20rpx;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, .14));
-  border-radius: 50%;
-  background: var(--app-color-surface, #fff);
-}
-
-.add-character-plus {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: 40rpx;
-  font-weight: 300;
-}
-
-.add-character-label {
-  color: var(--app-color-text-secondary, #7c8983);
-}
-
-/* ===== 最近故事 ===== */
-.recent-heading {
-  margin-bottom: 20rpx;
-}
-
-.recent-story-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.story-row {
-  display: flex;
-  min-height: 142rpx;
-  padding: 22rpx 0;
-  align-items: center;
-  gap: 22rpx;
-  border-bottom: 1px solid var(--app-color-border, rgba(38, 51, 46, .08));
-  transition: transform var(--app-motion-fast, 160ms) ease;
-}
-
-.story-row:active {
-  border-color: var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
-  transform: scale(0.988);
-}
-
-.story-avatar {
-  width: 100rpx;
-  height: 124rpx;
-  flex-shrink: 0;
-  border-radius: 16rpx;
-  background-color: var(--app-color-primary-soft, rgba(112, 174, 155, .14));
-}
-
-.story-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.story-meta-row {
-  gap: 12rpx;
-}
-
-.story-character {
-  overflow: hidden;
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-caption, 22rpx);
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.story-time {
-  flex-shrink: 0;
-}
-
-.story-title {
-  margin-top: 6rpx;
-  overflow: hidden;
-  color: var(--app-color-text-primary, #26332e);
-  font-size: var(--app-font-size-body, 28rpx);
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.story-preview {
-  margin-top: 6rpx;
-  overflow: hidden;
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.story-chevron {
-  flex-shrink: 0;
-  color: var(--app-color-text-muted, #a4aea9);
-  font-size: 42rpx;
-  font-weight: 300;
-}
-
-.recent-prompt {
-  display: flex;
-  margin-top: 42rpx;
-  padding: 28rpx 30rpx;
-  flex-direction: column;
-  gap: 8rpx;
-  border: 1px dashed var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
-  border-radius: var(--app-radius-md, 24rpx);
-  background-color: rgba(255, 255, 255, 0.48);
-}
-
-.recent-prompt-title {
-  color: var(--app-color-text-primary, #26332e);
-  font-size: var(--app-font-size-body, 28rpx);
-  font-weight: 650;
-}
-
-.recent-prompt-copy {
-  color: var(--app-color-text-secondary, #7c8983);
-  font-size: var(--app-font-size-body-sm, 24rpx);
-  line-height: 1.55;
-}
-
-/* ===== 首页空状态 ===== */
-.empty-actions-stack {
-  display: flex;
-  width: 100%;
-  max-width: 440rpx;
-  flex-direction: column;
-  gap: 16rpx;
-}
-
-.secondary-button {
-  display: flex;
-  width: 100%;
-  height: var(--app-control-height, 88rpx);
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--app-color-border-strong, rgba(38, 51, 46, 0.14));
-  border-radius: var(--app-radius-pill, 999rpx);
-  background-color: var(--app-color-surface-soft, rgba(255, 255, 255, 0.78));
-}
-
-.secondary-button-label {
-  color: var(--app-color-primary-strong, #4f8e7c);
-  font-size: var(--app-font-size-body, 28rpx);
-  font-weight: 650;
-}
-
-/* ===== 首屏加载骨架 ===== */
-.home-skeleton {
-  display: flex;
-  flex-direction: column;
-}
-
-.skeleton-feature,
-.skeleton-heading,
-.skeleton-character {
-  background: linear-gradient(
-    100deg,
-    rgba(255, 255, 255, 0.54) 10%,
-    rgba(255, 255, 255, 0.96) 34%,
-    rgba(255, 255, 255, 0.54) 58%
-  );
-  background-size: 220% 100%;
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
-}
-
-.skeleton-feature {
-  height: 490rpx;
-  border-radius: var(--app-radius-lg, 36rpx);
-}
-
-.skeleton-heading {
-  width: 220rpx;
-  height: 36rpx;
-  margin-top: 48rpx;
-  border-radius: var(--app-radius-pill, 999rpx);
-}
-
-.skeleton-characters {
-  display: flex;
-  margin-top: 24rpx;
-  gap: 22rpx;
-}
-
-.skeleton-character {
-  width: 204rpx;
-  height: 276rpx;
-  flex-shrink: 0;
-  border-radius: 24rpx;
-}
-
-@keyframes skeleton-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -120% 0;
-  }
-}
-
-/* ===== 重命名模态框 ===== */
-.rename-modal-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  background-color: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.rename-modal {
-  width: 580rpx;
-  background-color: #ffffff;
-  border-radius: 28rpx;
-  padding: 44rpx 36rpx;
-  display: flex;
-  flex-direction: column;
-  gap: 28rpx;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.modal-title {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1c1c1e;
-  text-align: center;
-}
-
-.rename-input {
-  width: 100%;
-  height: 80rpx;
-  background-color: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 14rpx;
-  padding: 0 20rpx;
-  font-size: 28rpx;
-  color: #1c1c1e;
-  box-sizing: border-box;
-}
-
-.rename-input:focus {
-  border-color: #1c1c1e;
-  background-color: #ffffff;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: space-between;
-  gap: 20rpx;
-}
-
-.modal-btn {
-  flex: 1;
-  height: 80rpx;
-  border-radius: 40rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26rpx;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.modal-btn.cancel {
-  background-color: rgba(0, 0, 0, 0.03);
-  color: #48484a;
-}
-
-.modal-btn.cancel:active {
-  background-color: rgba(0, 0, 0, 0.06);
-}
-
-.modal-btn.save {
-  background-color: #1c1c1e;
-  color: #ffffff;
-}
-
-.modal-btn.save:active {
-  background-color: #000000;
-  transform: scale(0.97);
-}
-
-/* Android Performance Fallbacks (Disable Frosted Glass) */
-.is-android .dropdown-menu {
-  backdrop-filter: none !important;
-  background-color: #ffffff !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12) !important;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-}
-
-.is-android .rename-modal-backdrop {
-  backdrop-filter: none !important;
-  background-color: rgba(0, 0, 0, 0.5) !important;
-}
-
-/* 人物卡保留无图角色的文字入口。 */
-.character-shortcut:active { transform: scale(.97); }
-.character-card-copy { position: absolute; bottom: 22rpx; left: 22rpx; right: 18rpx; }
-.character-card-link { display: block; margin-top: 8rpx; color: var(--app-color-text-secondary, #64716b); font-size: 19rpx; letter-spacing: 1rpx; }
-.character-initial { position: absolute; top: 24rpx; left: 24rpx; color: var(--app-color-primary-strong, #4f8e7c); opacity: .3; font-size: 100rpx; font-weight: 300; }
-.has-portrait .portrait-shade { background: linear-gradient(180deg, transparent 25%, rgba(12, 23, 19, .85) 100%); }
-.has-portrait .character-name { color: #fff; }
-.has-portrait .character-card-link { color: #e0e9e3; }
-.add-character-shortcut { flex-direction: column; align-items: center; justify-content: center; border-style: dashed; background: var(--app-color-surface-soft, rgba(255, 255, 255, .78)); }
-.add-character-label { text-align: center; }
-.add-character-hint { margin-top: 10rpx; font-size: 19rpx; color: var(--app-color-text-secondary, #64716b); }
-.skeleton-characters { overflow: hidden; }
-@media (min-width: 1000px) {
-  .home-content { padding-top: 36px; }
-  .home-content.has-recent-stories { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); column-gap: 44px; align-items: start; }
-  .has-recent-stories .featured-section { grid-column: 1; grid-row: 1; }
-  .has-recent-stories .characters-section { grid-column: 1; grid-row: 2; margin-top: 32px; }
-  .has-recent-stories .recent-section { grid-column: 2; grid-row: 1 / span 2; margin-top: 0; padding-left: 32px; border-left: 1px solid var(--app-color-border); }
-  .has-recent-stories .start-story-card { grid-column: 1; grid-row: 1; }
-  .characters-scroll { width: 100%; }
-  .featured-card { height: 360px; }
-  .featured-copy { padding: 28px; }
-  .featured-title { font-size: 32px; }
-  .featured-preview { font-size: 15px; }
-  .featured-cover-label { top: 24px; right: 24px; }
-  .character-shortcut { width: 132px; height: 180px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .featured-card, .character-shortcut, .story-row { transition: none; }
-  .skeleton-feature, .skeleton-heading, .skeleton-character { animation: none; }
-}
+@import "./index.css";
 </style>

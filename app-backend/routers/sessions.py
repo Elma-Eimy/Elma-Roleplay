@@ -26,6 +26,7 @@ import services.memory.cognition_service as cognition_service
 from core.config import settings
 from core.locking import cleanup_session_lock, is_session_locked, get_session_lock
 import services.conversation.session_service as session_service
+import services.conversation.session_query_service as session_query_service
 import services.conversation.message_service as message_service
 import services.memory.session_memory_service as session_memory_service
 import services.memory.session_memory_query_service as session_memory_query_service
@@ -120,7 +121,7 @@ def list_sessions(
     db: Session = Depends(get_db),
 ):
     """获取某个角色的会话列表、最后有效消息和标准分页信息。"""
-    return session_service.get_character_sessions(
+    return session_query_service.get_character_sessions(
         character_id=character_id,
         include_last_message=include_last_message,
         limit=limit,
@@ -136,40 +137,16 @@ def list_recent_sessions(
     db: Session = Depends(get_db),
 ):
     """获取首页最近会话及其角色、最后一条有效消息摘要。"""
-    return session_service.get_recent_sessions(limit=limit, offset=offset, db=db)
+    return session_query_service.get_recent_sessions(limit=limit, offset=offset, db=db)
 
 
 @router.get("/{session_id}")
 def get_session_detail(session_id: int, db: Session = Depends(get_db)):
     """获取会话详情（含 Persona 完整状态 + Character 基本信息）"""
-    session = get_single_session(session_id, db)
-    if not session:
+    result = session_query_service.get_session_detail(session_id, db)
+    if result is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    persona = session.persona
-    character = persona.character if persona else None
-
-    return {
-        "id": session.id,
-        "title": session.title,
-        "parent_session_id": session.parent_session_id,
-        "fork_message_id": session.fork_message_id,
-        "created_at": session.created_at.isoformat() if session.created_at else None,
-        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
-        "persona": {
-            "id": persona.id,
-            "character_id": persona.character_id,
-            "affection_score": persona.affection_score,
-            "cognition_state": persona.cognition_state,
-            "current_mood": persona.current_mood,
-            "current_scenario_override": persona.current_scenario_override,
-        } if persona else None,
-        "character": {
-            "id": character.id,
-            "name": character.name,
-            "avatar_path": character.avatar_path,
-        } if character else None,
-    }
+    return result
 
 
 @router.get("/{session_id}/context-compression")
@@ -197,7 +174,7 @@ def get_session_history(
     fetch_limit = min(fetch_limit, settings.APP_HISTORY_FETCH_MAX)
 
     fetch_before_id = before_id if isinstance(before_id, int) else None
-    page = session_service.get_session_history_page(session_id, db, fetch_limit, fetch_before_id)
+    page = session_query_service.get_session_history_page(session_id, db, fetch_limit, fetch_before_id)
     if page is None:
         raise HTTPException(status_code=404, detail="Session not found")
     messages, candidate_groups = page

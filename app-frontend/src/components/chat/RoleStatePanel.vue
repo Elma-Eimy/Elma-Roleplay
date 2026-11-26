@@ -77,17 +77,20 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useChatStore } from "@/store/chatStore";
 import { useRoleState } from "@/composables/useRoleState";
 import type { RoleState } from "@/types/roleState";
-const props = defineProps<{ sessionId: number | null; readonlyState?: RoleState; processing?: boolean }>();
+const props = defineProps<{
+  sessionId: number | null;
+  readonlyState?: RoleState;
+  processing?: boolean;
+  timeline?: string;
+}>();
 const collapsed = ref(false);
-const chatStore = useChatStore();
-const generating = computed(() => props.readonlyState ? !!props.processing : chatStore.isLoading);
+const generating = computed(() => !!props.processing);
 const { snapshot: editableSnapshot, busy, error, editing, scene, actors, newName, load, beginEdit, addActor, cancel, save } = useRoleState(() => props.readonlyState ? null : props.sessionId, () => generating.value);
 const snapshot = computed(() => props.readonlyState ? { state: props.readonlyState } : editableSnapshot.value);
-watch(() => [chatStore.isLoading, chatStore.messages.map(message => `${message.id}:${message.content}`).join('\u0000')], () => {
-  if (!generating.value && !editing.value) void load();
+watch(() => [props.processing, props.timeline], () => {
+  if (!props.readonlyState && !generating.value && !editing.value) void load();
 });
 </script>
 

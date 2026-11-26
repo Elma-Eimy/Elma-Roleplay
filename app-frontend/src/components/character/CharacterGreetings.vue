@@ -47,6 +47,7 @@
       ><text class="selected-title">{{ selected.title }} · 全文预览</text
       ><CharacterCardText
         :content="substitute(selected.content)"
+        :inline="inlinePreview"
         empty-text="此开场未填写正文，建议先补充内容。"
     /></view>
   </view>
@@ -63,6 +64,7 @@ const props = withDefaults(
     modelValue: number | null;
     characterName?: string;
     userName?: string;
+    inlinePreview?: boolean;
   }>(),
   {
     firstMes: "",
@@ -182,6 +184,8 @@ watch(
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   margin-top: 8rpx;
   font-size: 23rpx;
   color: var(--app-color-text-secondary, #7c8983);

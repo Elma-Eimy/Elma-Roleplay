@@ -1,6 +1,6 @@
 <template>
   <view class="card-reading">
-    <template v-if="pageCount > 1">
+    <template v-if="pageCount > 1 && !inline">
       <text class="reading-hint">上下滑动阅读本页，翻页后从页首开始。</text>
       <scroll-view :key="page" scroll-y class="reading-viewport">
         <text v-if="source" class="source-text" selectable>{{ pageText }}</text>
@@ -30,7 +30,7 @@ import { computed, ref, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import { formatCardInlineMedia } from "@/utils/characterCard";
 const props = withDefaults(
-  defineProps<{ content?: string; source?: boolean; emptyText?: string }>(),
+  defineProps<{ content?: string; source?: boolean; emptyText?: string; inline?: boolean }>(),
   { content: "", source: false, emptyText: "尚未填写" },
 );
 const page = ref(0);

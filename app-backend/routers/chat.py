@@ -11,6 +11,7 @@
 
 import json
 import asyncio
+import logging
 from fastapi import Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -23,10 +24,14 @@ import services.conversation.chat_engine as chat_engine
 import services.conversation.context_assembler as context_assembler
 import services.conversation.chat_turn_service as chat_turn_service
 import services.conversation.message_service as message_service
-from services.parse import _extract_xml_block, extract_stream_reply_prefix
+from services.conversation.reply_parser import _extract_xml_block, extract_stream_reply_prefix
 from core.locking import get_session_lock
 
 from application.session_routes import SessionAPIRouter
+from application.chat_maintenance import schedule_post_turn_maintenance
+from services.infrastructure.logging_context import diagnostic_task, log_event
+
+logger = logging.getLogger(__name__)
 
 router = SessionAPIRouter()
 
@@ -95,6 +100,7 @@ async def _abort_turn(turn, db: Session):
 
 
 @router.post("")
+@diagnostic_task("chat-turn")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     基于 Session 的对话端点。
@@ -147,11 +153,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             raise
 
         # ── Step 5: 后台触发提纯检查 ──
-        background_tasks.add_task(
-            chat_turn_service.run_post_turn_maintenance,
-            request.session_id,
-            turn.persona.id,
-        )
+        schedule_post_turn_maintenance(request.session_id, turn.persona.id)
 
         return {
             "reply": reply_text,
@@ -265,13 +267,7 @@ async def _run_stream_worker(
             raise asyncio.CancelledError()
 
         # 触发后台提纯与认知更新（独立任务）
-        asyncio.create_task(
-            run_in_threadpool(
-                chat_turn_service.run_post_turn_maintenance,
-                session_id,
-                persona_id,
-            )
-        )
+        schedule_post_turn_maintenance(session_id, persona_id)
 
         meta_payload = {
             "emotion_tag": emotion_tag,
@@ -287,10 +283,10 @@ async def _run_stream_worker(
 
     except asyncio.CancelledError:
         # 服务关闭、重载或显式取消时捕获 CancelledError
-        print(f"[INFO] 流式 Worker 任务被取消 (session_id={session_id})")
+        log_event(logger, logging.INFO, "chat_stream_cancelled", session_id=session_id)
         raise
     except Exception as exc:
-        print(f"[ERROR] 发生流生成或持久化错误: {exc}")
+        log_event(logger, logging.ERROR, "chat_stream_failed", session_id=session_id, error_type=type(exc).__name__)
         try:
             await queue.put({"type": "error", "error": str(exc)})
         except Exception:
@@ -301,7 +297,7 @@ async def _run_stream_worker(
                 if not turn_completed:
                     await run_in_threadpool(chat_turn_service.abort_chat_turn, turn, task_db)
             except Exception as abort_err:
-                print(f"[WARN] 失败清理回合时异常: {abort_err}")
+                log_event(logger, logging.WARNING, "chat_turn_cleanup_failed", session_id=session_id, error_type=type(abort_err).__name__)
             finally:
                 try:
                     task_db.close()
@@ -322,10 +318,11 @@ async def cancel_all_stream_tasks(timeout: float = 5.0) -> None:
     try:
         await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout)
     except asyncio.TimeoutError:
-        print(f"[WARN] 取消后台流式任务超时 ({timeout}s)")
+        log_event(logger, logging.WARNING, "chat_stream_shutdown_timeout", timeout_seconds=timeout)
 
 
 @router.post("/stream")
+@diagnostic_task("chat-turn")
 async def chat_stream(
     request: ChatRequest,
     background_tasks: BackgroundTasks,

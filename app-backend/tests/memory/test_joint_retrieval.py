@@ -9,12 +9,12 @@ from services.memory import joint_retrieval as joint
 from services.memory.graph_evidence import content_fingerprint, snapshot_sources
 from services.memory.graph_service import upsert_graph_data
 from services.memory.memory_facts import normalize_temporal
-from tests.memory import test_graph_rag_quality as fixture
+from tests.support.memory import graph_rag as fixture
 
 
 class JointRetrievalTests(unittest.TestCase):
-    setUp = fixture.GraphRagQualityTests.setUp
-    tearDown = fixture.GraphRagQualityTests.tearDown
+    setUp = fixture.GraphRagFixture.setUp
+    tearDown = fixture.GraphRagFixture.tearDown
 
     def fact(self, text, source="小红", target="旧城", *, persona=None, status="unknown", note=None):
         persona = persona or self.parent_persona

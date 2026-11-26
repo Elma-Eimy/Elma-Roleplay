@@ -270,10 +270,13 @@ const toggleAdvancedSection = (key: AdvancedSectionKey) => {
   advancedSections.value[key] = !advancedSections.value[key];
 };
 
-const updateTags = (event: any) => {
-  form.value.tags = event.detail.value
+const updateTags = (event: Event) => {
+  const detail = (event as Event & { detail?: { value?: string } }).detail;
+  const target = event.target as { value?: string } | null;
+  const raw = String(detail?.value ?? target?.value ?? "");
+  form.value.tags = raw
     .split(",")
-    .map((tag: string) => tag.trim())
+    .map((tag) => tag.trim())
     .filter(Boolean);
 };
 
@@ -377,7 +380,7 @@ const saveCharacter = async (story: { title: string; greeting_index: number | nu
         const response = await createCharacter(characterData);
         if (response.created === false) {
           uni.hideLoading();
-          uni.showModal({ title: "画册中已有同名角色", content: "本次导入尚未保存。可以修改姓名后新建，或打开已有档案，从那里导入更新。", confirmText: "打开档案", cancelText: "继续编辑", success: result => { if (result.confirm) uni.navigateTo({ url: `/pages/character/detail?id=${response.character_id}` }); } });
+          uni.showModal({ title: "服务器未允许同名创建", content: "当前连接的服务器版本尚未放开同名角色新建。可以修改姓名、更新后端服务，或打开已有档案。", confirmText: "打开档案", cancelText: "继续编辑", success: result => { if (result.confirm) uni.navigateTo({ url: `/pages/character/detail?id=${response.character_id}` }); } });
           return;
         }
         id = response.character_id; savedNewCharacterId.value = id;
@@ -631,7 +634,7 @@ const saveCharacter = async (story: { title: string; greeting_index: number | nu
 }
 
 .upload-icon {
-  color: #8e8e93;
+  color: var(--app-color-text-muted, #89958f);
 }
 
 .upload-text {

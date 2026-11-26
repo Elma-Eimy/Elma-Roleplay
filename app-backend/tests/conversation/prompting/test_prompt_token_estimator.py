@@ -155,6 +155,41 @@ class PromptTokenEstimatorTests(unittest.TestCase):
             report["sections"]["current_user_message"]["estimated_tokens"],
         )
 
+    def test_mes_examples_are_counted_under_examples_not_recent_history(self):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "【核心扮演指令】\n按角色回复。\n\n"
+                    "【对话示例说明】\n以下示例仅用于参考。\n\n"
+                    "【未结构化对话示例】\n一段背景示范台词"
+                ),
+            },
+            {"role": "user", "content": "示例用户问题"},
+            {"role": "assistant", "content": "<reply>示例角色回答</reply>"},
+            {"role": "system", "content": "【对话示例结束】\n以上仅为风格示例。"},
+            {"role": "user", "content": "真实历史提问"},
+            {"role": "assistant", "content": "<reply>真实历史回复</reply>"},
+            {"role": "user", "content": "本轮真实提问"},
+            {"role": "system", "content": "【重要：输出格式要求】"},
+        ]
+
+        report = estimate_prompt_tokens(messages)
+
+        self.assertGreater(report["sections"]["examples"]["characters"], 0)
+        self.assertEqual(
+            len("【核心扮演指令】\n按角色回复。\n\n") + len("【重要：输出格式要求】"),
+            report["sections"]["character"]["characters"],
+        )
+        self.assertEqual(
+            len("真实历史提问") + len("<reply>真实历史回复</reply>"),
+            report["sections"]["recent_history"]["characters"],
+        )
+        self.assertEqual(
+            len("本轮真实提问"),
+            report["sections"]["current_user_message"]["characters"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import logging
+import threading
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,24 +10,50 @@ from sqlalchemy import and_, or_
 from core.database import SessionLocal
 from core.models import OutboxJob, OutboxJobStatus
 from core.config import settings
+from services.infrastructure.logging_context import log_event, task_context
 
 # 控制后台任务执行的标志
 is_worker_running = True
 PROCESSING_LEASE_SECONDS = 300
 MAX_BACKOFF_SECONDS = 3600
+logger = logging.getLogger(__name__)
 
 async def run_outbox_worker():
     global is_worker_running
-    print("[OUTBOX WORKER] Starting background worker loop...")
+    log_event(logger, logging.INFO, "outbox_worker_started")
     while is_worker_running:
         try:
             await process_pending_jobs()
         except Exception as e:
-            print(f"[OUTBOX WORKER ERROR] Exception in loop: {e}")
-            traceback.print_exc()
+            log_event(logger, logging.ERROR, "outbox_poll_failed", error_type=type(e).__name__)
         await asyncio.sleep(5.0)  # 每 5 秒检查一次
 
 async def process_pending_jobs():
+    """在线程内完成一轮处理；取消后等待当前任务及数据库会话清理。"""
+    stop_requested = threading.Event()
+    work = asyncio.create_task(asyncio.to_thread(_process_pending_jobs, stop_requested))
+    cancelled = False
+    try:
+        while True:
+            try:
+                await asyncio.shield(work)
+                break
+            except asyncio.CancelledError:
+                if work.cancelled():
+                    raise
+                stop_requested.set()
+                cancelled = True
+    except Exception as exc:
+        if not cancelled:
+            raise
+        log_event(logger, logging.WARNING, "outbox_shutdown_failed", error_type=type(exc).__name__)
+    if cancelled:
+        raise asyncio.CancelledError
+
+
+def _process_pending_jobs(stop_requested):
+    if stop_requested.is_set():
+        return
     db = SessionLocal()
     try:
         now = datetime.now()
@@ -49,53 +77,57 @@ async def process_pending_jobs():
             return
 
         for job in jobs:
-            if job.status == OutboxJobStatus.processing:
-                job.last_error = "Processing lease expired; retrying idempotently"
+            if stop_requested.is_set():
+                break
+            with task_context(f"outbox-{job.id}"):
+                if job.status == OutboxJobStatus.processing:
+                    job.last_error = "Processing lease expired; retrying idempotently"
 
-            # 标记为正在处理中，并启动/更新其租期。
-            job.status = OutboxJobStatus.processing
-            job.run_after = datetime.now() + timedelta(seconds=PROCESSING_LEASE_SECONDS)
-            db.commit()
-            job_id = job.id
-            task_type = job.task_type
-            payload = job.payload
-
-            try:
-                # 在线程执行器（thread executor）中处理任务，以避免阻塞事件循环
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, execute_task, task_type, payload)
-
-                # 成功时：
-                # 物理删除该任务，以保持发件箱（outbox）表干净且体积小
-                db.delete(job)
+                # 标记为正在处理中，并启动/更新其租期。
+                job.status = OutboxJobStatus.processing
+                job.run_after = datetime.now() + timedelta(seconds=PROCESSING_LEASE_SECONDS)
                 db.commit()
-            except Exception as e:
-                db.rollback()
-                job = db.get(OutboxJob, job_id)
-                if job is None:
-                    continue
+                job_id = job.id
+                task_type = job.task_type
+                payload = job.payload
 
-                # 失败时：
-                job.attempts += 1
-                job.last_error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+                log_event(logger, logging.INFO, "outbox_job_started", job_id=job_id, task_type=task_type)
+                try:
+                    # Session 与外部执行留在同一个线程，取消不打断当前任务的持久结果。
+                    execute_task(task_type, payload)
+
+                    # 成功时：
+                    # 物理删除该任务，以保持发件箱（outbox）表干净且体积小
+                    db.delete(job)
+                    db.commit()
+                    log_event(logger, logging.INFO, "outbox_job_completed", job_id=job_id)
+                except Exception as e:
+                    db.rollback()
+                    job = db.get(OutboxJob, job_id)
+                    if job is None:
+                        continue
+
+                    # 失败时：
+                    job.attempts += 1
+                    job.last_error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
                 
-                if job.attempts >= job.max_attempts:
-                    job.status = OutboxJobStatus.failed
-                    # max_attempts 限制的是单次重试并发次数，而不是持久任务的生命周期。冷却并稍后启动另一次重试。
-                    job.attempts = 0
-                    job.run_after = datetime.now() + timedelta(seconds=MAX_BACKOFF_SECONDS)
-                    print(f"[OUTBOX WORKER ERROR] Job #{job.id} ({job.task_type}) exhausted a retry burst; cooling down until {job.run_after}.")
-                else:
-                    job.status = OutboxJobStatus.failed
-                    # 指数退避：在 15 * (2 ** attempts) 秒后重试
-                    backoff_seconds = min(
-                        MAX_BACKOFF_SECONDS,
-                        15 * (2 ** job.attempts),
-                    )
-                    job.run_after = datetime.now() + timedelta(seconds=backoff_seconds)
-                    print(f"[OUTBOX WORKER] Job #{job.id} failed. Attempt {job.attempts}/{job.max_attempts}. Will retry after {job.run_after}")
+                    if job.attempts >= job.max_attempts:
+                        job.status = OutboxJobStatus.failed
+                        # max_attempts 限制的是单次重试并发次数，而不是持久任务的生命周期。冷却并稍后启动另一次重试。
+                        job.attempts = 0
+                        job.run_after = datetime.now() + timedelta(seconds=MAX_BACKOFF_SECONDS)
+                        log_event(logger, logging.ERROR, "outbox_job_cooling_down", job_id=job_id, error_type=type(e).__name__)
+                    else:
+                        job.status = OutboxJobStatus.failed
+                        # 指数退避：在 15 * (2 ** attempts) 秒后重试
+                        backoff_seconds = min(
+                            MAX_BACKOFF_SECONDS,
+                            15 * (2 ** job.attempts),
+                        )
+                        job.run_after = datetime.now() + timedelta(seconds=backoff_seconds)
+                        log_event(logger, logging.WARNING, "outbox_job_deferred", job_id=job_id, attempts=job.attempts, error_type=type(e).__name__)
                 
-                db.commit()
+                    db.commit()
     finally:
         db.close()
 
@@ -137,12 +169,21 @@ def handle_upsert_vector(payload_str: str):
     memory_id = payload.get("memory_id")
     fallback_character_id = payload.get("character_id")
     fallback_doc_id = payload.get("chroma_doc_id")
-    if not memory_id or not fallback_character_id or not fallback_doc_id:
+    if not memory_id or not fallback_character_id or not isinstance(fallback_doc_id, str) or not fallback_doc_id.strip():
         raise ValueError("Invalid upsert_vector payload")
 
     db = SessionLocal()
     try:
         chunk = db.get(MemoryChunk, memory_id)
+        if chunk is not None and not chunk.chroma_doc_id:
+            # 仅修复空值，保留并发写入已选定的 ID，并在调用向量库前提交。
+            db.query(MemoryChunk).filter(
+                MemoryChunk.id == memory_id,
+                or_(MemoryChunk.chroma_doc_id.is_(None), MemoryChunk.chroma_doc_id == ""),
+            ).update({MemoryChunk.chroma_doc_id: fallback_doc_id}, synchronize_session=False)
+            db.commit()
+            chunk = db.get(MemoryChunk, memory_id, populate_existing=True)
+
         if chunk is None:
             # 该记忆可能会在任务排队后被删除。
             collection = get_character_collection(fallback_character_id)
@@ -165,7 +206,7 @@ def handle_upsert_vector(payload_str: str):
             documents=[chunk.content],
             metadatas=[metadata],
         )
-        print(f"[OUTBOX] ChromaDB upserted vector id={chunk.chroma_doc_id} for memory_id={memory_id}")
+        log_event(logger, logging.DEBUG, "outbox_vector_upserted", memory_id=memory_id)
     finally:
         db.close()
 
@@ -178,7 +219,7 @@ def handle_delete_vector(payload_str: str):
     if character_id and doc_ids:
         collection = get_character_collection(character_id)
         collection.delete(ids=doc_ids)
-        print(f"[OUTBOX] ChromaDB deleted vector ids={doc_ids} for character_id={character_id}")
+        log_event(logger, logging.DEBUG, "outbox_vectors_deleted", character_id=character_id, count=len(doc_ids))
 
 
 def handle_delete_vector_collection(payload_str: str):
@@ -194,10 +235,10 @@ def handle_delete_vector_collection(payload_str: str):
     collection_name = f"character_{character_id}"
     try:
         get_chroma_client().delete_collection(collection_name)
-        print(f"[OUTBOX] Deleted ChromaDB collection: {collection_name}")
+        log_event(logger, logging.DEBUG, "outbox_collection_deleted", character_id=character_id)
     except NotFoundError:
         # 成功删除后的重试，或者从未拥有过记忆的角色，目前已经处于所需的最终状态。
-        print(f"[OUTBOX] ChromaDB collection already absent: {collection_name}")
+        log_event(logger, logging.DEBUG, "outbox_collection_absent", character_id=character_id)
 
 def handle_delete_audio(payload_str: str):
     payload = json.loads(payload_str)
@@ -213,12 +254,12 @@ def handle_delete_audio(payload_str: str):
         if os.path.exists(actual_path):
             try:
                 os.remove(actual_path)
-                print(f"[OUTBOX] Deleted physical audio file: {actual_path}")
+                log_event(logger, logging.DEBUG, "outbox_audio_deleted")
             except Exception as e:
-                print(f"[OUTBOX ERROR] Failed to delete file {actual_path}: {e}")
+                log_event(logger, logging.WARNING, "outbox_audio_delete_failed", error_type=type(e).__name__)
                 raise e
         else:
-            print(f"[OUTBOX] Audio file not found for deletion: {actual_path} (skipped)")
+            log_event(logger, logging.DEBUG, "outbox_audio_absent")
 
 
 def _resolve_managed_avatar_path(file_path: str):
@@ -273,21 +314,18 @@ def handle_delete_avatar(payload_str: str):
     file_path = payload.get("file_path")
     target_path = _resolve_managed_avatar_path(file_path)
     if target_path is None:
-        print(
-            f"[OUTBOX] Avatar path is outside the managed upload directory: "
-            f"{file_path!r} (skipped)"
-        )
+        log_event(logger, logging.WARNING, "outbox_avatar_path_rejected")
         return
 
     if _avatar_is_still_referenced(target_path):
-        print(f"[OUTBOX] Avatar is still referenced: {target_path} (skipped)")
+        log_event(logger, logging.DEBUG, "outbox_avatar_referenced")
         return
 
     if not target_path.exists():
-        print(f"[OUTBOX] Avatar file not found: {target_path} (skipped)")
+        log_event(logger, logging.DEBUG, "outbox_avatar_absent")
         return
     if not target_path.is_file():
         raise ValueError(f"Avatar cleanup target is not a file: {target_path}")
 
     target_path.unlink()
-    print(f"[OUTBOX] Deleted physical avatar file: {target_path}")
+    log_event(logger, logging.DEBUG, "outbox_avatar_deleted")

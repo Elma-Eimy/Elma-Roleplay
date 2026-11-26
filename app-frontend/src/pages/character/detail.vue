@@ -1,22 +1,24 @@
 <template>
   <view class="detail-container app-motion-enter" v-if="character">
     <!-- 头部导航栏 -->
-    <view class="header">
-      <view class="back-btn" @tap="goBack">
-        <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
-      </view>
-      <text class="title">人物档案</text>
-      <view class="header-right">
-        <view role="button" aria-label="导入更新角色卡" class="header-btn sync-btn" @tap="quickUpdateFromCard">
-          <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+    <view class="header" :class="{ 'is-scrolled': isHeaderScrolled }">
+      <view class="header-inner">
+        <view class="back-btn" @tap="goBack">
+          <image class="back-icon" src="/static/icons/header_back.svg" mode="aspectFit" />
         </view>
-        <view role="button" aria-label="编辑人物档案" class="header-btn edit-btn" @tap="goToEdit">
-          <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+        <text class="title">{{ character.name || "人物档案" }}</text>
+        <view class="header-right">
+          <view role="button" aria-label="导入更新角色卡" class="header-btn sync-btn" @tap="quickUpdateFromCard">
+            <image class="sync-icon" src="/static/icons/drawer_sync.svg" mode="aspectFit" />
+          </view>
+          <view role="button" aria-label="编辑人物档案" class="header-btn edit-btn" @tap="goToEdit">
+            <image class="edit-icon" src="/static/icons/char_pencil.svg" mode="aspectFit" />
+          </view>
         </view>
       </view>
     </view>
 
-    <scroll-view scroll-y class="scroll-content">
+    <scroll-view scroll-y class="scroll-content" @scroll="onDetailScroll">
       <view class="scroll-inner">
         <!-- 角色立绘面板 -->
         <view class="portrait-panel">
@@ -26,23 +28,25 @@
             :src="getAvatarUrl(character.avatar_path || '')"
             :lazy-load="false"
           />
-          <!-- 前景高清立绘卡 -->
-          <view class="portrait-card-wrapper">
-            <AvatarImage
-              class="portrait-img" 
-              :src="getAvatarUrl(character.avatar_path || '')"
-              :lazy-load="false"
-              @tap="previewPortrait"
-            />
+          <view class="portrait-stage">
+            <!-- 前景高清立绘卡 -->
+            <view class="portrait-card-wrapper">
+              <AvatarImage
+                class="portrait-img" 
+                :src="getAvatarUrl(character.avatar_path || '')"
+                :lazy-load="false"
+                @tap="previewPortrait"
+              />
+            </view>
+            <view class="change-portrait-btn" @tap="changePortrait">
+              <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
+              <text class="change-portrait-text">更换头像</text>
+            </view>
           </view>
           <view class="portrait-overlay" @tap="previewPortrait"></view>
-          
-          <view class="change-portrait-btn" @tap="changePortrait">
-            <image class="change-portrait-icon" src="/static/icons/char_camera.svg" mode="aspectFit" />
-            <text class="change-portrait-text">更换头像</text>
-          </view>
         </view>
 
+        <view class="detail-main-column">
         <!-- 角色基本名称与标签区域 -->
         <view class="char-header-section">
           <text class="archive-eyebrow">CHARACTER FILE</text>
@@ -98,7 +102,7 @@
             :class="{ 'is-active': activeTab === 'lorebook' }"
             @tap="activeTab = 'lorebook'"
           >
-            <text class="tab-label">世界</text>
+            <text class="tab-label">世界书</text>
           </view>
           <view
             class="tab-item"
@@ -192,7 +196,7 @@
         </view>
 
         <!-- Tab 2: 人设细节卡片 -->
-        <view v-if="activeTab === 'profile'" class="char-header-section">
+        <view v-if="activeTab === 'profile'" class="portrait-library-card">
           <CharacterPortraitPanel :character-id="character.id" :timeline="portraitLibraryRevision" />
         </view>
         <CharacterProfileTab 
@@ -350,14 +354,17 @@
             </view>
           </view>
         </view>
+        </view>
       </view>
     </scroll-view>
 
     <!-- 底部操作按钮 -->
     <view class="footer">
-      <view class="action-btn" @tap="openNewBranchModal">
-        <image class="action-icon" src="/static/icons/header_plus.svg" mode="aspectFit" />
-        <text class="action-btn-text">开启新的故事线</text>
+      <view class="footer-inner">
+        <view class="action-btn" @tap="openNewBranchModal">
+          <image class="action-icon" src="/static/icons/header_plus.svg" mode="aspectFit" />
+          <text class="action-btn-text">开启新的故事线</text>
+        </view>
       </view>
     </view>
 
@@ -395,6 +402,7 @@
 
 <script setup lang="ts">
 import type { CharxImportResult } from "@/types/charx";
+import type { BranchTreeSession } from "@/types/chat";
 import CharacterPortraitPanel from "@/components/character/CharacterPortraitPanel.vue";
 import { ref, computed } from "vue";
 import { onLoad, onShow } from "@dcloudio/uni-app";
@@ -494,6 +502,11 @@ const openMemoryArchive = async () => {
 
 const lorebookEntriesCount = ref(0);
 const showAllTags = ref(false);
+const isHeaderScrolled = ref(false);
+
+const onDetailScroll = (event: { detail?: { scrollTop?: number } }) => {
+  isHeaderScrolled.value = (event.detail?.scrollTop ?? 0) > 150;
+};
 
 const onEntriesCountUpdate = (count: number) => {
   lorebookEntriesCount.value = count;
@@ -520,6 +533,15 @@ const getAffectionClass = (score: number | undefined | null) => {
 onLoad((options) => {
   if (options && options.id) {
     characterId.value = parseInt(options.id, 10);
+  }
+  const requestedTab = options?.tab;
+  if (
+    requestedTab === "profile" ||
+    requestedTab === "lorebook" ||
+    requestedTab === "memory" ||
+    requestedTab === "sessions"
+  ) {
+    activeTab.value = requestedTab;
   }
 });
 
@@ -685,7 +707,7 @@ const openNewBranchModal = () => {
   isNewBranchModalOpen.value = true;
 }
 
-const handleTreeNodeBranch = (session: any) => {
+const handleTreeNodeBranch = (session: BranchTreeSession) => {
   activeParentSessionId.value = session.id;
   isNewBranchModalOpen.value = true;
 };
@@ -711,13 +733,13 @@ const startNewBranch = async (payload: { title: string; greeting_index: number |
   }
 };
 
-const resumeSession = (session: any) => {
+const resumeSession = (session: BranchTreeSession) => {
   uni.navigateTo({
     url: `/pages/chat/chat?sessionId=${session.id}`
   });
 };
 
-const onSessionLongPress = (session: any) => {
+const onSessionLongPress = (session: BranchTreeSession) => {
   uni.vibrateShort({ success: () => {} });
   uni.showActionSheet({
     itemList: ['从此分支分叉新世界', '重命名分支', '删除分支'],
@@ -733,8 +755,8 @@ const onSessionLongPress = (session: any) => {
         uni.showModal({
           title: '删除宇宙分支',
           content: '确定要删除此平行世界故事线吗？该人格的所有记忆将被抹去。',
-          confirmColor: '#ff3b30',
-          cancelColor: '#8e8e93',
+          confirmColor: '#d9655d',
+          cancelColor: '#64716b',
           success: async (mRes) => {
             if (mRes.confirm && charId !== null) {
               try {
@@ -742,9 +764,10 @@ const onSessionLongPress = (session: any) => {
                 useChatSettingsStore().removeSession(session.id);
                 await loadCharacterData(charId);
                 uni.showToast({ title: '删除成功', icon: 'success' });
-              } catch (e: any) {
+              } catch (e: unknown) {
                 console.error("Failed to delete branch", e);
-                uni.showToast({ title: e.message || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
+                const errMessage = e instanceof Error ? e.message : "删除失败，请检查网络与后端配置";
+                uni.showToast({ title: errMessage || '删除失败，请检查网络与后端配置', icon: 'none', duration: 3000 });
               }
             }
           }
